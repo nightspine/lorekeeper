@@ -1,6 +1,6 @@
 [project]
 name = "lorekeeper"
-version = "0.0.0"
+version = "0.1.0"
 description = "Reference implementation of the Lorekeeper spoiler-safe book index format"
 readme = "README.md"
 requires-python = ">=3.11"
