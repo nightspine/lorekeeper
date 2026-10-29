@@ -14,7 +14,7 @@ The design separates three concerns:
 
 | Layer | What it is | Who implements it |
 |---|---|---|
-| **Format** (§3–§7) | A JSON index document for one book, plus a series manifest | Generators, editors, validators |
+| **Format** (§3–§6) | A JSON index document for one book, plus a series manifest | Generators, editors, validators |
 | **Protocol** (§8) | A small read-only HTTP API for finding and fetching indexes | Self-hosted servers, community registries |
 | **Client gating** (§7) | A deterministic algorithm that hides everything past the reader's position | Ebook reader apps |
 
