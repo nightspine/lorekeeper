@@ -11,7 +11,7 @@ reader shows them only up to where you are in the book.
 Indexes are built once (by AI, people, or both) and shared. Reader apps just
 fetch and filter them: no AI, no tokens, works offline.
 
-**Status:** v0.1 draft. Read [SPEC.md](SPEC.md).
+**Status:** v0.1 draft. Read [SPEC.md](SPEC.md). What comes next is in [ROADMAP.md](ROADMAP.md); first up is a manual index editor so a person can write, correct and delete what the model produced.
 
 **Releases:** a release is cut whenever something user-visible is ready, at least monthly while the project is 0.x. Docker images are published to `ghcr.io/nightspine/lorekeeper` for amd64 and arm64: `latest` is the newest release, `1.2.3` and `1.2` pin one, and `edge` is the latest build of `main`. See [RELEASING.md](RELEASING.md) and the [changelog](CHANGELOG.md).
 
