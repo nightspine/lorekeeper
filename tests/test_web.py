@@ -29,7 +29,7 @@ def client(tmp_path, monkeypatch):
     fake = SlowFake()
     monkeypatch.setattr(llm, "Ollama", lambda **kw: fake)
     app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9",
-                             allowed_hosts=("testserver",))
+                             allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         c.fake = fake
         yield c
@@ -455,7 +455,7 @@ def test_finished_runs_write_descriptions_when_a_claude_key_is_set(tmp_path, mon
     monkeypatch.setattr(llm, "Claude", Describer)
     (tmp_path / "data").mkdir()
     SecretStore(tmp_path / "data" / "secrets.json").set("anthropic_api_key", "sk-test")
-    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",))
+    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         c.fake = fake
         book = upload(c, tmp_path)

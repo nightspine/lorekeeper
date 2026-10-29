@@ -1,0 +1,33 @@
+/* ---------- Sign-in and password pages ---------- */
+.auth-page { min-height: calc(100vh - var(--topbar-h) - 2 * var(--space-5)); display: grid; place-items: center; padding: var(--space-5) 0; }
+.auth-col { width: 100%; max-width: 400px; display: grid; gap: var(--space-4); }
+.auth-brand { display: flex; align-items: center; gap: 12px; justify-content: center; }
+.auth-card h1 { font-size: 28px; margin: 0 0 var(--space-1); }
+.auth-card .muted { margin: 0; text-wrap: balance; }
+.auth-form .btn.block { width: 100%; justify-content: center; min-height: 44px; }
+.auth-form .btn { min-height: 44px; }
+.auth-form .toolbar .btn { width: 100%; justify-content: center; }
+.auth-form .icon-btn { width: 44px; height: 44px; flex: none; }
+.auth-form .input { min-height: 44px; }
+.auth-foot { text-align: center; margin: 0; }
+.auth-username { position: absolute; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; padding: 0; border: 0; }
+.account-form { max-width: 400px; }
+
+/* Signed out (or before the first password): the header keeps only the brand and the theme toggle. */
+body[data-signed-in="false"] .tabs,
+body[data-signed-in="false"] #docs-link,
+body[data-signed-in="false"] #queue-pill,
+body[data-signed-in="false"] #runs-link,
+body[data-signed-in="false"] #palette-btn,
+body[data-signed-in="false"] #settings-link,
+body[data-must-change-password="true"] .tabs,
+body[data-must-change-password="true"] #queue-pill,
+body[data-must-change-password="true"] #runs-link,
+body[data-must-change-password="true"] #palette-btn,
+body[data-must-change-password="true"] #settings-link { display: none; }
+body[data-signed-in="false"] .brand,
+body[data-must-change-password="true"] .brand { pointer-events: none; }
+
+@media (max-width: 640px) {
+  .auth-page { place-items: start center; padding-top: var(--space-4); }
+}
