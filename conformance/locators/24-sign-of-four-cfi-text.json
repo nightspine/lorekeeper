@@ -1,0 +1,14 @@
+{
+  "description": "CFI into the second paragraph of chapter II.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "cfi": "epubcfi(/6/8!/4/2/6/1:20)"
+  },
+  "expect": {
+    "seq": 79,
+    "exact": true,
+    "finished": "ch2.para01",
+    "inclusive": "ch2.para02"
+  }
+}

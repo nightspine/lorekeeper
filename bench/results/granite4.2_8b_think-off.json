@@ -1,0 +1,403 @@
+{
+  "model": "granite4.2:8b",
+  "think": false,
+  "wall_seconds": 259.5637011528015,
+  "eval_count": 2554,
+  "output": {
+    "entities": [
+      {
+        "name": "Doctor of Medicine",
+        "type": "concept",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The speaker earned a Doctor of Medicine degree from the University of London in 1878."
+          },
+          {
+            "paragraph": 31,
+            "text": "After completing studies, he was attached to the Fifth Northumberland Fusiliers as Assistant Surgeon."
+          }
+        ]
+      },
+      {
+        "name": "University of London",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The speaker took his Doctor of Medicine degree from the University of London in 1878."
+          }
+        ]
+      },
+      {
+        "name": "Netley",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The speaker proceeded to Netley to complete army surgeon training."
+          }
+        ]
+      },
+      {
+        "name": "Fifth Northumberland Fusiliers",
+        "type": "group",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The regiment was stationed in India when the speaker joined it."
+          },
+          {
+            "paragraph": 31,
+            "text": "The regiment was already deep in enemy territory when the speaker arrived at Candahar."
+          }
+        ]
+      },
+      {
+        "name": "India",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The regiment was stationed in India at the time the speaker joined."
+          }
+        ]
+      },
+      {
+        "name": "second Afghan war",
+        "type": "concept",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The second Afghan war broke out before the speaker could join his regiment."
+          }
+        ]
+      },
+      {
+        "name": "Bombay",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The speaker landed at Bombay and learned his corps had advanced through passes into enemy territory."
+          }
+        ]
+      },
+      {
+        "name": "Candahar",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The speaker reached Candahar safely and found his regiment there."
+          }
+        ]
+      },
+      {
+        "name": "Maiwand",
+        "type": "place",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "The fatal battle of Maiwand occurred where the speaker was attached to the Berkshires."
+          }
+        ]
+      },
+      {
+        "name": "Berkshires",
+        "type": "group",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "The speaker was removed from his brigade and attached to the Berkshires."
+          }
+        ]
+      },
+      {
+        "name": "Jezail",
+        "type": "object",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "A Jezail bullet struck the speaker on the shoulder."
+          },
+          {
+            "paragraph": 32,
+            "text": "The bullet shattered the bone and grazed the subclavian artery."
+          }
+        ]
+      },
+      {
+        "name": "Murray",
+        "type": "person",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "Murray was the speaker's orderly who helped him after the Jezail bullet wound."
+          },
+          {
+            "paragraph": 32,
+            "text": "Murray threw the speaker across a pack-horse and brought him safely to British lines."
+          }
+        ]
+      },
+      {
+        "name": "Ghazis",
+        "type": "group",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "The speaker would have been captured by the Ghazis if not for Murray's help."
+          }
+        ]
+      },
+      {
+        "name": "base hospital",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The speaker was moved to the base hospital at Peshawar after the Maiwand battle."
+          },
+          {
+            "paragraph": 33,
+            "text": "At the hospital, he rallied and improved enough to walk in the wards and sit on the verandah."
+          }
+        ]
+      },
+      {
+        "name": "Peshawar",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The base hospital was located at Peshawar."
+          }
+        ]
+      },
+      {
+        "name": "enteric fever",
+        "type": "concept",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The speaker contracted enteric fever at Peshawar."
+          },
+          {
+            "paragraph": 33,
+            "text": "Enteric fever was described as 'the curse of our Indian possessions'."
+          }
+        ]
+      },
+      {
+        "name": "troopship \"Orontes\"",
+        "type": "object",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The speaker was dispatched back to England in the troopship 'Orontes'."
+          },
+          {
+            "paragraph": 33,
+            "text": "He landed on Portsmouth jetty a month later."
+          }
+        ]
+      },
+      {
+        "name": "Portsmouth jetty",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The speaker landed on the Portsmouth jetty after returning from India."
+          }
+        ]
+      },
+      {
+        "name": "England",
+        "type": "place",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The speaker had no kith or kin in England."
+          }
+        ]
+      },
+      {
+        "name": "London",
+        "type": "place",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The speaker naturally gravitated to London due to lack of family."
+          },
+          {
+            "paragraph": 34,
+            "text": "London was described as 'a great cesspool' attracting idlers and loungers."
+          }
+        ]
+      },
+      {
+        "name": "private hotel in the Strand",
+        "type": "place",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The speaker stayed at a private hotel in the Strand in London."
+          },
+          {
+            "paragraph": 34,
+            "text": "He led a comfortless, meaningless existence there."
+          }
+        ]
+      },
+      {
+        "name": "eleven shillings and sixpence",
+        "type": "object",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The speaker's daily income was eleven shillings and sixpence."
+          },
+          {
+            "paragraph": 34,
+            "text": "This limited how free he could be in England."
+          }
+        ]
+      },
+      {
+        "name": "Holborn",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The speaker and Stamford planned to have lunch at the Holborn."
+          }
+        ]
+      },
+      {
+        "name": "hansom",
+        "type": "object",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The speaker and Stamford rode together in a hansom cab."
+          }
+        ]
+      },
+      {
+        "name": "Stamford",
+        "type": "person",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "Stamford was a former dresser under the speaker at Barts."
+          },
+          {
+            "paragraph": 35,
+            "text": "Stamford recognized the speaker at the Criterion Bar."
+          }
+        ]
+      },
+      {
+        "name": "Criterion Bar",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The speaker was standing at the Criterion Bar when Stamford tapped him."
+          }
+        ]
+      },
+      {
+        "name": "Barts",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "Stamford had been a dresser under the speaker at Barts."
+          }
+        ]
+      },
+      {
+        "name": "British lines",
+        "type": "place",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "Murray brought the speaker safely to the British lines after the Maiwand battle."
+          }
+        ]
+      },
+      {
+        "name": "chemical laboratory",
+        "type": "place",
+        "first_paragraph": 42,
+        "facts": [
+          {
+            "paragraph": 42,
+            "text": "A fellow worked at the chemical laboratory up at the hospital."
+          }
+        ]
+      },
+      {
+        "name": "hospital",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The speaker was moved to a base hospital at Peshawar."
+          },
+          {
+            "paragraph": 42,
+            "text": "The chemical laboratory was 'up at the hospital'."
+          }
+        ]
+      },
+      {
+        "name": "Sherlock Holmes",
+        "type": "person",
+        "first_paragraph": 44,
+        "facts": [
+          {
+            "paragraph": 44,
+            "text": "Young Stamford said the speaker did not know Sherlock Holmes yet."
+          },
+          {
+            "paragraph": 44,
+            "text": "Stamford suggested the speaker might not care for Holmes as a constant companion."
+          }
+        ]
+      }
+    ]
+  }
+}

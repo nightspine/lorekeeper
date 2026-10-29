@@ -1,0 +1,2875 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "index",
+  "id": "sherlock-holmes.study-in-scarlet",
+  "work": {
+    "title": "A Study in Scarlet",
+    "authors": [
+      "Arthur Conan Doyle"
+    ],
+    "language": "en"
+  },
+  "editions": [
+    {
+      "textHash": "3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5",
+      "fileHash": "d65612d1c87ec1f7fed290361d11278cdbaf8509d5c231b1ff0981049331b7e7",
+      "label": "pg244.epub",
+      "builtFrom": true
+    }
+  ],
+  "coverage": {
+    "complete": false,
+    "through": "toc06.para51"
+  },
+  "provenance": {
+    "generator": {
+      "name": "lorekeeper-generate",
+      "version": "0.1.0",
+      "model": "gemma4:12b-it-qat",
+      "promptSet": "extract-v1"
+    },
+    "contributors": [
+      {
+        "name": "gemma4:12b-it-qat via lorekeeper-generate",
+        "role": "generator"
+      }
+    ],
+    "review": [
+      {
+        "by": "lorekeeper-generate",
+        "date": "2026-10-21",
+        "status": "unreviewed"
+      }
+    ],
+    "created": "2026-10-21T21:36:52Z",
+    "updated": "2026-10-21T22:10:24Z",
+    "license": "CC0-1.0"
+  },
+  "anchors": [
+    {
+      "id": "toc05.para01",
+      "fp": "ed131b9e3d13f696",
+      "seq": 31
+    },
+    {
+      "id": "toc05.para02",
+      "fp": "ab28352abd2f8b28",
+      "seq": 32
+    },
+    {
+      "id": "toc05.para03",
+      "fp": "cfe66719d894689c",
+      "seq": 33
+    },
+    {
+      "id": "toc05.para04",
+      "fp": "9c2b8a4f6416e2c9",
+      "seq": 34
+    },
+    {
+      "id": "toc05.para05",
+      "fp": "96e69275a85f6afd",
+      "seq": 35
+    },
+    {
+      "id": "toc05.para06",
+      "fp": "4d9d535509296a43",
+      "seq": 36
+    },
+    {
+      "id": "toc05.para12",
+      "fp": "2707e7a97c01a485",
+      "seq": 42
+    },
+    {
+      "id": "toc05.para14",
+      "fp": "6f0214b011388a35",
+      "seq": 44
+    },
+    {
+      "id": "toc05.para18",
+      "fp": "bdb9d655de02466c",
+      "seq": 48
+    },
+    {
+      "id": "toc05.para20",
+      "fp": "47e977b5c649b208",
+      "seq": 50
+    },
+    {
+      "id": "toc05.para22",
+      "fp": "e3bd52f098a7214e",
+      "seq": 52
+    },
+    {
+      "id": "toc05.para24",
+      "fp": "59617953c1ffbd47",
+      "seq": 54
+    },
+    {
+      "id": "toc05.para26",
+      "fp": "86cedac828801127",
+      "seq": 56
+    },
+    {
+      "id": "toc05.para27",
+      "fp": "4cde2ba93a71deda",
+      "seq": 57
+    },
+    {
+      "id": "toc05.para29",
+      "fp": "9fe97072ddfb1898",
+      "seq": 59
+    },
+    {
+      "id": "toc05.para31",
+      "fp": "6fb95954d844326a",
+      "seq": 61
+    },
+    {
+      "id": "toc05.para33",
+      "fp": "a8bbfcf8ff7bfb3a",
+      "seq": 63
+    },
+    {
+      "id": "toc05.para34",
+      "fp": "2b1f5428714cbaa7",
+      "seq": 64
+    },
+    {
+      "id": "toc05.para35",
+      "fp": "2ea154b8accc08ca",
+      "seq": 65
+    },
+    {
+      "id": "toc05.para40",
+      "fp": "d2bda7f81bce8094",
+      "seq": 70
+    },
+    {
+      "id": "toc05.para43",
+      "fp": "f2934b27a4e464ac",
+      "seq": 73
+    },
+    {
+      "id": "toc05.para48",
+      "fp": "ce81da2f239bec6d",
+      "seq": 78
+    },
+    {
+      "id": "toc05.para50",
+      "fp": "fa01df8d777ad0ba",
+      "seq": 80
+    },
+    {
+      "id": "toc05.para51",
+      "fp": "3b121120601de98c",
+      "seq": 81
+    },
+    {
+      "id": "toc05.para52",
+      "fp": "bd54f49031fd6d23",
+      "seq": 82
+    },
+    {
+      "id": "toc05.para54",
+      "fp": "e0e07bb10af5223e",
+      "seq": 84
+    },
+    {
+      "id": "toc05.para56",
+      "fp": "45848ebd2892ce6f",
+      "seq": 86
+    },
+    {
+      "id": "toc05.para57",
+      "fp": "1be8b1a7ea3483d2",
+      "seq": 87
+    },
+    {
+      "id": "toc05.para62",
+      "fp": "2441113b09c52a75",
+      "seq": 92
+    },
+    {
+      "id": "toc05.para64",
+      "fp": "fd4a436b03306a8e",
+      "seq": 94
+    },
+    {
+      "id": "toc05.para65",
+      "fp": "4cd794dfb9806ba6",
+      "seq": 95
+    },
+    {
+      "id": "toc05.para67",
+      "fp": "59f5435db2e41809",
+      "seq": 97
+    },
+    {
+      "id": "toc05.para68",
+      "fp": "2bd1e1310c1c5210",
+      "seq": 98
+    },
+    {
+      "id": "toc05.para69",
+      "fp": "2eae6519269e5247",
+      "seq": 99
+    },
+    {
+      "id": "toc06.para01",
+      "fp": "ab283eb2075e6a74",
+      "seq": 101
+    },
+    {
+      "id": "toc06.para02",
+      "fp": "866b8c0f51ae6d41",
+      "seq": 102
+    },
+    {
+      "id": "toc06.para03",
+      "fp": "11af58c11b17527a",
+      "seq": 103
+    },
+    {
+      "id": "toc06.para04",
+      "fp": "4992f4a3f744dddf",
+      "seq": 104
+    },
+    {
+      "id": "toc06.para05",
+      "fp": "ba65608f3bc5e096",
+      "seq": 105
+    },
+    {
+      "id": "toc06.para06",
+      "fp": "33b412d20e241525",
+      "seq": 106
+    },
+    {
+      "id": "toc06.para09",
+      "fp": "5c942c26a3e5980e",
+      "seq": 109
+    },
+    {
+      "id": "toc06.para11",
+      "fp": "ac4ff5dd736f42ec",
+      "seq": 111
+    },
+    {
+      "id": "toc06.para12",
+      "fp": "5ca4cc5c1f7a5d8e",
+      "seq": 112
+    },
+    {
+      "id": "toc06.para14",
+      "fp": "d41ea025c39e21f8",
+      "seq": 114
+    },
+    {
+      "id": "toc06.para15",
+      "fp": "bcd2703f0233a6f9",
+      "seq": 115
+    },
+    {
+      "id": "toc06.para16",
+      "fp": "9d66abbe8986ebb4",
+      "seq": 116
+    },
+    {
+      "id": "toc06.para17",
+      "fp": "8c64fd96d194ff0e",
+      "seq": 117
+    },
+    {
+      "id": "toc06.para18",
+      "fp": "b6716e337bc60c4d",
+      "seq": 118
+    },
+    {
+      "id": "toc06.para19",
+      "fp": "9a1bf352ae5da30d",
+      "seq": 119
+    },
+    {
+      "id": "toc06.para20",
+      "fp": "28273a24bab21dfb",
+      "seq": 120
+    },
+    {
+      "id": "toc06.para21",
+      "fp": "b0f48502ac234b66",
+      "seq": 121
+    },
+    {
+      "id": "toc06.para22",
+      "fp": "9bd0ac8e3eddedcd",
+      "seq": 122
+    },
+    {
+      "id": "toc06.para23",
+      "fp": "da53505a58d23be3",
+      "seq": 123
+    },
+    {
+      "id": "toc06.para24",
+      "fp": "fe72c108568d6990",
+      "seq": 124
+    },
+    {
+      "id": "toc06.para26",
+      "fp": "f21a2c167b3e1af4",
+      "seq": 126
+    },
+    {
+      "id": "toc06.para28",
+      "fp": "46032c01f194bf97",
+      "seq": 128
+    },
+    {
+      "id": "toc06.para30",
+      "fp": "b79db8a299ad81e6",
+      "seq": 130
+    },
+    {
+      "id": "toc06.para32",
+      "fp": "c13c70f397bb9917",
+      "seq": 132
+    },
+    {
+      "id": "toc06.para34",
+      "fp": "6e4445fe0db5b213",
+      "seq": 134
+    },
+    {
+      "id": "toc06.para35",
+      "fp": "0e169aedbb01ceaf",
+      "seq": 135
+    },
+    {
+      "id": "toc06.para36",
+      "fp": "b7c36e9c7bb06dfc",
+      "seq": 136
+    },
+    {
+      "id": "toc06.para37",
+      "fp": "d49ee7dcf61dc92f",
+      "seq": 137
+    },
+    {
+      "id": "toc06.para38",
+      "fp": "14b06c559653598f",
+      "seq": 138
+    },
+    {
+      "id": "toc06.para40",
+      "fp": "a767037db7b083ac",
+      "seq": 140
+    },
+    {
+      "id": "toc06.para42",
+      "fp": "f2f54df014e96601",
+      "seq": 142
+    },
+    {
+      "id": "toc06.para43",
+      "fp": "f0c9e4977b98a92e",
+      "seq": 143
+    },
+    {
+      "id": "toc06.para45",
+      "fp": "cab7707037288d4b",
+      "seq": 145
+    },
+    {
+      "id": "toc06.para46",
+      "fp": "5242600effadc0f3",
+      "seq": 146
+    },
+    {
+      "id": "toc06.para47",
+      "fp": "d37b5f3213fb6e78",
+      "seq": 147
+    },
+    {
+      "id": "toc06.para48",
+      "fp": "0968f5639c4ccd6e",
+      "seq": 148
+    },
+    {
+      "id": "toc06.para50",
+      "fp": "56dcddbba164d0a6",
+      "seq": 150
+    },
+    {
+      "id": "toc06.para51",
+      "fp": "16d3b22cc97d0188",
+      "seq": 151
+    }
+  ],
+  "entities": [
+    {
+      "id": "bombay",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Bombay",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "candahar",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Candahar",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "fifth-northumberland-fusiliers",
+      "type": "group",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Fifth Northumberland Fusiliers",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "india",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "India",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "london",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "London",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "netley",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Netley",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "second-afghan-war",
+      "type": "concept",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "second Afghan war",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "sherlock-holmes",
+      "type": "person",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Sherlock Holmes",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.sherlock-holmes.1",
+          "from": "toc05.para18",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para18"
+          ],
+          "text": "Sherlock Holmes is an expert in anatomy and chemistry."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.2",
+          "from": "toc05.para18",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para18"
+          ],
+          "text": "Sherlock Holmes has not taken systematic medical classes."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.3",
+          "from": "toc05.para18",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para18"
+          ],
+          "text": "Sherlock Holmes has eccentric and desultory studies."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.4",
+          "from": "toc05.para20",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para20"
+          ],
+          "text": "Sherlock Holmes is difficult to draw out in conversation."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.5",
+          "from": "toc05.para22",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para22"
+          ],
+          "text": "Sherlock Holmes works at the chemical laboratory."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.6",
+          "from": "toc05.para27",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para27"
+          ],
+          "text": "Sherlock Holmes has a passion for exact knowledge."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.7",
+          "from": "toc05.para27",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para27"
+          ],
+          "text": "Sherlock Holmes is described as cold-blooded and overly scientific."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.8",
+          "from": "toc05.para31",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para29",
+            "toc05.para31"
+          ],
+          "text": "Sherlock Holmes beats subjects with a stick in the dissecting-rooms."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.9",
+          "from": "toc05.para31",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para29",
+            "toc05.para31"
+          ],
+          "text": "Sherlock Holmes beats subjects to see how bruises form after death."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.10",
+          "from": "toc05.para33",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para33"
+          ],
+          "text": "Sherlock Holmes is not a medical student."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.11",
+          "from": "toc05.para34",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para34"
+          ],
+          "text": "Sherlock Holmes discovered a re-agent that reacts only with hæmoglobin."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.12",
+          "from": "toc05.para40",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para40"
+          ],
+          "text": "The new test can detect blood stains even if they are old."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.13",
+          "from": "toc05.para43",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para43"
+          ],
+          "text": "The new test is more reliable than the Guiacum test or microscopic examination."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.14",
+          "from": "toc05.para50",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para50"
+          ],
+          "text": "Sherlock Holmes works with poisons frequently."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.15",
+          "from": "toc05.para50",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para50"
+          ],
+          "text": "Sherlock Holmes has many bandages and acid stains on his hands."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.16",
+          "from": "toc05.para52",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para52"
+          ],
+          "text": "Sherlock Holmes wants to share his rooms with Watson."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.17",
+          "from": "toc05.para52",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para52"
+          ],
+          "text": "Sherlock Holmes has his eye on a suite in Baker Street."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.18",
+          "from": "toc05.para54",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para54"
+          ],
+          "text": "Sherlock Holmes keeps chemicals and performs experiments."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.19",
+          "from": "toc05.para56",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para56"
+          ],
+          "text": "Sherlock Holmes becomes moody and silent at times."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.20",
+          "from": "toc05.para62",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para62"
+          ],
+          "text": "The two men plan to view the rooms together."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.21",
+          "from": "toc05.para62",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para62"
+          ],
+          "text": "Sherlock Holmes asks Watson to call him at noon tomorrow."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.22",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "Holmes is a quiet man with regular habits."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.23",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He rarely stays up past ten at night."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.24",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He eats breakfast and leaves before Watson wakes up."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.25",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He spends time at the chemical laboratory and the dissecting-rooms."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.26",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He takes long walks into the lower parts of the City."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.27",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He experiences periods of intense energy followed by days of total inactivity."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.28",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "He appears to have a dreamy expression during his periods of inactivity."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.29",
+          "from": "toc06.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para03"
+          ],
+          "text": "He is over six feet tall and very lean."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.30",
+          "from": "toc06.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para03"
+          ],
+          "text": "He has sharp eyes and a hawk-like nose."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.31",
+          "from": "toc06.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para03"
+          ],
+          "text": "He has a prominent and square chin."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.32",
+          "from": "toc06.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para03"
+          ],
+          "text": "His hands are often stained with ink and chemicals."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.33",
+          "from": "toc06.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para03"
+          ],
+          "text": "He has a very delicate touch when using instruments."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.34",
+          "from": "toc06.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para05"
+          ],
+          "text": "He is not studying medicine."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.35",
+          "from": "toc06.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para05"
+          ],
+          "text": "He has not pursued a formal education in science."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.36",
+          "from": "toc06.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para05"
+          ],
+          "text": "He possesses an extraordinarily wide and precise range of knowledge."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.37",
+          "from": "toc06.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para06"
+          ],
+          "text": "He knows almost nothing about contemporary literature, philosophy, or politics."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.38",
+          "from": "toc06.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para06"
+          ],
+          "text": "He did not know who Thomas Carlyle was."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.39",
+          "from": "toc06.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para06"
+          ],
+          "text": "He was unaware of the Copernican Theory and the Solar System."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.40",
+          "from": "toc06.para09",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para09"
+          ],
+          "text": "He believes the brain is like an attic that must be stocked with useful tools."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.41",
+          "from": "toc06.para09",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para09"
+          ],
+          "text": "He believes adding useless facts causes the brain to forget useful ones."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.42",
+          "from": "toc06.para11",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para11"
+          ],
+          "text": "He claims that the earth's orbit around the sun is irrelevant to his work."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.43",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He has no knowledge of literature, philosophy, or astronomy."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.44",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "His knowledge of politics is feeble."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.45",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He knows about belladonna, opium, and poisons."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.46",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He can identify different soils by looking at them."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.47",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He has profound knowledge of chemistry."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.48",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He knows every detail of every horror committed in the last century."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.49",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He is a skilled violinist."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.50",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He is an expert in boxing, swordsmanship, and singlestick."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.51",
+          "from": "toc06.para14",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para14"
+          ],
+          "text": "He has a good practical knowledge of British law."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.52",
+          "from": "toc06.para16",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para16"
+          ],
+          "text": "He often plays the violin alone while reflecting on his thoughts."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.53",
+          "from": "toc06.para17",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para17"
+          ],
+          "text": "He has many acquaintances from various social classes."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.54",
+          "from": "toc06.para17",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para17"
+          ],
+          "text": "He uses the sitting-room as a place of business for his clients."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.55",
+          "from": "toc06.para18",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para18"
+          ],
+          "text": "He had not finished breakfast on March 4th."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.56",
+          "from": "toc06.para24",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para24"
+          ],
+          "text": "Sherlock Holmes wrote the article Watson was criticizing."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.57",
+          "from": "toc06.para26",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para26"
+          ],
+          "text": "Sherlock Holmes uses his theories of observation and deduction to earn his living."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.58",
+          "from": "toc06.para28",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Sherlock Holmes is a consulting detective."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.59",
+          "from": "toc06.para28",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Sherlock Holmes helps Government and private detectives solve crimes."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.60",
+          "from": "toc06.para28",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Sherlock Holmes uses his knowledge of the history of crime to solve cases."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.61",
+          "from": "toc06.para28",
+          "basis": "inferred",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Sherlock Holmes identifies patterns in crimes."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.62",
+          "from": "toc06.para32",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para32"
+          ],
+          "text": "Sherlock Holmes possesses a type of intuition for solving cases."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.63",
+          "from": "toc06.para32",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para32"
+          ],
+          "text": "Sherlock Holmes uses special knowledge to facilitate his work."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.64",
+          "from": "toc06.para34",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para34"
+          ],
+          "text": "Sherlock Holmes deduced Watson's history from his appearance and injuries."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.65",
+          "from": "toc06.para36",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para36"
+          ],
+          "text": "Sherlock Holmes believes Dupin was an inferior detective."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.66",
+          "from": "toc06.para38",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para38"
+          ],
+          "text": "Sherlock Holmes considers Lecoq to be a bungler."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.67",
+          "from": "toc06.para40",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para40"
+          ],
+          "text": "Sherlock Holmes believes there are currently no significant crimes to detect."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.68",
+          "from": "toc06.para40",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para40"
+          ],
+          "text": "Sherlock Holmes believes he has brought more study and talent to detection than anyone else."
+        }
+      ]
+    },
+    {
+      "id": "university-of-london",
+      "type": "group",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "University of London",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "berkshires",
+      "type": "group",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Berkshires",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "maiwand",
+      "type": "place",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Maiwand",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "murray",
+      "type": "person",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Murray",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "enteric-fever",
+      "type": "concept",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "enteric fever",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "hospital",
+      "type": "place",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "hospital",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "orontes",
+      "type": "object",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "Orontes",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "peshawar",
+      "type": "place",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "Peshawar",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "portsmouth-jetty",
+      "type": "place",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "Portsmouth jetty",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "strand",
+      "type": "place",
+      "from": "toc05.para04",
+      "names": [
+        {
+          "value": "Strand",
+          "kind": "primary",
+          "from": "toc05.para04"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "barts",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Barts",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "criterion-bar",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Criterion Bar",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "holborn",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Holborn",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "stamford",
+      "type": "person",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Stamford",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.stamford.1",
+          "from": "toc05.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para05"
+          ],
+          "text": "Stamford was a dresser under Watson at Barts."
+        },
+        {
+          "id": "study-in-scarlet.stamford.2",
+          "from": "toc05.para51",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para51"
+          ],
+          "text": "Stamford wants to take diggings."
+        },
+        {
+          "id": "study-in-scarlet.stamford.3",
+          "from": "toc05.para68",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para68"
+          ],
+          "text": "Stamford predicts Sherlock Holmes will learn more about Watson than vice versa."
+        }
+      ]
+    },
+    {
+      "id": "watson",
+      "type": "person",
+      "from": "toc05.para06",
+      "names": [
+        {
+          "value": "Watson",
+          "kind": "primary",
+          "from": "toc05.para06"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.watson.1",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01",
+            "toc05.para02",
+            "toc05.para03",
+            "toc05.para04"
+          ],
+          "text": "Watson earned a medical degree from the University of London in 1878."
+        },
+        {
+          "id": "study-in-scarlet.watson.2",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "Watson trained as a surgeon at Netley."
+        },
+        {
+          "id": "study-in-scarlet.watson.3",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "Watson served as an Assistant Surgeon in the Fifth Northumberland Fusiliers."
+        },
+        {
+          "id": "study-in-scarlet.watson.4",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "Watson was stationed in India during the second Afghan war."
+        },
+        {
+          "id": "study-in-scarlet.watson.5",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "Watson reached Candahar safely during the war."
+        },
+        {
+          "id": "study-in-scarlet.watson.6",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "Watson was attached to the Berkshires during the battle of Maiwand."
+        },
+        {
+          "id": "study-in-scarlet.watson.7",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "Watson was shot in the shoulder by a Jezail bullet."
+        },
+        {
+          "id": "study-in-scarlet.watson.8",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "Watson was saved by Murray."
+        },
+        {
+          "id": "study-in-scarlet.watson.9",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para03"
+          ],
+          "text": "Watson was treated at a base hospital in Peshawar."
+        },
+        {
+          "id": "study-in-scarlet.watson.10",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para03"
+          ],
+          "text": "Watson contracted enteric fever."
+        },
+        {
+          "id": "study-in-scarlet.watson.11",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para03"
+          ],
+          "text": "Watson returned to England on the ship Orontes."
+        },
+        {
+          "id": "study-in-scarlet.watson.12",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para03"
+          ],
+          "text": "Watson has ruined health due to his experiences."
+        },
+        {
+          "id": "study-in-scarlet.watson.13",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para04"
+          ],
+          "text": "Watson earns eleven shillings and sixpence every day."
+        },
+        {
+          "id": "study-in-scarlet.watson.14",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para04"
+          ],
+          "text": "Watson stayed at a hotel in the Strand."
+        },
+        {
+          "id": "study-in-scarlet.watson.15",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para04"
+          ],
+          "text": "Watson is looking for cheaper lodgings in London."
+        },
+        {
+          "id": "study-in-scarlet.watson.16",
+          "from": "toc05.para57",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para57"
+          ],
+          "text": "Watson keeps a bull pup."
+        },
+        {
+          "id": "study-in-scarlet.watson.17",
+          "from": "toc05.para57",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para57"
+          ],
+          "text": "Watson objects to loud noises because of his shaken nerves."
+        },
+        {
+          "id": "study-in-scarlet.watson.18",
+          "from": "toc05.para57",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para57"
+          ],
+          "text": "Watson gets up at odd hours."
+        },
+        {
+          "id": "study-in-scarlet.watson.19",
+          "from": "toc05.para57",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para57"
+          ],
+          "text": "Watson describes himself as extremely lazy."
+        },
+        {
+          "id": "study-in-scarlet.watson.20",
+          "from": "toc05.para65",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para65"
+          ],
+          "text": "Watson wonders how Stamford knew he served in Afghanistan."
+        },
+        {
+          "id": "study-in-scarlet.watson.21",
+          "from": "toc05.para67",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para67"
+          ],
+          "text": "Watson believes the proper study of mankind is man."
+        },
+        {
+          "id": "study-in-scarlet.watson.22",
+          "from": "toc06.para04",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para04"
+          ],
+          "text": "Watson has poor health that limits his outdoor activities."
+        },
+        {
+          "id": "study-in-scarlet.watson.23",
+          "from": "toc06.para04",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para04"
+          ],
+          "text": "Watson has no friends to visit him."
+        }
+      ]
+    },
+    {
+      "id": "chemical-laboratory",
+      "type": "place",
+      "from": "toc05.para12",
+      "names": [
+        {
+          "value": "chemical laboratory",
+          "kind": "primary",
+          "from": "toc05.para12"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "vegetable-alkaloid",
+      "type": "term",
+      "from": "toc05.para27",
+      "names": [
+        {
+          "value": "vegetable alkaloid",
+          "kind": "primary",
+          "from": "toc05.para27"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "dissectingrooms",
+      "type": "place",
+      "from": "toc05.para29",
+      "names": [
+        {
+          "value": "dissecting-rooms",
+          "kind": "primary",
+          "from": "toc05.para29"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "haemoglobin",
+      "type": "term",
+      "from": "toc05.para34",
+      "names": [
+        {
+          "value": "hæmoglobin",
+          "kind": "primary",
+          "from": "toc05.para34"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "reagent",
+      "type": "term",
+      "from": "toc05.para34",
+      "names": [
+        {
+          "value": "re-agent",
+          "kind": "primary",
+          "from": "toc05.para34"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "bodkin",
+      "type": "object",
+      "from": "toc05.para40",
+      "names": [
+        {
+          "value": "bodkin",
+          "kind": "primary",
+          "from": "toc05.para40"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "chemical-pipette",
+      "type": "object",
+      "from": "toc05.para40",
+      "names": [
+        {
+          "value": "chemical pipette",
+          "kind": "primary",
+          "from": "toc05.para40"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "guiacum-test",
+      "type": "term",
+      "from": "toc05.para43",
+      "names": [
+        {
+          "value": "Guiacum test",
+          "kind": "primary",
+          "from": "toc05.para43"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "bradford",
+      "type": "place",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Bradford",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "frankfort",
+      "type": "place",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Frankfort",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "lefevre",
+      "type": "person",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Lefevre",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "mason",
+      "type": "person",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Mason",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "montpellier",
+      "type": "place",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Montpellier",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "muller",
+      "type": "person",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Muller",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "new-orleans",
+      "type": "place",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "New Orleans",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "samson",
+      "type": "person",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Samson",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "von-bischoff",
+      "type": "person",
+      "from": "toc05.para48",
+      "names": [
+        {
+          "value": "Von Bischoff",
+          "kind": "primary",
+          "from": "toc05.para48"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "baker-street",
+      "type": "place",
+      "from": "toc05.para52",
+      "names": [
+        {
+          "value": "Baker Street",
+          "kind": "primary",
+          "from": "toc05.para52"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "bull-pup",
+      "type": "object",
+      "from": "toc05.para57",
+      "names": [
+        {
+          "value": "bull pup",
+          "kind": "primary",
+          "from": "toc05.para57"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "no-221b-baker-street",
+      "type": "place",
+      "from": "toc06.para01",
+      "names": [
+        {
+          "value": "No. 221b, Baker Street",
+          "kind": "primary",
+          "from": "toc06.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.no-221b-baker-street.1",
+          "from": "toc06.para01",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para01"
+          ],
+          "text": "The rooms consist of two bedrooms and a large sitting-room."
+        },
+        {
+          "id": "study-in-scarlet.no-221b-baker-street.2",
+          "from": "toc06.para01",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para01"
+          ],
+          "text": "Watson and Sherlock Holmes agreed to share the rooms."
+        }
+      ]
+    },
+    {
+      "id": "copernican-theory",
+      "type": "concept",
+      "from": "toc06.para06",
+      "names": [
+        {
+          "value": "Copernican Theory",
+          "kind": "primary",
+          "from": "toc06.para06"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "solar-system",
+      "type": "concept",
+      "from": "toc06.para06",
+      "names": [
+        {
+          "value": "Solar System",
+          "kind": "primary",
+          "from": "toc06.para06"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "thomas-carlyle",
+      "type": "person",
+      "from": "toc06.para06",
+      "names": [
+        {
+          "value": "Thomas Carlyle",
+          "kind": "primary",
+          "from": "toc06.para06"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "lestrade",
+      "type": "person",
+      "from": "toc06.para17",
+      "names": [
+        {
+          "value": "Lestrade",
+          "kind": "primary",
+          "from": "toc06.para17"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.lestrade.1",
+          "from": "toc06.para17",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para17"
+          ],
+          "text": "He is a sallow, rat-faced man with dark eyes."
+        },
+        {
+          "id": "study-in-scarlet.lestrade.2",
+          "from": "toc06.para28",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Lestrade was recently confused by a forgery case."
+        }
+      ]
+    },
+    {
+      "id": "the-book-of-life",
+      "type": "object",
+      "from": "toc06.para19",
+      "names": [
+        {
+          "value": "The Book of Life",
+          "kind": "primary",
+          "from": "toc06.para19"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.the-book-of-life.1",
+          "from": "toc06.para19",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para19"
+          ],
+          "text": "The book claims an observant man can learn much from systematic examination."
+        },
+        {
+          "id": "study-in-scarlet.the-book-of-life.2",
+          "from": "toc06.para19",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para19"
+          ],
+          "text": "The author claims deceit is impossible for a trained observer."
+        }
+      ]
+    },
+    {
+      "id": "science-of-deduction-and-analysis",
+      "type": "concept",
+      "from": "toc06.para20",
+      "names": [
+        {
+          "value": "Science of Deduction and Analysis",
+          "kind": "primary",
+          "from": "toc06.para20"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.science-of-deduction-and-analysis.1",
+          "from": "toc06.para20",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para20"
+          ],
+          "text": "This science requires long and patient study to master."
+        },
+        {
+          "id": "study-in-scarlet.science-of-deduction-and-analysis.2",
+          "from": "toc06.para20",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para20"
+          ],
+          "text": "A person's trade can be revealed by their fingernails, sleeves, boots, and knees."
+        }
+      ]
+    },
+    {
+      "id": "underground",
+      "type": "place",
+      "from": "toc06.para23",
+      "names": [
+        {
+          "value": "Underground",
+          "kind": "primary",
+          "from": "toc06.para23"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "consulting-detective",
+      "type": "term",
+      "from": "toc06.para28",
+      "names": [
+        {
+          "value": "consulting detective",
+          "kind": "primary",
+          "from": "toc06.para28"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "government-detectives",
+      "type": "group",
+      "from": "toc06.para28",
+      "names": [
+        {
+          "value": "Government detectives",
+          "kind": "primary",
+          "from": "toc06.para28"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "private-inquiry-agencies",
+      "type": "group",
+      "from": "toc06.para30",
+      "names": [
+        {
+          "value": "private inquiry agencies",
+          "kind": "primary",
+          "from": "toc06.para30"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "dupin",
+      "type": "person",
+      "from": "toc06.para35",
+      "names": [
+        {
+          "value": "Dupin",
+          "kind": "primary",
+          "from": "toc06.para35"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "edgar-allen-poe",
+      "type": "person",
+      "from": "toc06.para35",
+      "names": [
+        {
+          "value": "Edgar Allen Poe",
+          "kind": "primary",
+          "from": "toc06.para35"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "gaboriau",
+      "type": "person",
+      "from": "toc06.para37",
+      "names": [
+        {
+          "value": "Gaboriau",
+          "kind": "primary",
+          "from": "toc06.para37"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "lecoq",
+      "type": "person",
+      "from": "toc06.para37",
+      "names": [
+        {
+          "value": "Lecoq",
+          "kind": "primary",
+          "from": "toc06.para37"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "scotland-yard",
+      "type": "group",
+      "from": "toc06.para40",
+      "names": [
+        {
+          "value": "Scotland Yard",
+          "kind": "primary",
+          "from": "toc06.para40"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "blue-envelope",
+      "type": "object",
+      "from": "toc06.para42",
+      "names": [
+        {
+          "value": "blue envelope",
+          "kind": "primary",
+          "from": "toc06.para42"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "retired-sergeant-of-marines",
+      "type": "person",
+      "from": "toc06.para43",
+      "names": [
+        {
+          "value": "retired sergeant of Marines",
+          "kind": "primary",
+          "from": "toc06.para43"
+        }
+      ],
+      "facets": []
+    },
+    {
+      "id": "commissionaire",
+      "type": "person",
+      "from": "toc06.para48",
+      "names": [
+        {
+          "value": "Commissionaire",
+          "kind": "primary",
+          "from": "toc06.para48"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.commissionaire.1",
+          "from": "toc06.para48",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para48"
+          ],
+          "text": "The Commissionaire speaks in a gruff voice."
+        },
+        {
+          "id": "study-in-scarlet.commissionaire.2",
+          "from": "toc06.para48",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para48"
+          ],
+          "text": "The Commissionaire's uniform is being repaired."
+        },
+        {
+          "id": "study-in-scarlet.commissionaire.3",
+          "from": "toc06.para50",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para50"
+          ],
+          "text": "The Commissionaire was a sergeant in the Royal Marine Light Infantry."
+        },
+        {
+          "id": "study-in-scarlet.commissionaire.4",
+          "from": "toc06.para51",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para51"
+          ],
+          "text": "The Commissionaire salutes and leaves."
+        }
+      ]
+    },
+    {
+      "id": "royal-marine-light-infantry",
+      "type": "group",
+      "from": "toc06.para50",
+      "names": [
+        {
+          "value": "Royal Marine Light Infantry",
+          "kind": "primary",
+          "from": "toc06.para50"
+        }
+      ],
+      "facets": []
+    }
+  ],
+  "relations": [
+    {
+      "id": "study-in-scarlet.rel.1",
+      "src": "watson",
+      "dst": "stamford",
+      "label": "was superior to",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para05"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.2",
+      "src": "murray",
+      "dst": "watson",
+      "label": "saved",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para02"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.3",
+      "src": "watson",
+      "dst": "stamford",
+      "label": "friend of",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para05"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.4",
+      "src": "stamford",
+      "dst": "sherlock-holmes",
+      "label": "introduces",
+      "from": "toc05.para35",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para35"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.5",
+      "src": "stamford",
+      "dst": "watson",
+      "label": "introduces",
+      "from": "toc05.para35",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para35"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.6",
+      "src": "sherlock-holmes",
+      "dst": "watson",
+      "label": "potential roommate of",
+      "from": "toc05.para52",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para52"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.7",
+      "src": "watson",
+      "dst": "sherlock-holmes",
+      "label": "roommate of",
+      "from": "toc06.para01",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.8",
+      "src": "lestrade",
+      "dst": "sherlock-holmes",
+      "label": "client of",
+      "from": "toc06.para17",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para17"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.9",
+      "src": "sherlock-holmes",
+      "dst": "watson",
+      "label": "author of article criticized by",
+      "from": "toc06.para24",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para24"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.10",
+      "src": "sherlock-holmes",
+      "dst": "lestrade",
+      "label": "helps",
+      "from": "toc06.para28",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para28"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.11",
+      "src": "sherlock-holmes",
+      "dst": "dupin",
+      "label": "compared to",
+      "from": "toc06.para35",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para35"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.12",
+      "src": "commissionaire",
+      "dst": "royal-marine-light-infantry",
+      "label": "former member of",
+      "from": "toc06.para50",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para50"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "study-in-scarlet.ev.1",
+      "from": "toc05.para06",
+      "summary": "Watson graduated from the University of London and joined the army.",
+      "entities": [
+        "watson",
+        "university-of-london"
+      ],
+      "evidence": [
+        "toc05.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.2",
+      "from": "toc05.para06",
+      "summary": "Watson traveled to India and reached Candahar during the second Afghan war.",
+      "entities": [
+        "watson",
+        "india",
+        "second-afghan-war",
+        "candahar"
+      ],
+      "evidence": [
+        "toc05.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.3",
+      "from": "toc05.para06",
+      "summary": "Watson was wounded at the battle of Maiwand.",
+      "entities": [
+        "watson",
+        "berkshires",
+        "maiwand"
+      ],
+      "evidence": [
+        "toc05.para02"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.4",
+      "from": "toc05.para06",
+      "summary": "Murray saved Watson from the Ghazis.",
+      "entities": [
+        "murray",
+        "watson"
+      ],
+      "evidence": [
+        "toc05.para02"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.5",
+      "from": "toc05.para06",
+      "summary": "Watson was hospitalized in Peshawar and contracted enteric fever.",
+      "entities": [
+        "watson",
+        "peshawar",
+        "enteric-fever"
+      ],
+      "evidence": [
+        "toc05.para03"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.6",
+      "from": "toc05.para06",
+      "summary": "Watson met Stamford at the Criterion Bar.",
+      "entities": [
+        "watson",
+        "stamford",
+        "criterion-bar"
+      ],
+      "evidence": [
+        "toc05.para05"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.7",
+      "from": "toc05.para06",
+      "summary": "Watson and Stamford traveled to the Holborn in a hansom.",
+      "entities": [
+        "watson",
+        "stamford",
+        "holborn"
+      ],
+      "evidence": [
+        "toc05.para05"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.8",
+      "from": "toc05.para14",
+      "summary": "Stamford told Watson about Sherlock Holmes.",
+      "entities": [
+        "stamford",
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para14"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.9",
+      "from": "toc05.para22",
+      "summary": "Stamford agreed to take Watson to the laboratory to meet Sherlock Holmes.",
+      "entities": [
+        "stamford",
+        "watson",
+        "sherlock-holmes",
+        "chemical-laboratory"
+      ],
+      "evidence": [
+        "toc05.para22"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.10",
+      "from": "toc05.para26",
+      "summary": "Watson questions Stamford about his reluctance to work with Sherlock Holmes.",
+      "entities": [
+        "watson",
+        "stamford",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para26"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.11",
+      "from": "toc05.para33",
+      "summary": "Watson and Stamford enter the hospital and walk to the chemical laboratory.",
+      "entities": [
+        "watson",
+        "stamford",
+        "hospital",
+        "chemical-laboratory"
+      ],
+      "evidence": [
+        "toc05.para33"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.12",
+      "from": "toc05.para34",
+      "summary": "Sherlock Holmes excitedly shows Watson and Stamford his new discovery.",
+      "entities": [
+        "sherlock-holmes",
+        "watson",
+        "stamford"
+      ],
+      "evidence": [
+        "toc05.para34"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.13",
+      "from": "toc05.para40",
+      "summary": "Sherlock Holmes demonstrates how the new test reacts with blood.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc05.para40"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.14",
+      "from": "toc05.para51",
+      "summary": "Stamford explains that he arranged the meeting so the two men could work together.",
+      "entities": [
+        "stamford",
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para51"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.15",
+      "from": "toc05.para56",
+      "summary": "The two men discuss their personal habits and flaws.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc05.para56"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.16",
+      "from": "toc05.para62",
+      "summary": "Sherlock Holmes and Watson agree to meet at noon tomorrow to see the rooms.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc05.para62"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.17",
+      "from": "toc05.para64",
+      "summary": "Watson and Sherlock Holmes walk toward Watson's hotel.",
+      "entities": [
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para64"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.18",
+      "from": "toc05.para68",
+      "summary": "Stamford says goodbye to Watson.",
+      "entities": [
+        "stamford",
+        "watson"
+      ],
+      "evidence": [
+        "toc05.para68"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.19",
+      "from": "toc06.para01",
+      "summary": "Watson and Sherlock Holmes inspect and agree to rent rooms at No. 221b, Baker Street.",
+      "entities": [
+        "watson",
+        "sherlock-holmes",
+        "no-221b-baker-street"
+      ],
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.20",
+      "from": "toc06.para01",
+      "summary": "Watson moves his belongings from a hotel to the new rooms.",
+      "entities": [
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.21",
+      "from": "toc06.para01",
+      "summary": "Sherlock Holmes moves his boxes into the new rooms.",
+      "entities": [
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.22",
+      "from": "toc06.para06",
+      "summary": "Watson asks Sherlock Holmes about Thomas Carlyle.",
+      "entities": [
+        "watson",
+        "sherlock-holmes",
+        "thomas-carlyle"
+      ],
+      "evidence": [
+        "toc06.para06"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.23",
+      "from": "toc06.para06",
+      "summary": "Watson discovers that Sherlock Holmes is ignorant of the Copernican Theory.",
+      "entities": [
+        "watson",
+        "sherlock-holmes",
+        "copernican-theory"
+      ],
+      "evidence": [
+        "toc06.para06"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.24",
+      "from": "toc06.para12",
+      "summary": "Watson jots down a list of the specific areas where Sherlock Holmes is well-informed.",
+      "entities": [
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para12"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.25",
+      "from": "toc06.para15",
+      "summary": "Watson expresses frustration at trying to reconcile Holmes's diverse skills.",
+      "entities": [
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc06.para15"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.26",
+      "from": "toc06.para16",
+      "summary": "Watson describes Holmes's eccentric and often melancholy violin playing.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para16"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.27",
+      "from": "toc06.para17",
+      "summary": "Watson observes various diverse people visiting Holmes for business.",
+      "entities": [
+        "watson",
+        "sherlock-holmes",
+        "lestrade"
+      ],
+      "evidence": [
+        "toc06.para17"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.28",
+      "from": "toc06.para18",
+      "summary": "Watson rings the bell for breakfast while Holmes eats toast.",
+      "entities": [
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc06.para18"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.29",
+      "from": "toc06.para19",
+      "summary": "Watson reads a magazine and finds its contents absurd.",
+      "entities": [
+        "watson",
+        "the-book-of-life"
+      ],
+      "evidence": [
+        "toc06.para19"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.30",
+      "from": "toc06.para21",
+      "summary": "Watson calls the magazine's content rubbish.",
+      "entities": [
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para21"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.31",
+      "from": "toc06.para22",
+      "summary": "Holmes asks Watson what he is reacting to.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para22"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.32",
+      "from": "toc06.para24",
+      "summary": "Sherlock Holmes reveals that he wrote the article Watson was criticizing.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para24"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.33",
+      "from": "toc06.para28",
+      "summary": "Sherlock Holmes explains his role as a consulting detective.",
+      "entities": [
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc06.para28"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.34",
+      "from": "toc06.para34",
+      "summary": "Sherlock Holmes explains how he deduced Watson's military background.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para34"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.35",
+      "from": "toc06.para36",
+      "summary": "Sherlock Holmes expresses his low opinion of Dupin.",
+      "entities": [
+        "sherlock-holmes",
+        "dupin"
+      ],
+      "evidence": [
+        "toc06.para36"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.36",
+      "from": "toc06.para38",
+      "summary": "Sherlock Holmes criticizes Lecoq's work.",
+      "entities": [
+        "sherlock-holmes",
+        "lecoq"
+      ],
+      "evidence": [
+        "toc06.para38"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.37",
+      "from": "toc06.para45",
+      "summary": "A man with a blue envelope arrives at the door and knocks.",
+      "entities": [
+        "retired-sergeant-of-marines",
+        "blue-envelope"
+      ],
+      "evidence": [
+        "toc06.para45"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.38",
+      "from": "toc06.para46",
+      "summary": "The man enters the room and hands a letter to Sherlock Holmes.",
+      "entities": [
+        "retired-sergeant-of-marines",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc06.para46"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.39",
+      "from": "toc06.para48",
+      "summary": "The Commissionaire explains that his uniform is away for repairs.",
+      "entities": [
+        "commissionaire"
+      ],
+      "evidence": [
+        "toc06.para48"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.40",
+      "from": "toc06.para50",
+      "summary": "The Commissionaire states his former military rank.",
+      "entities": [
+        "commissionaire"
+      ],
+      "evidence": [
+        "toc06.para50"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.41",
+      "from": "toc06.para51",
+      "summary": "The Commissionaire salutes and departs.",
+      "entities": [
+        "commissionaire"
+      ],
+      "evidence": [
+        "toc06.para51"
+      ]
+    }
+  ],
+  "recaps": [
+    {
+      "id": "study-in-scarlet.recap.1",
+      "from": "toc05.para69",
+      "text": "Watson met Stamford at a bar and learned about Sherlock Holmes. Stamford took Watson to a laboratory to meet the famous detective. Holmes showed Watson a new chemical discovery involving blood. The two men discussed their personal habits and agreed to meet the next day. Stamford then said goodbye as Watson and Holmes walked toward a hotel.",
+      "evidence": [
+        "toc05.para06",
+        "toc05.para14",
+        "toc05.para22",
+        "toc05.para26",
+        "toc05.para33",
+        "toc05.para34",
+        "toc05.para40",
+        "toc05.para51",
+        "toc05.para56",
+        "toc05.para62",
+        "toc05.para64",
+        "toc05.para68"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.recap.2",
+      "from": "toc06.para51",
+      "text": "Watson and Holmes move into a new apartment on Baker Street. Watson notes Holmes's vast knowledge and his strange habits. Holmes reveals he is a consulting detective who can deduce personal details from observation. A man delivers a letter to the apartment and mentions his former military rank.",
+      "evidence": [
+        "toc06.para01",
+        "toc06.para06",
+        "toc06.para12",
+        "toc06.para15",
+        "toc06.para16",
+        "toc06.para17",
+        "toc06.para18",
+        "toc06.para19",
+        "toc06.para21",
+        "toc06.para22",
+        "toc06.para24",
+        "toc06.para28",
+        "toc06.para34",
+        "toc06.para36",
+        "toc06.para38",
+        "toc06.para45",
+        "toc06.para46",
+        "toc06.para48",
+        "toc06.para50",
+        "toc06.para51"
+      ]
+    }
+  ],
+  "series": {
+    "id": "sherlock-holmes",
+    "book": "study-in-scarlet"
+  }
+}

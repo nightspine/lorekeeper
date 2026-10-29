@@ -1,0 +1,24 @@
+{
+  "model": "gemma4:12b-it-qat",
+  "chunks": 7,
+  "seconds": 2013,
+  "stats": {
+    "entities": 62,
+    "dropped: duplicate": 1,
+    "dropped: not supported": 6,
+    "facets": 106,
+    "relations": 12,
+    "events": 41,
+    "recaps": 2
+  },
+  "validation_errors": [
+    "error: /entities/26/id: 'h\u00e6moglobin' does not match '^[a-z0-9][a-z0-9._-]*$'"
+  ],
+  "usage": {
+    "calls": 17,
+    "prompt_tokens": 31280,
+    "output_tokens": 15236,
+    "seconds": 2012.6757135391235,
+    "failures": 0
+  }
+}

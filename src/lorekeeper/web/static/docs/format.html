@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Index format - Lorekeeper docs</title>
+<meta name="description" content="The Lorekeeper index format: anchors, entities, facets, relations, events, recaps, replacement and series.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html" aria-current="page">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>The index format in brief</h1>
+<p class="lede">An index is one JSON file per book. This page is the short version of sections 4 and 5 of the specification.</p>
+
+<h2 id="top">Top-level fields</h2>
+<div class="table-wrap"><table><thead><tr><th>Field</th><th>Meaning</th></tr></thead><tbody><tr><td><code>lorekeeper</code>, <code>kind</code></td><td>Format version (<code>0.1</code>) and document kind: <code>index</code> or <code>series</code>.</td></tr><tr><td><code>id</code></td><td>A registry-unique slug for this index.</td></tr><tr><td><code>work</code></td><td>Title, authors, language and identifiers (Gutenberg, Open Library, Wikidata, ISBNs) that let a server find the index for a book.</td></tr><tr><td><code>series</code></td><td>Optional. The series id and this book's key in it.</td></tr><tr><td><code>editions</code></td><td>The text hash and file hash of each edition the index was built from or checked against. One is marked <code>builtFrom</code>.</td></tr><tr><td><code>coverage</code></td><td>Whether the index is complete and the last anchor it covers (<code>through</code>). Partial indexes are valid.</td></tr><tr><td><code>provenance</code></td><td>Timestamps, license, generator and review records.</td></tr><tr><td><code>anchors</code></td><td>The ordered list of paragraph fingerprints that everything else points at.</td></tr><tr><td><code>entities</code>, <code>relations</code>, <code>events</code>, <code>recaps</code></td><td>The content, all gated.</td></tr></tbody></table></div>
+
+<h2 id="example">An example</h2>
+<p>Trimmed from <code>examples/sherlock-holmes/study-in-scarlet.json</code> in the repository. Hashes and a few items are shortened.</p>
+<pre><code>{
+  &quot;lorekeeper&quot;: &quot;0.1&quot;,
+  &quot;kind&quot;: &quot;index&quot;,
+  &quot;id&quot;: &quot;sherlock-holmes.study-in-scarlet&quot;,
+  &quot;work&quot;: { &quot;title&quot;: &quot;A Study in Scarlet&quot;, &quot;authors&quot;: [&quot;Arthur Conan Doyle&quot;], &quot;language&quot;: &quot;en&quot;,
+            &quot;ids&quot;: { &quot;gutenberg&quot;: &quot;244&quot; } },
+  &quot;series&quot;: { &quot;id&quot;: &quot;sherlock-holmes&quot;, &quot;book&quot;: &quot;study-in-scarlet&quot; },
+  &quot;editions&quot;: [{ &quot;textHash&quot;: &quot;3ba1a631...d4ff5&quot;, &quot;fileHash&quot;: &quot;d65612d1...b7e7&quot;, &quot;builtFrom&quot;: true }],
+  &quot;coverage&quot;: { &quot;complete&quot;: false, &quot;through&quot;: &quot;ch2.para51&quot; },
+  &quot;provenance&quot;: { &quot;created&quot;: &quot;2026-10-21T00:00:00Z&quot;, &quot;license&quot;: &quot;CC0-1.0&quot; },
+  &quot;anchors&quot;: [
+    { &quot;id&quot;: &quot;ch1.para14&quot;, &quot;fp&quot;: &quot;6f0214b011388a35&quot;, &quot;seq&quot;: 44 },
+    { &quot;id&quot;: &quot;ch2.para28&quot;, &quot;fp&quot;: &quot;...&quot;, &quot;seq&quot;: 131 }
+  ],
+  &quot;entities&quot;: [{
+    &quot;id&quot;: &quot;holmes&quot;, &quot;type&quot;: &quot;person&quot;, &quot;from&quot;: &quot;ch1.para14&quot;,
+    &quot;names&quot;: [
+      { &quot;value&quot;: &quot;Sherlock Holmes&quot;, &quot;kind&quot;: &quot;primary&quot;, &quot;from&quot;: &quot;ch1.para14&quot; },
+      { &quot;value&quot;: &quot;Holmes&quot;, &quot;kind&quot;: &quot;alias&quot;, &quot;from&quot;: &quot;ch1.para27&quot; }
+    ],
+    &quot;facets&quot;: [
+      { &quot;id&quot;: &quot;sis.holmes.1&quot;, &quot;from&quot;: &quot;ch1.para14&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;evidence&quot;: [&quot;ch1.para12&quot;, &quot;ch1.para14&quot;],
+        &quot;text&quot;: &quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, who is looking for someone to split the cost of a set of rooms.&quot; },
+      { &quot;id&quot;: &quot;sis.holmes.14&quot;, &quot;from&quot;: &quot;ch2.para28&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;evidence&quot;: [&quot;ch2.para28&quot;],
+        &quot;replaces&quot;: [&quot;sis.holmes.8&quot;],
+        &quot;text&quot;: &quot;Works as a consulting detective, perhaps the only one in the world.&quot; }
+    ]
+  }],
+  &quot;relations&quot;: [{ &quot;id&quot;: &quot;sis.rel.murray-watson&quot;, &quot;src&quot;: &quot;murray&quot;, &quot;dst&quot;: &quot;watson&quot;, &quot;from&quot;: &quot;ch1.para02&quot;,
+                  &quot;label&quot;: &quot;orderly who saved the life of&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;evidence&quot;: [&quot;ch1.para02&quot;] }],
+  &quot;events&quot;: [{ &quot;id&quot;: &quot;sis.ev.maiwand&quot;, &quot;from&quot;: &quot;ch1.para02&quot;, &quot;summary&quot;: &quot;Watson is wounded at the battle of Maiwand.&quot;,
+               &quot;entities&quot;: [&quot;watson&quot;, &quot;murray&quot;, &quot;maiwand&quot;], &quot;evidence&quot;: [&quot;ch1.para02&quot;] }],
+  &quot;recaps&quot;: [{ &quot;id&quot;: &quot;sis.recap.ch1&quot;, &quot;from&quot;: &quot;ch1.para69&quot;, &quot;evidence&quot;: [&quot;ch1.para35&quot;],
+               &quot;text&quot;: &quot;Invalided home from Afghanistan and short of money, Dr. Watson needs cheap lodgings...&quot; }]
+}</code></pre>
+
+<h2 id="anchors">Anchors and <code>from</code></h2>
+<p>An anchor is a paragraph, identified by <code>fp</code>, the SHA-256 of its first twelve normalized words. The order of the <code>anchors</code> array is reading order, and an anchor's position in the array is its <em>ordinal</em>. The optional <code>seq</code> is a hint for one edition only. Clients compare ordinals and never ids or seqs.</p>
+<p>Every name, facet, relation, event and recap has a <code>from</code> anchor, the point at which it becomes visible. An anchor marks the end of its paragraph, so something revealed at <code>ch1.para14</code> appears once the reader has finished that paragraph. Facets, relations, events and recaps also carry <code>evidence</code>, anchors at or before <code>from</code> whose text supports the claim, and facets and relations carry a <code>basis</code>: <code>stated</code> or <code>inferred</code>.</p>
+
+<h2 id="entities">Entities, facets and profiles</h2>
+<p>An entity is a person, creature, place, group, object, concept or term. Its <code>names</code> each have their own <code>from</code>, so a nickname can stay hidden until the story uses it. A <em>facet</em> is one statement about what the entity is: role, looks, nature, allegiance, status. Plot goes to events. A facet with <code>kind: "profile"</code> is a self-contained "who this is now" description. The last visible profile is the one a reader app shows, and earlier ones become history.</p>
+
+<h2 id="relations">Relations, events and recaps</h2>
+<ul>
+<li><strong>Relations</strong> connect two entities with a label, such as "orderly who saved the life of". A relation is visible only when both endpoints are.</li>
+<li><strong>Events</strong> are things that happen, listing the entities involved.</li>
+<li><strong>Recaps</strong> are story-so-far text. A recap with <code>scope: "chapter"</code> belongs to one chapter, and the view lists every visible chapter recap in reading order.</li>
+</ul>
+
+<h2 id="replaces"><code>replaces</code> and history</h2>
+<p>A facet or relation may list ids in <code>replaces</code>. Once the replacing item is visible, the replaced ones move to <code>history</code>. They remain true statements about what the reader once knew, and an app can show them under "Earlier impressions". Replacement only points backwards, within the book or to an earlier book of the series, so an index can be generated forward without editing earlier files.</p>
+
+<h2 id="series">Series</h2>
+<p>A series manifest (<code>kind: "series"</code>) lists the books, their reading orders (publication, chronological) and the default order. Entity ids are series-scoped. Each book's index lists only that book's names and facets, and the gating algorithm merges them across the books the reader has finished. An optional <code>carried</code> block is a fallback copy of an earlier book's entities, used only when that book's index is missing.</p>
+
+<h2 id="editions">Editions and hashes</h2>
+<p>The <code>textHash</code> identifies an edition's text regardless of metadata, images or styling: the SHA-256 of every normalized word of every block, in order. The <code>fileHash</code> identifies one exact EPUB file. A server's lookup route matches on either, which is how a reader app that holds a different edition of the same book still finds an index, with anchors resolved by fingerprint alone.</p>
+
+<h2 id="more">Full rules</h2>
+<p>The complete structure is in <a href="spec.html#4-index-document">section 4, Index document</a> and <a href="spec.html#5-series">section 5, Series</a>. The content rules for authors (text only, belief at the position, original wording) are in <a href="spec.html#6-content-rules">section 6</a>. The normative JSON Schemas are in the repository's <code>schema/</code> folder.</p>
+
+</main>
+</div>
+</body>
+</html>

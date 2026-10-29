@@ -1,0 +1,14 @@
+{
+  "description": "Cross-edition: an XPointer into the Standard Ebooks chapter II.",
+  "edition": "corpus/se-scarlet/scarlet.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[5]/body/section/p[8]/text().0"
+  },
+  "expect": {
+    "seq": 89,
+    "exact": true,
+    "finished": "ch2.para07",
+    "inclusive": "ch2.para07"
+  }
+}

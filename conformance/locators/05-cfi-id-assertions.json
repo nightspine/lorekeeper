@@ -1,0 +1,14 @@
+{
+  "description": "CFI whose id assertions agree with its path, down to the empty <a> inside the chapter heading.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10[chap1]!/4/2[pgepubid00004]/2/2[link2HCH0001]/1:0)"
+  },
+  "expect": {
+    "seq": 30,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "pt1.note"
+  }
+}

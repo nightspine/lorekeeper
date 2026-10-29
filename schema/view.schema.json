@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/view.schema.json",
+  "title": "Lorekeeper gated view",
+  "description": "What a reader at one position may see. Output of the gating algorithm (SPEC.md §7) and of GET /v0/indexes/{id}/view.",
+  "type": "object",
+  "required": [
+    "lorekeeper",
+    "kind",
+    "position",
+    "coverage",
+    "entities",
+    "relations",
+    "relationHistory",
+    "events",
+    "recap",
+    "chapters"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "lorekeeper": {
+      "const": "0.1"
+    },
+    "kind": {
+      "const": "view"
+    },
+    "position": {
+      "type": "object",
+      "required": [
+        "book",
+        "anchor"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "book": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "anchor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "complete",
+        "through",
+        "exhausted"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "through": {
+          "type": "string"
+        },
+        "exhausted": {
+          "type": "boolean",
+          "description": "Reader has reached the end of a partial index"
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "type",
+          "name",
+          "aliases",
+          "facets",
+          "history",
+          "profile"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "enum": [
+              "person",
+              "creature",
+              "place",
+              "group",
+              "object",
+              "concept",
+              "term"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "facets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/facet"
+            }
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/facet"
+            }
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/$defs/facet"
+              }
+            ],
+            "description": "The last visible profile facet, inherited from earlier series books until a later one is visible (SPEC.md §7.3)."
+          }
+        }
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    },
+    "relationHistory": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "summary",
+          "entities",
+          "book"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "entities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "book": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "recap": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "id",
+            "text",
+            "book"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            },
+            "book": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "text",
+          "book"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "book": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "locator": {
+      "description": "Present only when the view was requested with a locator (SPEC.md §8.4).",
+      "type": "object",
+      "required": [
+        "position",
+        "seq",
+        "basis",
+        "exact"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Anchor id gated at, null for none"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Block the locator mapped to; -1 for none"
+        },
+        "basis": {
+          "enum": [
+            "block",
+            "cfi",
+            "xpointer",
+            "word",
+            "progress"
+          ]
+        },
+        "exact": {
+          "type": "boolean"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "facet": {
+      "type": "object",
+      "required": [
+        "id",
+        "text",
+        "basis",
+        "book"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "basis": {
+          "enum": [
+            "stated",
+            "inferred"
+          ]
+        },
+        "book": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "required": [
+        "id",
+        "src",
+        "dst",
+        "label",
+        "book"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "src": {
+          "type": "string"
+        },
+        "dst": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "book": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    }
+  }
+}

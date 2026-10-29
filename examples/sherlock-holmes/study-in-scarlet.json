@@ -1,0 +1,1229 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "index",
+  "id": "sherlock-holmes.study-in-scarlet",
+  "work": {
+    "title": "A Study in Scarlet",
+    "authors": [
+      "Arthur Conan Doyle"
+    ],
+    "language": "en",
+    "ids": {
+      "gutenberg": "244"
+    }
+  },
+  "series": {
+    "id": "sherlock-holmes",
+    "book": "study-in-scarlet"
+  },
+  "editions": [
+    {
+      "textHash": "3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5",
+      "fileHash": "d65612d1c87ec1f7fed290361d11278cdbaf8509d5c231b1ff0981049331b7e7",
+      "builtFrom": true
+    },
+    {
+      "textHash": "e9a16e278890a82799238872e5fd456e68df9d73f40c6a59c9f35412a1a53ce1",
+      "label": "Project Gutenberg EPUB #244",
+      "fileHash": "d65612d1c87ec1f7fed290361d11278cdbaf8509d5c231b1ff0981049331b7e7",
+      "builtFrom": true
+    }
+  ],
+  "coverage": {
+    "complete": false,
+    "through": "ch2.para51"
+  },
+  "provenance": {
+    "contributors": [
+      {
+        "name": "Lorekeeper spec example (hand-written)",
+        "role": "author"
+      }
+    ],
+    "created": "2026-10-21T00:00:00Z",
+    "license": "CC0-1.0"
+  },
+  "anchors": [
+    {
+      "id": "pt1.note",
+      "seq": 29,
+      "fp": "d06ec52816f3d682"
+    },
+    {
+      "id": "ch1.para01",
+      "seq": 31,
+      "fp": "ed131b9e3d13f696"
+    },
+    {
+      "id": "ch1.para02",
+      "seq": 32,
+      "fp": "ab28352abd2f8b28"
+    },
+    {
+      "id": "ch1.para03",
+      "seq": 33,
+      "fp": "cfe66719d894689c"
+    },
+    {
+      "id": "ch1.para04",
+      "seq": 34,
+      "fp": "9c2b8a4f6416e2c9"
+    },
+    {
+      "id": "ch1.para05",
+      "seq": 35,
+      "fp": "96e69275a85f6afd"
+    },
+    {
+      "id": "ch1.para06",
+      "seq": 36,
+      "fp": "4d9d535509296a43"
+    },
+    {
+      "id": "ch1.para09",
+      "seq": 39,
+      "fp": "012c132f363a6ccc"
+    },
+    {
+      "id": "ch1.para12",
+      "seq": 42,
+      "fp": "2707e7a97c01a485"
+    },
+    {
+      "id": "ch1.para14",
+      "seq": 44,
+      "fp": "6f0214b011388a35"
+    },
+    {
+      "id": "ch1.para18",
+      "seq": 48,
+      "fp": "bdb9d655de02466c"
+    },
+    {
+      "id": "ch1.para27",
+      "seq": 57,
+      "fp": "4cde2ba93a71deda"
+    },
+    {
+      "id": "ch1.para29",
+      "seq": 59,
+      "fp": "9fe97072ddfb1898"
+    },
+    {
+      "id": "ch1.para31",
+      "seq": 61,
+      "fp": "6fb95954d844326a"
+    },
+    {
+      "id": "ch1.para33",
+      "seq": 63,
+      "fp": "a8bbfcf8ff7bfb3a"
+    },
+    {
+      "id": "ch1.para34",
+      "seq": 64,
+      "fp": "2b1f5428714cbaa7"
+    },
+    {
+      "id": "ch1.para35",
+      "seq": 65,
+      "fp": "2ea154b8accc08ca"
+    },
+    {
+      "id": "ch1.para36",
+      "seq": 66,
+      "fp": "2bdbe9363838f4d1"
+    },
+    {
+      "id": "ch1.para37",
+      "seq": 67,
+      "fp": "7f122ddfcbd2c9f2"
+    },
+    {
+      "id": "ch1.para38",
+      "seq": 68,
+      "fp": "9c618e3f9d30c72b"
+    },
+    {
+      "id": "ch1.para40",
+      "seq": 70,
+      "fp": "d2bda7f81bce8094"
+    },
+    {
+      "id": "ch1.para52",
+      "seq": 82,
+      "fp": "bd54f49031fd6d23"
+    },
+    {
+      "id": "ch1.para54",
+      "seq": 84,
+      "fp": "e0e07bb10af5223e"
+    },
+    {
+      "id": "ch1.para56",
+      "seq": 86,
+      "fp": "45848ebd2892ce6f"
+    },
+    {
+      "id": "ch1.para57",
+      "seq": 87,
+      "fp": "1be8b1a7ea3483d2"
+    },
+    {
+      "id": "ch1.para58",
+      "seq": 88,
+      "fp": "c61bb766c424230d"
+    },
+    {
+      "id": "ch1.para60",
+      "seq": 90,
+      "fp": "3f602e0e1311a5a6"
+    },
+    {
+      "id": "ch1.para65",
+      "seq": 95,
+      "fp": "4cd794dfb9806ba6"
+    },
+    {
+      "id": "ch1.para66",
+      "seq": 96,
+      "fp": "dbf2ff0de2756278"
+    },
+    {
+      "id": "ch1.para69",
+      "seq": 99,
+      "fp": "2eae6519269e5247"
+    },
+    {
+      "id": "ch2.para01",
+      "seq": 101,
+      "fp": "ab283eb2075e6a74"
+    },
+    {
+      "id": "ch2.para03",
+      "seq": 103,
+      "fp": "11af58c11b17527a"
+    },
+    {
+      "id": "ch2.para04",
+      "seq": 104,
+      "fp": "4992f4a3f744dddf"
+    },
+    {
+      "id": "ch2.para05",
+      "seq": 105,
+      "fp": "ba65608f3bc5e096"
+    },
+    {
+      "id": "ch2.para06",
+      "seq": 106,
+      "fp": "33b412d20e241525"
+    },
+    {
+      "id": "ch2.para07",
+      "seq": 107,
+      "fp": "c05609cad2b1d09e"
+    },
+    {
+      "id": "ch2.para09",
+      "seq": 109,
+      "fp": "5c942c26a3e5980e"
+    },
+    {
+      "id": "ch2.para11",
+      "seq": 111,
+      "fp": "ac4ff5dd736f42ec"
+    },
+    {
+      "id": "ch2.para14",
+      "seq": 114,
+      "fp": "d41ea025c39e21f8"
+    },
+    {
+      "id": "ch2.para16",
+      "seq": 116,
+      "fp": "9d66abbe8986ebb4"
+    },
+    {
+      "id": "ch2.para17",
+      "seq": 117,
+      "fp": "8c64fd96d194ff0e"
+    },
+    {
+      "id": "ch2.para19",
+      "seq": 119,
+      "fp": "9a1bf352ae5da30d"
+    },
+    {
+      "id": "ch2.para21",
+      "seq": 121,
+      "fp": "b0f48502ac234b66"
+    },
+    {
+      "id": "ch2.para24",
+      "seq": 124,
+      "fp": "fe72c108568d6990"
+    },
+    {
+      "id": "ch2.para28",
+      "seq": 128,
+      "fp": "46032c01f194bf97"
+    },
+    {
+      "id": "ch2.para31",
+      "seq": 131,
+      "fp": "a3123c62350991eb"
+    },
+    {
+      "id": "ch2.para32",
+      "seq": 132,
+      "fp": "c13c70f397bb9917"
+    },
+    {
+      "id": "ch2.para34",
+      "seq": 134,
+      "fp": "6e4445fe0db5b213"
+    },
+    {
+      "id": "ch2.para35",
+      "seq": 135,
+      "fp": "0e169aedbb01ceaf"
+    },
+    {
+      "id": "ch2.para36",
+      "seq": 136,
+      "fp": "b7c36e9c7bb06dfc"
+    },
+    {
+      "id": "ch2.para37",
+      "seq": 137,
+      "fp": "d49ee7dcf61dc92f"
+    },
+    {
+      "id": "ch2.para38",
+      "seq": 138,
+      "fp": "14b06c559653598f"
+    },
+    {
+      "id": "ch2.para43",
+      "seq": 143,
+      "fp": "f0c9e4977b98a92e"
+    },
+    {
+      "id": "ch2.para44",
+      "seq": 144,
+      "fp": "f8f39ba18e7ea497"
+    },
+    {
+      "id": "ch2.para48",
+      "seq": 148,
+      "fp": "0968f5639c4ccd6e"
+    },
+    {
+      "id": "ch2.para50",
+      "seq": 150,
+      "fp": "56dcddbba164d0a6"
+    },
+    {
+      "id": "ch2.para51",
+      "seq": 151,
+      "fp": "16d3b22cc97d0188"
+    }
+  ],
+  "entities": [
+    {
+      "id": "watson",
+      "type": "person",
+      "from": "pt1.note",
+      "names": [
+        {
+          "value": "John H. Watson",
+          "kind": "primary",
+          "from": "pt1.note"
+        },
+        {
+          "value": "Watson",
+          "kind": "alias",
+          "from": "ch1.para06"
+        },
+        {
+          "value": "Dr. Watson",
+          "kind": "title",
+          "from": "ch1.para35"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.watson.1",
+          "from": "ch1.para01",
+          "basis": "stated",
+          "evidence": [
+            "pt1.note",
+            "ch1.para01"
+          ],
+          "text": "The narrator. Qualified as a doctor in London in 1878 and joined the army as an assistant surgeon, reaching his regiment in the Second Afghan War."
+        },
+        {
+          "id": "sis.watson.2",
+          "from": "ch1.para02",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para02"
+          ],
+          "text": "Hit in the shoulder by a Jezail bullet at the battle of Maiwand; his orderly Murray got him back to British lines."
+        },
+        {
+          "id": "sis.watson.3",
+          "from": "ch1.para03",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para03"
+          ],
+          "text": "Nearly died of enteric fever while recovering in Peshawar and was shipped home to England with his health ruined."
+        },
+        {
+          "id": "sis.watson.4",
+          "from": "ch1.para09",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para04",
+            "ch1.para09"
+          ],
+          "text": "Alone in London with no family and a small army pension, he is running short of money and looking for cheaper lodgings."
+        },
+        {
+          "id": "sis.watson.p1",
+          "kind": "profile",
+          "from": "ch1.para09",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para01",
+            "ch1.para02",
+            "ch1.para03",
+            "ch1.para09"
+          ],
+          "text": "The narrator: an army doctor sent home from Afghanistan after a wound at Maiwand and a bad fever, now alone in London with a small pension and little money."
+        },
+        {
+          "id": "sis.watson.5",
+          "from": "ch1.para57",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para57"
+          ],
+          "text": "Owns up to keeping a bull pup, having frayed nerves, rising at odd hours and being very lazy."
+        },
+        {
+          "id": "sis.watson.6",
+          "from": "ch2.para04",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para03",
+            "ch2.para04"
+          ],
+          "text": "With poor health, no visitors and little to do, he becomes absorbed in trying to work out who Holmes really is."
+        },
+        {
+          "id": "sis.watson.7",
+          "from": "ch2.para44",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para44"
+          ],
+          "text": "Suspects that Holmes's confident deductions are bluster that cannot be checked."
+        }
+      ]
+    },
+    {
+      "id": "murray",
+      "type": "person",
+      "from": "ch1.para02",
+      "names": [
+        {
+          "value": "Murray",
+          "kind": "primary",
+          "from": "ch1.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.murray.1",
+          "from": "ch1.para02",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para02"
+          ],
+          "text": "Watson's orderly at Maiwand, who saved him by throwing him across a pack-horse and carrying him to safety."
+        }
+      ]
+    },
+    {
+      "id": "maiwand",
+      "type": "place",
+      "from": "ch1.para02",
+      "names": [
+        {
+          "value": "Maiwand",
+          "kind": "primary",
+          "from": "ch1.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.maiwand.1",
+          "from": "ch1.para02",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para02"
+          ],
+          "text": "Battle of the Second Afghan War where Watson was badly wounded."
+        }
+      ]
+    },
+    {
+      "id": "stamford",
+      "type": "person",
+      "from": "ch1.para05",
+      "names": [
+        {
+          "value": "Stamford",
+          "kind": "primary",
+          "from": "ch1.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.stamford.1",
+          "from": "ch1.para05",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05"
+          ],
+          "text": "Once a dresser under Watson at Barts; the two run into each other by chance at the Criterion Bar."
+        },
+        {
+          "id": "sis.stamford.2",
+          "from": "ch1.para35",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para33",
+            "ch1.para35"
+          ],
+          "text": "Takes Watson to the hospital laboratory and introduces him to Sherlock Holmes."
+        }
+      ]
+    },
+    {
+      "id": "barts",
+      "type": "place",
+      "from": "ch1.para05",
+      "names": [
+        {
+          "value": "Barts",
+          "kind": "primary",
+          "from": "ch1.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.barts.1",
+          "from": "ch1.para05",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05"
+          ],
+          "text": "The London hospital where Watson and Stamford once worked together."
+        },
+        {
+          "id": "sis.barts.2",
+          "from": "ch1.para34",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para33",
+            "ch1.para34"
+          ],
+          "text": "Holmes works in its chemical laboratory, a high room crowded with bottles, retorts and test-tubes."
+        }
+      ]
+    },
+    {
+      "id": "criterion-bar",
+      "type": "place",
+      "from": "ch1.para05",
+      "names": [
+        {
+          "value": "Criterion Bar",
+          "kind": "primary",
+          "from": "ch1.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.criterion.1",
+          "from": "ch1.para05",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05"
+          ],
+          "text": "The London bar where Watson meets Stamford again."
+        }
+      ]
+    },
+    {
+      "id": "holmes",
+      "type": "person",
+      "from": "ch1.para14",
+      "names": [
+        {
+          "value": "Sherlock Holmes",
+          "kind": "primary",
+          "from": "ch1.para14"
+        },
+        {
+          "value": "Holmes",
+          "kind": "alias",
+          "from": "ch1.para27"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.holmes.1",
+          "from": "ch1.para14",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12",
+            "ch1.para14"
+          ],
+          "text": "A man Stamford knows from the hospital's chemical laboratory, who is looking for someone to split the cost of a set of rooms."
+        },
+        {
+          "id": "sis.holmes.2",
+          "from": "ch1.para18",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para18"
+          ],
+          "text": "Knows anatomy well and is a first-rate chemist, yet has never studied medicine systematically; even Stamford does not know his aims."
+        },
+        {
+          "id": "sis.holmes.p1",
+          "kind": "profile",
+          "from": "ch1.para18",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para14",
+            "ch1.para18"
+          ],
+          "text": "A young man who works in the hospital's chemical laboratory: a first-class chemist who knows anatomy well but follows no regular course of study, and who wants someone to share rooms with."
+        },
+        {
+          "id": "sis.holmes.3",
+          "from": "ch1.para31",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para27",
+            "ch1.para29",
+            "ch1.para31"
+          ],
+          "text": "Stamford finds him scientific to the point of coldness: he has been seen beating corpses in the dissecting rooms to study bruising after death."
+        },
+        {
+          "id": "sis.holmes.4",
+          "from": "ch1.para37",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para36",
+            "ch1.para37"
+          ],
+          "text": "On first meeting Watson, tells him he has been in Afghanistan, and will not say how he knew."
+        },
+        {
+          "id": "sis.holmes.5",
+          "from": "ch1.para40",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para38",
+            "ch1.para40"
+          ],
+          "text": "Has just discovered a reagent that reacts to haemoglobin, giving a reliable test for bloodstains, and is thrilled by its value in criminal cases."
+        },
+        {
+          "id": "sis.holmes.6",
+          "from": "ch1.para56",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para52",
+            "ch1.para54",
+            "ch1.para56"
+          ],
+          "text": "Warns Watson that he smokes strong tobacco, keeps chemicals and runs experiments at home, and sometimes falls silent for days."
+        },
+        {
+          "id": "sis.holmes.7",
+          "from": "ch2.para03",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para03"
+          ],
+          "text": "Over six feet tall and very lean, with piercing eyes, a hawk-like nose, a square chin, and hands stained by ink and chemicals."
+        },
+        {
+          "id": "sis.holmes.8",
+          "from": "ch2.para05",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para05"
+          ],
+          "text": "His profession is a mystery to Watson: he is not studying medicine or working toward any degree, yet his knowledge in certain areas is deep and exact."
+        },
+        {
+          "id": "sis.holmes.9",
+          "from": "ch2.para06",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para06"
+          ],
+          "text": "Knows next to nothing of literature, philosophy or politics, and did not know that the earth goes round the sun."
+        },
+        {
+          "id": "sis.holmes.10",
+          "from": "ch2.para11",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para07",
+            "ch2.para09",
+            "ch2.para11"
+          ],
+          "text": "Treats the mind as an attic with limited room, so he deliberately forgets anything that is no use to his work."
+        },
+        {
+          "id": "sis.holmes.11",
+          "from": "ch2.para14",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para14"
+          ],
+          "text": "Watson's list of his knowledge: none in literature, philosophy or astronomy; profound in chemistry; immense in sensational crime; also a fine violinist, boxer, swordsman and singlestick player who knows British law."
+        },
+        {
+          "id": "sis.holmes.12",
+          "from": "ch2.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para17"
+          ],
+          "text": "Receives a stream of very different visitors he calls clients, borrowing the shared sitting-room to see them."
+        },
+        {
+          "id": "sis.holmes.13",
+          "from": "ch2.para24",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para19",
+            "ch2.para21",
+            "ch2.para24"
+          ],
+          "text": "Turns out to be the author of the magazine article on observation that Watson has just mocked."
+        },
+        {
+          "id": "sis.holmes.14",
+          "from": "ch2.para28",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para28"
+          ],
+          "replaces": [
+            "sis.holmes.8"
+          ],
+          "text": "Works as a consulting detective, perhaps the only one in the world: police and private detectives bring him cases they cannot solve."
+        },
+        {
+          "id": "sis.holmes.p2",
+          "kind": "profile",
+          "from": "ch2.para28",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para03",
+            "ch2.para28"
+          ],
+          "replaces": [
+            "sis.holmes.p1"
+          ],
+          "text": "Watson's fellow lodger in Baker Street: a tall, very lean man with sharp eyes and a beak of a nose, who earns his living as a consulting detective, reasoning from small observed details to firm conclusions."
+        },
+        {
+          "id": "sis.holmes.15",
+          "from": "ch2.para34",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para34"
+          ],
+          "text": "Explains that he read Watson's army bearing, tanned face, fair wrists, haggard look and stiff arm in an instant to place him in Afghanistan."
+        },
+        {
+          "id": "sis.holmes.16",
+          "from": "ch2.para38",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para36",
+            "ch2.para38"
+          ],
+          "text": "Scorns the famous fictional detectives Dupin and Lecoq."
+        },
+        {
+          "id": "sis.holmes.17",
+          "from": "ch2.para50",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para43",
+            "ch2.para50"
+          ],
+          "text": "Identifies a messenger across the street as a retired Marine sergeant; the man confirms it."
+        }
+      ]
+    },
+    {
+      "id": "baker-street",
+      "type": "place",
+      "from": "ch1.para52",
+      "names": [
+        {
+          "value": "Baker Street",
+          "kind": "primary",
+          "from": "ch1.para52"
+        },
+        {
+          "value": "221B Baker Street",
+          "kind": "primary",
+          "from": "ch2.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.bakerst.1",
+          "from": "ch1.para52",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para52"
+          ],
+          "text": "Holmes has his eye on a suite of rooms here that would suit two lodgers."
+        },
+        {
+          "id": "sis.bakerst.2",
+          "from": "ch2.para01",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para01"
+          ],
+          "text": "Two bedrooms and a bright, well-furnished sitting-room. Holmes and Watson take the rooms on the spot and move in."
+        }
+      ]
+    },
+    {
+      "id": "blood-test",
+      "type": "concept",
+      "from": "ch1.para40",
+      "names": [
+        {
+          "value": "Holmes's bloodstain test",
+          "kind": "descriptive",
+          "from": "ch1.para40"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.bloodtest.1",
+          "from": "ch1.para40",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para38",
+            "ch1.para40"
+          ],
+          "text": "A chemical test Holmes has just devised that reacts only to haemoglobin, detecting even tiny traces of blood."
+        }
+      ]
+    },
+    {
+      "id": "lestrade",
+      "type": "person",
+      "from": "ch2.para17",
+      "names": [
+        {
+          "value": "Lestrade",
+          "kind": "primary",
+          "from": "ch2.para17"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.lestrade.1",
+          "from": "ch2.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para17"
+          ],
+          "text": "A small, sallow, dark-eyed visitor who calls on Holmes three or four times in one week."
+        },
+        {
+          "id": "sis.lestrade.2",
+          "from": "ch2.para28",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para28"
+          ],
+          "text": "A well-known detective; Holmes says he came for help after getting lost in a forgery case."
+        }
+      ]
+    },
+    {
+      "id": "book-of-life",
+      "type": "object",
+      "from": "ch2.para19",
+      "names": [
+        {
+          "value": "The Book of Life",
+          "kind": "primary",
+          "from": "ch2.para19"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.bookoflife.1",
+          "from": "ch2.para19",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para19"
+          ],
+          "text": "A magazine article Watson reads over breakfast, claiming a trained observer can read a person's thoughts and history from tiny details."
+        },
+        {
+          "id": "sis.bookoflife.2",
+          "from": "ch2.para21",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para21"
+          ],
+          "text": "Watson dismisses it as nonsense."
+        },
+        {
+          "id": "sis.bookoflife.3",
+          "from": "ch2.para24",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para24"
+          ],
+          "text": "Holmes reveals that he wrote it."
+        }
+      ]
+    },
+    {
+      "id": "consulting-detective",
+      "type": "term",
+      "from": "ch2.para28",
+      "names": [
+        {
+          "value": "consulting detective",
+          "kind": "primary",
+          "from": "ch2.para28"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.consulting.1",
+          "from": "ch2.para32",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para28",
+            "ch2.para31",
+            "ch2.para32"
+          ],
+          "text": "Holmes's name for his own trade: detectives and private clients bring him their problems and he usually solves them from what they tell him, often without leaving his room."
+        }
+      ]
+    },
+    {
+      "id": "dupin",
+      "type": "person",
+      "from": "ch2.para35",
+      "names": [
+        {
+          "value": "Dupin",
+          "kind": "primary",
+          "from": "ch2.para35"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.dupin.1",
+          "from": "ch2.para36",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para35",
+            "ch2.para36"
+          ],
+          "text": "Poe's fictional detective. Watson compares Holmes to him; Holmes thinks Dupin showy, superficial and overrated."
+        }
+      ]
+    },
+    {
+      "id": "lecoq",
+      "type": "person",
+      "from": "ch2.para37",
+      "names": [
+        {
+          "value": "Lecoq",
+          "kind": "primary",
+          "from": "ch2.para37"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.lecoq.1",
+          "from": "ch2.para38",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para37",
+            "ch2.para38"
+          ],
+          "text": "Gaboriau's fictional detective, whom Holmes dismisses as a bungler with nothing going for him but energy."
+        }
+      ]
+    },
+    {
+      "id": "marine-sergeant",
+      "type": "person",
+      "from": "ch2.para43",
+      "names": [
+        {
+          "value": "the retired Marine sergeant",
+          "kind": "descriptive",
+          "from": "ch2.para43"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sis.sergeant.1",
+          "from": "ch2.para43",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para43"
+          ],
+          "text": "A man walking down Baker Street whom Holmes, at a glance, calls a retired sergeant of Marines."
+        },
+        {
+          "id": "sis.sergeant.2",
+          "from": "ch2.para50",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para48",
+            "ch2.para50"
+          ],
+          "text": "Delivers a letter to Holmes. Now a commissionaire, he confirms he served as a sergeant in the Royal Marine Light Infantry."
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "sis.rel.murray-watson",
+      "src": "murray",
+      "dst": "watson",
+      "label": "orderly who saved the life of",
+      "from": "ch1.para02",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para02"
+      ]
+    },
+    {
+      "id": "sis.rel.stamford-watson",
+      "src": "stamford",
+      "dst": "watson",
+      "label": "former dresser under",
+      "from": "ch1.para05",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para05"
+      ]
+    },
+    {
+      "id": "sis.rel.holmes-barts",
+      "src": "holmes",
+      "dst": "barts",
+      "label": "works in the chemical laboratory of",
+      "from": "ch1.para34",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para12",
+        "ch1.para34"
+      ]
+    },
+    {
+      "id": "sis.rel.watson-holmes.1",
+      "src": "watson",
+      "dst": "holmes",
+      "label": "has agreed to share rooms with",
+      "from": "ch1.para60",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para60"
+      ]
+    },
+    {
+      "id": "sis.rel.watson-holmes.2",
+      "src": "watson",
+      "dst": "holmes",
+      "label": "shares rooms at 221B Baker Street with",
+      "from": "ch2.para01",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para01"
+      ],
+      "replaces": [
+        "sis.rel.watson-holmes.1"
+      ]
+    },
+    {
+      "id": "sis.rel.lestrade-holmes",
+      "src": "lestrade",
+      "dst": "holmes",
+      "label": "brings difficult cases to",
+      "from": "ch2.para28",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para28"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "sis.ev.maiwand",
+      "from": "ch1.para02",
+      "summary": "Watson is wounded at the battle of Maiwand.",
+      "entities": [
+        "watson",
+        "murray",
+        "maiwand"
+      ],
+      "evidence": [
+        "ch1.para02"
+      ]
+    },
+    {
+      "id": "sis.ev.criterion",
+      "from": "ch1.para05",
+      "summary": "Watson runs into Stamford at the Criterion Bar.",
+      "entities": [
+        "watson",
+        "stamford",
+        "criterion-bar"
+      ],
+      "evidence": [
+        "ch1.para05"
+      ]
+    },
+    {
+      "id": "sis.ev.meeting",
+      "from": "ch1.para35",
+      "summary": "Stamford introduces Watson to Holmes at Barts.",
+      "entities": [
+        "watson",
+        "stamford",
+        "holmes",
+        "barts"
+      ],
+      "evidence": [
+        "ch1.para35"
+      ]
+    },
+    {
+      "id": "sis.ev.agree",
+      "from": "ch1.para60",
+      "summary": "Holmes and Watson agree to share rooms.",
+      "entities": [
+        "holmes",
+        "watson"
+      ],
+      "evidence": [
+        "ch1.para60"
+      ]
+    },
+    {
+      "id": "sis.ev.movein",
+      "from": "ch2.para01",
+      "summary": "They move into 221B Baker Street.",
+      "entities": [
+        "holmes",
+        "watson",
+        "baker-street"
+      ],
+      "evidence": [
+        "ch2.para01"
+      ]
+    },
+    {
+      "id": "sis.ev.article",
+      "from": "ch2.para24",
+      "summary": "Holmes reveals he wrote \"The Book of Life\".",
+      "entities": [
+        "holmes",
+        "watson",
+        "book-of-life"
+      ],
+      "evidence": [
+        "ch2.para24"
+      ]
+    },
+    {
+      "id": "sis.ev.trade",
+      "from": "ch2.para28",
+      "summary": "Holmes explains that he is a consulting detective.",
+      "entities": [
+        "holmes",
+        "watson",
+        "consulting-detective"
+      ],
+      "evidence": [
+        "ch2.para28"
+      ]
+    },
+    {
+      "id": "sis.ev.sergeant",
+      "from": "ch2.para50",
+      "summary": "A messenger confirms Holmes's guess that he was a Marine sergeant.",
+      "entities": [
+        "holmes",
+        "watson",
+        "marine-sergeant"
+      ],
+      "evidence": [
+        "ch2.para50"
+      ]
+    }
+  ],
+  "recaps": [
+    {
+      "id": "sis.recap.ch1",
+      "from": "ch1.para69",
+      "evidence": [
+        "ch1.para03",
+        "ch1.para05",
+        "ch1.para35",
+        "ch1.para60"
+      ],
+      "text": "Invalided home from Afghanistan and short of money, Dr. Watson needs cheap lodgings. His old acquaintance Stamford introduces him to Sherlock Holmes, a brilliant, eccentric chemist who guesses Watson's past at a glance, and the two agree to share rooms."
+    },
+    {
+      "id": "sis.recap.ch2",
+      "from": "ch2.para51",
+      "evidence": [
+        "ch2.para01",
+        "ch2.para14",
+        "ch2.para24",
+        "ch2.para28",
+        "ch2.para50"
+      ],
+      "text": "Watson and Holmes settle into 221B Baker Street. Puzzled by Holmes's lopsided knowledge and many visitors, Watson finally learns that Holmes wrote an article on deduction and works as a consulting detective. Holmes then proves his point by identifying a messenger as a former Marine sergeant."
+    }
+  ]
+}

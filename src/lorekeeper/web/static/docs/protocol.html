@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Protocol reference - Lorekeeper docs</title>
+<meta name="description" content="Reference for the Lorekeeper read-only HTTP protocol: discovery, lookup, fetch, view, entities, errors, CORS, auth and caching.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html" aria-current="page">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Protocol reference</h1>
+<p class="lede">The read-only HTTP API a Lorekeeper server offers to reader apps and plugins. It is section 8 of the specification, written out route by route.</p>
+
+<p>The protocol is separate from the web app's own <code>/api</code>, which is private to the web interface and can change at any time. The routes here are all <code>GET</code>, return UTF-8 JSON, report errors as <code>application/problem+json</code> (RFC 9457) and send CORS headers so browser-based readers can call them. A running server also publishes them as OpenAPI at <a href="../api/docs">/api/docs</a>, which is handy for trying requests. The examples use <code>http://localhost:8765</code> and the bundled example index.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th>Route</th><th>Purpose</th><th>Capability</th></tr></thead>
+<tbody>
+<tr><td><a href="#discovery"><code>GET /.well-known/lorekeeper</code></a></td><td>What the server offers.</td><td>always</td></tr>
+<tr><td><a href="#lookup"><code>GET /v0/lookup</code></a></td><td>Find indexes for a book.</td><td><code>lookup</code></td></tr>
+<tr><td><a href="#index"><code>GET /v0/indexes/{id}</code></a></td><td>Fetch an index.</td><td><code>index</code></td></tr>
+<tr><td><a href="#series"><code>GET /v0/series/{id}</code></a></td><td>Fetch a series manifest.</td><td><code>series</code></td></tr>
+<tr><td><a href="#view"><code>GET /v0/indexes/{id}/view</code></a></td><td>The gated view at a position.</td><td><code>view</code>, <code>view-cfi</code></td></tr>
+<tr><td><a href="#entities"><code>GET /v0/indexes/{id}/entities</code></a></td><td>Who is this name?</td><td><code>entities</code></td></tr>
+</tbody></table></div>
+
+<h2 id="discovery">Discovery</h2>
+<div class="route"><span class="method">GET</span><code>/.well-known/lorekeeper</code></div>
+<p>Always public, even when a token is required. No parameters.</p>
+<pre><code>curl http://localhost:8765/.well-known/lorekeeper
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;name&quot;:&quot;Lorekeeper&quot;,&quot;api&quot;:&quot;/v0&quot;,
+ &quot;capabilities&quot;:[&quot;lookup&quot;,&quot;index&quot;,&quot;series&quot;,&quot;view&quot;,&quot;view-cfi&quot;,&quot;entities&quot;],
+ &quot;auth&quot;:{&quot;type&quot;:&quot;none&quot;}}</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>lorekeeper</code></td><td>The protocol and format version.</td></tr><tr><td><code>name</code></td><td>A display name for the server. Set it with the <code>LOREKEEPER_SERVER_NAME</code> environment variable.</td></tr><tr><td><code>api</code></td><td>The path prefix of the other routes.</td></tr><tr><td><code>capabilities</code></td><td>Routes and features on offer. <code>view-cfi</code> means <code>cfi</code> and <code>xpointer</code> locators are accepted, because this server holds editions.</td></tr><tr><td><code>auth.type</code></td><td><code>none</code> or <code>bearer</code>.</td></tr></tbody></table></div>
+
+<h2 id="lookup">Lookup</h2>
+<div class="route"><span class="method">GET</span><code>/v0/lookup</code></div>
+<p>Finds indexes for a book. Give at least one parameter. When you give several, an index matches if any of them does, and its <code>match</code> reports the strongest.</p>
+<div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead><tbody><tr><td><code>fileHash</code></td><td>string</td><td>one of these</td><td>SHA-256 of the EPUB file.</td></tr><tr><td><code>textHash</code></td><td>string</td><td></td><td>Text hash of the edition (specification 3.4).</td></tr><tr><td><code>isbn</code></td><td>string</td><td></td><td>ISBN-10 or ISBN-13. Hyphens are allowed.</td></tr><tr><td><code>gutenberg</code></td><td>string</td><td></td><td>Project Gutenberg ebook number.</td></tr><tr><td><code>openlibrary</code></td><td>string</td><td></td><td>Open Library work id.</td></tr><tr><td><code>wikidata</code></td><td>string</td><td></td><td>Wikidata item id.</td></tr></tbody></table></div>
+<p>The response is <code>{"results": [...]}</code>, best match first. Within a quality, complete indexes come before partial ones.</p>
+<div class="table-wrap"><table><thead><tr><th>Result member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>id</code></td><td>Use this in the other routes. It is stable on one server.</td></tr><tr><td><code>title</code></td><td>The work's title.</td></tr><tr><td><code>match</code></td><td><code>file</code> for the same file, <code>text</code> for the same text, <code>identifier</code> for an ISBN or catalogue id match, which may be another edition.</td></tr><tr><td><code>complete</code></td><td>Whether the index covers the whole book.</td></tr><tr><td><code>digest</code></td><td><code>sha256:</code> and 64 hex digits. Equals the ETag of the fetch route.</td></tr><tr><td><code>href</code></td><td>The path of the index.</td></tr><tr><td><code>series</code></td><td>Optional: <code>{{id, book}}</code>.</td></tr><tr><td><code>updated</code></td><td>Optional timestamp from the index's provenance.</td></tr></tbody></table></div>
+<pre><code>curl &quot;http://localhost:8765/v0/lookup?textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+curl &quot;http://localhost:8765/v0/lookup?gutenberg=244&quot;
+curl &quot;http://localhost:8765/v0/lookup?isbn=978-0-14-043787-2&quot;</code></pre>
+<p>Errors: <code>400</code> when no parameter is given, <code>401</code> without a required token.</p>
+
+<h2 id="index">Fetch an index</h2>
+<div class="route"><span class="method">GET</span><code>/v0/indexes/{id}</code></div>
+<p>Returns the index document, which is the file as stored (<a href="format.html">index format</a>). The path parameter <code>id</code> is the <code>id</code> from lookup. Cache it by ETag and gate locally.</p>
+<pre><code>curl -i -H &#x27;If-None-Match: &quot;sha256:1c87e7bc...fe74a51&quot;&#x27; http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet
+HTTP/1.1 304 Not Modified</code></pre>
+<p>Errors: <code>401</code>, <code>404</code> when there is no such index.</p>
+
+<h2 id="series">Fetch a series manifest</h2>
+<div class="route"><span class="method">GET</span><code>/v0/series/{id}</code></div>
+<p>Returns the series manifest. Here <code>id</code> is the series id, for example <code>sherlock-holmes</code>, as in an index's <code>series.id</code>. It lists the books, the reading orders and the default order. Same caching as the index.</p>
+<pre><code>curl http://localhost:8765/v0/series/sherlock-holmes
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;kind&quot;:&quot;series&quot;,&quot;id&quot;:&quot;sherlock-holmes&quot;,&quot;title&quot;:&quot;Sherlock Holmes&quot;,
+ &quot;books&quot;:[{&quot;key&quot;:&quot;study-in-scarlet&quot;,&quot;title&quot;:&quot;A Study in Scarlet&quot;,&quot;ids&quot;:{&quot;gutenberg&quot;:&quot;244&quot;}}, ...],
+ &quot;orders&quot;:{&quot;publication&quot;:[&quot;study-in-scarlet&quot;,&quot;sign-of-four&quot;]},&quot;defaultOrder&quot;:&quot;publication&quot;}</code></pre>
+<p>Errors: <code>401</code>, <code>404</code>.</p>
+
+<h2 id="view">View</h2>
+<div class="route"><span class="method">GET</span><code>/v0/indexes/{id}/view</code></div>
+<p>The spoiler-safe view of the index at a position, in the shape of <code>schema/view.schema.json</code>. Give exactly one position: an <code>anchor</code>, or one locator form with <code>textHash</code> or <code>fileHash</code>. Sending an anchor with a locator, or two locator forms, is an error. This route sends the reading position to the server.</p>
+<div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead><tbody><tr><td><code>anchor</code></td><td>string</td><td>one position</td><td>An anchor id of the index.</td></tr><tr><td><code>block</code></td><td>integer</td><td>one position</td><td>Locator: the block seq in the reader's edition.</td></tr><tr><td><code>cfi</code></td><td>string</td><td>one position</td><td>Locator: an EPUB CFI such as <code class="wrap">epubcfi(/6/22!/4/108/1:0)</code>.</td></tr><tr><td><code>xpointer</code></td><td>string</td><td>one position</td><td>Locator: a CREngine XPointer. Must start with <code>/</code>.</td></tr><tr><td><code>spine</code></td><td>integer</td><td>with word or progress</td><td>Locator: 0-based linear spine document.</td></tr><tr><td><code>word</code></td><td>integer</td><td>with spine</td><td>Locator: 0-based word in that document.</td></tr><tr><td><code>progress</code></td><td>number 0..1</td><td>with spine</td><td>Locator: fraction of that document. Approximate.</td></tr><tr><td><code>textHash</code></td><td>string</td><td>with a locator</td><td>Text hash of the reader's edition. Either this or <code>fileHash</code>.</td></tr><tr><td><code>fileHash</code></td><td>string</td><td>with a locator</td><td>SHA-256 of the reader's EPUB file.</td></tr><tr><td><code>inclusive</code></td><td>true or false</td><td>no</td><td>Whether the current paragraph counts. See below for defaults.</td></tr><tr><td><code>order</code></td><td>string</td><td>no</td><td>A reading order key of the series. Default: the series default.</td></tr><tr><td><code>finished</code></td><td>comma list</td><td>no</td><td>Book keys the reader has finished. Default: every book before the current one.</td></tr></tbody></table></div>
+<p><code>inclusive</code> defaults to <code>false</code> here, so the paragraph being read does not count. Only these combinations are valid: <code>anchor</code>, <code>block</code>, <code>cfi</code>, <code>xpointer</code>, <code>spine</code> with <code>word</code>, <code>spine</code> with <code>progress</code>.</p>
+<p>The body is a view with <code>entities</code>, <code>relations</code>, <code>relationHistory</code>, <code>events</code>, <code>recap</code> and <code>chapters</code>. When a locator was used it also carries one more member:</p>
+<pre><code>{ ..., &quot;locator&quot;: { &quot;position&quot;: &quot;ch1.para05&quot;, &quot;seq&quot;: 36, &quot;basis&quot;: &quot;cfi&quot;, &quot;exact&quot;: true } }</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>position</code></td><td>The anchor id the view was gated at, or <code>null</code> for none.</td></tr><tr><td><code>seq</code></td><td>The block the locator mapped to. -1 for none.</td></tr><tr><td><code>basis</code></td><td>The form used: <code>block</code>, <code>cfi</code>, <code>xpointer</code>, <code>word</code> or <code>progress</code>.</td></tr><tr><td><code>exact</code></td><td>False for <code>progress</code> and for a fallback; otherwise true.</td></tr></tbody></table></div>
+<p>The server resolves a locator only against an edition it holds: the one the index was built from, or another EPUB it stores, found by text hash or file hash.</p>
+<p>Errors: <code>400</code> for a missing, repeated or malformed position, an unknown anchor or reading order, or a locator without a hash; <code>401</code>; <code>404</code>; <code>409</code> when the edition is not held; <code>501</code> if the server cannot map locators.</p>
+
+<h2 id="entities">Entities</h2>
+<div class="route"><span class="method">GET</span><code>/v0/indexes/{id}/entities</code></div>
+<p>Answers "I tapped this name; who is it?" without fetching the whole view. It returns what filtering the view for the same position would give.</p>
+<div class="table-wrap"><table><thead><tr><th>Name</th><th>Type</th><th>Required</th><th>Meaning</th></tr></thead><tbody><tr><td><code>name</code></td><td>string</td><td>yes</td><td>A visible name or alias, compared case-insensitively, or a surname that no other visible entity shares.</td></tr><tr><td><code>anchor</code></td><td>string</td><td>one position</td><td>An anchor id of the index.</td></tr><tr><td><code>block</code></td><td>integer</td><td>one position</td><td>Locator: the block seq in the reader's edition.</td></tr><tr><td><code>cfi</code></td><td>string</td><td>one position</td><td>Locator: an EPUB CFI such as <code class="wrap">epubcfi(/6/22!/4/108/1:0)</code>.</td></tr><tr><td><code>xpointer</code></td><td>string</td><td>one position</td><td>Locator: a CREngine XPointer. Must start with <code>/</code>.</td></tr><tr><td><code>spine</code></td><td>integer</td><td>with word or progress</td><td>Locator: 0-based linear spine document.</td></tr><tr><td><code>word</code></td><td>integer</td><td>with spine</td><td>Locator: 0-based word in that document.</td></tr><tr><td><code>progress</code></td><td>number 0..1</td><td>with spine</td><td>Locator: fraction of that document. Approximate.</td></tr><tr><td><code>textHash</code></td><td>string</td><td>with a locator</td><td>Text hash of the reader's edition. Either this or <code>fileHash</code>.</td></tr><tr><td><code>fileHash</code></td><td>string</td><td>with a locator</td><td>SHA-256 of the reader's EPUB file.</td></tr><tr><td><code>inclusive</code></td><td>true or false</td><td>no</td><td>Whether the current paragraph counts. See below for defaults.</td></tr><tr><td><code>order</code></td><td>string</td><td>no</td><td>A reading order key of the series. Default: the series default.</td></tr><tr><td><code>finished</code></td><td>comma list</td><td>no</td><td>Book keys the reader has finished. Default: every book before the current one.</td></tr></tbody></table></div>
+<p>Here <code>inclusive</code> defaults to <code>true</code>, because the reader is looking at the name. Names that are not visible at the position never match.</p>
+<pre><code>curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/entities&quot; --data-urlencode &quot;name=Holmes&quot; \
+  --data-urlencode &quot;cfi=epubcfi(/6/10!/4/2/30/1:0)&quot; --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+
+{&quot;position&quot;:&quot;ch1.para14&quot;,
+ &quot;entities&quot;:[{&quot;id&quot;:&quot;holmes&quot;,&quot;type&quot;:&quot;person&quot;,&quot;name&quot;:&quot;Sherlock Holmes&quot;,&quot;aliases&quot;:[],&quot;profile&quot;:null,
+   &quot;facets&quot;:[{&quot;id&quot;:&quot;sis.holmes.1&quot;,&quot;text&quot;:&quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, ...&quot;,&quot;basis&quot;:&quot;stated&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;}],
+   &quot;history&quot;:[],&quot;relations&quot;:[],&quot;events&quot;:[]}],
+ &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para14&quot;,&quot;seq&quot;:44,&quot;basis&quot;:&quot;cfi&quot;,&quot;exact&quot;:true}}</code></pre>
+<p>Each element of <code>entities</code> has the members of a view entity, plus <code>relations</code> and <code>events</code> listing the visible ones that involve it. The array is empty when nothing matches. Errors are those of the view route, plus <code>400</code> when <code>name</code> is missing.</p>
+
+<h2 id="errors">Errors</h2>
+<p>Every error is a problem document with <code>type</code>, <code>title</code>, <code>status</code> and usually <code>detail</code>.</p>
+<div class="table-wrap"><table><thead><tr><th>Status</th><th>Slug</th><th>When</th></tr></thead><tbody><tr><td>400</td><td><code>bad-request</code></td><td>A parameter is missing, malformed or contradicts another.</td></tr><tr><td>401</td><td><code>unauthorized</code></td><td>A bearer token is required and missing or wrong. The response carries <code>WWW-Authenticate: Bearer realm="lorekeeper"</code>.</td></tr><tr><td>404</td><td><code>not-found</code></td><td>No such index or series, or an unknown path under <code>/v0</code>.</td></tr><tr><td>405</td><td><code>method-not-allowed</code></td><td>Anything but <code>GET</code> and <code>OPTIONS</code>.</td></tr><tr><td>409</td><td><code>edition-not-held</code></td><td>The server does not hold the reader's edition, so it cannot map a locator. Fall back to local gating.</td></tr><tr><td>501</td><td><code>not-implemented</code></td><td>The server cannot map locators.</td></tr></tbody></table></div>
+<pre><code>{ &quot;type&quot;: &quot;https://lorekeeper.dev/problems/not-found&quot;, &quot;title&quot;: &quot;No such index&quot;, &quot;status&quot;: 404, &quot;detail&quot;: &quot;nope&quot; }</code></pre>
+
+<h2 id="cors">CORS</h2>
+<p>All protocol responses, including errors and <code>401</code>, send these headers, and a preflight <code>OPTIONS</code> to any protocol path is answered with <code>204</code> and no token check.</p>
+<pre><code>Access-Control-Allow-Origin: *
+Access-Control-Allow-Headers: Authorization, If-None-Match
+Access-Control-Allow-Methods: GET, OPTIONS
+Access-Control-Expose-Headers: ETag
+Access-Control-Max-Age: 600</code></pre>
+<p>Because the origin is open, the bearer token is the only thing that stops another web page from reading an exposed server. Do not expose a server without one.</p>
+
+<h2 id="auth">Authentication</h2>
+<p>By default there is none: a server on <code>localhost</code> needs no token. For a server on a network, set a token in one of three ways, listed from least to most careful:</p>
+<pre><code>LOREKEEPER_API_TOKEN=s3cret uv run lorekeeper web --host 0.0.0.0     # environment variable
+uv run lorekeeper web --host 0.0.0.0 --api-token s3cret               # flag; visible in shell history
+uv run lorekeeper web --host 0.0.0.0 --api-token-file ~/.lk-token     # first line of a file</code></pre>
+<p>The flag overrides the environment variable. With a token set, every protocol route except discovery needs the header, and <code>auth.type</code> in discovery turns to <code>bearer</code>. The comparison is constant-time.</p>
+<pre><code>curl -H &quot;Authorization: Bearer s3cret&quot; http://localhost:8765/v0/lookup?gutenberg=244
+
+curl -i http://localhost:8765/v0/lookup?gutenberg=244          # without the header
+HTTP/1.1 401 Unauthorized
+www-authenticate: Bearer realm=&quot;lorekeeper&quot;
+{&quot;type&quot;:&quot;https://lorekeeper.dev/problems/unauthorized&quot;,&quot;title&quot;:&quot;Unauthorized&quot;,&quot;status&quot;:401,
+ &quot;detail&quot;:&quot;send Authorization: Bearer &lt;token&gt;&quot;}</code></pre>
+<p class="note">The token protects <code>/v0</code> and the discovery document only. The web app itself, with its uploads, builds and settings, has no login. Read <a href="self-hosting.html#exposing">exposing the server</a> before binding to a network address.</p>
+
+<h2 id="caching">Caching</h2>
+<ul>
+<li>Index and series bodies carry <code>ETag: "sha256:..."</code>, equal to the <code>digest</code> in lookup results, and <code>Cache-Control: private, max-age=0, must-revalidate</code>. Revalidate with <code>If-None-Match</code>. A weak tag, a comma-separated list and <code>*</code> are accepted. A match returns <code>304</code> with no body.</li>
+<li>Views and entity answers have no ETag. They depend on the position, so cache them in your app if at all, and never past the reader's position.</li>
+<li>Lookup results change when the library changes, so revalidate by digest rather than caching them for long.</li>
+</ul>
+<p class="note">The authoritative text is <a href="spec.html#8-protocol">section 8 of the specification</a>, and the authoritative schemas are in <code>schema/api.schema.json</code>.</p>
+
+</main>
+</div>
+</body>
+</html>

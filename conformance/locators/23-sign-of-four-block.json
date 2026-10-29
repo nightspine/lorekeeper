@@ -1,0 +1,14 @@
+{
+  "description": "A block seq in the other edition: the first paragraph of chapter II.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "block": 78
+  },
+  "expect": {
+    "seq": 78,
+    "exact": true,
+    "finished": "ch1.para55",
+    "inclusive": "ch2.para01"
+  }
+}

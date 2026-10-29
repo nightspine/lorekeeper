@@ -1,0 +1,15 @@
+{
+  "description": "Progress 0.5 rounds down to the block whose word range holds half the document's words.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "spine": 4,
+    "progress": 0.5
+  },
+  "expect": {
+    "seq": 59,
+    "exact": false,
+    "finished": "ch1.para27",
+    "inclusive": "ch1.para29"
+  }
+}

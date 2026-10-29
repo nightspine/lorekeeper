@@ -1,0 +1,14 @@
+{
+  "description": "XPointer to a paragraph that does not exist: the block before the document, not exact.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[5]/body/div/p[999]/text().0"
+  },
+  "expect": {
+    "seq": 29,
+    "exact": false,
+    "finished": null,
+    "inclusive": "pt1.note"
+  }
+}

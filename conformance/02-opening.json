@@ -1,0 +1,106 @@
+{
+  "description": "Second paragraph of the book: only Watson, Murray and Maiwand exist.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "study-in-scarlet",
+    "anchor": "ch1.para02"
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "study-in-scarlet",
+      "anchor": "ch1.para02"
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para51",
+      "exhausted": false
+    },
+    "entities": [
+      {
+        "id": "watson",
+        "type": "person",
+        "name": "John H. Watson",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.watson.1",
+            "text": "The narrator. Qualified as a doctor in London in 1878 and joined the army as an assistant surgeon, reaching his regiment in the Second Afghan War.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.2",
+            "text": "Hit in the shoulder by a Jezail bullet at the battle of Maiwand; his orderly Murray got him back to British lines.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "murray",
+        "type": "person",
+        "name": "Murray",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.murray.1",
+            "text": "Watson's orderly at Maiwand, who saved him by throwing him across a pack-horse and carrying him to safety.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "maiwand",
+        "type": "place",
+        "name": "Maiwand",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.maiwand.1",
+            "text": "Battle of the Second Afghan War where Watson was badly wounded.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      }
+    ],
+    "relations": [
+      {
+        "id": "sis.rel.murray-watson",
+        "src": "murray",
+        "dst": "watson",
+        "label": "orderly who saved the life of",
+        "book": "study-in-scarlet"
+      }
+    ],
+    "relationHistory": [],
+    "events": [
+      {
+        "id": "sis.ev.maiwand",
+        "summary": "Watson is wounded at the battle of Maiwand.",
+        "entities": [
+          "watson",
+          "murray",
+          "maiwand"
+        ],
+        "book": "study-in-scarlet"
+      }
+    ],
+    "recap": null,
+    "chapters": []
+  }
+}

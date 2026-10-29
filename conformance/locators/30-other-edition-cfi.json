@@ -1,0 +1,14 @@
+{
+  "description": "Cross-edition: the same book in the Standard Ebooks edition. A CFI into chapter I; the anchors are found by fingerprint, so the answer differs from the Gutenberg seq hints.",
+  "edition": "corpus/se-scarlet/scarlet.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/8!/4/2/14/1:3)"
+  },
+  "expect": {
+    "seq": 16,
+    "exact": true,
+    "finished": "ch1.para05",
+    "inclusive": "ch1.para06"
+  }
+}

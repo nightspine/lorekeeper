@@ -1,0 +1,14 @@
+{
+  "description": "A block seq in the reader's own edition is taken as is.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "block": 36
+  },
+  "expect": {
+    "seq": 36,
+    "exact": true,
+    "finished": "ch1.para05",
+    "inclusive": "ch1.para06"
+  }
+}

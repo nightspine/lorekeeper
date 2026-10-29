@@ -1,0 +1,14 @@
+{
+  "description": "CFI with id assertions down to the heading of the first document.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "cfi": "epubcfi(/6/4!/4/2[pg-header]/2[pg-header-heading]/1:0)"
+  },
+  "expect": {
+    "seq": 0,
+    "exact": true,
+    "finished": null,
+    "inclusive": null
+  }
+}

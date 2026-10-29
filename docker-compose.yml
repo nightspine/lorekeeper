@@ -1,0 +1,50 @@
+services:
+  lorekeeper:
+    image: ghcr.io/nightspine/lorekeeper:latest   # or :edge for the latest main build
+    # build: .   # build from this checkout instead of pulling the image
+    ports:
+      - "8765:8765"
+    volumes:
+      - lorekeeper-data:/data
+    environment:
+      # Protects the read-only /v0 protocol, not the web app. Leave empty for no token.
+      LOREKEEPER_API_TOKEN: ${LOREKEEPER_API_TOKEN:-}
+      # Cloud model keys, all optional; you can also enter them in Settings. Empty means not set.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      # Any OpenAI-compatible server (LM Studio, vLLM, llama.cpp): its URL and model.
+      CUSTOM_BASE_URL: ${CUSTOM_BASE_URL:-}
+      CUSTOM_MODEL: ${CUSTOM_MODEL:-}
+      CUSTOM_API_KEY: ${CUSTOM_API_KEY:-}
+      # Ollama on the host machine. For the bundled service below use http://ollama:11434
+      LOREKEEPER_OLLAMA_URL: ${LOREKEEPER_OLLAMA_URL:-http://host.docker.internal:11434}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Optional: run Ollama in Docker too. Start it with `docker compose --profile ollama up -d`,
+  # set LOREKEEPER_OLLAMA_URL=http://ollama:11434, then `docker compose exec ollama ollama pull gemma4:12b-it-qat`.
+  ollama:
+    image: ollama/ollama:latest
+    profiles: [ollama]
+    volumes:
+      - ollama-models:/root/.ollama
+    # GPU (NVIDIA, needs the NVIDIA Container Toolkit): uncomment.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  lorekeeper-data:
+  ollama-models:

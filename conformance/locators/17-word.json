@@ -1,0 +1,15 @@
+{
+  "description": "Word 240 of the chapter I document.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "spine": 4,
+    "word": 240
+  },
+  "expect": {
+    "seq": 33,
+    "exact": true,
+    "finished": "ch1.para02",
+    "inclusive": "ch1.para03"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "description": "CFI into the <title> text of a document, before its first block: the last block of the previous document.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/2/2/1:0)"
+  },
+  "expect": {
+    "seq": 29,
+    "exact": true,
+    "finished": null,
+    "inclusive": "pt1.note"
+  }
+}

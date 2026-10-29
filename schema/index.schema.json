@@ -1,0 +1,697 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/index.schema.json",
+  "title": "Lorekeeper index document",
+  "description": "A spoiler-gated index of one book. See SPEC.md §4.",
+  "type": "object",
+  "required": [
+    "lorekeeper",
+    "kind",
+    "id",
+    "work",
+    "editions",
+    "coverage",
+    "provenance",
+    "anchors",
+    "entities"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "lorekeeper": {
+      "const": "0.1"
+    },
+    "kind": {
+      "const": "index"
+    },
+    "id": {
+      "$ref": "#/$defs/slug"
+    },
+    "work": {
+      "type": "object",
+      "required": [
+        "title",
+        "authors",
+        "language"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "language": {
+          "type": "string",
+          "description": "BCP 47 tag of the indexed text"
+        },
+        "ids": {
+          "$ref": "#/$defs/identifiers"
+        }
+      }
+    },
+    "series": {
+      "type": "object",
+      "required": [
+        "id",
+        "book"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "book": {
+          "$ref": "#/$defs/slug"
+        }
+      }
+    },
+    "editions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "textHash"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "textHash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "fileHash": {
+            "$ref": "#/$defs/sha256"
+          },
+          "label": {
+            "type": "string"
+          },
+          "ids": {
+            "$ref": "#/$defs/identifiers"
+          },
+          "builtFrom": {
+            "type": "boolean",
+            "description": "Anchor seq hints are exact for this edition"
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "required": [
+        "complete",
+        "through"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "through": {
+          "$ref": "#/$defs/anchorRef"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "created",
+        "license"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "generator": {
+          "type": "object",
+          "required": [
+            "name",
+            "version"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "version": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            },
+            "promptSet": {
+              "type": "string"
+            }
+          }
+        },
+        "contributors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "role"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "author",
+                  "generator",
+                  "reviewer",
+                  "editor"
+                ]
+              }
+            }
+          }
+        },
+        "review": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "by",
+              "date",
+              "status"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "by": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string",
+                "format": "date"
+              },
+              "status": {
+                "enum": [
+                  "unreviewed",
+                  "spot-checked",
+                  "reviewed"
+                ]
+              },
+              "through": {
+                "$ref": "#/$defs/anchorRef"
+              }
+            }
+          }
+        },
+        "created": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updated": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "license": {
+          "type": "string",
+          "description": "SPDX identifier for the index content"
+        }
+      }
+    },
+    "anchors": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "fp"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "#/$defs/anchorRef"
+          },
+          "fp": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{16}$"
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Block index hint in the builtFrom edition"
+          }
+        }
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/entity"
+      }
+    },
+    "relations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relation"
+      }
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/event"
+      }
+    },
+    "recaps": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/recap"
+      }
+    },
+    "carried": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/carriedEntity"
+      }
+    }
+  },
+  "$defs": {
+    "slug": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "maxLength": 128
+    },
+    "anchorRef": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]+$",
+      "maxLength": 64
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "identifiers": {
+      "type": "object",
+      "description": "Known external identifiers. Keys are lowercase scheme names; isbn13 may be a list.",
+      "properties": {
+        "isbn13": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[0-9]{13}$"
+          }
+        },
+        "openlibrary": {
+          "type": "string"
+        },
+        "wikidata": {
+          "type": "string",
+          "pattern": "^Q[0-9]+$"
+        },
+        "gutenberg": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "array"
+        ]
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/anchorRef"
+      }
+    },
+    "basis": {
+      "enum": [
+        "stated",
+        "inferred"
+      ]
+    },
+    "replaces": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/slug"
+      }
+    },
+    "entityType": {
+      "enum": [
+        "person",
+        "creature",
+        "place",
+        "group",
+        "object",
+        "concept",
+        "term"
+      ]
+    },
+    "name": {
+      "type": "object",
+      "required": [
+        "value",
+        "kind",
+        "from"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "kind": {
+          "enum": [
+            "primary",
+            "alias",
+            "title",
+            "nickname",
+            "descriptive"
+          ]
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        }
+      }
+    },
+    "facet": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "text",
+        "basis",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800
+        },
+        "basis": {
+          "$ref": "#/$defs/basis"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "replaces": {
+          "$ref": "#/$defs/replaces"
+        },
+        "kind": {
+          "enum": [
+            "profile"
+          ],
+          "description": "A self-contained description of the entity as the reader knows it at `from` (SPEC.md §4.2). Absent for details."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "not": {
+              "required": [
+                "kind"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "maxLength": 280
+              }
+            }
+          }
+        }
+      ]
+    },
+    "entity": {
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "from",
+        "names",
+        "facets"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "type": {
+          "$ref": "#/$defs/entityType"
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/name"
+          }
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/facet"
+          }
+        }
+      }
+    },
+    "relation": {
+      "type": "object",
+      "required": [
+        "id",
+        "src",
+        "dst",
+        "label",
+        "from",
+        "basis",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "src": {
+          "$ref": "#/$defs/slug"
+        },
+        "dst": {
+          "$ref": "#/$defs/slug"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        },
+        "basis": {
+          "$ref": "#/$defs/basis"
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "replaces": {
+          "$ref": "#/$defs/replaces"
+        }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "summary",
+        "entities",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/slug"
+          }
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        }
+      }
+    },
+    "recap": {
+      "type": "object",
+      "required": [
+        "id",
+        "from",
+        "text",
+        "evidence"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "from": {
+          "$ref": "#/$defs/anchorRef"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "evidence": {
+          "$ref": "#/$defs/evidence"
+        },
+        "scope": {
+          "enum": [
+            "story",
+            "chapter"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "if": {
+        "not": {
+          "required": [
+            "scope"
+          ],
+          "properties": {
+            "scope": {
+              "const": "chapter"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "text": {
+            "maxLength": 1200
+          }
+        }
+      }
+    },
+    "carriedEntity": {
+      "type": "object",
+      "description": "An entity as it stood at the end of an earlier series book. Names and facets carry no anchors.",
+      "required": [
+        "id",
+        "type",
+        "origin",
+        "names",
+        "facets"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/slug"
+        },
+        "type": {
+          "$ref": "#/$defs/entityType"
+        },
+        "origin": {
+          "$ref": "#/$defs/slug"
+        },
+        "names": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "value",
+              "kind"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "value": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "kind": {
+                "enum": [
+                  "primary",
+                  "alias",
+                  "title",
+                  "nickname",
+                  "descriptive"
+                ]
+              }
+            }
+          }
+        },
+        "facets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "text",
+              "basis"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/slug"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 800
+              },
+              "basis": {
+                "$ref": "#/$defs/basis"
+              },
+              "kind": {
+                "enum": [
+                  "profile"
+                ]
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "not": {
+                    "required": [
+                      "kind"
+                    ]
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "text": {
+                      "maxLength": 280
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

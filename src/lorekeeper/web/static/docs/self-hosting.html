@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Self-hosting - Lorekeeper docs</title>
+<meta name="description" content="Run the Lorekeeper server with Docker or uv, build indexes with Ollama or Claude, expose it safely and back up its data.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html" aria-current="page">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Self-hosting</h1>
+<p class="lede">Run the Lorekeeper server on your own machine. It builds indexes for your books, shows them in a Reader, and serves the read-only protocol to your other devices.</p>
+
+<h2 id="docker">Run with Docker</h2>
+<p>The image bundles the server, the docs and the example library. It runs as an unprivileged user and keeps everything in one volume mounted at <code>/data</code>.</p>
+<pre><code>git clone https://github.com/nightspine/lorekeeper.git &amp;&amp; cd lorekeeper
+docker compose up -d</code></pre>
+<p>Then open <code>http://localhost:8765</code>. The compose file pulls the published image <code>ghcr.io/nightspine/lorekeeper</code> for amd64 and arm64. To build from your checkout instead, swap the <code>image</code> line for the commented <code>build: .</code>. To use one command and no compose file:</p>
+<pre><code>docker run -d --name lorekeeper -p 8765:8765 -v lorekeeper-data:/data \
+  --add-host host.docker.internal:host-gateway \
+  -e LOREKEEPER_OLLAMA_URL=http://host.docker.internal:11434 \
+  ghcr.io/nightspine/lorekeeper:latest</code></pre>
+<h3 id="docker-existing">Add it to an existing compose file</h3>
+<p>Copy this service into the <code>services:</code> section of your own compose file, and add the volume:</p>
+<pre><code>services:
+  lorekeeper:
+    image: ghcr.io/nightspine/lorekeeper:latest
+    ports:
+      - "8765:8765"
+    volumes:
+      - lorekeeper-data:/data
+    environment:
+      LOREKEEPER_API_TOKEN: ${LOREKEEPER_API_TOKEN:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOREKEEPER_OLLAMA_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+volumes:
+  lorekeeper-data:</code></pre>
+<p>Only the port, the volume and the environment matter. <code>LOREKEEPER_API_TOKEN</code> protects the <code>/v0</code> protocol, a provider key is optional if you build with a cloud model, and <code>LOREKEEPER_OLLAMA_URL</code> points at your Ollama.</p>
+<h3 id="docker-tags">Image tags</h3>
+<p><code>latest</code> is the newest stable release, <code>1.2.3</code> and <code>1.2</code> pin a release, and <code>edge</code> is the latest build of the main branch, which may contain unreleased changes. Pin a version for anything you rely on.</p>
+<p>Environment variables fill in the defaults of the matching command-line flags, and a flag you pass always wins.</p>
+<div class="table-wrap"><table><thead><tr><th>Variable</th><th>Meaning</th><th>Default in the image</th></tr></thead><tbody>
+<tr><td><code>LOREKEEPER_DATA</code></td><td>Where uploads, jobs, secrets and generated indexes live (<code>--data</code>).</td><td><code>/data</code></td></tr>
+<tr><td><code>LOREKEEPER_HOST</code></td><td>Address to bind (<code>--host</code>).</td><td><code>0.0.0.0</code></td></tr>
+<tr><td><code>LOREKEEPER_PORT</code></td><td>Port to listen on (<code>--port</code>).</td><td><code>8765</code></td></tr>
+<tr><td><code>LOREKEEPER_OLLAMA_URL</code></td><td>Ollama server to build with (<code>--ollama-url</code>).</td><td><code>http://localhost:11434</code>, which is the container itself; the compose file sets <code>http://host.docker.internal:11434</code></td></tr>
+<tr><td><code>LOREKEEPER_API_TOKEN</code></td><td>Bearer token required on the read-only <code>/v0</code> protocol.</td><td>none</td></tr>
+<tr><td><code>ANTHROPIC_API_KEY</code></td><td>Claude key for building and fact-checking. You can also enter it under Settings.</td><td>none</td></tr>
+<tr><td><code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, and the others</td><td>Keys for the other cloud providers; see <a href="#keys">Where keys come from</a> for the full list.</td><td>none</td></tr>
+</tbody></table></div>
+<p>The image's own entrypoint already binds <code>0.0.0.0:8765</code> inside the container, so to change the port people use, change only the left side of the port mapping, for example <code>8080:8765</code>.</p>
+
+<h3 id="docker-ollama">Ollama on the host or in compose</h3>
+<p>The compose file points Lorekeeper at an Ollama running on your machine, through <code>host.docker.internal</code>. On Linux the <code>extra_hosts</code> line in the file makes that name work. On the host, Ollama must accept connections from Docker, so start it with <code>OLLAMA_HOST=0.0.0.0</code> if the Settings page cannot see it.</p>
+<p>To run Ollama in Docker as well, enable the optional service and point Lorekeeper at it:</p>
+<pre><code>LOREKEEPER_OLLAMA_URL=http://ollama:11434 docker compose --profile ollama up -d
+docker compose exec ollama ollama pull gemma4:12b-it-qat</code></pre>
+<p>Models are stored in the <code>ollama-models</code> volume. Inside Docker, Ollama uses the CPU unless you give it a GPU: on Linux with an NVIDIA card and the NVIDIA Container Toolkit, uncomment the <code>deploy</code> block of the <code>ollama</code> service. Docker on macOS cannot pass the GPU through, so a Mac is much faster with Ollama installed on the host, which is why that is the default.</p>
+
+<h3 id="docker-expose">Reverse proxy, token and the Host check</h3>
+<p>The server checks the <code>Host</code> header against <code>localhost</code> to stop DNS rebinding. When it binds to anything other than a local address, as the container does, that check is switched off, so a proxy can forward <code>books.example.com</code> to it without any extra setting. In exchange, the web app has no login: <strong>anyone who can reach the port can build books and change settings</strong>. Publish the port only on a trusted network, for example <code>127.0.0.1:8765:8765</code>, and put a reverse proxy that does its own authentication, a VPN or Tailscale in front of it.</p>
+<p><code>LOREKEEPER_API_TOKEN</code> protects only the <code>/v0</code> protocol that reader apps use. Set it whenever the server is reachable beyond your own machine, and have the proxy pass <code>Authorization</code> through.</p>
+
+<h3 id="docker-backup">Backups</h3>
+<p>Everything worth keeping is in the <code>lorekeeper-data</code> volume. Check the Runs page first, then copy it out:</p>
+<pre><code>docker run --rm -v lorekeeper_lorekeeper-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/lorekeeper-data.tgz -C /data .</code></pre>
+<p>The volume name is prefixed with the compose project name, which is the folder name; <code>docker volume ls</code> shows it. The archive contains <code>secrets.json</code>, so keep it private. To update, run <code>docker compose pull &amp;&amp; docker compose up -d</code>, and the volume is kept. If you build from a checkout, run <code>git pull</code> and <code>docker compose up -d --build</code> instead.</p>
+
+<h2 id="install">Install without Docker</h2>
+<p>You need Python 3.11 or later and <a href="https://docs.astral.sh/uv/">uv</a>.</p>
+<pre><code>git clone https://github.com/nightspine/lorekeeper.git &amp;&amp; cd lorekeeper
+uv sync --extra web --extra claude
+uv run --extra web --extra claude lorekeeper web</code></pre>
+<p>The server listens on <code>http://127.0.0.1:8765</code>. The <code>claude</code> extra is only needed if you want Claude to build or fact-check indexes. Add <code>--port</code> to change the port and <code>--data</code> to change where it keeps its files.</p>
+
+<h2 id="library">Library and Book Orbit</h2>
+<p>The Library lists books, with each book's index versions grouped under it. You can upload EPUBs, or sign in to a Book Orbit server under Settings to browse its books. Only books with an EPUB appear, since comics and PDFs have no text to index, and you choose which Book Orbit libraries to show. A book's EPUB is downloaded the first time you build it.</p>
+<p>Series come from Book Orbit, from the EPUB's own metadata, or from you. When you build a book whose earlier series books have no index, the Library warns you, and it can queue a whole series in order so that each book builds on the ones before it. Characters then keep one identity across books.</p>
+
+<h2 id="building">Models and keys</h2>
+<p>Building reads a book chapter by chapter, proposes facts for each chunk, checks every claim against the text and writes the index after each chunk.</p>
+<ul>
+<li><strong>Ollama</strong> runs a model on your own machine and sends nothing out. Install it, start it, and pick a model in the build form. A two-chapter run takes tens of minutes on a 16 GB laptop, so start it and come back.</li>
+<li><strong>Bring your own key.</strong> A cloud model is faster and usually better at names and relationships. Claude, OpenAI, Gemini, OpenRouter, Mistral, Groq, xAI and DeepSeek work with your own account, and so does any server that speaks the OpenAI chat API. The book text is sent to the provider you pick, and the build form shows a price estimate before you start (or says the price is unknown for a model it has no price for). After each build a short pass rewrites character descriptions with the cheap model of the provider you built with, about ten cents a novel on the cheapest models, and it is skipped when no key is set.</li>
+</ul>
+<h3 id="keys">Where keys come from</h3>
+<p>Under Settings, each provider has a card with a link to create a key. The key is tested with a free call before it is saved. You can also set it in the environment, which is the easiest way in Docker, and Settings then shows it as coming from the environment, masked. A key saved in Settings wins over the environment.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Provider</th><th>Environment variable</th></tr></thead>
+<tbody>
+<tr><td>Claude</td><td><code>ANTHROPIC_API_KEY</code></td></tr>
+<tr><td>OpenAI</td><td><code>OPENAI_API_KEY</code></td></tr>
+<tr><td>Gemini</td><td><code>GEMINI_API_KEY</code></td></tr>
+<tr><td>OpenRouter</td><td><code>OPENROUTER_API_KEY</code></td></tr>
+<tr><td>Mistral</td><td><code>MISTRAL_API_KEY</code></td></tr>
+<tr><td>Groq</td><td><code>GROQ_API_KEY</code></td></tr>
+<tr><td>xAI</td><td><code>XAI_API_KEY</code></td></tr>
+<tr><td>DeepSeek</td><td><code>DEEPSEEK_API_KEY</code></td></tr>
+<tr><td>Custom server</td><td><code>CUSTOM_BASE_URL</code>, <code>CUSTOM_MODEL</code>, optionally <code>CUSTOM_API_KEY</code></td></tr>
+</tbody>
+</table></div>
+<p>Keys you enter under Settings are stored in <code>lorekeeper-data/secrets.json</code>, readable only by you, and are shown back masked. They are passed to the model at run time and never written into job records or run logs. The preset model list and prices are a convenience: the model picker also lists the models your key can reach, and you can use any of them.</p>
+<h3 id="custom-server">A server of your own</h3>
+<p>Choose "Custom server" in Settings and enter its base URL (for example <code>http://localhost:1234/v1</code> for LM Studio) and the model name it serves. A key is optional. Lorekeeper asks for JSON that matches its schema and falls back to plain JSON mode for servers that do not support schemas. Quality depends on the model: small local models can miss names that a larger model finds. From the command line, use <code>lorekeeper generate --provider custom --base-url URL --model NAME</code>, or <code>--provider openai</code>, <code>gemini</code> and the others with a key in the environment or in a file given to <code>--api-key-file</code>.</p>
+
+<h2 id="exposing">Exposing the server</h2>
+<p>By default the server only answers to <code>localhost</code>. It checks the <code>Host</code> header so that a hostile web page cannot reach it through DNS rebinding, and it requires a custom header on every write so that other sites cannot post to it.</p>
+<p>To reach it from a phone or an e-reader, bind to a network address (the Docker image already does):</p>
+<pre><code>uv run lorekeeper web --host 0.0.0.0 --api-token-file ~/.lorekeeper-token</code></pre>
+<p>With <code>--host</code> set to anything but a local address the Host check is switched off, and <strong>anyone who can reach the port can use the whole web app</strong>, including building books and changing settings. The bearer token protects only the read-only protocol under <code>/v0</code>, not the web app. Put the server behind a VPN, Tailscale or a reverse proxy that does its own authentication.</p>
+<p>For the token, give <code>--api-token</code> (visible in shell history), <code>--api-token-file</code> (first line of the file) or the <code>LOREKEEPER_API_TOKEN</code> environment variable. Clients then send <code>Authorization: Bearer &lt;token&gt;</code>, and discovery stays public so an app can learn that a token is needed. The <a href="protocol.html#auth">protocol reference</a> has the details.</p>
+
+<h2 id="data">Where your data lives</h2>
+<p>Everything is under <code>lorekeeper-data/</code> in the directory you started the server from, or under <code>/data</code> in Docker.</p>
+<div class="table-wrap"><table><thead><tr><th>Path</th><th>Contents</th></tr></thead><tbody><tr><td><code>books/</code></td><td>Uploaded and downloaded EPUBs, addressed by content hash.</td></tr><tr><td><code>indexes/</code></td><td>Generated index and series files, with <code>.state</code> and <code>.report</code> sidecars.</td></tr><tr><td><code>jobs/</code></td><td>Job records and each run's event log.</td></tr><tr><td><code>library.json</code></td><td>Default versions, manual series, chosen Book Orbit libraries and pairs you marked as different entities.</td></tr><tr><td><code>bookorbit/</code></td><td>The synced Book Orbit book list and covers.</td></tr><tr><td><code>merges/</code></td><td>Snapshots taken before a merge of duplicate entities, so it can be undone.</td></tr><tr><td><code>backups/</code></td><td>Originals copied here before a command rewrites existing indexes.</td></tr><tr><td><code>secrets.json</code></td><td>Provider keys and the Book Orbit refresh token, mode 0600.</td></tr></tbody></table></div>
+<p>The exact folder names inside <code>lorekeeper-data/</code> can change while the project is a draft, so treat the table as a map, not a contract.</p>
+
+<h2 id="backups">Backups</h2>
+<p>Copy the whole <code>lorekeeper-data/</code> folder while no run is active. Indexes are plain JSON and can be committed to git. Leave out <code>secrets.json</code> if you share the backup. Commands that rewrite existing indexes, such as <code>profiles</code> and <code>portraits</code>, copy the originals into <code>backups/</code> first. Check the Runs page before you stop the server, because a build that is killed mid-chunk loses that chunk. A stopped run continues from its last finished chunk with Resume.</p>
+
+<h2 id="sync">Book Orbit reading position</h2>
+<p>When a book comes from Book Orbit, the Reader asks Book Orbit where you are in it and starts there, with a note saying so. Book Orbit stores the position in whichever dialect the reading app wrote: an EPUB CFI from its web reader and iOS app, a spine file with a percentage from Kobo, a KOReader XPointer, or a whole-book percentage. The server maps the most precise usable one onto the text model with the same locator rules as the protocol, and rounds toward the paragraph before, so it can only under-reveal.</p>
+<p>The position acts as a line. Dragging the Reader past it stops at the line, and letting go there asks whether you really have read further. Say yes and the Reader moves on and remembers it, or go back to Book Orbit's position with one click. If Book Orbit cannot be reached, the Reader says so and carries on from where you left it.</p>
+
+</main>
+</div>
+</body>
+</html>

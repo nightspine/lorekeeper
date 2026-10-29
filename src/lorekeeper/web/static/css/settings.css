@@ -1,0 +1,52 @@
+/* ---------- Settings ---------- */
+.settings-page { display: grid; gap: var(--space-5); max-width: 1100px; }
+.settings-lede { font-size: var(--text-lg); margin-top: var(--space-2); max-width: 65ch; }
+.settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-5); align-items: start; }
+/* Grid items default to their content's minimum width; the pricing table's nowrap cells would push a card past its column. */
+.settings-grid > *, .settings-page > * { min-width: 0; }
+.section-title h2.with-icon { display: flex; gap: 10px; align-items: center; }
+.section-title h2.with-icon .svg-icon { color: var(--beacon); }
+.stack-8 { display: grid; gap: var(--space-2); }
+.stack-12 { display: grid; gap: var(--space-3); }
+.stack-14 { display: grid; gap: var(--space-4); }
+.stack-16 { display: grid; gap: var(--space-4); }
+.row-wrap { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.model-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); padding: 10px 2px; border: 0; background: none; box-shadow: none; }
+.model-row + .model-row, .stack-8 > .model-row + .model-row { border-top: 1px solid var(--edge); }
+.model-name { font-weight: 600; overflow-wrap: anywhere; }
+.model-row .subtle { font-size: var(--text-sm); white-space: nowrap; }
+.chip-after { margin-left: var(--space-2); }
+.key-row { display: flex; gap: var(--space-2); align-items: center; }
+.key-row .input { flex: 1; min-width: 0; }
+.field-error { color: var(--rose); }
+.form-520 { max-width: 520px; }
+
+/* pricing: a glass table, numbers right-aligned */
+.pricing { margin-top: var(--space-2); }
+.pricing .table-wrap { border: 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); border-radius: 0; background: none; box-shadow: none; overflow-x: auto; }
+.pricing table.data { min-width: 0; width: 100%; border-collapse: collapse; }
+.pricing table.data th { padding: 11px var(--space-3); font-size: 13px; font-weight: 600; color: var(--text-3); text-align: left; }
+.pricing table.data td { padding: 10px var(--space-3); border-top: 1px solid var(--edge); }
+.pricing table.data th:not(:first-child), .pricing table.data td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+.pricing table.data tbody tr { cursor: default; }
+.pricing table.data tbody tr:hover { background: none; }
+.pricing-note { margin-top: 6px; }
+
+/* Book Orbit library picker */
+.bo-libs { border: 0; border-radius: 0; background: none; box-shadow: none; padding: var(--space-3) 0 var(--space-2); margin: var(--space-3) 0 var(--space-1); display: grid; gap: var(--space-3); min-width: 0; }
+.bo-libs.ask { box-shadow: inset 3px 0 0 var(--beacon); padding-left: var(--space-3); }
+.bo-libs legend { font-weight: 700; padding: 0 6px; }
+.bo-libs > .hint { margin: 0; }
+.bo-lib-list { display: grid; gap: var(--space-1); }
+.bo-lib { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; padding: 0 var(--space-2); border-radius: 10px; cursor: pointer; }
+.bo-lib:hover { background: var(--glass-2); }
+.bo-lib input { width: 18px; height: 18px; accent-color: var(--beacon); }
+.bo-lib-name { font-weight: 600; overflow-wrap: anywhere; }
+@media (max-width: 640px) { .bo-lib { grid-template-columns: auto minmax(0, 1fr); } .bo-lib .hint { grid-column: 2; } }
+
+/* cloud models: one block per provider, separated by a hairline */
+.prov-list { gap: var(--space-5); }
+.prov + .prov { padding-top: var(--space-5); border-top: 1px solid var(--edge); }
+.prov-name { margin: 0; font-size: var(--text-md, 16px); font-weight: 600; }
+.prov-more > summary { cursor: pointer; color: var(--text-2); font-size: var(--text-sm); padding: 4px 0; }
+.prov-more[open] > summary { margin-bottom: var(--space-3); }

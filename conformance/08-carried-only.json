@@ -1,0 +1,183 @@
+{
+  "description": "Only book 2's index is available: carried entries stand in for book 1.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/sign-of-four.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "sign-of-four",
+    "anchor": "ch1.para17"
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "sign-of-four",
+      "anchor": "ch1.para17"
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para40",
+      "exhausted": false
+    },
+    "entities": [
+      {
+        "id": "holmes",
+        "type": "person",
+        "name": "Sherlock Holmes",
+        "aliases": [
+          "Holmes"
+        ],
+        "profile": {
+          "id": "sof.holmes.p1",
+          "text": "Watson's companion of several years in Baker Street, who calls himself the only unofficial consulting detective and turns to cocaine when he has no problem to work on.",
+          "basis": "stated",
+          "book": "sign-of-four"
+        },
+        "facets": [
+          {
+            "id": "sof.holmes.1",
+            "text": "Has been injecting cocaine several times a day for months when he has no case, which alarms Watson.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.2",
+            "text": "Calls himself the only unofficial consulting detective, the last resort of official detectives such as Gregson, Lestrade and Athelney Jones; he wants no public credit.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.3",
+            "text": "Thinks Watson's written account of their first case was spoiled by romance, since detection should be treated as an exact science.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": [
+          {
+            "id": "sof.carried.holmes.1",
+            "text": "A consulting detective with lopsided but deep knowledge, especially of chemistry and crime, who reads people's histories from small details.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ]
+      },
+      {
+        "id": "watson",
+        "type": "person",
+        "name": "John H. Watson",
+        "aliases": [
+          "Dr. Watson",
+          "Watson"
+        ],
+        "profile": {
+          "id": "sof.carried.watson.1",
+          "text": "Army doctor wounded in Afghanistan who shares rooms with Holmes at 221B Baker Street and narrates his cases.",
+          "basis": "stated",
+          "book": "study-in-scarlet"
+        },
+        "facets": [
+          {
+            "id": "sof.watson.1",
+            "text": "His health has still not recovered from the Afghan campaign.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.2",
+            "text": "Has written up the Jefferson Hope case as a short book titled \"A Study in Scarlet\".",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.3",
+            "text": "Has now lived with Holmes in Baker Street for years.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "lestrade",
+        "type": "person",
+        "name": "Lestrade",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sof.carried.lestrade.1",
+            "text": "A well-known police detective who brings Holmes cases he cannot solve.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sof.lestrade.1",
+            "text": "Named by Holmes as one of the official detectives who come to him when out of their depth.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "gregson",
+        "type": "person",
+        "name": "Gregson",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sof.gregson.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "athelney-jones",
+        "type": "person",
+        "name": "Athelney Jones",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sof.jones.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      }
+    ],
+    "relations": [
+      {
+        "id": "sof.rel.watson-holmes",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "longtime companion and fellow lodger of",
+        "book": "sign-of-four"
+      }
+    ],
+    "relationHistory": [],
+    "events": [
+      {
+        "id": "sof.ev.cocaine",
+        "summary": "Watson confronts Holmes about his cocaine habit.",
+        "entities": [
+          "watson",
+          "holmes"
+        ],
+        "book": "sign-of-four"
+      }
+    ],
+    "recap": null,
+    "chapters": []
+  }
+}

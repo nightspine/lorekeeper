@@ -1,0 +1,14 @@
+{
+  "description": "XPointer to the <a> inside the chapter heading: the heading block.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[5]/body/div/h2/a"
+  },
+  "expect": {
+    "seq": 30,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "pt1.note"
+  }
+}

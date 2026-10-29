@@ -1,0 +1,1064 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "index",
+  "id": "sherlock-holmes.sign-of-four",
+  "work": {
+    "title": "The Sign of the Four",
+    "authors": [
+      "Arthur Conan Doyle"
+    ],
+    "language": "en",
+    "ids": {
+      "gutenberg": "2097"
+    }
+  },
+  "series": {
+    "id": "sherlock-holmes",
+    "book": "sign-of-four"
+  },
+  "editions": [
+    {
+      "textHash": "32b811458e762804df436a50b471f117db78f7c968c509f6f5163e73ded715b7",
+      "fileHash": "966338f996fb14b86d3795ed017b39f2cec57c20dc9f5fd04231653f03b2ce35",
+      "builtFrom": true
+    },
+    {
+      "textHash": "704f7c6f3745ce5b153ea2a5a88e86d4cd2c252c64f726ac92b98467714f329c",
+      "label": "Project Gutenberg EPUB #2097",
+      "fileHash": "966338f996fb14b86d3795ed017b39f2cec57c20dc9f5fd04231653f03b2ce35",
+      "builtFrom": true
+    }
+  ],
+  "coverage": {
+    "complete": false,
+    "through": "ch2.para40"
+  },
+  "provenance": {
+    "contributors": [
+      {
+        "name": "Lorekeeper spec example (hand-written)",
+        "role": "author"
+      }
+    ],
+    "created": "2026-10-21T00:00:00Z",
+    "license": "CC0-1.0"
+  },
+  "anchors": [
+    {
+      "id": "ch1.para01",
+      "seq": 22,
+      "fp": "13bfef4be80aab55"
+    },
+    {
+      "id": "ch1.para02",
+      "seq": 23,
+      "fp": "1cc15b5ed4e9f62f"
+    },
+    {
+      "id": "ch1.para05",
+      "seq": 26,
+      "fp": "1c34781415c4c697"
+    },
+    {
+      "id": "ch1.para06",
+      "seq": 27,
+      "fp": "60e25bffce69dab4"
+    },
+    {
+      "id": "ch1.para12",
+      "seq": 33,
+      "fp": "ce7f453471da652c"
+    },
+    {
+      "id": "ch1.para13",
+      "seq": 34,
+      "fp": "5506097418c9ff9b"
+    },
+    {
+      "id": "ch1.para14",
+      "seq": 35,
+      "fp": "ffb0b2ebf724a35c"
+    },
+    {
+      "id": "ch1.para17",
+      "seq": 38,
+      "fp": "cb95eb1db6870023"
+    },
+    {
+      "id": "ch1.para18",
+      "seq": 39,
+      "fp": "6c1dc2821cca1237"
+    },
+    {
+      "id": "ch1.para20",
+      "seq": 41,
+      "fp": "0e3901de62569bc2"
+    },
+    {
+      "id": "ch1.para22",
+      "seq": 43,
+      "fp": "1fe02d9bbcd1e15a"
+    },
+    {
+      "id": "ch1.para26",
+      "seq": 47,
+      "fp": "ae05a8b261a6a11e"
+    },
+    {
+      "id": "ch1.para28",
+      "seq": 49,
+      "fp": "aa82ce8ffea4943a"
+    },
+    {
+      "id": "ch1.para30",
+      "seq": 51,
+      "fp": "b8103a41fda16d31"
+    },
+    {
+      "id": "ch1.para33",
+      "seq": 54,
+      "fp": "ea0f191b1ef1b1a6"
+    },
+    {
+      "id": "ch1.para37",
+      "seq": 58,
+      "fp": "63915d07b9b4f49b"
+    },
+    {
+      "id": "ch1.para41",
+      "seq": 62,
+      "fp": "731b49bc3492a714"
+    },
+    {
+      "id": "ch1.para42",
+      "seq": 63,
+      "fp": "c35879482b6ab243"
+    },
+    {
+      "id": "ch1.para43",
+      "seq": 64,
+      "fp": "bc4ce211d31cc9a2"
+    },
+    {
+      "id": "ch1.para44",
+      "seq": 65,
+      "fp": "58542337a2a859a8"
+    },
+    {
+      "id": "ch1.para45",
+      "seq": 66,
+      "fp": "f695657a9affd317"
+    },
+    {
+      "id": "ch1.para51",
+      "seq": 72,
+      "fp": "bacc948646a9c596"
+    },
+    {
+      "id": "ch1.para52",
+      "seq": 73,
+      "fp": "e71836a30c0e4d4c"
+    },
+    {
+      "id": "ch1.para53",
+      "seq": 74,
+      "fp": "6189b81fb0957a29"
+    },
+    {
+      "id": "ch1.para54",
+      "seq": 75,
+      "fp": "268177a006f6a0ed"
+    },
+    {
+      "id": "ch1.para55",
+      "seq": 76,
+      "fp": "9811874c12e11ccc"
+    },
+    {
+      "id": "ch2.para01",
+      "seq": 78,
+      "fp": "4328eb841135b9ad"
+    },
+    {
+      "id": "ch2.para02",
+      "seq": 79,
+      "fp": "a7197b4b404f8348"
+    },
+    {
+      "id": "ch2.para03",
+      "seq": 80,
+      "fp": "43d865908241ba9e"
+    },
+    {
+      "id": "ch2.para09",
+      "seq": 86,
+      "fp": "b4a0f5e2412a1345"
+    },
+    {
+      "id": "ch2.para11",
+      "seq": 88,
+      "fp": "411169bf9c55b356"
+    },
+    {
+      "id": "ch2.para13",
+      "seq": 90,
+      "fp": "b3eb53cfa231ac65"
+    },
+    {
+      "id": "ch2.para15",
+      "seq": 92,
+      "fp": "e60eb8f707ed514b"
+    },
+    {
+      "id": "ch2.para17",
+      "seq": 94,
+      "fp": "cf8839a16aac7c96"
+    },
+    {
+      "id": "ch2.para19",
+      "seq": 96,
+      "fp": "7bcc37702578db75"
+    },
+    {
+      "id": "ch2.para20",
+      "seq": 97,
+      "fp": "84be860b49db5b0b"
+    },
+    {
+      "id": "ch2.para22",
+      "seq": 99,
+      "fp": "38d98306015ea28d"
+    },
+    {
+      "id": "ch2.para24",
+      "seq": 101,
+      "fp": "ffddd4d1f8509597"
+    },
+    {
+      "id": "ch2.para32",
+      "seq": 109,
+      "fp": "84c8cf201668a190"
+    },
+    {
+      "id": "ch2.para33",
+      "seq": 110,
+      "fp": "c5c61756453cdd2a"
+    },
+    {
+      "id": "ch2.para35",
+      "seq": 112,
+      "fp": "52303626e4739624"
+    },
+    {
+      "id": "ch2.para40",
+      "seq": 117,
+      "fp": "bed8747aa70e1a94"
+    }
+  ],
+  "entities": [
+    {
+      "id": "holmes",
+      "type": "person",
+      "from": "ch1.para01",
+      "names": [
+        {
+          "value": "Sherlock Holmes",
+          "kind": "primary",
+          "from": "ch1.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.holmes.1",
+          "from": "ch1.para05",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para01",
+            "ch1.para02",
+            "ch1.para05"
+          ],
+          "text": "Has been injecting cocaine several times a day for months when he has no case, which alarms Watson."
+        },
+        {
+          "id": "sof.holmes.2",
+          "from": "ch1.para12",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12"
+          ],
+          "text": "Calls himself the only unofficial consulting detective, the last resort of official detectives such as Gregson, Lestrade and Athelney Jones; he wants no public credit."
+        },
+        {
+          "id": "sof.holmes.p1",
+          "kind": "profile",
+          "from": "ch1.para12",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05",
+            "ch1.para12"
+          ],
+          "replaces": [
+            "sis.holmes.p2"
+          ],
+          "text": "Watson's companion of several years in Baker Street, who calls himself the only unofficial consulting detective and turns to cocaine when he has no problem to work on."
+        },
+        {
+          "id": "sof.holmes.3",
+          "from": "ch1.para14",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para13",
+            "ch1.para14"
+          ],
+          "text": "Thinks Watson's written account of their first case was spoiled by romance, since detection should be treated as an exact science."
+        },
+        {
+          "id": "sof.holmes.4",
+          "from": "ch1.para22",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para22"
+          ],
+          "text": "Has written technical monographs, including one that tells apart 140 kinds of tobacco ash."
+        },
+        {
+          "id": "sof.holmes.5",
+          "from": "ch1.para30",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para26",
+            "ch1.para28",
+            "ch1.para30"
+          ],
+          "text": "Shows the difference between observation and deduction by working out that Watson went to the Wigmore Street post office to send a telegram."
+        },
+        {
+          "id": "sof.holmes.6",
+          "from": "ch1.para51",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para37",
+            "ch1.para41",
+            "ch1.para43",
+            "ch1.para44",
+            "ch1.para51"
+          ],
+          "text": "From an old watch alone, deduces the unhappy life of Watson's late elder brother. Watson is hurt until Holmes shows his reasoning."
+        },
+        {
+          "id": "sof.holmes.7",
+          "from": "ch2.para35",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para33",
+            "ch2.para35"
+          ],
+          "text": "Insists that a client is only a factor in a problem and that personal feelings must never colour his judgment."
+        }
+      ]
+    },
+    {
+      "id": "watson",
+      "type": "person",
+      "from": "ch1.para06",
+      "names": [
+        {
+          "value": "Watson",
+          "kind": "alias",
+          "from": "ch1.para06"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.watson.1",
+          "from": "ch1.para06",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para06"
+          ],
+          "text": "His health has still not recovered from the Afghan campaign."
+        },
+        {
+          "id": "sof.watson.2",
+          "from": "ch1.para13",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12",
+            "ch1.para13"
+          ],
+          "text": "Has written up the Jefferson Hope case as a short book titled \"A Study in Scarlet\"."
+        },
+        {
+          "id": "sof.watson.3",
+          "from": "ch1.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para17"
+          ],
+          "text": "Has now lived with Holmes in Baker Street for years."
+        },
+        {
+          "id": "sof.watson.4",
+          "from": "ch1.para45",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para41",
+            "ch1.para43",
+            "ch1.para45"
+          ],
+          "text": "Had an elder brother, now dead, who threw away his prospects and took to drink; the subject is painful to Watson."
+        },
+        {
+          "id": "sof.watson.5",
+          "from": "ch2.para40",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para42",
+            "ch2.para40"
+          ],
+          "text": "Describes himself as an army surgeon with a weak leg and very little money, and limps when upset."
+        },
+        {
+          "id": "sof.watson.6",
+          "from": "ch2.para40",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para32",
+            "ch2.para40"
+          ],
+          "text": "Is strongly drawn to Mary Morstan but tells himself he has no right to hope."
+        }
+      ]
+    },
+    {
+      "id": "lestrade",
+      "type": "person",
+      "from": "ch1.para12",
+      "names": [
+        {
+          "value": "Lestrade",
+          "kind": "primary",
+          "from": "ch1.para12"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.lestrade.1",
+          "from": "ch1.para12",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12"
+          ],
+          "text": "Named by Holmes as one of the official detectives who come to him when out of their depth."
+        }
+      ]
+    },
+    {
+      "id": "gregson",
+      "type": "person",
+      "from": "ch1.para12",
+      "names": [
+        {
+          "value": "Gregson",
+          "kind": "primary",
+          "from": "ch1.para12"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.gregson.1",
+          "from": "ch1.para12",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12"
+          ],
+          "text": "An official detective Holmes names among those who bring him cases."
+        }
+      ]
+    },
+    {
+      "id": "athelney-jones",
+      "type": "person",
+      "from": "ch1.para12",
+      "names": [
+        {
+          "value": "Athelney Jones",
+          "kind": "primary",
+          "from": "ch1.para12"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.jones.1",
+          "from": "ch1.para12",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para12"
+          ],
+          "text": "An official detective Holmes names among those who bring him cases."
+        }
+      ]
+    },
+    {
+      "id": "le-villard",
+      "type": "person",
+      "from": "ch1.para18",
+      "names": [
+        {
+          "value": "François Le Villard",
+          "kind": "primary",
+          "from": "ch1.para18"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.villard.1",
+          "from": "ch1.para20",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para18",
+            "ch1.para20"
+          ],
+          "text": "A rising French detective who recently consulted Holmes and is translating Holmes's monographs into French."
+        }
+      ]
+    },
+    {
+      "id": "mrs-hudson",
+      "type": "person",
+      "from": "ch1.para55",
+      "names": [
+        {
+          "value": "Mrs. Hudson",
+          "kind": "primary",
+          "from": "ch1.para55"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.hudson.1",
+          "from": "ch1.para55",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para53",
+            "ch1.para55"
+          ],
+          "text": "The landlady at Baker Street, who shows visitors up to Holmes."
+        }
+      ]
+    },
+    {
+      "id": "mary-morstan",
+      "type": "person",
+      "from": "ch1.para55",
+      "names": [
+        {
+          "value": "Mary Morstan",
+          "kind": "primary",
+          "from": "ch1.para55"
+        },
+        {
+          "value": "Miss Morstan",
+          "kind": "title",
+          "from": "ch2.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.morstan.1",
+          "from": "ch1.para55",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para54",
+            "ch1.para55"
+          ],
+          "text": "A young woman who calls on Holmes; he does not recognise her name."
+        },
+        {
+          "id": "sof.morstan.2",
+          "from": "ch2.para01",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para01"
+          ],
+          "text": "Blonde, small and composed, dressed tastefully but plainly in a way that hints at limited means."
+        },
+        {
+          "id": "sof.morstan.3",
+          "from": "ch2.para02",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para02"
+          ],
+          "text": "Employed by Mrs. Cecil Forrester, whom Holmes once helped."
+        },
+        {
+          "id": "sof.morstan.4",
+          "from": "ch2.para11",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para09",
+            "ch2.para11"
+          ],
+          "text": "Her mother died when she was young; she grew up at a boarding school in Edinburgh while her father served in India. He vanished in London in 1878, soon after coming home on leave."
+        },
+        {
+          "id": "sof.morstan.5",
+          "from": "ch2.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para17"
+          ],
+          "replaces": [
+            "sof.morstan.3"
+          ],
+          "text": "Has been governess in the household of Mrs. Cecil Forrester since 1882."
+        },
+        {
+          "id": "sof.morstan.6",
+          "from": "ch2.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para17"
+          ],
+          "text": "Since 1882 she has received a valuable pearl by post every year from an unknown sender, after answering a newspaper advertisement that asked for her address."
+        },
+        {
+          "id": "sof.morstan.7",
+          "from": "ch2.para20",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para19",
+            "ch2.para20"
+          ],
+          "text": "Has just received an unsigned letter telling her to come to the Lyceum Theatre tonight, with two friends and no police, and promising her justice."
+        }
+      ]
+    },
+    {
+      "id": "mrs-forrester",
+      "type": "person",
+      "from": "ch2.para02",
+      "names": [
+        {
+          "value": "Mrs. Cecil Forrester",
+          "kind": "primary",
+          "from": "ch2.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.forrester.1",
+          "from": "ch2.para03",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para02",
+            "ch2.para03"
+          ],
+          "text": "Mary Morstan's employer and a former client of Holmes, whose problem he remembers as a simple one."
+        }
+      ]
+    },
+    {
+      "id": "captain-morstan",
+      "type": "person",
+      "from": "ch2.para09",
+      "names": [
+        {
+          "value": "Captain Morstan",
+          "kind": "primary",
+          "from": "ch2.para09"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.capt.1",
+          "from": "ch2.para11",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para09",
+            "ch2.para11"
+          ],
+          "text": "Mary's father, senior captain of an Indian regiment, who disappeared from the Langham Hotel in London on 3 December 1878 and was never heard of again."
+        },
+        {
+          "id": "sof.capt.2",
+          "from": "ch2.para13",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para13"
+          ],
+          "text": "Had served as an officer of the convict guard on the Andaman Islands; his abandoned luggage held curiosities from there."
+        }
+      ]
+    },
+    {
+      "id": "andaman-islands",
+      "type": "place",
+      "from": "ch2.para13",
+      "names": [
+        {
+          "value": "Andaman Islands",
+          "kind": "primary",
+          "from": "ch2.para13"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.andaman.1",
+          "from": "ch2.para13",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para13"
+          ],
+          "text": "Islands where Captain Morstan helped guard convicts."
+        }
+      ]
+    },
+    {
+      "id": "major-sholto",
+      "type": "person",
+      "from": "ch2.para15",
+      "names": [
+        {
+          "value": "Major Sholto",
+          "kind": "primary",
+          "from": "ch2.para15"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.sholto.1",
+          "from": "ch2.para15",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para15"
+          ],
+          "text": "Captain Morstan's only known friend in London: a retired officer of his regiment living at Upper Norwood, who said he had not known Morstan was in England."
+        }
+      ]
+    },
+    {
+      "id": "pearls",
+      "type": "object",
+      "from": "ch2.para17",
+      "names": [
+        {
+          "value": "Mary Morstan's pearls",
+          "kind": "descriptive",
+          "from": "ch2.para17"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.pearls.1",
+          "from": "ch2.para17",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para17"
+          ],
+          "text": "Six rare, valuable pearls, one posted to Mary each year since 1882 with no note or sender."
+        }
+      ]
+    },
+    {
+      "id": "lyceum",
+      "type": "place",
+      "from": "ch2.para20",
+      "names": [
+        {
+          "value": "Lyceum Theatre",
+          "kind": "primary",
+          "from": "ch2.para20"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.lyceum.1",
+          "from": "ch2.para20",
+          "basis": "stated",
+          "evidence": [
+            "ch2.para20"
+          ],
+          "text": "London theatre where the letter tells Mary to wait at a particular pillar at seven o'clock tonight."
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "sof.rel.watson-holmes",
+      "src": "watson",
+      "dst": "holmes",
+      "label": "longtime companion and fellow lodger of",
+      "from": "ch1.para17",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para17"
+      ],
+      "replaces": [
+        "sis.rel.watson-holmes.2"
+      ]
+    },
+    {
+      "id": "sof.rel.villard-holmes",
+      "src": "le-villard",
+      "dst": "holmes",
+      "label": "recently consulted",
+      "from": "ch1.para18",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para18"
+      ]
+    },
+    {
+      "id": "sof.rel.hudson-holmes",
+      "src": "mrs-hudson",
+      "dst": "holmes",
+      "label": "landlady of",
+      "from": "ch1.para55",
+      "basis": "stated",
+      "evidence": [
+        "ch1.para53",
+        "ch1.para55"
+      ]
+    },
+    {
+      "id": "sof.rel.forrester-holmes",
+      "src": "mrs-forrester",
+      "dst": "holmes",
+      "label": "former client of",
+      "from": "ch2.para03",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para03"
+      ]
+    },
+    {
+      "id": "sof.rel.mary-captain",
+      "src": "mary-morstan",
+      "dst": "captain-morstan",
+      "label": "daughter of",
+      "from": "ch2.para09",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para09"
+      ]
+    },
+    {
+      "id": "sof.rel.captain-sholto",
+      "src": "captain-morstan",
+      "dst": "major-sholto",
+      "label": "fellow officer and friend of",
+      "from": "ch2.para15",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para15"
+      ]
+    },
+    {
+      "id": "sof.rel.mary-forrester",
+      "src": "mary-morstan",
+      "dst": "mrs-forrester",
+      "label": "governess to",
+      "from": "ch2.para17",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para17"
+      ]
+    },
+    {
+      "id": "sof.rel.watson-mary",
+      "src": "watson",
+      "dst": "mary-morstan",
+      "label": "attracted to",
+      "from": "ch2.para32",
+      "basis": "stated",
+      "evidence": [
+        "ch2.para32"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "sof.ev.cocaine",
+      "from": "ch1.para05",
+      "summary": "Watson confronts Holmes about his cocaine habit.",
+      "entities": [
+        "watson",
+        "holmes"
+      ],
+      "evidence": [
+        "ch1.para05"
+      ]
+    },
+    {
+      "id": "sof.ev.telegram",
+      "from": "ch1.para30",
+      "summary": "Holmes deduces that Watson sent a telegram that morning.",
+      "entities": [
+        "holmes",
+        "watson"
+      ],
+      "evidence": [
+        "ch1.para30"
+      ]
+    },
+    {
+      "id": "sof.ev.watch",
+      "from": "ch1.para51",
+      "summary": "Holmes reads the history of Watson's brother from an old watch.",
+      "entities": [
+        "holmes",
+        "watson"
+      ],
+      "evidence": [
+        "ch1.para51"
+      ]
+    },
+    {
+      "id": "sof.ev.visitor",
+      "from": "ch1.para55",
+      "summary": "Mary Morstan calls on Holmes.",
+      "entities": [
+        "mary-morstan",
+        "holmes",
+        "mrs-hudson"
+      ],
+      "evidence": [
+        "ch1.para55"
+      ]
+    },
+    {
+      "id": "sof.ev.father",
+      "from": "ch2.para11",
+      "summary": "Mary explains how her father disappeared in 1878.",
+      "entities": [
+        "mary-morstan",
+        "captain-morstan"
+      ],
+      "evidence": [
+        "ch2.para09",
+        "ch2.para11"
+      ]
+    },
+    {
+      "id": "sof.ev.letter",
+      "from": "ch2.para20",
+      "summary": "Holmes examines the letter summoning Mary to the Lyceum Theatre.",
+      "entities": [
+        "holmes",
+        "mary-morstan",
+        "lyceum"
+      ],
+      "evidence": [
+        "ch2.para20"
+      ]
+    },
+    {
+      "id": "sof.ev.agree",
+      "from": "ch2.para24",
+      "summary": "Holmes and Watson agree to go with Mary that evening.",
+      "entities": [
+        "holmes",
+        "watson",
+        "mary-morstan"
+      ],
+      "evidence": [
+        "ch2.para22",
+        "ch2.para24"
+      ]
+    }
+  ],
+  "recaps": [
+    {
+      "id": "sof.recap.ch1",
+      "from": "ch1.para55",
+      "evidence": [
+        "ch1.para05",
+        "ch1.para30",
+        "ch1.para51",
+        "ch1.para55"
+      ],
+      "text": "Bored without a case, Holmes is using cocaine, to Watson's dismay. Holmes shows off his methods by deducing Watson's trip to the post office and the sad history of Watson's elder brother from an old watch. Then a young woman, Mary Morstan, arrives to consult him."
+    },
+    {
+      "id": "sof.recap.ch2",
+      "from": "ch2.para40",
+      "evidence": [
+        "ch2.para11",
+        "ch2.para17",
+        "ch2.para20",
+        "ch2.para24",
+        "ch2.para40"
+      ],
+      "text": "Mary Morstan's father vanished in London in 1878. Since 1882 someone has sent her a pearl every year, and today a letter summoned her to the Lyceum Theatre tonight. Holmes and Watson agree to go with her. Watson is captivated by her but thinks himself unworthy."
+    }
+  ],
+  "carried": [
+    {
+      "id": "holmes",
+      "type": "person",
+      "origin": "study-in-scarlet",
+      "names": [
+        {
+          "value": "Sherlock Holmes",
+          "kind": "primary"
+        },
+        {
+          "value": "Holmes",
+          "kind": "alias"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.carried.holmes.1",
+          "kind": "profile",
+          "basis": "stated",
+          "text": "A consulting detective with lopsided but deep knowledge, especially of chemistry and crime, who reads people's histories from small details."
+        }
+      ]
+    },
+    {
+      "id": "watson",
+      "type": "person",
+      "origin": "study-in-scarlet",
+      "names": [
+        {
+          "value": "John H. Watson",
+          "kind": "primary"
+        },
+        {
+          "value": "Dr. Watson",
+          "kind": "title"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.carried.watson.1",
+          "kind": "profile",
+          "basis": "stated",
+          "text": "Army doctor wounded in Afghanistan who shares rooms with Holmes at 221B Baker Street and narrates his cases."
+        }
+      ]
+    },
+    {
+      "id": "lestrade",
+      "type": "person",
+      "origin": "study-in-scarlet",
+      "names": [
+        {
+          "value": "Lestrade",
+          "kind": "primary"
+        }
+      ],
+      "facets": [
+        {
+          "id": "sof.carried.lestrade.1",
+          "basis": "stated",
+          "text": "A well-known police detective who brings Holmes cases he cannot solve."
+        }
+      ]
+    }
+  ]
+}

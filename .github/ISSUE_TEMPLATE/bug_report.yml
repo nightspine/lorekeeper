@@ -1,0 +1,52 @@
+name: Bug report
+description: Something does not work as the spec or the docs say.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Steps, ideally with a public-domain book (for example a Project Gutenberg title) and the exact command.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or image tag
+      description: For example 0.1.0, edge, or a commit hash.
+    validations:
+      required: true
+  - type: dropdown
+    id: how
+    attributes:
+      label: How you run it
+      options: [Docker, uv / Python, KOReader plugin, Other]
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Model, if the bug is in generation
+      description: Ollama model or cloud provider and model name.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Remove any API keys or tokens.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before you submit
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I reproduced this myself; it is not copied from a model's analysis.
+          required: true

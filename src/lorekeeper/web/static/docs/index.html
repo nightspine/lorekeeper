@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Overview - Lorekeeper docs</title>
+<meta name="description" content="Lorekeeper is an open format and protocol for spoiler-safe book companions, with a reference server and client.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html" aria-current="page">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Lorekeeper documentation</h1>
+<p class="lede">Lorekeeper is an open format and protocol for spoiler-safe book companions. An index lists a book's characters, places, terms, relationships, events and recaps, and a reader app shows only what you have read so far.</p>
+
+<p>Indexes are built once, by AI, by people or by both, and then shared. A reader app only fetches an index and filters it against the reader's position, so it needs no AI, no tokens, and works offline. Every item in an index carries the paragraph where it becomes visible, and a paragraph is recognized by a short fingerprint of its words, so one index fits every edition of a book and every screen size.</p>
+<p>The documentation is for two audiences. Developers of reader apps add a "who is this?" lookup that cannot spoil. Self-hosters run a server that builds indexes for their own library and serves them to their devices.</p>
+
+<div class="paths">
+<a class="primary" href="reader-apps.html"><strong>Integrate a reader app</strong><span>Fetch an index, find the reader's paragraph, answer a tapped name.</span></a>
+<a href="self-hosting.html"><strong>Self-host</strong><span>Run the server, build indexes from your own EPUBs, share them with your devices.</span></a>
+<a href="spec.html"><strong>Read the spec</strong><span>The normative text model, index format, gating algorithm and protocol.</span></a>
+</div>
+
+<h2 id="tour">A 60-second tour</h2>
+<ol>
+<li><strong>Library.</strong> Start the server and open it in a browser. The Library lists your books by series, from your uploads and from Book Orbit if you connect it. With no books yet it opens on a bundled example, a hand-written index of the first chapters of <em>A Study in Scarlet</em>.</li>
+<li><strong>Build.</strong> Pick a book, choose a local model through Ollama or a cloud model on your own key (Claude, OpenAI, Gemini and others), and press Build index. The Runs page follows the build chapter by chapter. Each finished chunk is written to disk, so a stopped run resumes where it ended.</li>
+<li><strong>Reader.</strong> Open the index in the Reader and drag through the book. Characters, places, relationships and recaps appear as the position passes the paragraph that introduces them, and a tapped name shows only what you know by then.</li>
+</ol>
+<p>The same index, served over HTTP, answers the same questions for any other app. That is the subject of the <a href="reader-apps.html">reader app guide</a>.</p>
+
+<h2 id="how">How it fits together</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Piece</th><th>What it does</th><th>Where to read more</th></tr></thead>
+<tbody>
+<tr><td>Text model</td><td>Turns an EPUB into numbered paragraph blocks and fingerprints them.</td><td><a href="spec.html#31-text-model">Specification 3</a></td></tr>
+<tr><td>Index</td><td>A JSON document of entities, relations, events and recaps, each gated by a paragraph anchor.</td><td><a href="format.html">Index format</a></td></tr>
+<tr><td>Gating</td><td>Chooses what is visible at a position. Runs on the device or on the server.</td><td><a href="reader-apps.html#safety">Spoiler safety</a></td></tr>
+<tr><td>Locators</td><td>Turn a CFI, an XPointer or a word offset into a paragraph.</td><td><a href="locators.html">Locators</a></td></tr>
+<tr><td>Protocol</td><td>Read-only HTTP routes for lookup, fetch, view and name lookup.</td><td><a href="protocol.html">Protocol reference</a></td></tr>
+<tr><td>Conformance</td><td>Test cases every client and server must pass.</td><td><a href="conformance.html">Conformance</a></td></tr>
+</tbody></table></div>
+<p class="note">Lorekeeper is a v0.1 draft. The format and protocol can still change, and the specification is the authority where a page here is vaguer.</p>
+
+</main>
+</div>
+</body>
+</html>

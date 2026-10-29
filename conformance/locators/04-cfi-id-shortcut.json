@@ -1,0 +1,14 @@
+{
+  "description": "The path is stale (no child 49) but the asserted id on the last element step names the chapter heading anchor.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/98[link2HCH0001]/1:0)"
+  },
+  "expect": {
+    "seq": 30,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "pt1.note"
+  }
+}

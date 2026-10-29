@@ -1,0 +1,978 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "index",
+  "id": "sherlock-holmes.study-in-scarlet",
+  "work": {
+    "title": "A Study in Scarlet",
+    "authors": [
+      "Arthur Conan Doyle"
+    ],
+    "language": "en"
+  },
+  "editions": [
+    {
+      "textHash": "3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5",
+      "fileHash": "d65612d1c87ec1f7fed290361d11278cdbaf8509d5c231b1ff0981049331b7e7",
+      "label": "pg244.epub",
+      "builtFrom": true
+    }
+  ],
+  "coverage": {
+    "complete": false,
+    "through": "toc06.para51"
+  },
+  "provenance": {
+    "generator": {
+      "name": "lorekeeper-generate",
+      "version": "0.2.0",
+      "model": "claude-haiku-5-5",
+      "promptSet": "extract-v2"
+    },
+    "contributors": [
+      {
+        "name": "claude-haiku-5-5 via lorekeeper-generate",
+        "role": "generator"
+      }
+    ],
+    "review": [
+      {
+        "by": "lorekeeper-generate",
+        "date": "2026-10-21",
+        "status": "unreviewed"
+      }
+    ],
+    "created": "2026-10-21T22:36:46Z",
+    "updated": "2026-10-21T22:37:05Z",
+    "license": "CC0-1.0"
+  },
+  "anchors": [
+    {
+      "id": "toc05.para01",
+      "fp": "ed131b9e3d13f696",
+      "seq": 31
+    },
+    {
+      "id": "toc05.para02",
+      "fp": "ab28352abd2f8b28",
+      "seq": 32
+    },
+    {
+      "id": "toc05.para03",
+      "fp": "cfe66719d894689c",
+      "seq": 33
+    },
+    {
+      "id": "toc05.para05",
+      "fp": "96e69275a85f6afd",
+      "seq": 35
+    },
+    {
+      "id": "toc05.para06",
+      "fp": "4d9d535509296a43",
+      "seq": 36
+    },
+    {
+      "id": "toc05.para34",
+      "fp": "2b1f5428714cbaa7",
+      "seq": 64
+    },
+    {
+      "id": "toc05.para40",
+      "fp": "d2bda7f81bce8094",
+      "seq": 70
+    },
+    {
+      "id": "toc05.para51",
+      "fp": "3b121120601de98c",
+      "seq": 81
+    },
+    {
+      "id": "toc05.para52",
+      "fp": "bd54f49031fd6d23",
+      "seq": 82
+    },
+    {
+      "id": "toc05.para57",
+      "fp": "1be8b1a7ea3483d2",
+      "seq": 87
+    },
+    {
+      "id": "toc05.para60",
+      "fp": "3f602e0e1311a5a6",
+      "seq": 90
+    },
+    {
+      "id": "toc05.para62",
+      "fp": "2441113b09c52a75",
+      "seq": 92
+    },
+    {
+      "id": "toc05.para69",
+      "fp": "2eae6519269e5247",
+      "seq": 99
+    },
+    {
+      "id": "toc06.para01",
+      "fp": "ab283eb2075e6a74",
+      "seq": 101
+    },
+    {
+      "id": "toc06.para02",
+      "fp": "866b8c0f51ae6d41",
+      "seq": 102
+    },
+    {
+      "id": "toc06.para04",
+      "fp": "4992f4a3f744dddf",
+      "seq": 104
+    },
+    {
+      "id": "toc06.para06",
+      "fp": "33b412d20e241525",
+      "seq": 106
+    },
+    {
+      "id": "toc06.para09",
+      "fp": "5c942c26a3e5980e",
+      "seq": 109
+    },
+    {
+      "id": "toc06.para16",
+      "fp": "9d66abbe8986ebb4",
+      "seq": 116
+    },
+    {
+      "id": "toc06.para17",
+      "fp": "8c64fd96d194ff0e",
+      "seq": 117
+    },
+    {
+      "id": "toc06.para19",
+      "fp": "9a1bf352ae5da30d",
+      "seq": 119
+    },
+    {
+      "id": "toc06.para20",
+      "fp": "28273a24bab21dfb",
+      "seq": 120
+    },
+    {
+      "id": "toc06.para24",
+      "fp": "fe72c108568d6990",
+      "seq": 124
+    },
+    {
+      "id": "toc06.para28",
+      "fp": "46032c01f194bf97",
+      "seq": 128
+    },
+    {
+      "id": "toc06.para32",
+      "fp": "c13c70f397bb9917",
+      "seq": 132
+    },
+    {
+      "id": "toc06.para35",
+      "fp": "0e169aedbb01ceaf",
+      "seq": 135
+    },
+    {
+      "id": "toc06.para36",
+      "fp": "b7c36e9c7bb06dfc",
+      "seq": 136
+    },
+    {
+      "id": "toc06.para37",
+      "fp": "d49ee7dcf61dc92f",
+      "seq": 137
+    },
+    {
+      "id": "toc06.para38",
+      "fp": "14b06c559653598f",
+      "seq": 138
+    },
+    {
+      "id": "toc06.para40",
+      "fp": "a767037db7b083ac",
+      "seq": 140
+    },
+    {
+      "id": "toc06.para46",
+      "fp": "5242600effadc0f3",
+      "seq": 146
+    },
+    {
+      "id": "toc06.para51",
+      "fp": "16d3b22cc97d0188",
+      "seq": 151
+    }
+  ],
+  "entities": [
+    {
+      "id": "fifth-northumberland-fusiliers",
+      "type": "group",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Fifth Northumberland Fusiliers",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.fifth-northumberland-fusiliers.1",
+          "from": "toc05.para01",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "The regiment Watson was attached to as Assistant Surgeon, stationed in India."
+        }
+      ]
+    },
+    {
+      "id": "netley",
+      "type": "place",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Netley",
+          "kind": "primary",
+          "from": "toc05.para01"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.netley.1",
+          "from": "toc05.para01",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para01"
+          ],
+          "text": "Where Watson completed the army surgeon course after his medical degree."
+        }
+      ]
+    },
+    {
+      "id": "sherlock-holmes",
+      "type": "person",
+      "from": "toc05.para01",
+      "names": [
+        {
+          "value": "Sherlock Holmes",
+          "kind": "primary",
+          "from": "toc05.para01"
+        },
+        {
+          "value": "Mr. Sherlock Holmes",
+          "kind": "alias",
+          "from": "toc06.para46"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.sherlock-holmes.1",
+          "from": "toc05.para34",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para34"
+          ],
+          "text": "A man working at the hospital's chemical laboratory, eccentric and absorbed in unusual scientific studies."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.2",
+          "from": "toc05.para52",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para52"
+          ],
+          "text": "Holmes proposes sharing rooms in Baker Street and seems pleased at the idea of a lodger."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.3",
+          "from": "toc06.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para02"
+          ],
+          "text": "Holmes is quiet and regular in habits, sometimes lying idle for days, and seems not to be a drug user."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.4",
+          "from": "toc06.para09",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para09"
+          ],
+          "text": "Holmes believes the brain is like an attic and deliberately excludes knowledge he thinks useless to his work."
+        },
+        {
+          "id": "study-in-scarlet.sherlock-holmes.5",
+          "from": "toc06.para28",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para28"
+          ],
+          "text": "Holmes reveals he is a consulting detective whom Scotland Yard-type detectives and private agents consult for their cases."
+        }
+      ]
+    },
+    {
+      "id": "berkshires",
+      "type": "group",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Berkshires",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.berkshires.1",
+          "from": "toc05.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "The regiment Watson was attached to during the Afghan campaign, where he served at Maiwand."
+        }
+      ]
+    },
+    {
+      "id": "maiwand",
+      "type": "concept",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Maiwand",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.maiwand.1",
+          "from": "toc05.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "A fatal battle in the Afghan campaign where Watson was wounded in the shoulder."
+        }
+      ]
+    },
+    {
+      "id": "murray",
+      "type": "person",
+      "from": "toc05.para02",
+      "names": [
+        {
+          "value": "Murray",
+          "kind": "primary",
+          "from": "toc05.para02"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.murray.1",
+          "from": "toc05.para02",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para02"
+          ],
+          "text": "Watson's orderly who saved him at the battle of Maiwand by carrying him to safety."
+        }
+      ]
+    },
+    {
+      "id": "peshawar",
+      "type": "place",
+      "from": "toc05.para03",
+      "names": [
+        {
+          "value": "Peshawar",
+          "kind": "primary",
+          "from": "toc05.para03"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.peshawar.1",
+          "from": "toc05.para03",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para03"
+          ],
+          "text": "The base hospital where Watson was taken after his wounding and later struck by fever."
+        }
+      ]
+    },
+    {
+      "id": "barts",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Barts",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.barts.1",
+          "from": "toc05.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para05"
+          ],
+          "text": "The hospital where Stamford once dressed wounds under Watson."
+        }
+      ]
+    },
+    {
+      "id": "criterion-bar",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Criterion Bar",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.criterion-bar.1",
+          "from": "toc05.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para05"
+          ],
+          "text": "A London bar where Watson is standing when Stamford greets him."
+        }
+      ]
+    },
+    {
+      "id": "holborn",
+      "type": "place",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Holborn",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.holborn.1",
+          "from": "toc05.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para05"
+          ],
+          "text": "A restaurant where Watson and Stamford go to lunch together."
+        }
+      ]
+    },
+    {
+      "id": "stamford",
+      "type": "person",
+      "from": "toc05.para05",
+      "names": [
+        {
+          "value": "Stamford",
+          "kind": "primary",
+          "from": "toc05.para05"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.stamford.1",
+          "from": "toc05.para05",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para05"
+          ],
+          "text": "A former dresser under Watson at Barts whom Watson meets by chance at the Criterion Bar."
+        }
+      ]
+    },
+    {
+      "id": "watson",
+      "type": "person",
+      "from": "toc05.para06",
+      "names": [
+        {
+          "value": "Watson",
+          "kind": "primary",
+          "from": "toc05.para06"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.watson.1",
+          "from": "toc05.para06",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para06"
+          ],
+          "text": "The narrator, a newly qualified doctor who has served as an army surgeon and is now recovering in London."
+        },
+        {
+          "id": "study-in-scarlet.watson.2",
+          "from": "toc06.para04",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para04"
+          ],
+          "text": "Watson, with a poor health and no friends to visit him, is leisurely idle and eager for mystery."
+        }
+      ]
+    },
+    {
+      "id": "haemoglobin-test",
+      "type": "concept",
+      "from": "toc05.para34",
+      "names": [
+        {
+          "value": "Hæmoglobin test",
+          "kind": "primary",
+          "from": "toc05.para34"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.haemoglobin-test.1",
+          "from": "toc05.para40",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para40"
+          ],
+          "text": "Holmes's newly found reagent that reacts only to blood, offering a reliable test for blood stains."
+        }
+      ]
+    },
+    {
+      "id": "baker-street",
+      "type": "place",
+      "from": "toc05.para52",
+      "names": [
+        {
+          "value": "Baker Street",
+          "kind": "primary",
+          "from": "toc05.para52"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.baker-street.1",
+          "from": "toc05.para52",
+          "basis": "stated",
+          "evidence": [
+            "toc05.para52"
+          ],
+          "text": "The street where Holmes has a suite of rooms in view as shared lodgings."
+        },
+        {
+          "id": "study-in-scarlet.baker-street.2",
+          "from": "toc06.para01",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para01"
+          ],
+          "text": "Watson and Holmes take the rooms at No. 221b, Baker Street, and move in, Holmes following with his boxes the next morning."
+        }
+      ]
+    },
+    {
+      "id": "lestrade",
+      "type": "person",
+      "from": "toc06.para17",
+      "names": [
+        {
+          "value": "Lestrade",
+          "kind": "primary",
+          "from": "toc06.para17"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.lestrade.1",
+          "from": "toc06.para17",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para17"
+          ],
+          "text": "Introduced to Watson as Mr. Lestrade, a sallow, rat-faced, dark-eyed fellow who visits Holmes several times in a week."
+        }
+      ]
+    },
+    {
+      "id": "the-book-of-life",
+      "type": "object",
+      "from": "toc06.para19",
+      "names": [
+        {
+          "value": "The Book of Life",
+          "kind": "primary",
+          "from": "toc06.para19"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.the-book-of-life.1",
+          "from": "toc06.para24",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para19",
+            "toc06.para24"
+          ],
+          "text": "An article in a magazine, which Holmes has marked and which Watson reads, describing deduction from observation."
+        }
+      ]
+    },
+    {
+      "id": "science-of-deduction-and-analysis",
+      "type": "concept",
+      "from": "toc06.para20",
+      "names": [
+        {
+          "value": "Science of Deduction and Analysis",
+          "kind": "primary",
+          "from": "toc06.para20"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.science-of-deduction-and-analysis.1",
+          "from": "toc06.para20",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para20"
+          ],
+          "text": "The art of reading a person's history and trade from small observed details, as described in the article."
+        }
+      ]
+    },
+    {
+      "id": "dupin",
+      "type": "person",
+      "from": "toc06.para35",
+      "names": [
+        {
+          "value": "Dupin",
+          "kind": "primary",
+          "from": "toc06.para35"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.dupin.1",
+          "from": "toc06.para35",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para35"
+          ],
+          "text": "A fictional analytical detective from Poe's stories, to whom Watson likens Holmes."
+        }
+      ]
+    },
+    {
+      "id": "edgar-allen-poe",
+      "type": "person",
+      "from": "toc06.para35",
+      "names": [
+        {
+          "value": "Edgar Allen Poe",
+          "kind": "primary",
+          "from": "toc06.para35"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.edgar-allen-poe.1",
+          "from": "toc06.para35",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para35"
+          ],
+          "text": "A writer whose fictional detective Dupin Watson compares Holmes to."
+        }
+      ]
+    },
+    {
+      "id": "gaboriau",
+      "type": "person",
+      "from": "toc06.para37",
+      "names": [
+        {
+          "value": "Gaboriau",
+          "kind": "primary",
+          "from": "toc06.para37"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.gaboriau.1",
+          "from": "toc06.para37",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para37"
+          ],
+          "text": "A writer whose detective novels Watson asks Holmes about, with Lecoq as one of the characters."
+        }
+      ]
+    },
+    {
+      "id": "lecoq",
+      "type": "person",
+      "from": "toc06.para37",
+      "names": [
+        {
+          "value": "Lecoq",
+          "kind": "primary",
+          "from": "toc06.para37"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.lecoq.1",
+          "from": "toc06.para37",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para37"
+          ],
+          "text": "A fictional detective from Gaboriau's works, whom Watson admired and asks Holmes about."
+        }
+      ]
+    },
+    {
+      "id": "scotland-yard",
+      "type": "group",
+      "from": "toc06.para40",
+      "names": [
+        {
+          "value": "Scotland Yard",
+          "kind": "primary",
+          "from": "toc06.para40"
+        }
+      ],
+      "facets": [
+        {
+          "id": "study-in-scarlet.scotland-yard.1",
+          "from": "toc06.para40",
+          "basis": "stated",
+          "evidence": [
+            "toc06.para40"
+          ],
+          "text": "The official police force, whose officials Holmes mocks for seeing through transparent motives."
+        }
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "id": "study-in-scarlet.rel.1",
+      "src": "murray",
+      "dst": "watson",
+      "label": "orderly who saved",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para02"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.2",
+      "src": "stamford",
+      "dst": "watson",
+      "label": "former dresser of",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para05"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.3",
+      "src": "stamford",
+      "dst": "sherlock-holmes",
+      "label": "acquaintance who introduced",
+      "from": "toc05.para51",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para51"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.4",
+      "src": "watson",
+      "dst": "sherlock-holmes",
+      "label": "agreed to share rooms with",
+      "from": "toc05.para60",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para60"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.5",
+      "src": "watson",
+      "dst": "fifth-northumberland-fusiliers",
+      "label": "served in regiment",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.6",
+      "src": "watson",
+      "dst": "berkshires",
+      "label": "attached to",
+      "from": "toc05.para06",
+      "basis": "stated",
+      "evidence": [
+        "toc05.para02"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.7",
+      "src": "sherlock-holmes",
+      "dst": "watson",
+      "label": "shares rooms at Baker Street with",
+      "from": "toc06.para01",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.8",
+      "src": "sherlock-holmes",
+      "dst": "lestrade",
+      "label": "consulted by",
+      "from": "toc06.para28",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para17",
+        "toc06.para28"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.9",
+      "src": "sherlock-holmes",
+      "dst": "dupin",
+      "label": "admires the deductive reasoning of",
+      "from": "toc06.para36",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para32",
+        "toc06.para36"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.10",
+      "src": "sherlock-holmes",
+      "dst": "lecoq",
+      "label": "is contemptuous of",
+      "from": "toc06.para38",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para38"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.rel.11",
+      "src": "sherlock-holmes",
+      "dst": "the-book-of-life",
+      "label": "wrote",
+      "from": "toc06.para24",
+      "basis": "stated",
+      "evidence": [
+        "toc06.para24"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "study-in-scarlet.ev.1",
+      "from": "toc05.para40",
+      "summary": "Watson is introduced to Holmes, who demonstrates his blood-detecting reagent.",
+      "entities": [
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para34",
+        "toc05.para40"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.2",
+      "from": "toc05.para62",
+      "summary": "Watson and Holmes agree to share rooms, to be viewed the next day at noon.",
+      "entities": [
+        "watson",
+        "sherlock-holmes"
+      ],
+      "evidence": [
+        "toc05.para57",
+        "toc05.para62"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.3",
+      "from": "toc06.para01",
+      "summary": "Watson and Holmes rent the rooms at 221b Baker Street and move in.",
+      "entities": [
+        "watson",
+        "sherlock-holmes",
+        "baker-street"
+      ],
+      "evidence": [
+        "toc06.para01"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.ev.4",
+      "from": "toc06.para28",
+      "summary": "Holmes explains to Watson that he is a consulting detective whom police and private detectives consult.",
+      "entities": [
+        "sherlock-holmes",
+        "watson"
+      ],
+      "evidence": [
+        "toc06.para28"
+      ]
+    }
+  ],
+  "recaps": [
+    {
+      "id": "study-in-scarlet.recap.1",
+      "from": "toc05.para69",
+      "text": "In 1878 Watson, a newly qualified army surgeon, was wounded at Maiwand in the Afghan war and sent home from Peshawar with ruined health. Living in London on a small income, he met his former dresser Stamford, who introduced him to Sherlock Holmes, an eccentric chemist at the hospital. Holmes showed Watson a new blood-detection test and, after a brief exchange of habits, they agreed to share rooms in Baker Street. Holmes also astonished Watson by somehow knowing he had come from Afghanistan.",
+      "evidence": [
+        "toc05.para69"
+      ]
+    },
+    {
+      "id": "study-in-scarlet.recap.2",
+      "from": "toc06.para51",
+      "text": "In 1878 Watson, a newly qualified army surgeon wounded at Maiwand in the Afghan war, was sent home with ruined health. In London he met his former dresser Stamford, who introduced him to Sherlock Holmes, an eccentric chemist. They agreed to share rooms at 221b Baker Street, where Holmes astonished Watson by knowing he had come from Afghanistan. Holmes lives regularly but erratically, and many visitors come to consult him in private. Holmes reveals he is a consulting detective who sorts out cases for police and private agents.",
+      "evidence": [
+        "toc06.para51"
+      ]
+    }
+  ],
+  "series": {
+    "id": "sherlock-holmes",
+    "book": "study-in-scarlet"
+  }
+}

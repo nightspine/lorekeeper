@@ -1,0 +1,15 @@
+{
+  "description": "Progress 0.42 of the chapter II document.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "spine": 3,
+    "progress": 0.42
+  },
+  "expect": {
+    "seq": 94,
+    "exact": false,
+    "finished": "ch2.para15",
+    "inclusive": "ch2.para17"
+  }
+}

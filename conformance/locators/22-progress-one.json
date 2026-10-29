@@ -1,0 +1,15 @@
+{
+  "description": "Progress 1 is the last block of the document.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "spine": 4,
+    "progress": 1
+  },
+  "expect": {
+    "seq": 99,
+    "exact": false,
+    "finished": "ch1.para66",
+    "inclusive": "ch1.para69"
+  }
+}

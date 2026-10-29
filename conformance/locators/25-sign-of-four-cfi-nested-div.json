@@ -1,0 +1,14 @@
+{
+  "description": "CFI to a div that holds blocks (the Gutenberg header): the first block that starts inside it.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "cfi": "epubcfi(/6/4!/4/2/6)"
+  },
+  "expect": {
+    "seq": 1,
+    "exact": true,
+    "finished": null,
+    "inclusive": null
+  }
+}
