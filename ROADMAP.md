@@ -15,18 +15,28 @@ Indexes today are built by a model and corrected after the fact through merges. 
 
 Tracked in issue #6.
 
-## 2. Reader apps
+## 2. Non-fiction and self-help books
+
+Today's index describes a story. Other books need their own shape:
+
+- **A book kind** on every index (`fiction`, `non-fiction`, `self-help`, with room for more), inferred by default from the EPUB and overridable in the build form, recorded in the index and the series manifest.
+- **One schema per kind**, versioned with the spec. A non-fiction companion gates concepts and terms with definitions as the book gives them, people and works cited, the argument so far and chapter takeaways; a self-help companion gates practices, principles and exercises as they are introduced and the author's framework. The rule stays the same: nothing appears before the book has said it.
+- **Generation, Reader and protocol per kind**: separate extraction and fact-check prompts, tabs and a concept map in the Reader, the kind in `/v0` responses, new conformance cases.
+
+This is a large change across SPEC §4 and §7, the schemas and the conformance suites. It lands as a spec minor version with the fiction schema unchanged, so existing indexes stay valid. Tracked in issue #13.
+
+## 3. Reader apps
 
 - Test the KOReader thin client on a device, then a fat client (local gating in Lua) so an e-reader works offline.
 - A second reference integration for an iOS reader.
 
-## 3. Generation quality
+## 4. Generation quality
 
 - Verify the provider registry's model ids against each provider's live list, and measure speed for the estimate.
 - Mention anchors per entity ("appears in chapters") computed on device from names.
 - Cross-book identity for translations and alternate editions.
 
-## 4. Sharing
+## 5. Sharing
 
 - A community registry of indexes with signed files and maintainer keys (SPEC §11.6).
 - Index embedding in EPUB (SPEC §9) end to end.
