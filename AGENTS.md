@@ -21,6 +21,8 @@ uv sync --all-extras --dev
 uv run --extra web --extra claude lorekeeper web      # then open http://localhost:8765
 ```
 
+The first start prints the `admin` password once and asks for a new one at sign-in. For local development, `lorekeeper web --no-auth` skips sign-in.
+
 With no books, the Library opens on the bundled example index; press "Try it now" to open it in the Reader.
 
 ## Checks

@@ -7,7 +7,12 @@ services:
     volumes:
       - lorekeeper-data:/data
     environment:
-      # Protects the read-only /v0 protocol, not the web app. Leave empty for no token.
+      # Initial password of the web app's admin account, used on the first start only.
+      # Empty means one is generated and printed in the logs (docker compose logs lorekeeper).
+      # Either way you must choose a new password at first sign-in.
+      LOREKEEPER_ADMIN_PASSWORD: ${LOREKEEPER_ADMIN_PASSWORD:-}
+      # Protects the read-only /v0 protocol used by reader apps; the web app has its own sign-in.
+      # Leave empty for no token.
       LOREKEEPER_API_TOKEN: ${LOREKEEPER_API_TOKEN:-}
       # Cloud model keys, all optional; you can also enter them in Settings. Empty means not set.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}

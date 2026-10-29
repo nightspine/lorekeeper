@@ -220,13 +220,25 @@ def cmd_web(args) -> int:
         if not token:
             print("--api-token-file is empty", file=sys.stderr)
             return 2
-    app = create_app(Path(args.data), libs, epubs, args.ollama_url, allowed_hosts=allowed, api_token=token)
+    auth_on = not (args.no_auth or os.environ.get("LOREKEEPER_AUTH", "").strip().lower() in ("off", "0", "false", "no"))
+    if not auth_on:
+        print("warning: sign-in is off; anyone who can reach this port can use the app", file=sys.stderr)
+    app = create_app(Path(args.data), libs, epubs, args.ollama_url, allowed_hosts=allowed, api_token=token,
+                     auth=auth_on, initial_password=os.environ.get("LOREKEEPER_ADMIN_PASSWORD") or None)
     from .web.protocol import api_token as active_token
     if active_token(token):
         print("API token required for /v0")
     print(f"Lorekeeper on http://{args.host}:{args.port}  (data: {Path(args.data).resolve()})")
     # Open progress streams would otherwise hold a shutdown open indefinitely.
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning", timeout_graceful_shutdown=3)
+    return 0
+
+
+def cmd_reset_password(args) -> int:
+    from .web.auth import Auth
+    if not Auth(Path(args.data) / "auth.json").reset_password():
+        print("no admin yet: start `lorekeeper web` once", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -481,7 +493,14 @@ def main(argv: list[str] | None = None) -> int:
                    help="env LOREKEEPER_OLLAMA_URL")
     s.add_argument("--api-token", help="require this bearer token on /v0 (overrides LOREKEEPER_API_TOKEN; visible in shell history)")
     s.add_argument("--api-token-file", help="read the bearer token from the first line of this file")
+    s.add_argument("--no-auth", action="store_true",
+                   help="turn the admin sign-in off (env LOREKEEPER_AUTH=off); only for trusted local use")
     s.set_defaults(fn=cmd_web)
+
+    s = sub.add_parser("reset-password", help="set a new generated password for admin and sign everyone out")
+    s.add_argument("--data", default=os.environ.get("LOREKEEPER_DATA") or "lorekeeper-data",
+                   help="the web app's data directory (env LOREKEEPER_DATA)")
+    s.set_defaults(fn=cmd_reset_password)
 
     s = sub.add_parser("docs", help="the documentation site")
     dsub = s.add_subparsers(required=True)

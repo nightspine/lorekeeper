@@ -89,6 +89,14 @@ registerProvider("books", (query) => {
   return books.map(mk);
 });
 
+// Only offered when this server has sign-in on and someone is signed in (app.js sets the body attributes).
+registerProvider("account", () => {
+  const b = document.body.dataset;
+  if (b.auth !== "on" || b.signedIn !== "true" || b.mustChangePassword === "true") return [];
+  return [{ id: "sign-out", label: "Sign out", hint: "End this session", group: "Account", keywords: "log out logout sign off", _rank: 95,
+    run: () => { import("./app.js").then((m) => m.signOut()); } }];
+});
+
 registerProvider("theme", () => {
   const dark = (document.documentElement.dataset.theme || "dark") === "dark";
   return [{
@@ -106,6 +114,8 @@ registerProvider("theme", () => {
 });
 
 async function loadBooks() {
+  // Signed out (or before the first password) every /api call would be refused.
+  if (document.body.dataset.signedIn === "false" || document.body.dataset.mustChangePassword === "true") return;
   if (books && Date.now() - booksAt < 60000) return;
   try {
     const d = await api.catalog();

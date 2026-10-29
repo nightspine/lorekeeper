@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import epub, llm, text
 from ..generate import slug
+from . import auth as authmod
 from . import bookorbit, position, protocol
 from .catalog import Catalog, series_num, story_chapters
 from .identity import Identity
@@ -107,8 +108,15 @@ LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: list[Path],
                ollama_url: str = "http://localhost:11434",
                allowed_hosts: tuple[str, ...] | None = LOCAL_HOSTS,
-               api_token: str | None = None) -> FastAPI:
-    """allowed_hosts=None disables the Host check (only for deliberate remote access)."""
+               api_token: str | None = None, auth: bool = True, initial_password: str | None = None,
+               log=authmod.say, auth_clock=time.monotonic) -> FastAPI:
+    """allowed_hosts=None disables the Host check (only for deliberate remote access).
+
+    auth=True puts an admin sign-in in front of /api (see web/auth.py); the first start creates the
+    account and logs its initial password through `log`."""
+    accounts = authmod.Auth(data_dir / "auth.json", auth_clock) if auth else None
+    if accounts:
+        accounts.ensure_admin(initial_password, log)
     secrets = SecretStore(data_dir / "secrets.json")
     keys = Keys(secrets)
     books = BookStore(data_dir / "books")
@@ -225,6 +233,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         config["whole_story"] = bool(story) and set(story) <= set(config.get("chapters") or [])
         return jobs.submit(local, config)
     app = FastAPI(title="Lorekeeper", docs_url="/api/docs", redoc_url=None)
+    app.state.auth = accounts
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     # The docs site (static/docs) links ../css, ../fonts and ../vendor so that it works unchanged when
     # `lorekeeper docs export` copies it to a static host. Serve those folders at the root to match.
@@ -241,7 +250,108 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # CSRF: other origins can't send a custom header without a CORS preflight, which we never allow.
         if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get("x-lorekeeper") != "1":
             return JSONResponse({"detail": "missing X-Lorekeeper header"}, status_code=403)
+        if accounts:
+            path = request.url.path
+            protected = (path.startswith("/api/") and not path.startswith("/api/auth/")) or path == "/openapi.json"
+            user = accounts.session_for(request.cookies.get(authmod.COOKIE))
+            request.state.user = user
+            if protected:
+                if not user:
+                    return JSONResponse({"detail": "Sign in required"}, status_code=401)
+                if accounts.user(user).get("mustChangePassword"):
+                    return JSONResponse({"detail": "Choose a new password first",
+                                         "code": "password-change-required"}, status_code=403)
         return await call_next(request)
+
+    def secure_request(request: Request) -> bool:
+        return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").lower() == "https"
+
+    def set_cookie(request: Request, response, token: str) -> None:
+        response.set_cookie(authmod.COOKIE, token, max_age=30 * 24 * 3600, path="/", httponly=True,
+                            samesite="lax", secure=secure_request(request))
+
+    def need_auth() -> None:
+        if not accounts:
+            raise HTTPException(404, "Sign-in is off")
+
+    async def json_body(request: Request) -> dict:
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        if not isinstance(body, dict):
+            raise HTTPException(400, "expected a JSON object")
+        return body
+
+    def throttled(key: tuple) -> JSONResponse | None:
+        wait = accounts.throttle.wait(key)
+        if wait:
+            return JSONResponse({"detail": f"Too many attempts. Try again in {wait} seconds."},
+                                status_code=429, headers={"Retry-After": str(wait)})
+        return None
+
+    @app.get("/api/auth/session")
+    def auth_session(request: Request):
+        if not accounts:
+            return {"auth": False}
+        user = getattr(request.state, "user", None)
+        if not user:
+            return {"auth": True, "user": None, "setup": accounts.setup()}
+        return {"auth": True, "user": accounts.public_user(user)}
+
+    @app.post("/api/auth/login")
+    async def auth_login(request: Request):
+        need_auth()
+        body = await json_body(request)
+        username, password = str(body.get("username") or ""), str(body.get("password") or "")
+        key = (username.strip().lower(), request.client.host if request.client else "")
+        if (blocked := throttled(key)):
+            return blocked
+        name = accounts.authenticate(username, password)
+        if not name:
+            accounts.throttle.fail(key)
+            return JSONResponse({"detail": "Wrong username or password"}, status_code=401)
+        accounts.throttle.clear(key)
+        old = request.cookies.get(authmod.COOKIE)
+        if old:
+            accounts.delete_session(old)
+        response = JSONResponse({"user": accounts.public_user(name)})
+        set_cookie(request, response, accounts.create_session(name))
+        return response
+
+    @app.post("/api/auth/logout")
+    def auth_logout(request: Request):
+        need_auth()
+        accounts.delete_session(request.cookies.get(authmod.COOKIE))
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(authmod.COOKIE, path="/", httponly=True, samesite="lax",
+                               secure=secure_request(request))
+        return response
+
+    @app.post("/api/auth/password")
+    async def auth_password(request: Request):
+        need_auth()
+        user = getattr(request.state, "user", None)
+        if not user:
+            return JSONResponse({"detail": "Sign in required"}, status_code=401)
+        body = await json_body(request)
+        current, new = str(body.get("current") or ""), str(body.get("new") or "")
+        key = (user, request.client.host if request.client else "")
+        if (blocked := throttled(key)):
+            return blocked
+        if not accounts.authenticate(user, current):
+            accounts.throttle.fail(key)
+            return JSONResponse({"detail": "Wrong current password"}, status_code=401)
+        accounts.throttle.clear(key)
+        if (problem := authmod.check_password(new, current)):
+            raise HTTPException(400, problem)
+        accounts.set_password(user, new)
+        old = request.cookies.get(authmod.COOKIE)
+        accounts.delete_session(old)
+        accounts.delete_other_sessions(user, None)
+        response = JSONResponse({"user": accounts.public_user(user)})
+        set_cookie(request, response, accounts.create_session(user))
+        return response
 
     def job_json(job) -> dict:
         return {**asdict(job), "output_name": Path(job.output).name}

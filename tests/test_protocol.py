@@ -42,7 +42,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.delenv("LOREKEEPER_API_TOKEN", raising=False)
     epubs = [CORPUS] if CORPUS.is_dir() else []
     app = web_app.create_app(tmp_path / "data", [("examples", EXAMPLES.parent)], epubs,
-                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",))
+                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
     with TestClient(app) as c:
         yield c
 
