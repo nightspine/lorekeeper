@@ -39,7 +39,7 @@ Lorekeeper is a fully AI-made project. The maintainer is a full-time software en
 
 The documentation is hosted at https://nightspine.github.io/lorekeeper/ (docs at `/docs/`). Using a coding agent? Point your coding agent at [AGENTS.md](AGENTS.md).
 
-With Docker, no checkout needed. Add this service to your own compose file, or save it as `compose.yaml` and run `docker compose up -d`, then open http://localhost:8765. Use the tag `edge` instead of `latest` for the newest build of `main`.
+With Docker, no checkout needed. Add this service to your own compose file, or save it as `compose.yaml` and run `docker compose up -d`, then open http://localhost:8765. Sign in as `admin` with the password from `docker compose logs lorekeeper` (or set `LOREKEEPER_ADMIN_PASSWORD` first), and choose a new one. Use the tag `edge` instead of `latest` for the newest build of `main`.
 
 ```yaml
 services:
@@ -50,6 +50,7 @@ services:
     volumes:
       - lorekeeper-data:/data
     environment:
+      LOREKEEPER_ADMIN_PASSWORD: ${LOREKEEPER_ADMIN_PASSWORD:-}
       LOREKEEPER_API_TOKEN: ${LOREKEEPER_API_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOREKEEPER_OLLAMA_URL: http://host.docker.internal:11434
@@ -88,7 +89,7 @@ With Docker, the server, docs and example library come as one image, and your da
 docker compose up -d        # http://localhost:8765
 ```
 
-Set `LOREKEEPER_API_TOKEN` and any cloud model keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`) in the environment (or an `.env` file) if you want them, or enter keys under Settings; the compose file points at an Ollama on the host. See the self-hosting guide for the options. Without Docker:
+The web app asks for a sign-in: the first start creates `admin` and prints its password once (`docker compose logs lorekeeper` in Docker), and you choose your own at first sign-in. `lorekeeper reset-password` sets a new one, and `lorekeeper web --no-auth` skips sign-in for trusted local use only. Set `LOREKEEPER_API_TOKEN` (for the `/v0` protocol) and any cloud model keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `MISTRAL_API_KEY`, `GROQ_API_KEY`, `XAI_API_KEY`, `DEEPSEEK_API_KEY`) in the environment (or an `.env` file) if you want them, or enter keys under Settings; the compose file points at an Ollama on the host. See the self-hosting guide for the options. Without Docker:
 
 ```sh
 uv sync --extra web --extra claude

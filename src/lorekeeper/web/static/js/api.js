@@ -1,4 +1,4 @@
-async function request(method, url, body) {
+async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {
     method,
     // Required on every change; other websites can't send it (CSRF protection on the server).
@@ -6,14 +6,51 @@ async function request(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch {}
-    throw new Error(detail);
+    let detail = res.statusText, code = "";
+    try { const j = await res.json(); detail = j.detail || detail; code = j.code || ""; } catch {}
+    if (!opts.auth) {
+      if (res.status === 401) redirectToLogin();
+      else if (res.status === 403 && code === "password-change-required") redirectTo("#/password");
+    }
+    const err = new Error(detail);
+    err.status = res.status;
+    err.code = code;
+    throw err;
   }
   return res.json();
 }
 
+/** Only same-page hashes are ever followed after sign-in; never a URL, never the sign-in pages themselves. */
+export function safeNext(next) {
+  if (typeof next !== "string" || !next.startsWith("#/")) return "";
+  const route = next.slice(2).split(/[/?]/)[0];
+  return route === "login" || route === "password" ? "" : next;
+}
+function redirectTo(hash) {
+  if (location.hash !== hash) location.hash = hash;
+}
+/** app.js sets `hooks.unauthorized` so a 401 on a stale cookie also marks the page as signed out. */
+export const hooks = { unauthorized: null };
+function redirectToLogin() {
+  hooks.unauthorized?.();
+  const here = location.hash;
+  if (/^#\/login(\?|$)/.test(here)) return;
+  const next = safeNext(here);
+  redirectTo("#/login" + (next ? "?next=" + encodeURIComponent(next) : ""));
+}
+
 export const api = {
+  /** Who is signed in. Plain fetch, never redirects; a 404 or a failed request means an older server with no sign-in. */
+  session: async () => {
+    try {
+      const res = await fetch("/api/auth/session");
+      if (!res.ok) return { auth: false };
+      return await res.json();
+    } catch { return { auth: false }; }
+  },
+  login: (username, password) => request("POST", "/api/auth/login", { username, password }, { auth: true }),
+  logout: () => request("POST", "/api/auth/logout", undefined, { auth: true }),
+  changePassword: (current, next) => request("POST", "/api/auth/password", { current, new: next }, { auth: true }),
   ollama: () => request("GET", "/api/ollama"),
   // Cloud model providers (Claude, OpenAI, Gemini, ...): status, models and prices; keys are only ever returned masked.
   providers: (fresh = false) => request("GET", `/api/providers${fresh ? "?fresh=true" : ""}`),

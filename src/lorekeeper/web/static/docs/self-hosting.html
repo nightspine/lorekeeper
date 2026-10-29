@@ -24,7 +24,7 @@
 <p>The image bundles the server, the docs and the example library. It runs as an unprivileged user and keeps everything in one volume mounted at <code>/data</code>.</p>
 <pre><code>git clone https://github.com/nightspine/lorekeeper.git &amp;&amp; cd lorekeeper
 docker compose up -d</code></pre>
-<p>Then open <code>http://localhost:8765</code>. The compose file pulls the published image <code>ghcr.io/nightspine/lorekeeper</code> for amd64 and arm64. To build from your checkout instead, swap the <code>image</code> line for the commented <code>build: .</code>. To use one command and no compose file:</p>
+<p>Then open <code>http://localhost:8765</code> and <a href="#sign-in">sign in</a> as <code>admin</code> with the password from <code>docker compose logs lorekeeper</code>. The compose file pulls the published image <code>ghcr.io/nightspine/lorekeeper</code> for amd64 and arm64. To build from your checkout instead, swap the <code>image</code> line for the commented <code>build: .</code>. To use one command and no compose file:</p>
 <pre><code>docker run -d --name lorekeeper -p 8765:8765 -v lorekeeper-data:/data \
   --add-host host.docker.internal:host-gateway \
   -e LOREKEEPER_OLLAMA_URL=http://host.docker.internal:11434 \
@@ -39,6 +39,7 @@ docker compose up -d</code></pre>
     volumes:
       - lorekeeper-data:/data
     environment:
+      LOREKEEPER_ADMIN_PASSWORD: ${LOREKEEPER_ADMIN_PASSWORD:-}
       LOREKEEPER_API_TOKEN: ${LOREKEEPER_API_TOKEN:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOREKEEPER_OLLAMA_URL: http://host.docker.internal:11434
@@ -48,7 +49,7 @@ docker compose up -d</code></pre>
 
 volumes:
   lorekeeper-data:</code></pre>
-<p>Only the port, the volume and the environment matter. <code>LOREKEEPER_API_TOKEN</code> protects the <code>/v0</code> protocol, a provider key is optional if you build with a cloud model, and <code>LOREKEEPER_OLLAMA_URL</code> points at your Ollama.</p>
+<p>Only the port, the volume and the environment matter. <code>LOREKEEPER_ADMIN_PASSWORD</code> is the initial password for the web app (empty means one is generated and printed in the logs; see <a href="#sign-in">Sign in</a>), <code>LOREKEEPER_API_TOKEN</code> protects the <code>/v0</code> protocol, a provider key is optional if you build with a cloud model, and <code>LOREKEEPER_OLLAMA_URL</code> points at your Ollama.</p>
 <h3 id="docker-tags">Image tags</h3>
 <p><code>latest</code> is the newest stable release, <code>1.2.3</code> and <code>1.2</code> pin a release, and <code>edge</code> is the latest build of the main branch, which may contain unreleased changes. Pin a version for anything you rely on.</p>
 <p>Environment variables fill in the defaults of the matching command-line flags, and a flag you pass always wins.</p>
@@ -57,7 +58,9 @@ volumes:
 <tr><td><code>LOREKEEPER_HOST</code></td><td>Address to bind (<code>--host</code>).</td><td><code>0.0.0.0</code></td></tr>
 <tr><td><code>LOREKEEPER_PORT</code></td><td>Port to listen on (<code>--port</code>).</td><td><code>8765</code></td></tr>
 <tr><td><code>LOREKEEPER_OLLAMA_URL</code></td><td>Ollama server to build with (<code>--ollama-url</code>).</td><td><code>http://localhost:11434</code>, which is the container itself; the compose file sets <code>http://host.docker.internal:11434</code></td></tr>
-<tr><td><code>LOREKEEPER_API_TOKEN</code></td><td>Bearer token required on the read-only <code>/v0</code> protocol.</td><td>none</td></tr>
+<tr><td><code>LOREKEEPER_ADMIN_PASSWORD</code></td><td>Initial password of the <code>admin</code> account, used only on the first start. You must choose a new one at first sign-in.</td><td>none, so one is generated and printed in the logs</td></tr>
+<tr><td><code>LOREKEEPER_AUTH</code></td><td>Set to <code>off</code> to skip the web app sign-in (<code>--no-auth</code>). Trusted local use only.</td><td>on</td></tr>
+<tr><td><code>LOREKEEPER_API_TOKEN</code></td><td>Bearer token required on the read-only <code>/v0</code> protocol. The web app has its own sign-in.</td><td>none</td></tr>
 <tr><td><code>ANTHROPIC_API_KEY</code></td><td>Claude key for building and fact-checking. You can also enter it under Settings.</td><td>none</td></tr>
 <tr><td><code>OPENAI_API_KEY</code>, <code>GEMINI_API_KEY</code>, and the others</td><td>Keys for the other cloud providers; see <a href="#keys">Where keys come from</a> for the full list.</td><td>none</td></tr>
 </tbody></table></div>
@@ -70,15 +73,39 @@ volumes:
 docker compose exec ollama ollama pull gemma4:12b-it-qat</code></pre>
 <p>Models are stored in the <code>ollama-models</code> volume. Inside Docker, Ollama uses the CPU unless you give it a GPU: on Linux with an NVIDIA card and the NVIDIA Container Toolkit, uncomment the <code>deploy</code> block of the <code>ollama</code> service. Docker on macOS cannot pass the GPU through, so a Mac is much faster with Ollama installed on the host, which is why that is the default.</p>
 
-<h3 id="docker-expose">Reverse proxy, token and the Host check</h3>
-<p>The server checks the <code>Host</code> header against <code>localhost</code> to stop DNS rebinding. When it binds to anything other than a local address, as the container does, that check is switched off, so a proxy can forward <code>books.example.com</code> to it without any extra setting. In exchange, the web app has no login: <strong>anyone who can reach the port can build books and change settings</strong>. Publish the port only on a trusted network, for example <code>127.0.0.1:8765:8765</code>, and put a reverse proxy that does its own authentication, a VPN or Tailscale in front of it.</p>
-<p><code>LOREKEEPER_API_TOKEN</code> protects only the <code>/v0</code> protocol that reader apps use. Set it whenever the server is reachable beyond your own machine, and have the proxy pass <code>Authorization</code> through.</p>
+<h3 id="docker-expose">Reverse proxy, sign-in and the Host check</h3>
+<p>The server checks the <code>Host</code> header against <code>localhost</code> to stop DNS rebinding. When it binds to anything other than a local address, as the container does, that check is switched off, so a proxy can forward <code>books.example.com</code> to it without any extra setting. The web app asks for a <a href="#sign-in">sign-in</a>, but that is one password on one account, so keep the port off the open internet: publish it only on a trusted network, for example <code>127.0.0.1:8765:8765</code>, or put a VPN or Tailscale in front of it.</p>
+<p>Serve it over HTTPS and have the proxy send <code>X-Forwarded-Proto: https</code>, so the session cookie is marked <code>Secure</code>. Most proxies do this with one line of configuration. Also let <code>Authorization</code> through for the <code>/v0</code> protocol.</p>
+<p><code>LOREKEEPER_API_TOKEN</code> protects the <code>/v0</code> protocol that reader apps use, which does not use the sign-in. Set it whenever the server is reachable beyond your own machine.</p>
 
 <h3 id="docker-backup">Backups</h3>
 <p>Everything worth keeping is in the <code>lorekeeper-data</code> volume. Check the Runs page first, then copy it out:</p>
 <pre><code>docker run --rm -v lorekeeper_lorekeeper-data:/data -v "$PWD":/backup alpine \
   tar czf /backup/lorekeeper-data.tgz -C /data .</code></pre>
 <p>The volume name is prefixed with the compose project name, which is the folder name; <code>docker volume ls</code> shows it. The archive contains <code>secrets.json</code>, so keep it private. To update, run <code>docker compose pull &amp;&amp; docker compose up -d</code>, and the volume is kept. If you build from a checkout, run <code>git pull</code> and <code>docker compose up -d --build</code> instead.</p>
+
+<h2 id="sign-in">Sign in</h2>
+<p>The web app asks for a sign-in. There is one account, named <code>admin</code>, and it guards the Library, the Runs page and the provider keys you save under Settings.</p>
+<h3 id="sign-in-first">First start</h3>
+<p>When the server starts with no account, it creates <code>admin</code> and prints a password once, in a block like this:</p>
+<pre><code>First start. Sign in as  admin  with the password
+    k3Jd...
+You will be asked to choose a new password.</code></pre>
+<p>In Docker, run <code>docker compose logs lorekeeper</code> to see it. Without Docker, it appears in the terminal where you started the server. Only a hash of the password is stored, so it cannot be shown again.</p>
+<p>To pick the first password yourself, set <code>LOREKEEPER_ADMIN_PASSWORD</code> before the first start. It is used only when no account exists yet, and it counts as an initial password: you are asked to choose a new one at first sign-in either way. Until you do, the server answers every request except the sign-in ones with an error, so nothing else works with the initial password.</p>
+<h3 id="sign-in-password">Changing the password</h3>
+<p>A password must be 12 to 128 characters and different from the current one. There are no rules about digits or symbols, so a sentence you will remember works well. You can change it later under Settings, in the Account card, which also has the Sign out button.</p>
+<h3 id="sign-in-reset">If you forget it</h3>
+<p>Anyone with access to the data directory can set a new password. This prints a new generated password once, asks for a change at the next sign-in and ends every session:</p>
+<pre><code>uv run lorekeeper reset-password
+docker compose exec lorekeeper lorekeeper reset-password</code></pre>
+<p>The first form is for an install without Docker and takes <code>--data DIR</code> if your data is not in the default place. The second runs inside the container. A running server picks up the new password without a restart.</p>
+<h3 id="sign-in-sessions">Sessions</h3>
+<p>Signing in sets a cookie named <code>lorekeeper_session</code>. The session ends after 30 days without use, and in any case 90 days after sign-in. Changing the password signs you out everywhere else. The cookie is marked <code>HttpOnly</code> and <code>SameSite=Lax</code>, and also <code>Secure</code> when the request arrived over HTTPS. Behind a reverse proxy the server sees plain HTTP, so the proxy must send <code>X-Forwarded-Proto: https</code> for the cookie to be marked <code>Secure</code>. After five wrong passwords in a row from one address, further attempts are refused for a short and growing time, up to 15 minutes.</p>
+<h3 id="sign-in-off">Turning it off</h3>
+<p>For a machine only you use, <code>lorekeeper web --no-auth</code>, or <code>LOREKEEPER_AUTH=off</code> in the environment, skips the sign-in. The server prints a warning at start. <strong>With sign-in off, anyone who can reach the port can use the whole app</strong>, including spending your provider keys, so do not combine it with a published port or <code>--host</code>.</p>
+<h3 id="sign-in-other">What it does not cover</h3>
+<p>Sign-in guards the web app and its <code>/api</code> routes. The read-only <code>/v0</code> protocol keeps its own bearer token (<code>LOREKEEPER_API_TOKEN</code>), and discovery at <code>/.well-known/lorekeeper</code> stays public, as does the container's health check. The docs and the sign-in page are public too.</p>
 
 <h2 id="install">Install without Docker</h2>
 <p>You need Python 3.11 or later and <a href="https://docs.astral.sh/uv/">uv</a>.</p>
@@ -121,7 +148,7 @@ uv run --extra web --extra claude lorekeeper web</code></pre>
 <p>By default the server only answers to <code>localhost</code>. It checks the <code>Host</code> header so that a hostile web page cannot reach it through DNS rebinding, and it requires a custom header on every write so that other sites cannot post to it.</p>
 <p>To reach it from a phone or an e-reader, bind to a network address (the Docker image already does):</p>
 <pre><code>uv run lorekeeper web --host 0.0.0.0 --api-token-file ~/.lorekeeper-token</code></pre>
-<p>With <code>--host</code> set to anything but a local address the Host check is switched off, and <strong>anyone who can reach the port can use the whole web app</strong>, including building books and changing settings. The bearer token protects only the read-only protocol under <code>/v0</code>, not the web app. Put the server behind a VPN, Tailscale or a reverse proxy that does its own authentication.</p>
+<p>With <code>--host</code> set to anything but a local address the Host check is switched off, and the web app is protected only by its <a href="#sign-in">sign-in</a>. Keep that port on a trusted network, behind a VPN, Tailscale or a reverse proxy. The bearer token below guards the read-only protocol under <code>/v0</code>, not the web app.</p>
 <p>For the token, give <code>--api-token</code> (visible in shell history), <code>--api-token-file</code> (first line of the file) or the <code>LOREKEEPER_API_TOKEN</code> environment variable. Clients then send <code>Authorization: Bearer &lt;token&gt;</code>, and discovery stays public so an app can learn that a token is needed. The <a href="protocol.html#auth">protocol reference</a> has the details.</p>
 
 <h2 id="data">Where your data lives</h2>

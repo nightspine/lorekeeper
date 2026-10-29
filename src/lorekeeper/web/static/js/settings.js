@@ -1,5 +1,6 @@
 import { api } from "./api.js";
-import { onOllama } from "./app.js";
+import { onOllama, signOut, state } from "./app.js";
+import { passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
 
@@ -12,10 +13,21 @@ export function mountSettings(root) {
   // state = dot + word: beacon when working, rose when broken, hollow when nothing is set up yet
   const status = (ok, text, unset = false) => h(`span.badge.${ok ? "done" : unset ? "stopped" : "failed"}`, text);
 
+  // Account: only when this server has sign-in on and someone is signed in.
+  const user = state.session.auth ? state.session.user : null;
+  const accountCard = user && h("section.card.card-pad", { "aria-labelledby": "p-account", id: "account" },
+    h("div.section-title", h("h2#p-account.with-icon", icon("shield"), "Account")),
+    h("div.stack-14",
+      h("div.row-wrap", h("p", "Signed in as ", h("strong", user.name)),
+        h("button.btn", { type: "button", on: { click: () => signOut() } }, "Sign out")),
+      h("details.prov-more", h("summary", "Change password"),
+        h("div.account-form", passwordForm({ username: user.name })))));
+
   root.append(h("div.settings-page",
     h("div", h("span.eyebrow", "Settings"), h("h1", "Library and models"),
       h("p.muted.settings-lede",
         "Lorekeeper can read books with a local model through Ollama, or with a cloud model on your own key: Claude, OpenAI, Gemini and more, or any OpenAI-compatible server. Local is free and private; cloud models are much faster and cost a little per book.")),
+    accountCard,
     h("section.card.card-pad", { "aria-labelledby": "p-bo", id: "bookorbit" },
       h("div.section-title", h("h2#p-bo.with-icon", icon("link"), "Book Orbit")),
       boBody),

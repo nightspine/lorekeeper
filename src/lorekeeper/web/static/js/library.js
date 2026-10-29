@@ -49,7 +49,8 @@ export function mountLibrary(root) {
       try {
         const lib = await api.library();
         const ex = (lib.indexes || []).filter((i) => i.source === "examples");
-        s.demo = ex.find((i) => i.key.includes("study-in-scarlet")) || ex[0] || null;
+        // The whole-novel Dracula example first; the two-chapter Sherlock ones are hand-written and short.
+        s.demo = ex.find((i) => i.key.includes("dracula")) || ex.find((i) => i.key.includes("study-in-scarlet")) || ex[0] || null;
       } catch { s.demo = null; }
     }
     paint();

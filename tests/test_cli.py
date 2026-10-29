@@ -9,7 +9,7 @@ def _app(tmp_path, **kw):
     pytest.importorskip("fastapi")
     from lorekeeper.web import app as web_app
     return web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9",
-                              allowed_hosts=("testserver",), **kw)
+                              allowed_hosts=("testserver",), auth=False, **kw)
 
 
 def test_api_token_argument(tmp_path, monkeypatch):

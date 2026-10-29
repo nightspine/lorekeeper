@@ -126,7 +126,7 @@ def client(tmp_path, monkeypatch):
     def make(provider, model=None, api_key=None, **kw):
         return fake
     monkeypatch.setattr(llm, "make", make)
-    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",))
+    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         c.fake, c.seen, c.data = fake, seen, tmp_path / "data"
         yield c
