@@ -37,7 +37,7 @@ uv run python bench/compare_handwritten.py out.lore.json                  # gene
 
 The generator needs a local Ollama (`brew services start ollama`), or a cloud provider with your own key (every provider in `llm.PROVIDERS`: `llm.OpenAICompatible` serves all but Claude, which uses the anthropic SDK). Default model is `gemma4:12b-it-qat`; `qwen3.5:9b-q4_K_M` is the faster alternative. Thinking mode is deliberately off. A two-chapter run takes tens of minutes on a 16 GB M4, so run it in the background. Tests use a scripted fake model (`tests/test_generate.py`) and never call Ollama.
 
-`corpus/` is gitignored; the README lists the download commands. Tests that need a corpus EPUB skip when it is missing, so a green run without the corpus doesn't cover anchor resolution or quote checks.
+`corpus/` is gitignored; the README lists the download commands (pg244, pg2097, pg345 and the Standard Ebooks Scarlet). `examples/dracula/dracula.json` is a complete generated index of pg345 that the Library, the Docker image and the landing-page demo ship with; it must pass `lorekeeper validate --epub corpus/pg345/pg345.epub`, and `bench/site_demo_data.py` flattens it for the site. Tests that need a corpus EPUB skip when it is missing, so a green run without the corpus doesn't cover anchor resolution or quote checks.
 
 ## Architecture
 
