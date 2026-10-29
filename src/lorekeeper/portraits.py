@@ -25,8 +25,8 @@ from bisect import bisect_left
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-from . import epub, merge
-from .generate import HINDSIGHT, MOMENTARY, SYSTEM, unsupported_tie
+from . import epub, merge, text as text_
+from .generate import HINDSIGHT, MAX_COPY, MOMENTARY, SYSTEM, unsupported_tie
 
 MAX_CHARS = 800      # SPEC §6.3 limit for a profile facet
 MIN_MENTIONS = 2     # an entity needs this many passages before its first portrait
@@ -132,15 +132,22 @@ def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int) -> tuple[s
     return "\n…\n".join(out), last
 
 
-def _checked(text: str, known: set[str], source: str | None = None) -> tuple[str | None, str]:
+def _checked(text: str, known: set[str], source: str | None = None,
+             book: set[tuple[str, ...]] | None = None) -> tuple[str | None, str]:
     """(text, "") if the portrait is usable, else (None, reason). `known` holds the capitalised
     words of the book up to this point; `source` is the passage text the portrait was written
-    from, when given, and a tie word (wife, brother...) must occur in it."""
+    from, when given, and a tie word (wife, brother...) must occur in it; `book` is the book's
+    word shingles, and a portrait may not copy more than 8 consecutive words of it (SPEC §6.3,
+    the rule the validator enforces)."""
     text = " ".join(text.split())
     if not text:
         return None, "empty"
     if len(text) > MAX_CHARS:
         return None, "too long"
+    if book:
+        runs = text_.copied_runs(text, book, MAX_COPY)
+        if runs:
+            return None, f"copies the book: {runs[0]}"
     bad = HINDSIGHT.search(text) or MOMENTARY.search(text)
     if bad:
         return None, f"wording: {bad.group(0)}"
@@ -191,6 +198,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
     lo = anchors[0]["seq"]
     hi = seq_of.get(d.get("coverage", {}).get("through"), anchors[-1]["seq"])
     text = {b.seq: b.raw for b in book.blocks[lo:hi + 1]}
+    shingles = text_.shingles([w for b in book.blocks for w in b.words], MAX_COPY)
     marks = [c.start - 1 for c in book.chapters if lo < c.start <= hi] + [hi]
     ents = {e["id"]: e for e in d["entities"]}
     pats = _patterns(d)
@@ -250,18 +258,23 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
                 passages=passages)
             out = model.complete(SYSTEM, prompt, SCHEMA)
-            got = _checked(str((out or {}).get("text", "")), known, passages)
+            got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
             if got[1].startswith("tie not in the text"):
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      f'No passage says {word}. Rewrite it without that tie, stating only what the passages show.', SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages)
+                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+            elif got[1].startswith("copies the book"):
+                run = got[1].split(": ", 1)[1]
+                out = model.complete(SYSTEM, prompt + f'\n\nYour first answer copied the book\'s wording ("{run}"): "{out.get("text", "")}"\n'
+                                     "Rewrite it in your own words, quoting at most 5 consecutive words of the passages.", SCHEMA)
+                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
             elif got[1].startswith("wording"):
                 # Usually a lasting fact phrased as news ("now works with dragons"): one rewrite.
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      "Rewrite it as a timeless description without that wording.", SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages)
+                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
             return eid, seen, last, got
 
         with ThreadPoolExecutor(WORKERS) as pool:

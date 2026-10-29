@@ -31,6 +31,7 @@ Lorekeeper is a fully AI-made project. The maintainer is a full-time software en
 | [`schema/`](schema/) | JSON Schemas: index, series, view, API responses |
 | [`src/lorekeeper/`](src/lorekeeper/) | Python reference implementation: EPUB text model, fingerprints, anchor resolution, gating, validator, CLI |
 | [`examples/sherlock-holmes/`](examples/sherlock-holmes/) | Hand-written example indexes for the first two chapters of *A Study in Scarlet* and *The Sign of the Four* |
+| [`examples/dracula/`](examples/dracula/) | A complete index of *Dracula* (Project Gutenberg #345) built by Lorekeeper with Claude Haiku and spot-checked by hand: the book the hosted demo and a fresh install open with |
 | [`conformance/`](conformance/) | Positions plus the exact view every client must produce |
 | Locators | How a reader's EPUB CFI, KOReader XPointer or spine offset becomes a block and a position: SPEC §3.8, `lorekeeper locate` |
 
@@ -66,9 +67,10 @@ To work on the code and the spec:
 uv sync
 
 # The examples are anchored to Project Gutenberg EPUBs; tests that need them skip if missing.
-mkdir -p corpus/pg244 corpus/pg2097 corpus/se-scarlet
+mkdir -p corpus/pg244 corpus/pg2097 corpus/pg345 corpus/se-scarlet
 curl -sL -o corpus/pg244/pg244.epub   https://www.gutenberg.org/cache/epub/244/pg244.epub
 curl -sL -o corpus/pg2097/pg2097.epub https://www.gutenberg.org/cache/epub/2097/pg2097.epub
+curl -sL -o corpus/pg345/pg345.epub   https://www.gutenberg.org/cache/epub/345/pg345.epub
 curl -sL -o corpus/se-scarlet/scarlet.epub \
   "https://standardebooks.org/ebooks/arthur-conan-doyle/a-study-in-scarlet/downloads/arthur-conan-doyle_a-study-in-scarlet.epub?source=download"
 

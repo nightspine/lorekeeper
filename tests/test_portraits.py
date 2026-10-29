@@ -164,3 +164,19 @@ def test_portrait_rewrite_without_the_tie_is_kept():
     d = _doc(book, [_mira()])
     model = Fake(["Mira is the fiancée of the miller.", "A young woman who carries baskets to the mill."])
     assert portraits.portraits([(d, book)], model, log=lambda m: None)["portraits"] == 1
+
+
+def test_a_portrait_that_copies_the_book_is_rewritten_once_then_dropped():
+    """SPEC §6.3: no more than 8 consecutive words of the book, the rule the validator enforces."""
+    long_ch = ["Mira walked to the mill with her basket and waited by the gate for the miller to open up."] * 4
+    book = _book([("One", long_ch)])
+    doc = _doc(book, [_mira()])
+    copied = "Mira walked to the mill with her basket and waited by the gate for the miller."
+    fake = Fake([copied, "A girl who carries a basket to the mill each morning and waits there."])
+    stats = portraits.portraits([(doc, book)], fake, log=lambda m: None)
+    assert stats.get("portraits") == 1 and "copied the book" in fake.prompts[1]
+    assert doc["entities"][0]["facets"][0]["text"].startswith("A girl who carries")
+    # Still copying after the rewrite: dropped.
+    doc2 = _doc(book, [_mira()])
+    stats2 = portraits.portraits([(doc2, book)], Fake([copied, copied]), log=lambda m: None)
+    assert stats2.get("dropped") == 1 and not doc2["entities"][0]["facets"]
