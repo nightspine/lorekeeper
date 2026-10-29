@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Specification - Lorekeeper docs</title>
+<meta name="description" content="The Lorekeeper specification, rendered from SPEC.md.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html" aria-current="page">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Specification</h1>
+
+<p id="spec-status" role="status">Loading the specification.</p>
+<div class="spec-wrap">
+<details id="spec-toc" hidden open></details>
+<article id="spec" aria-label="Lorekeeper specification"></article>
+</div>
+<noscript><p>The specification is rendered in the browser. Without JavaScript, read <a href="../spec.md">SPEC.md</a> directly.</p></noscript>
+</main>
+</div>
+<script src="../vendor/marked.min.js"></script>
+<script>
+// Renders the repository's own SPEC.md. It is the one place on this site that uses innerHTML: the
+// source is a file shipped with the project (served read-only by the server as /spec.md, or copied
+// next to the docs by `lorekeeper docs export`), never index content or any other user data.
+(function () {
+  var box = document.getElementById("spec");
+  var toc = document.getElementById("spec-toc");
+  var status = document.getElementById("spec-status");
+  function slug(text) {
+    return text.toLowerCase().replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, "").replace(/[^a-z0-9 -]/g, "").trim().replace(/ /g, "-");
+  }
+  fetch("../spec.md").then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.text();
+  }).then(function (md) {
+    box.innerHTML = marked.parse(md);
+    var h1 = box.querySelector("h1");
+    if (h1) { var p = document.createElement("p"); p.className = "lede"; p.textContent = h1.textContent; h1.replaceWith(p); }
+    // Links to repository files (schema/, conformance/) have no target on a static host: show them as text.
+    box.querySelectorAll("a[href]").forEach(function (a) {
+      if (/^(#|https?:|mailto:)/.test(a.getAttribute("href"))) return;
+      var span = document.createElement("span");
+      span.innerHTML = a.innerHTML;
+      span.title = "In the repository: " + a.getAttribute("href");
+      a.replaceWith(span);
+    });
+    var seen = {}, items = [];
+    box.querySelectorAll("h2, h3").forEach(function (h) {
+      var id = slug(h.textContent) || "section", n = seen[id] = (seen[id] || 0) + 1;
+      if (n > 1) id += "-" + n;
+      h.id = id;
+      items.push('<li class="' + h.tagName.toLowerCase() + '"><a href="#' + id + '">' + h.innerHTML.replace(/<\/?a[^>]*>/g, "") + "</a></li>");
+    });
+    toc.innerHTML = "<summary>Contents</summary><ul>" + items.join("") + "</ul>";
+    toc.hidden = false;
+    status.hidden = true;
+    if (location.hash) { var t = document.getElementById(decodeURIComponent(location.hash.slice(1))); if (t) t.scrollIntoView(); }
+  }).catch(function (e) {
+    status.textContent = "Could not load the specification (" + e.message + "). It is served as spec.md next to this site; if you copied the docs folder by hand, copy SPEC.md as spec.md too.";
+  });
+})();
+</script>
+</body>
+</html>

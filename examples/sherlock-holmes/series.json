@@ -1,0 +1,14 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "series",
+  "id": "sherlock-holmes",
+  "title": "Sherlock Holmes",
+  "books": [
+    { "key": "study-in-scarlet", "title": "A Study in Scarlet", "ids": { "gutenberg": "244" } },
+    { "key": "sign-of-four", "title": "The Sign of the Four", "ids": { "gutenberg": "2097" } }
+  ],
+  "orders": {
+    "publication": ["study-in-scarlet", "sign-of-four"]
+  },
+  "defaultOrder": "publication"
+}

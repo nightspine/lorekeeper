@@ -1,0 +1,342 @@
+{
+  "model": "gemma4:12b-it-qat",
+  "think": false,
+  "wall_seconds": 340.65036487579346,
+  "eval_count": 2313,
+  "output": {
+    "entities": [
+      {
+        "name": "Doctor of Medicine",
+        "type": "term",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The narrator earned this degree in 1878."
+          }
+        ]
+      },
+      {
+        "name": "University of London",
+        "type": "group",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "This institution granted the narrator his medical degree."
+          }
+        ]
+      },
+      {
+        "name": "Netley",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The narrator went here to complete a surgical course for the army."
+          }
+        ]
+      },
+      {
+        "name": "Fifth Northumberland Fusiliers",
+        "type": "group",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The narrator was assigned to this regiment as an Assistant Surgeon."
+          },
+          {
+            "paragraph": 31,
+            "text": "The unit was stationed in India during the narrator's assignment."
+          }
+        ]
+      },
+      {
+        "name": "India",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "This is where the regiment was stationed."
+          }
+        ]
+      },
+      {
+        "name": "second Afghan war",
+        "type": "term",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "This conflict began before the narrator could join his regiment."
+          }
+        ]
+      },
+      {
+        "name": "Bombay",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The narrator landed here and learned his corps had already moved into enemy territory."
+          }
+        ]
+      },
+      {
+        "name": "Candahar",
+        "type": "place",
+        "first_paragraph": 31,
+        "facts": [
+          {
+            "paragraph": 31,
+            "text": "The narrator reached this location safely to find his regiment."
+          }
+        ]
+      },
+      {
+        "name": "Berkshires",
+        "type": "group",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "The narrator was transferred to this group."
+          }
+        ]
+      },
+      {
+        "name": "battle of Maiwand",
+        "type": "term",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "The narrator served with the Berkshires during this fatal engagement."
+          }
+        ]
+      },
+      {
+        "name": "Jezail bullet",
+        "type": "object",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "This projectile struck the narrator in the shoulder."
+          }
+        ]
+      },
+      {
+        "name": "Ghazis",
+        "type": "group",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "These were the murderous enemies the narrator narrowly escaped."
+          }
+        ]
+      },
+      {
+        "name": "Murray",
+        "type": "person",
+        "first_paragraph": 32,
+        "facts": [
+          {
+            "paragraph": 32,
+            "text": "He was the narrator's orderly."
+          },
+          {
+            "paragraph": 32,
+            "text": "He showed great courage by throwing the narrator across a pack-horse."
+          },
+          {
+            "paragraph": 32,
+            "text": "He successfully brought the narrator to the British lines."
+          }
+        ]
+      },
+      {
+        "name": "base hospital at Peshawar",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The narrator was taken here with a train of wounded people."
+          }
+        ]
+      },
+      {
+        "name": "enteric fever",
+        "type": "term",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "This disease struck the narrator while he was recovering."
+          },
+          {
+            "paragraph": 33,
+            "text": "It is described as a curse of the Indian possessions."
+          }
+        ]
+      },
+      {
+        "name": "England",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The narrator was sent back here because his health was ruined."
+          }
+        ]
+      },
+      {
+        "name": "Orontes",
+        "type": "object",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "This was the troopship the narrator used to return home."
+          }
+        ]
+      },
+      {
+        "name": "Portsmouth jetty",
+        "type": "place",
+        "first_paragraph": 33,
+        "facts": [
+          {
+            "paragraph": 33,
+            "text": "The narrator landed here a month after leaving India."
+          }
+        ]
+      },
+      {
+        "name": "London",
+        "type": "place",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The narrator gravitated here because he had no family in England."
+          },
+          {
+            "paragraph": 34,
+            "text": "It is described as a cesspool for the idlers of the Empire."
+          }
+        ]
+      },
+      {
+        "name": "Strand",
+        "type": "place",
+        "first_paragraph": 34,
+        "facts": [
+          {
+            "paragraph": 34,
+            "text": "The narrator stayed at a private hotel on this street."
+          }
+        ]
+      },
+      {
+        "name": "Criterion Bar",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The narrator was standing here when he met Stamford."
+          }
+        ]
+      },
+      {
+        "name": "Stamford",
+        "type": "person",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "He was a dresser under the narrator at Barts."
+          },
+          {
+            "paragraph": 35,
+            "text": "He was delighted to see the narrator."
+          }
+        ]
+      },
+      {
+        "name": "Barts",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "Stamford worked here as a dresser under the narrator."
+          }
+        ]
+      },
+      {
+        "name": "Holborn",
+        "type": "place",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The narrator and Stamford went here for lunch."
+          }
+        ]
+      },
+      {
+        "name": "hansom",
+        "type": "object",
+        "first_paragraph": 35,
+        "facts": [
+          {
+            "paragraph": 35,
+            "text": "The narrator and Stamford traveled in this vehicle."
+          }
+        ]
+      },
+      {
+        "name": "Watson",
+        "type": "person",
+        "first_paragraph": 36,
+        "facts": [
+          {
+            "paragraph": 36,
+            "text": "Stamford addresses the narrator by this name."
+          }
+        ]
+      },
+      {
+        "name": "chemical laboratory",
+        "type": "place",
+        "first_paragraph": 42,
+        "facts": [
+          {
+            "paragraph": 42,
+            "text": "A fellow is working at this location at the hospital."
+          }
+        ]
+      },
+      {
+        "name": "Sherlock Holmes",
+        "type": "person",
+        "first_paragraph": 44,
+        "facts": [
+          {
+            "paragraph": 44,
+            "text": "Stamford mentions him as a potential constant companion."
+          }
+        ]
+      }
+    ]
+  }
+}

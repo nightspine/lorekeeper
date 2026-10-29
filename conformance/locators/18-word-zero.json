@@ -1,0 +1,15 @@
+{
+  "description": "Word 0 is the first block of the document.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "spine": 4,
+    "word": 0
+  },
+  "expect": {
+    "seq": 30,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "pt1.note"
+  }
+}

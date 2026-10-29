@@ -1,0 +1,14 @@
+{
+  "description": "XPointer with a character offset deep into the tenth paragraph.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[5]/body/div/p[10]/text().57"
+  },
+  "expect": {
+    "seq": 40,
+    "exact": true,
+    "finished": "ch1.para09",
+    "inclusive": "ch1.para09"
+  }
+}

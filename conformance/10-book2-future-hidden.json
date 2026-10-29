@@ -1,0 +1,329 @@
+{
+  "description": "Mid book 1: nothing from book 2 leaks even though its index is loaded.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json",
+    "../examples/sherlock-holmes/sign-of-four.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "study-in-scarlet",
+    "anchor": "ch1.para60"
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "study-in-scarlet",
+      "anchor": "ch1.para60"
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para51",
+      "exhausted": false
+    },
+    "entities": [
+      {
+        "id": "watson",
+        "type": "person",
+        "name": "John H. Watson",
+        "aliases": [
+          "Watson",
+          "Dr. Watson"
+        ],
+        "profile": {
+          "id": "sis.watson.p1",
+          "text": "The narrator: an army doctor sent home from Afghanistan after a wound at Maiwand and a bad fever, now alone in London with a small pension and little money.",
+          "basis": "stated",
+          "book": "study-in-scarlet"
+        },
+        "facets": [
+          {
+            "id": "sis.watson.1",
+            "text": "The narrator. Qualified as a doctor in London in 1878 and joined the army as an assistant surgeon, reaching his regiment in the Second Afghan War.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.2",
+            "text": "Hit in the shoulder by a Jezail bullet at the battle of Maiwand; his orderly Murray got him back to British lines.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.3",
+            "text": "Nearly died of enteric fever while recovering in Peshawar and was shipped home to England with his health ruined.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.4",
+            "text": "Alone in London with no family and a small army pension, he is running short of money and looking for cheaper lodgings.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.5",
+            "text": "Owns up to keeping a bull pup, having frayed nerves, rising at odd hours and being very lazy.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "murray",
+        "type": "person",
+        "name": "Murray",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.murray.1",
+            "text": "Watson's orderly at Maiwand, who saved him by throwing him across a pack-horse and carrying him to safety.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "maiwand",
+        "type": "place",
+        "name": "Maiwand",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.maiwand.1",
+            "text": "Battle of the Second Afghan War where Watson was badly wounded.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "stamford",
+        "type": "person",
+        "name": "Stamford",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.stamford.1",
+            "text": "Once a dresser under Watson at Barts; the two run into each other by chance at the Criterion Bar.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.stamford.2",
+            "text": "Takes Watson to the hospital laboratory and introduces him to Sherlock Holmes.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "barts",
+        "type": "place",
+        "name": "Barts",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.barts.1",
+            "text": "The London hospital where Watson and Stamford once worked together.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.barts.2",
+            "text": "Holmes works in its chemical laboratory, a high room crowded with bottles, retorts and test-tubes.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "criterion-bar",
+        "type": "place",
+        "name": "Criterion Bar",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.criterion.1",
+            "text": "The London bar where Watson meets Stamford again.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "holmes",
+        "type": "person",
+        "name": "Sherlock Holmes",
+        "aliases": [
+          "Holmes"
+        ],
+        "profile": {
+          "id": "sis.holmes.p1",
+          "text": "A young man who works in the hospital's chemical laboratory: a first-class chemist who knows anatomy well but follows no regular course of study, and who wants someone to share rooms with.",
+          "basis": "stated",
+          "book": "study-in-scarlet"
+        },
+        "facets": [
+          {
+            "id": "sis.holmes.1",
+            "text": "A man Stamford knows from the hospital's chemical laboratory, who is looking for someone to split the cost of a set of rooms.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.2",
+            "text": "Knows anatomy well and is a first-rate chemist, yet has never studied medicine systematically; even Stamford does not know his aims.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.3",
+            "text": "Stamford finds him scientific to the point of coldness: he has been seen beating corpses in the dissecting rooms to study bruising after death.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.4",
+            "text": "On first meeting Watson, tells him he has been in Afghanistan, and will not say how he knew.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.5",
+            "text": "Has just discovered a reagent that reacts to haemoglobin, giving a reliable test for bloodstains, and is thrilled by its value in criminal cases.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.6",
+            "text": "Warns Watson that he smokes strong tobacco, keeps chemicals and runs experiments at home, and sometimes falls silent for days.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "blood-test",
+        "type": "concept",
+        "name": "Holmes's bloodstain test",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.bloodtest.1",
+            "text": "A chemical test Holmes has just devised that reacts only to haemoglobin, detecting even tiny traces of blood.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "baker-street",
+        "type": "place",
+        "name": "Baker Street",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.bakerst.1",
+            "text": "Holmes has his eye on a suite of rooms here that would suit two lodgers.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      }
+    ],
+    "relations": [
+      {
+        "id": "sis.rel.murray-watson",
+        "src": "murray",
+        "dst": "watson",
+        "label": "orderly who saved the life of",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.stamford-watson",
+        "src": "stamford",
+        "dst": "watson",
+        "label": "former dresser under",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.holmes-barts",
+        "src": "holmes",
+        "dst": "barts",
+        "label": "works in the chemical laboratory of",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.watson-holmes.1",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "has agreed to share rooms with",
+        "book": "study-in-scarlet"
+      }
+    ],
+    "relationHistory": [],
+    "events": [
+      {
+        "id": "sis.ev.maiwand",
+        "summary": "Watson is wounded at the battle of Maiwand.",
+        "entities": [
+          "watson",
+          "murray",
+          "maiwand"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.criterion",
+        "summary": "Watson runs into Stamford at the Criterion Bar.",
+        "entities": [
+          "watson",
+          "stamford",
+          "criterion-bar"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.meeting",
+        "summary": "Stamford introduces Watson to Holmes at Barts.",
+        "entities": [
+          "watson",
+          "stamford",
+          "holmes",
+          "barts"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.agree",
+        "summary": "Holmes and Watson agree to share rooms.",
+        "entities": [
+          "holmes",
+          "watson"
+        ],
+        "book": "study-in-scarlet"
+      }
+    ],
+    "recap": null,
+    "chapters": []
+  }
+}

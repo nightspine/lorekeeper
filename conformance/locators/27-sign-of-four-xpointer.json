@@ -1,0 +1,14 @@
+{
+  "description": "XPointer into the second paragraph of chapter II.",
+  "edition": "corpus/pg2097/pg2097.epub",
+  "index": "examples/sherlock-holmes/sign-of-four.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[4]/body/div/p[2]/text().3"
+  },
+  "expect": {
+    "seq": 79,
+    "exact": true,
+    "finished": "ch2.para01",
+    "inclusive": "ch2.para02"
+  }
+}

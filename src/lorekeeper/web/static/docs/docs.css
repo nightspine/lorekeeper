@@ -1,0 +1,105 @@
+/* Documentation site layout. Tokens, base elements and the skip link come from ../css/base.css.
+   The pages use relative links only, so the folder works from /docs/ here and from any static host
+   (see `lorekeeper docs export`, which lays out docs/, css/, fonts/ and vendor/ side by side).
+   Fonts are declared here with relative URLs because fonts/fonts.css points at /static/. */
+
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 400 800; font-display: swap; src: url(../fonts/manrope-latin-ext.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 400 800; font-display: swap; src: url(../fonts/manrope-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(../fonts/jetbrains-mono-400-latin-ext.woff2) format('woff2'); unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: 'JetBrains Mono'; font-style: normal; font-weight: 400; font-display: swap; src: url(../fonts/jetbrains-mono-400-latin.woff2) format('woff2'); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+.docs { display: grid; grid-template-columns: 220px minmax(0, 760px); gap: var(--space-7); max-width: 1100px; margin: 0 auto; padding: var(--space-6) var(--space-5) 96px; align-items: start; }
+
+/* ---------- left nav ---------- */
+.docs-nav { position: sticky; top: var(--space-5); display: flex; flex-direction: column; gap: var(--space-4); max-height: calc(100vh - var(--space-6)); overflow-y: auto; }
+.docs-brand { font-size: var(--text-xl); font-weight: 800; letter-spacing: -.035em; color: var(--text); }
+.docs-brand:hover { text-decoration: none; }
+.docs-brand span { display: block; font-size: var(--text-sm); font-weight: 600; letter-spacing: 0; color: var(--text-3); margin-top: 2px; }
+.docs-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.docs-nav li a { display: block; padding: 7px 12px; border-radius: var(--radius-s); color: var(--text-2); font-weight: 600; font-size: 15px; }
+.docs-nav li a:hover { background: var(--glass-2); color: var(--text); text-decoration: none; }
+.docs-nav li a[aria-current="page"] { background: var(--glass-2); color: var(--text); box-shadow: inset 2px 0 0 var(--beacon); }
+.docs-nav .group { padding: 0 12px; margin: var(--space-3) 0 2px; font-size: 13px; font-weight: 600; color: var(--text-3); }
+
+/* ---------- content ---------- */
+.docs-main { min-width: 0; width: 100%; max-width: none; margin: 0; padding: 0; }  /* base.css gives main auto margins, which would shrink-wrap a grid item */
+.docs-main > h1 { font-size: 34px; margin-bottom: var(--space-3); }
+.docs-main .lede { font-size: var(--text-lg); color: var(--text-2); line-height: 1.5; margin-bottom: var(--space-6); }
+.docs-main h2 { font-size: 24px; margin: var(--space-7) 0 var(--space-3); padding-top: var(--space-5); border-top: 1px solid var(--edge); }
+.docs-main h2:first-of-type { border-top: 0; padding-top: 0; }
+.docs-main h3 { font-size: 18px; margin: var(--space-5) 0 var(--space-2); }
+.docs-main p { margin: 0 0 var(--space-4); color: var(--text); }
+.docs-main p, .docs-main li { overflow-wrap: anywhere; }
+.docs-main ul, .docs-main ol { margin: 0 0 var(--space-4); padding-left: 22px; }
+.docs-main li { margin-bottom: 6px; }
+.docs-main a { text-decoration: underline; text-underline-offset: .18em; text-decoration-color: color-mix(in srgb, var(--beacon) 45%, transparent); }
+.docs-main a:hover { text-decoration-color: var(--beacon); }
+.docs-main strong { font-weight: 700; }
+
+code, kbd { font-family: var(--font-mono); font-size: .88em; background: var(--glass-2); border: 1px solid var(--edge); border-radius: 6px; padding: 1px 6px; overflow-wrap: anywhere; }
+pre { margin: 0 0 var(--space-4); padding: var(--space-4); background: var(--glass); border: 1px solid var(--edge); border-radius: var(--radius); overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+pre code { font-variant-ligatures: none; display: block; background: none; border: 0; padding: 0; font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre; overflow-wrap: normal; }
+pre .c { color: var(--text-3); }
+.file { margin: 0 0 6px; font-size: var(--text-sm); font-weight: 600; color: var(--text-3); }
+.file + pre { margin-top: 0; }
+
+.table-wrap { overflow-x: auto; margin: 0 0 var(--space-4); max-width: 100%; }
+table { width: 100%; border-collapse: collapse; font-size: var(--text-sm); }
+th { text-align: left; padding: 10px 14px 10px 0; font-size: 13px; font-weight: 600; color: var(--text-3); border-bottom: 1px solid var(--edge-lit); white-space: nowrap; }
+td { padding: 10px 14px 10px 0; border-top: 1px solid var(--edge); vertical-align: top; color: var(--text-2); }
+td:first-child { color: var(--text); }
+td code { white-space: nowrap; }
+td code.wrap { white-space: normal; }
+
+.note { margin: 0 0 var(--space-4); padding: var(--space-3) var(--space-4); background: var(--glass); border: 1px solid var(--edge); border-left: 3px solid var(--edge-lit); border-radius: var(--radius-s); color: var(--text-2); }
+.note p:last-child { margin-bottom: 0; }
+.note p { color: var(--text-2); }
+.warn { border-left-color: var(--ember); }
+
+.route { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: var(--space-3); }
+.method { font: 400 13px/1 var(--font-mono); padding: 4px 8px; border-radius: 6px; background: var(--info-soft); color: var(--t-group); }
+.route code { background: none; border: 0; padding: 0; font-size: 16px; color: var(--text); }
+
+.paths { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); margin: var(--space-5) 0; }
+.paths a { display: block; padding: var(--space-4); border-radius: var(--radius-l); text-decoration: none; background: linear-gradient(180deg, var(--glass-2), var(--glass)); border: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--edge-lit); color: var(--text-2); transition: border-color var(--dur-fast), background var(--dur-fast); }
+.paths a:hover { border-color: var(--edge-lit); background: var(--glass-hover); text-decoration: none; }
+.paths strong { display: block; color: var(--text); font-size: var(--text-md); margin-bottom: 4px; }
+.paths span { font-size: var(--text-sm); line-height: 1.45; }
+.paths .primary { border-color: transparent; background: var(--beacon); color: var(--beacon-ink); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08), 0 8px 28px var(--beacon-glow); }
+.paths .primary strong { color: var(--beacon-ink); }
+
+.pager { display: flex; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-7); padding-top: var(--space-5); border-top: 1px solid var(--edge); font-weight: 600; }
+
+.checklist { list-style: none; padding-left: 0; }
+.checklist li { position: relative; padding-left: 28px; }
+.checklist li::before { content: ""; position: absolute; left: 0; top: .42em; width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid var(--beacon); }
+
+/* spec page */
+.spec-wrap { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+#spec-toc { font-size: var(--text-sm); padding: var(--space-4); border: 1px solid var(--edge); border-radius: var(--radius); background: var(--glass); }
+#spec-toc summary { cursor: pointer; font-weight: 600; color: var(--text-2); }
+#spec-toc ul { list-style: none; margin: var(--space-3) 0 0; padding: 0; columns: 2; column-gap: var(--space-5); }
+#spec-toc li { margin: 0 0 4px; break-inside: avoid; }
+#spec-toc li.h3 { padding-left: 14px; }
+#spec-toc a { text-decoration: none; color: var(--text-2); }
+#spec-toc a:hover { color: var(--text); }
+#spec h1 { font-size: 30px; margin-bottom: var(--space-4); }
+#spec h2 { font-size: 24px; margin: var(--space-7) 0 var(--space-3); padding-top: var(--space-5); border-top: 1px solid var(--edge); }
+#spec h3 { font-size: 18px; margin: var(--space-5) 0 var(--space-2); }
+#spec h2, #spec h3 { scroll-margin-top: var(--space-5); }
+#spec p, #spec li { color: var(--text); }
+#spec blockquote { margin: 0 0 var(--space-4); padding: 0 var(--space-4); border-left: 3px solid var(--edge-lit); color: var(--text-2); }
+#spec table { display: block; overflow-x: auto; margin-bottom: var(--space-4); }
+#spec hr { border: 0; border-top: 1px solid var(--edge); margin: var(--space-5) 0; }
+#spec-status { color: var(--text-2); }
+
+@media (max-width: 900px) {
+  .docs { grid-template-columns: minmax(0, 1fr); gap: var(--space-5); padding: var(--space-4) 16px 64px; }
+  .docs-nav { position: static; max-height: none; overflow: visible; }
+  .docs-nav ul { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .docs-nav li a { padding: 6px 10px; border: 1px solid var(--edge); }
+  .docs-nav .group { display: none; }
+  .docs-main > h1 { font-size: 28px; }
+  .paths { grid-template-columns: minmax(0, 1fr); }
+  #spec-toc ul { columns: 1; }
+}

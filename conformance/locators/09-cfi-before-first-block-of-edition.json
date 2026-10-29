@@ -1,0 +1,14 @@
+{
+  "description": "CFI to the cover image, in a document with no blocks before the first block of the edition: -1.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/2!/4/2/2)"
+  },
+  "expect": {
+    "seq": -1,
+    "exact": true,
+    "finished": null,
+    "inclusive": null
+  }
+}

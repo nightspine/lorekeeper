@@ -1,0 +1,15 @@
+{
+  "description": "A word offset past the end of the document clamps to its last block, not exact.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "spine": 4,
+    "word": 100000
+  },
+  "expect": {
+    "seq": 99,
+    "exact": false,
+    "finished": "ch1.para66",
+    "inclusive": "ch1.para69"
+  }
+}

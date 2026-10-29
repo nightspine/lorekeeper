@@ -1,0 +1,697 @@
+{
+  "description": "A book 2 relation replaces a book 1 relation.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json",
+    "../examples/sherlock-holmes/sign-of-four.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "sign-of-four",
+    "anchor": "ch1.para17"
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "sign-of-four",
+      "anchor": "ch1.para17"
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para40",
+      "exhausted": false
+    },
+    "entities": [
+      {
+        "id": "watson",
+        "type": "person",
+        "name": "John H. Watson",
+        "aliases": [
+          "Watson",
+          "Dr. Watson"
+        ],
+        "profile": {
+          "id": "sis.watson.p1",
+          "text": "The narrator: an army doctor sent home from Afghanistan after a wound at Maiwand and a bad fever, now alone in London with a small pension and little money.",
+          "basis": "stated",
+          "book": "study-in-scarlet"
+        },
+        "facets": [
+          {
+            "id": "sis.watson.1",
+            "text": "The narrator. Qualified as a doctor in London in 1878 and joined the army as an assistant surgeon, reaching his regiment in the Second Afghan War.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.2",
+            "text": "Hit in the shoulder by a Jezail bullet at the battle of Maiwand; his orderly Murray got him back to British lines.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.3",
+            "text": "Nearly died of enteric fever while recovering in Peshawar and was shipped home to England with his health ruined.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.4",
+            "text": "Alone in London with no family and a small army pension, he is running short of money and looking for cheaper lodgings.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.5",
+            "text": "Owns up to keeping a bull pup, having frayed nerves, rising at odd hours and being very lazy.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.6",
+            "text": "With poor health, no visitors and little to do, he becomes absorbed in trying to work out who Holmes really is.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.watson.7",
+            "text": "Suspects that Holmes's confident deductions are bluster that cannot be checked.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sof.watson.1",
+            "text": "His health has still not recovered from the Afghan campaign.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.2",
+            "text": "Has written up the Jefferson Hope case as a short book titled \"A Study in Scarlet\".",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.3",
+            "text": "Has now lived with Holmes in Baker Street for years.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "murray",
+        "type": "person",
+        "name": "Murray",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.murray.1",
+            "text": "Watson's orderly at Maiwand, who saved him by throwing him across a pack-horse and carrying him to safety.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "maiwand",
+        "type": "place",
+        "name": "Maiwand",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.maiwand.1",
+            "text": "Battle of the Second Afghan War where Watson was badly wounded.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "stamford",
+        "type": "person",
+        "name": "Stamford",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.stamford.1",
+            "text": "Once a dresser under Watson at Barts; the two run into each other by chance at the Criterion Bar.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.stamford.2",
+            "text": "Takes Watson to the hospital laboratory and introduces him to Sherlock Holmes.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "barts",
+        "type": "place",
+        "name": "Barts",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.barts.1",
+            "text": "The London hospital where Watson and Stamford once worked together.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.barts.2",
+            "text": "Holmes works in its chemical laboratory, a high room crowded with bottles, retorts and test-tubes.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "criterion-bar",
+        "type": "place",
+        "name": "Criterion Bar",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.criterion.1",
+            "text": "The London bar where Watson meets Stamford again.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "holmes",
+        "type": "person",
+        "name": "Sherlock Holmes",
+        "aliases": [
+          "Holmes"
+        ],
+        "profile": {
+          "id": "sof.holmes.p1",
+          "text": "Watson's companion of several years in Baker Street, who calls himself the only unofficial consulting detective and turns to cocaine when he has no problem to work on.",
+          "basis": "stated",
+          "book": "sign-of-four"
+        },
+        "facets": [
+          {
+            "id": "sis.holmes.1",
+            "text": "A man Stamford knows from the hospital's chemical laboratory, who is looking for someone to split the cost of a set of rooms.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.2",
+            "text": "Knows anatomy well and is a first-rate chemist, yet has never studied medicine systematically; even Stamford does not know his aims.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.3",
+            "text": "Stamford finds him scientific to the point of coldness: he has been seen beating corpses in the dissecting rooms to study bruising after death.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.4",
+            "text": "On first meeting Watson, tells him he has been in Afghanistan, and will not say how he knew.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.5",
+            "text": "Has just discovered a reagent that reacts to haemoglobin, giving a reliable test for bloodstains, and is thrilled by its value in criminal cases.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.6",
+            "text": "Warns Watson that he smokes strong tobacco, keeps chemicals and runs experiments at home, and sometimes falls silent for days.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.7",
+            "text": "Over six feet tall and very lean, with piercing eyes, a hawk-like nose, a square chin, and hands stained by ink and chemicals.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.9",
+            "text": "Knows next to nothing of literature, philosophy or politics, and did not know that the earth goes round the sun.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.10",
+            "text": "Treats the mind as an attic with limited room, so he deliberately forgets anything that is no use to his work.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.11",
+            "text": "Watson's list of his knowledge: none in literature, philosophy or astronomy; profound in chemistry; immense in sensational crime; also a fine violinist, boxer, swordsman and singlestick player who knows British law.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.12",
+            "text": "Receives a stream of very different visitors he calls clients, borrowing the shared sitting-room to see them.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.13",
+            "text": "Turns out to be the author of the magazine article on observation that Watson has just mocked.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.14",
+            "text": "Works as a consulting detective, perhaps the only one in the world: police and private detectives bring him cases they cannot solve.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.15",
+            "text": "Explains that he read Watson's army bearing, tanned face, fair wrists, haggard look and stiff arm in an instant to place him in Afghanistan.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.16",
+            "text": "Scorns the famous fictional detectives Dupin and Lecoq.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.17",
+            "text": "Identifies a messenger across the street as a retired Marine sergeant; the man confirms it.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sof.holmes.1",
+            "text": "Has been injecting cocaine several times a day for months when he has no case, which alarms Watson.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.2",
+            "text": "Calls himself the only unofficial consulting detective, the last resort of official detectives such as Gregson, Lestrade and Athelney Jones; he wants no public credit.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.3",
+            "text": "Thinks Watson's written account of their first case was spoiled by romance, since detection should be treated as an exact science.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": [
+          {
+            "id": "sis.holmes.p1",
+            "text": "A young man who works in the hospital's chemical laboratory: a first-class chemist who knows anatomy well but follows no regular course of study, and who wants someone to share rooms with.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.8",
+            "text": "His profession is a mystery to Watson: he is not studying medicine or working toward any degree, yet his knowledge in certain areas is deep and exact.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.holmes.p2",
+            "text": "Watson's fellow lodger in Baker Street: a tall, very lean man with sharp eyes and a beak of a nose, who earns his living as a consulting detective, reasoning from small observed details to firm conclusions.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ]
+      },
+      {
+        "id": "blood-test",
+        "type": "concept",
+        "name": "Holmes's bloodstain test",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.bloodtest.1",
+            "text": "A chemical test Holmes has just devised that reacts only to haemoglobin, detecting even tiny traces of blood.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "baker-street",
+        "type": "place",
+        "name": "221B Baker Street",
+        "aliases": [
+          "Baker Street"
+        ],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.bakerst.1",
+            "text": "Holmes has his eye on a suite of rooms here that would suit two lodgers.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.bakerst.2",
+            "text": "Two bedrooms and a bright, well-furnished sitting-room. Holmes and Watson take the rooms on the spot and move in.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "lestrade",
+        "type": "person",
+        "name": "Lestrade",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.lestrade.1",
+            "text": "A small, sallow, dark-eyed visitor who calls on Holmes three or four times in one week.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.lestrade.2",
+            "text": "A well-known detective; Holmes says he came for help after getting lost in a forgery case.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sof.lestrade.1",
+            "text": "Named by Holmes as one of the official detectives who come to him when out of their depth.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "book-of-life",
+        "type": "object",
+        "name": "The Book of Life",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.bookoflife.1",
+            "text": "A magazine article Watson reads over breakfast, claiming a trained observer can read a person's thoughts and history from tiny details.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.bookoflife.2",
+            "text": "Watson dismisses it as nonsense.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.bookoflife.3",
+            "text": "Holmes reveals that he wrote it.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "consulting-detective",
+        "type": "term",
+        "name": "consulting detective",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.consulting.1",
+            "text": "Holmes's name for his own trade: detectives and private clients bring him their problems and he usually solves them from what they tell him, often without leaving his room.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "dupin",
+        "type": "person",
+        "name": "Dupin",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.dupin.1",
+            "text": "Poe's fictional detective. Watson compares Holmes to him; Holmes thinks Dupin showy, superficial and overrated.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "lecoq",
+        "type": "person",
+        "name": "Lecoq",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.lecoq.1",
+            "text": "Gaboriau's fictional detective, whom Holmes dismisses as a bungler with nothing going for him but energy.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "marine-sergeant",
+        "type": "person",
+        "name": "the retired Marine sergeant",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sis.sergeant.1",
+            "text": "A man walking down Baker Street whom Holmes, at a glance, calls a retired sergeant of Marines.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sis.sergeant.2",
+            "text": "Delivers a letter to Holmes. Now a commissionaire, he confirms he served as a sergeant in the Royal Marine Light Infantry.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "gregson",
+        "type": "person",
+        "name": "Gregson",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sof.gregson.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "athelney-jones",
+        "type": "person",
+        "name": "Athelney Jones",
+        "aliases": [],
+        "profile": null,
+        "facets": [
+          {
+            "id": "sof.jones.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      }
+    ],
+    "relations": [
+      {
+        "id": "sis.rel.murray-watson",
+        "src": "murray",
+        "dst": "watson",
+        "label": "orderly who saved the life of",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.stamford-watson",
+        "src": "stamford",
+        "dst": "watson",
+        "label": "former dresser under",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.holmes-barts",
+        "src": "holmes",
+        "dst": "barts",
+        "label": "works in the chemical laboratory of",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.lestrade-holmes",
+        "src": "lestrade",
+        "dst": "holmes",
+        "label": "brings difficult cases to",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sof.rel.watson-holmes",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "longtime companion and fellow lodger of",
+        "book": "sign-of-four"
+      }
+    ],
+    "relationHistory": [
+      {
+        "id": "sis.rel.watson-holmes.1",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "has agreed to share rooms with",
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.rel.watson-holmes.2",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "shares rooms at 221B Baker Street with",
+        "book": "study-in-scarlet"
+      }
+    ],
+    "events": [
+      {
+        "id": "sis.ev.maiwand",
+        "summary": "Watson is wounded at the battle of Maiwand.",
+        "entities": [
+          "watson",
+          "murray",
+          "maiwand"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.criterion",
+        "summary": "Watson runs into Stamford at the Criterion Bar.",
+        "entities": [
+          "watson",
+          "stamford",
+          "criterion-bar"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.meeting",
+        "summary": "Stamford introduces Watson to Holmes at Barts.",
+        "entities": [
+          "watson",
+          "stamford",
+          "holmes",
+          "barts"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.agree",
+        "summary": "Holmes and Watson agree to share rooms.",
+        "entities": [
+          "holmes",
+          "watson"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.movein",
+        "summary": "They move into 221B Baker Street.",
+        "entities": [
+          "holmes",
+          "watson",
+          "baker-street"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.article",
+        "summary": "Holmes reveals he wrote \"The Book of Life\".",
+        "entities": [
+          "holmes",
+          "watson",
+          "book-of-life"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.trade",
+        "summary": "Holmes explains that he is a consulting detective.",
+        "entities": [
+          "holmes",
+          "watson",
+          "consulting-detective"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sis.ev.sergeant",
+        "summary": "A messenger confirms Holmes's guess that he was a Marine sergeant.",
+        "entities": [
+          "holmes",
+          "watson",
+          "marine-sergeant"
+        ],
+        "book": "study-in-scarlet"
+      },
+      {
+        "id": "sof.ev.cocaine",
+        "summary": "Watson confronts Holmes about his cocaine habit.",
+        "entities": [
+          "watson",
+          "holmes"
+        ],
+        "book": "sign-of-four"
+      }
+    ],
+    "recap": {
+      "id": "sis.recap.ch2",
+      "text": "Watson and Holmes settle into 221B Baker Street. Puzzled by Holmes's lopsided knowledge and many visitors, Watson finally learns that Holmes wrote an article on deduction and works as a consulting detective. Holmes then proves his point by identifying a messenger as a former Marine sergeant.",
+      "book": "study-in-scarlet"
+    },
+    "chapters": []
+  }
+}

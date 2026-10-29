@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Conformance - Lorekeeper docs</title>
+<meta name="description" content="How to test a Lorekeeper client, server or index against the conformance suites.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html" aria-current="page">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Conformance</h1>
+<p class="lede">Two suites of JSON cases define what a client or server must do. They are plain data, so a port in any language can run them.</p>
+
+<h2 id="suites">The suites</h2>
+<div class="table-wrap"><table><thead><tr><th>Folder</th><th>What it tests</th><th>Needs the EPUB</th></tr></thead><tbody><tr><td><code>conformance/*.json</code></td><td>Gating: positions in the example indexes and the exact view every client must produce.</td><td>No</td></tr><tr><td><code>conformance/locators/*.json</code></td><td>Locators: an edition, an index, a locator, and the expected seq and anchors.</td><td>Yes, the Gutenberg EPUB for most cases</td></tr></tbody></table></div>
+<p>A client conforms if its view equals the expected view for every gating case (JSON equality, array order significant) and, for each locator form it supports, every locator case of that form. A server conforms if its responses match <code>schema/api.schema.json</code>, its views pass the gating cases, and it passes the locator cases for each form it accepts.</p>
+
+<h2 id="gating">Gating case shape</h2>
+<pre><code>{
+  &quot;description&quot;: &quot;Holmes reveals his trade; the &#x27;profession is a mystery&#x27; facet moves to history.&quot;,
+  &quot;series&quot;: &quot;../examples/sherlock-holmes/series.json&quot;,
+  &quot;indexes&quot;: [&quot;../examples/sherlock-holmes/study-in-scarlet.json&quot;],
+  &quot;order&quot;: null,
+  &quot;finished&quot;: null,
+  &quot;position&quot;: { &quot;book&quot;: &quot;study-in-scarlet&quot;, &quot;anchor&quot;: &quot;ch2.para28&quot; },
+  &quot;expect&quot;: { &quot;lorekeeper&quot;: &quot;0.1&quot;, &quot;kind&quot;: &quot;view&quot;, &quot;position&quot;: { ... }, &quot;coverage&quot;: { ... },
+              &quot;entities&quot;: [ ... ], &quot;relations&quot;: [ ... ], &quot;relationHistory&quot;: [ ... ],
+              &quot;events&quot;: [ ... ], &quot;recap&quot;: null, &quot;chapters&quot;: [ ... ] }
+}</code></pre>
+<p>The inputs are the index files, the optional series manifest, a reading order (<code>null</code> for the default), a list of finished books (<code>null</code> for the default of every book before the current one) and the position. <code>expect</code> is the whole view, in the shape of <code>schema/view.schema.json</code>. There are fourteen cases, including a position before the first anchor, replacement across books, a book whose index is missing, an unfinished earlier book, and profiles inherited from an earlier book.</p>
+
+<h2 id="locator-cases">Locator case shape</h2>
+<pre><code>{
+  &quot;description&quot;: &quot;Word 240 of the chapter I document.&quot;,
+  &quot;edition&quot;: &quot;corpus/pg244/pg244.epub&quot;,
+  &quot;index&quot;: &quot;examples/sherlock-holmes/study-in-scarlet.json&quot;,
+  &quot;locator&quot;: { &quot;spine&quot;: 4, &quot;word&quot;: 240 },
+  &quot;expect&quot;: { &quot;seq&quot;: 33, &quot;exact&quot;: true, &quot;finished&quot;: &quot;ch1.para02&quot;, &quot;inclusive&quot;: &quot;ch1.para03&quot; }
+}</code></pre>
+<p>Map the locator onto the edition, check that <code>seq</code> and <code>exact</code> match, then resolve the index's anchors against that edition and check the anchor for each mode. A case whose edition file is missing is skipped by the Python runner, so a green run without the corpus does not cover locators. The README lists the download commands for the Gutenberg and Standard Ebooks files.</p>
+<p>The suite has no error cases yet. Test the error rules of section 3.8 yourself: a malformed locator, members of two forms, and a missing or non-linear document must all fail, never guess.</p>
+
+<h2 id="run">Running the reference</h2>
+<pre><code>uv run lorekeeper conformance            # run every case, prints ok / FAIL / skip per file
+uv run lorekeeper conformance --update   # regenerate expected output after an intended change
+uv run pytest                            # includes the same cases plus independent spoiler assertions
+node tests/js/run_conformance.mjs        # the JavaScript gating port against the gating cases</code></pre>
+<p>Expected outputs are generated by the Python reference, so review the diff after <code>--update</code>. The spoiler properties that must never regress are also asserted by hand in <code>tests/test_gating.py</code>, independent of the generated files.</p>
+
+<h2 id="indexes">Validating an index</h2>
+<p>Index documents conform if they pass every check in <a href="spec.html#64-validation">section 6.4</a>.</p>
+<pre><code>uv run lorekeeper validate my-book.lore.json
+uv run lorekeeper validate my-book.lore.json --epub my-book.epub   # also checks anchors and quoted text
+uv run lorekeeper validate book1.json book2.json --series series.json</code></pre>
+
+</main>
+</div>
+</body>
+</html>

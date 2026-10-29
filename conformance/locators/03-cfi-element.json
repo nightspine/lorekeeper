@@ -1,0 +1,14 @@
+{
+  "description": "CFI that ends on a paragraph element, with no text step.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/14)"
+  },
+  "expect": {
+    "seq": 36,
+    "exact": true,
+    "finished": "ch1.para05",
+    "inclusive": "ch1.para06"
+  }
+}

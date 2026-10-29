@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/api.schema.json",
+  "title": "Lorekeeper protocol responses",
+  "description": "Response bodies for the read-only HTTP protocol (SPEC.md \u00a78). Index, series and view bodies use their own schemas.",
+  "$defs": {
+    "discovery": {
+      "description": "GET /.well-known/lorekeeper",
+      "type": "object",
+      "required": [
+        "lorekeeper",
+        "api",
+        "capabilities",
+        "auth"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "lorekeeper": {
+          "const": "0.1"
+        },
+        "name": {
+          "type": "string"
+        },
+        "api": {
+          "type": "string",
+          "description": "Base path or absolute URL of the v0 API"
+        },
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "lookup",
+              "index",
+              "series",
+              "view",
+              "view-cfi",
+              "entities",
+              "requests"
+            ]
+          }
+        },
+        "auth": {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "enum": [
+                "none",
+                "bearer"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "lookup": {
+      "description": "GET /v0/lookup",
+      "type": "object",
+      "required": [
+        "results"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "title",
+              "match",
+              "complete",
+              "digest",
+              "href"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "match": {
+                "enum": [
+                  "file",
+                  "text",
+                  "identifier"
+                ]
+              },
+              "series": {
+                "type": "object",
+                "required": [
+                  "id",
+                  "book"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "book": {
+                    "type": "string"
+                  }
+                }
+              },
+              "complete": {
+                "type": "boolean"
+              },
+              "updated": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "digest": {
+                "type": "string",
+                "pattern": "^sha256:[0-9a-f]{64}$"
+              },
+              "href": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "problem": {
+      "description": "Error body, RFC 9457 application/problem+json",
+      "type": "object",
+      "required": [
+        "type",
+        "title",
+        "status"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "status": {
+          "type": "integer"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "locator": {
+      "description": "A reader position in the reader's own edition (SPEC.md \u00a73.8). Exactly one form. As view/entities query parameters the members are the parameter names.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "block"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "block": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "cfi"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "cfi": {
+              "type": "string",
+              "pattern": "^epubcfi\\(.+\\)$"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "xpointer"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "xpointer": {
+              "type": "string",
+              "pattern": "^/"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "spine",
+            "word"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "spine": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "word": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "spine",
+            "progress"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "spine": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "progress": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      ]
+    },
+    "viewQuery": {
+      "description": "Query parameters of GET /v0/indexes/{id}/view and the position parameters of GET /v0/indexes/{id}/entities (SPEC.md \u00a78.4, \u00a78.6). Exactly one of: anchor, or one locator form (block | cfi | xpointer | spine+word | spine+progress). A locator requires textHash or fileHash. Sending several positions is 400; a locator against an edition the server does not hold is 409 (problem). Values arrive as strings and are parsed per the locator definition.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "type": "string"
+        },
+        "block": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cfi": {
+          "type": "string"
+        },
+        "xpointer": {
+          "type": "string"
+        },
+        "spine": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "word": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "textHash": {
+          "type": "string"
+        },
+        "fileHash": {
+          "type": "string"
+        },
+        "inclusive": {
+          "type": "boolean",
+          "description": "Default false for view, true for entities."
+        },
+        "order": {
+          "type": "string",
+          "description": "Reading order key"
+        },
+        "finished": {
+          "type": "string",
+          "description": "Comma-separated book keys"
+        }
+      }
+    },
+    "entitiesResponse": {
+      "description": "GET /v0/indexes/{id}/entities (SPEC.md \u00a78.6)",
+      "type": "object",
+      "required": [
+        "position",
+        "entities"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Anchor id the lookup was gated at, null for none"
+        },
+        "locator": {
+          "$ref": "#/$defs/locatorResult"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "description": "A view entity (view.schema.json) plus the visible relations and events that involve it",
+            "type": "object",
+            "required": [
+              "id",
+              "type",
+              "name",
+              "aliases",
+              "facets",
+              "history",
+              "profile",
+              "relations",
+              "events"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "aliases": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "facets": {
+                "type": "array"
+              },
+              "history": {
+                "type": "array"
+              },
+              "profile": {},
+              "relations": {
+                "type": "array",
+                "items": {
+                  "$ref": "view.schema.json#/properties/relations/items"
+                }
+              },
+              "events": {
+                "type": "array",
+                "items": {
+                  "$ref": "view.schema.json#/properties/events/items"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "locatorResult": {
+      "description": "Result of mapping a locator (SPEC.md \u00a78.4). Present in a view or entities response only when a locator parameter was used; absent when anchor was given.",
+      "type": "object",
+      "required": [
+        "position",
+        "seq",
+        "basis",
+        "exact"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "position": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Anchor id gated at, null for none"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Block the locator mapped to; -1 for none"
+        },
+        "basis": {
+          "enum": [
+            "block",
+            "cfi",
+            "xpointer",
+            "word",
+            "progress"
+          ]
+        },
+        "exact": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

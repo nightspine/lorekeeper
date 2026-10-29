@@ -1,0 +1,27 @@
+{
+  "model": "gemma4:12b-it-qat",
+  "chunks": 2,
+  "stopped": false,
+  "seconds": 636,
+  "stats": {
+    "entities": 20,
+    "dropped: not supported": 0,
+    "facets": 59,
+    "relations": 5,
+    "events": 3,
+    "recaps": 2,
+    "moved later by fact-check": 1
+  },
+  "validation_errors": [],
+  "rejected": [],
+  "usage": {
+    "calls": 4,
+    "prompt_tokens": 20991,
+    "output_tokens": 4160,
+    "seconds": 635.4388444423676,
+    "failures": 0,
+    "refusals": 0,
+    "truncated": 0,
+    "cost_usd": 0.0
+  }
+}

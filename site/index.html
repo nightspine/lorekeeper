@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lorekeeper</title>
+<meta name="description" content="Lorekeeper builds a spoiler-gated index for any EPUB: who is who, what happened and how people are connected, revealed only as far as you have read. An open standard with a self-hosted reference implementation.">
+<meta property="og:title" content="Lorekeeper">
+<meta property="og:description" content="A book companion that cannot spoil you. Open standard, self-hosted, works across a series.">
+<meta property="og:image" content="assets/reader-map.webp">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%235CE1D6'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+
+<header class="site-nav" id="top">
+  <div class="wrap nav-row">
+    <a class="brand" href="#top" aria-label="Lorekeeper, home"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Lorekeeper</span></a>
+    <nav class="nav-links" aria-label="Site">
+      <a href="#reader">Reader</a>
+      <a href="#build">Building</a>
+      <a href="#developers">Reader apps</a>
+      <a href="docs/index.html">Docs</a>
+      <a href="docs/spec.html">Spec</a>
+    </nav>
+    <a class="btn primary nav-cta" href="docs/self-hosting.html">Self-host it</a>
+  </div>
+</header>
+
+<main id="main" class="site">
+
+<!-- ============ Hero ============ -->
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="kicker">An open standard for spoiler-safe book companions</p>
+      <h1 class="display">A book companion that can't spoil you.</h1>
+      <p class="lede">Lorekeeper builds an index for any EPUB: who's who, what happened, how everyone is connected. Your reader shows it only as far as you've read. Not a name, not a count, not a hint past your page.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="docs/self-hosting.html">Self-host it</a>
+        <a class="btn ghost" href="docs/reader-apps.html">Build it into a reader</a>
+      </div>
+      <p class="fineprint">Open format and protocol. Runs on your own machine with a local model, or bring your own key: Claude, OpenAI, Gemini and any OpenAI-compatible API. Indexes carry across a whole series.</p>
+    </div>
+
+    <div class="demo card" id="demo" aria-labelledby="demo-title">
+      <div class="demo-head">
+        <div>
+          <h2 id="demo-title" class="demo-book">Dracula</h2>
+          <p class="subtle">Bram Stoker. The whole book, indexed by Lorekeeper. Drag to read.</p>
+        </div>
+        <span class="demo-badge">Live demo</span>
+      </div>
+
+      <div class="demo-pos">
+        <span class="demo-pct"><output id="demo-pct" for="demo-range">0</output><span class="demo-pct-sign">%</span></span>
+        <span class="demo-ch" id="demo-ch">Before the first page</span>
+      </div>
+      <div class="horizon">
+        <div class="horizon-rail" aria-hidden="true"><span class="horizon-lit" id="demo-lit"></span><span class="horizon-orb" id="demo-orb"></span></div>
+        <input class="horizon-range" id="demo-range" type="range" min="0" max="1000" step="1" value="0" aria-label="Where you are in the book" aria-valuetext="0 percent">
+      </div>
+
+      <div class="demo-body">
+        <section class="demo-col" aria-live="polite">
+          <h3 class="demo-h">Story so far</h3>
+          <p class="demo-recap" id="demo-recap">Nothing to recap yet. Move forward to see the story so far.</p>
+          <h3 class="demo-h">What happened <span class="demo-count" id="demo-ev-count"></span></h3>
+          <ol class="demo-events" id="demo-events"></ol>
+        </section>
+        <section class="demo-col">
+          <h3 class="demo-h">Cast and world <span class="demo-count" id="demo-cast-count"></span></h3>
+          <ul class="demo-cast" id="demo-cast"></ul>
+          <p class="demo-empty" id="demo-empty">No one has been named yet.</p>
+          <p class="demo-more" id="demo-more"></p>
+        </section>
+      </div>
+      <p class="demo-foot">Everything past the marker stays dark. The page doesn't even know how much is there.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Reader ============ -->
+<section class="section" id="reader">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 class="h2">What you've read is lit. What's ahead is dark.</h2>
+      <p class="lede">One position control drives the whole companion. Set it to your page and every tab answers as of that page.</p>
+    </div>
+
+    <div class="feature">
+      <div class="feature-copy">
+        <h3 class="h3">Set where you are. Everything follows.</h3>
+        <p>A chapter, a percentage, or the position your reading app already knows. The track is lit up to the marker and dark after it, and the counts beneath only count what you can see.</p>
+      </div>
+      <figure class="shot"><img src="assets/reader-top.webp" width="1440" height="900" alt="The Reader at 40% of Dracula, Chapter XII: the horizon slider lit to the marker, the story so far, and tabs for Chapters, Cast and World, Timeline and Connections with their counts" loading="lazy"></figure>
+    </div>
+
+    <div class="feature flip">
+      <div class="feature-copy">
+        <h3 class="h3">Who they are, as far as you know.</h3>
+        <p>Every character gets a description written from the passages that mention them, rewritten at each chapter end. Facts are listed with the page that states them, in words the book has already used. No hindsight, no "will later".</p>
+      </div>
+      <figure class="shot"><img src="assets/reader-drawer.webp" width="1440" height="900" alt="An entity panel for Van Helsing: a short description of who he is at this point in the book and a list of facts known so far" loading="lazy"></figure>
+    </div>
+
+    <div class="feature">
+      <div class="feature-copy">
+        <h3 class="h3">What happened, in order.</h3>
+        <p>Events are one sentence each, tagged with everyone involved, newest first. The story-so-far recap at the top of the Chapters tab is stitched from chapter summaries up to your page.</p>
+      </div>
+      <figure class="shot"><img src="assets/reader-timeline.webp" width="1440" height="900" alt="The Timeline tab: one-sentence events from Dracula, each with chips naming the characters involved" loading="lazy"></figure>
+    </div>
+
+    <div class="feature flip">
+      <div class="feature-copy">
+        <h3 class="h3">An archipelago of the cast.</h3>
+        <p>Characters tied by stated relationships form islands, named after their family or the person with the most ties. Moving forward adds people to the map without reshuffling it, and nothing beyond your page is used to place anyone.</p>
+      </div>
+      <figure class="shot"><img src="assets/reader-map.webp" width="1440" height="900" alt="The Connections map for Dracula: islands labelled Jonathan's circle, Lucy's circle and John's circle, with character nodes joined by relationship lines" loading="lazy"></figure>
+    </div>
+
+    <div class="pair">
+      <figure class="shot small">
+        <img src="assets/library.webp" width="1440" height="900" alt="The Library in cover view: Dracula and the two Sherlock Holmes books, all marked complete" loading="lazy">
+        <figcaption>A library that knows which books have an index, which are building, and which series they belong to.</figcaption>
+      </figure>
+      <figure class="shot small">
+        <img src="assets/palette.webp" width="1440" height="900" alt="The command palette open over the Reader with the query 'hels', matching Van Helsing, Liverpool and Liverpool Street among the entries known so far" loading="lazy">
+        <figcaption>Command palette for anything visible: characters, chapters, books. It finds only what you've reached.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Building ============ -->
+<section class="section" id="build">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 class="h2">How an index is built</h2>
+      <p class="lede">A model only proposes. The reference implementation checks every claim against the book and decides where it may be revealed.</p>
+    </div>
+
+    <ol class="pipeline" id="pipeline">
+      <li class="step">
+        <div class="step-art" aria-hidden="true">
+          <span class="blk" style="--i:0"><i>0</i><b style="--w:88%"></b></span>
+          <span class="blk" style="--i:1"><i>1</i><b style="--w:64%"></b></span>
+          <span class="blk" style="--i:2"><i>2</i><b style="--w:92%"></b></span>
+          <span class="blk" style="--i:3"><i>3</i><b style="--w:52%"></b></span>
+          <span class="blk" style="--i:4"><i>4</i><b style="--w:76%"></b></span>
+        </div>
+        <h3 class="step-title">Read</h3>
+        <p class="step-text">The EPUB becomes numbered paragraphs. Front and back matter is left out.</p>
+      </li>
+      <li class="step">
+        <div class="step-art" aria-hidden="true">
+          <span class="blk fp" style="--i:0"><i>0</i><b style="--w:88%"></b><em>d06ec528</em></span>
+          <span class="blk fp" style="--i:1"><i>1</i><b style="--w:64%"></b><em>8a1f03c2</em></span>
+          <span class="blk fp" style="--i:2"><i>2</i><b style="--w:92%"></b><em>5be97d10</em></span>
+          <span class="blk fp" style="--i:3"><i>3</i><b style="--w:52%"></b><em>c40e2b77</em></span>
+          <span class="blk fp" style="--i:4"><i>4</i><b style="--w:76%"></b><em>19f6aa04</em></span>
+        </div>
+        <h3 class="step-title">Anchor</h3>
+        <p class="step-text">Each paragraph gets a fingerprint of its words, so any edition of the book lines up with the index.</p>
+      </li>
+      <li class="step">
+        <div class="step-art claims" aria-hidden="true">
+          <span class="claim" style="--i:0">Harker, a solicitor's clerk</span>
+          <span class="claim" style="--i:1">Dracula, a count in Transylvania</span>
+          <span class="claim" style="--i:2">Harker reaches Bistritz</span>
+          <span class="claim doubt" style="--i:3">Dracula was born in 1431</span>
+        </div>
+        <h3 class="step-title">Propose</h3>
+        <p class="step-text">A model reads one chunk at a time and proposes names, facts, events, relationships and a recap. Locally with Ollama, or with the cloud model of your choice.</p>
+      </li>
+      <li class="step">
+        <div class="step-art claims" aria-hidden="true">
+          <span class="claim ok" style="--i:0">Harker, a solicitor's clerk</span>
+          <span class="claim ok" style="--i:1">Dracula, a count in Transylvania</span>
+          <span class="claim ok" style="--i:2">Harker reaches Bistritz</span>
+          <span class="claim drop" style="--i:3">Dracula was born in 1431<small>not in the text</small></span>
+        </div>
+        <h3 class="step-title">Check</h3>
+        <p class="step-text">Every claim is checked against the passage. What the text doesn't say is dropped, and nothing is taken on the model's word. Names must appear in the book before they can be used.</p>
+      </li>
+      <li class="step">
+        <div class="step-art claims" aria-hidden="true">
+          <span class="claim at" style="--i:0">Harker, a solicitor's clerk<small>from block 1</small></span>
+          <span class="claim at" style="--i:1">Dracula, a count in Transylvania<small>from block 3</small></span>
+          <span class="claim at" style="--i:2">Harker reaches Bistritz<small>from block 4</small></span>
+          <span class="claim file" style="--i:3">dracula.lore.json</span>
+        </div>
+        <h3 class="step-title">Gate</h3>
+        <p class="step-text">Each surviving fact is tied to the paragraph that states it. A reader shows it only once that paragraph is behind them.</p>
+      </li>
+    </ol>
+
+    <div class="feature">
+      <div class="feature-copy">
+        <h3 class="h3">One form. Any model.</h3>
+        <p>Pick a book, pick where the model runs, press Build. On your own computer it is free and private. With a cloud model on your own key (Claude, OpenAI, Gemini or any OpenAI-compatible API) it is faster and costs cents; with Claude, all of Dracula took ten minutes and 22 cents. The whole story is selected by default; front and back matter never is.</p>
+      </div>
+      <figure class="shot"><img src="assets/build.webp" width="1440" height="900" alt="The build form for Dracula: 161,861 words in 28 story sections, a choice between running on this computer with Ollama or with a cloud model, an estimate, and a Build index button" loading="lazy"></figure>
+    </div>
+
+    <div class="feature flip">
+      <div class="feature-copy">
+        <h3 class="h3">Watch it work without being spoiled.</h3>
+        <p>The run monitor shows progress, speed, cost and a quality gate that counts every dropped claim by reason. The names and facts it finds stay hidden until you say you've read the book, because the model reads ahead of you.</p>
+      </div>
+      <figure class="shot"><img src="assets/run.webp" width="1440" height="900" alt="A finished run of Dracula: 81 chunks in ten minutes for 22 cents, counts of entities, facts, relations, events and recaps, a hidden discoveries panel, and a quality gate listing dropped claims by reason" loading="lazy"></figure>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Series and sync ============ -->
+<section class="section" id="series">
+  <div class="wrap">
+    <div class="section-head">
+      <h2 class="h2">Made for long series</h2>
+    </div>
+    <div class="tiles">
+      <article class="tile card">
+        <h3 class="h3">One character, seven books</h3>
+        <p>Entity ids are shared across a series. A character keeps one growing description from book to book, and the Reader merges what you know from the books you've finished with where you are in the current one.</p>
+      </article>
+      <article class="tile card">
+        <h3 class="h3">Your position, from where you read</h3>
+        <p>Linked to a Book Orbit library, the Reader opens at the page your reading app last saved. Lorekeeper only ever reads that position. It never writes one back.</p>
+      </article>
+      <article class="tile card">
+        <h3 class="h3">A line you don't cross by accident</h3>
+        <p>In a book you haven't finished, the synced position is a spoiler line. The slider stops there. Going past it asks first, and one tap brings you back.</p>
+      </article>
+      <article class="tile card">
+        <h3 class="h3">Duplicates, handled carefully</h3>
+        <p>"Van Helsing" and "Abraham Van Helsing" are offered as one entry only once you've reached both. Hidden identities are never merged, so a stranger stays a stranger until the book says otherwise.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Developers ============ -->
+<section class="section" id="developers">
+  <div class="wrap dev-grid">
+    <div class="dev-copy">
+      <h2 class="h2">Built for reader apps, not just this one</h2>
+      <p class="lede">The index is a JSON file and the gating rule is a short, tested algorithm. A reader app needs no AI and no tokens to use one, and it works offline.</p>
+      <ul class="dev-list">
+        <li><strong>An open spec.</strong> Text model, fingerprints, anchors, content rules, gating, and the HTTP protocol. <a href="docs/spec.html">Read it</a>.</li>
+        <li><strong>Positions from what your app already has.</strong> An EPUB CFI, a KOReader XPointer, a spine index and word. Never a percentage or a page number. <a href="docs/locators.html">Locators</a>.</li>
+        <li><strong>Conformance suites.</strong> Fixed positions with the exact view every client must produce, for gating and for locators. <a href="docs/conformance.html">Conformance</a>.</li>
+        <li><strong>A reference client in plain JavaScript</strong> and a thin KOReader plugin that talks to a server. <a href="docs/reader-apps.html">Reader app guide</a>.</li>
+      </ul>
+    </div>
+    <div class="dev-code card">
+      <p class="dev-code-title">Ask a server what a reader may see</p>
+<pre><code><span class="c"># Find the index for the book in hand</span>
+GET /v0/lookup?gutenberg=244
+
+<span class="c"># The gated view at an EPUB CFI from the reading app</span>
+GET /v0/indexes/<span class="v">{id}</span>/view
+    ?cfi=epubcfi(/6/22!/4/108/1:0)
+    &amp;fileHash=<span class="v">{sha256}</span>
+
+<span class="c"># Response: entities, events, recaps as of that page,</span>
+<span class="c"># plus where the locator landed</span>
+{ "locator": { "seq": 36, "basis": "cfi", "exact": true },
+  "position": { "anchor": "ch1.para05" },
+  "entities": [ … ], "events": [ … ], "recaps": [ … ] }</code></pre>
+      <p class="dev-code-foot">Read-only, any-origin CORS, optional bearer token. <a href="docs/protocol.html">Protocol reference</a>.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============ Self-host ============ -->
+<section class="section" id="selfhost">
+  <div class="wrap host-grid">
+    <div>
+      <h2 class="h2">Self-host it</h2>
+      <p class="lede">One Docker command, or Python 3.11 and uv. Add Ollama to build indexes for free on your own machine, or bring a key (Claude, OpenAI, Gemini and more) to build them faster.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="docs/self-hosting.html">Self-hosting guide</a>
+        <a class="btn ghost" href="readme.md">Read the README</a>
+      </div>
+    </div>
+    <div class="host-code card">
+<pre><code>docker compose up -d
+<span class="c"># then open http://localhost:8765</span>
+
+<span class="c"># or, without Docker</span>
+uv sync
+uv run --extra web lorekeeper web</code></pre>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="site-foot">
+  <div class="wrap foot-row">
+    <span class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Lorekeeper</span></span>
+    <p class="subtle">An open standard, v0.1 draft. Indexes are built once and shared. Readers just fetch and filter.</p>
+    <nav class="foot-links" aria-label="Footer">
+      <a href="docs/index.html">Docs</a>
+      <a href="docs/spec.html">Specification</a>
+      <a href="docs/protocol.html">Protocol</a>
+      <a href="docs/reader-apps.html">Reader apps</a>
+    </nav>
+  </div>
+</footer>
+
+<script type="module" src="site.js"></script>
+</body>
+</html>

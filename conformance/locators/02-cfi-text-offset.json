@@ -1,0 +1,14 @@
+{
+  "description": "CFI into the text of a paragraph (chapter I, the 6th paragraph); the character offset does not change the block.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/14/1:12)"
+  },
+  "expect": {
+    "seq": 36,
+    "exact": true,
+    "finished": "ch1.para05",
+    "inclusive": "ch1.para06"
+  }
+}

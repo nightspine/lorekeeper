@@ -1,0 +1,51 @@
+{
+  "model": "claude-haiku-5-5",
+  "chunks": 2,
+  "stopped": false,
+  "seconds": 19,
+  "stats": {
+    "entities": 25,
+    "moved later by fact-check": 5,
+    "dropped: not supported": 6,
+    "facets": 28,
+    "relations": 11,
+    "events": 4,
+    "recaps": 2
+  },
+  "validation_errors": [],
+  "rejected": [
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 7) Watson: Watson was struck by enteric fever and sent back to England with ruined health, living on a modest army income."
+    },
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 28) Sherlock Holmes: Stamford describes Holmes as cold-blooded and fond of experiments, including beating corpses to study bruises."
+    },
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 7) Thomas Carlyle: A writer Watson quotes, whose identity Holmes does not know."
+    },
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 7) Copernican Theory: The idea that the earth travels round the sun, which Holmes says he does not know."
+    },
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 17) Mendelssohn: A composer whose Lieder Holmes has played for Watson on the violin."
+    },
+    {
+      "kind": "facet",
+      "claim": "(by paragraph 37) Sherlock Holmes: Holmes scorns Dupin and Lecoq as inferior detectives and considers himself far superior."
+    }
+  ],
+  "usage": {
+    "calls": 4,
+    "prompt_tokens": 32225,
+    "output_tokens": 3677,
+    "seconds": 18.697639226913452,
+    "failures": 0,
+    "refusals": 0,
+    "cost_usd": 0.00260796
+  }
+}

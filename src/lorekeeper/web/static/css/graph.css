@@ -1,0 +1,158 @@
+/* ---------- Reader: Connections graph ----------
+   The map sits on the page ground in a glass panel. What you have read is lit: beads in their type colour,
+   islands as faint tinted hulls, one beacon for selection. Tokens only; both themes. */
+.g-toolbar { display: grid; gap: var(--space-3); margin-bottom: var(--space-4); }
+.g-options { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.g-opt-label { font-size: var(--text-xs); font-weight: 600; color: var(--text-3); }
+.g-spacer { flex: 1; }
+.g-options .seg button { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; font-size: 13px; }
+.g-options .seg button[disabled] { opacity: .45; cursor: not-allowed; }
+.g-options .seg .svg-icon { width: 14px; height: 14px; }
+.g-toolbar .search.g-search .input { border-radius: var(--radius); }
+
+/* type filters: the Cast tab's pill chips, with a type dot instead of an icon */
+.g-toolbar .filter-chip .svg-icon { display: none; }
+.g-toolbar .filter-chip::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--t); }
+
+.g-toggle .box { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 5px; border: 1.5px solid var(--text-3); color: transparent; transition: background var(--dur-fast), border-color var(--dur-fast); }
+.g-toggle .box .svg-icon { width: 11px; height: 11px; stroke-width: 3.5; }
+.g-toggle[aria-pressed="true"] .box { background: var(--beacon); border-color: var(--beacon); color: var(--beacon-ink); }
+
+.g-search { position: relative; }
+.g-matches { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; padding: var(--space-1); border-radius: 16px; background: linear-gradient(180deg, var(--glass-2), var(--glass)), var(--bg); border: 1px solid var(--edge); box-shadow: var(--shadow), inset 0 1px 0 var(--edge-lit); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: grid; }
+.g-matches[hidden] { display: none; }
+.g-matches button, .g-matches [role="option"] { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font-size: var(--text-sm); font-weight: 500; }
+.g-matches button:hover, .g-matches button:focus-visible, .g-matches [role="option"]:hover, .g-matches [role="option"][aria-selected="true"] { background: var(--glass-hover); }
+.g-matches [role="option"][aria-selected="true"] { box-shadow: inset 3px 0 0 var(--beacon); }
+.g-matches button:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; }
+.g-matches button > span:nth-child(2), .g-matches [role="option"] > span:nth-child(2) { flex: 1; }
+.g-swatch { width: 10px; height: 10px; border-radius: 50%; background: var(--t); flex: none; }
+.g-toolbar .linkish { font-weight: 600; color: var(--text-2); text-decoration: underline; text-underline-offset: .2em; text-decoration-color: var(--edge-lit); }
+.g-toolbar .linkish:hover { color: var(--beacon); }
+
+.g-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--space-4); align-items: start; }
+
+/* the stage: a glass panel whose inside is the ground, with a faint beacon-tinted sea */
+.g-stage { position: relative; display: flex; flex-direction: column; min-height: 640px; border-radius: var(--radius-l); border: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--edge-lit); overflow: hidden; background: var(--sea); }
+.g-stage.g-list { min-height: 0; padding: var(--space-4); background: var(--glass); }
+.g-stage-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px var(--space-3); padding: var(--space-4) var(--space-4) 0; }
+.g-stage-head h3 { margin: 0; font: 700 16px/1.2 var(--font-ui); letter-spacing: -.01em; }
+.g-stage-head .hint { color: var(--text-3); }
+.g-zoom { margin-left: auto; display: inline-flex; gap: 6px; align-self: center; }
+.g-zoom b { font: 700 var(--text-md)/1 var(--font-ui); }
+.g-svg { flex: 1; width: 100%; min-height: 560px; touch-action: none; cursor: grab; user-select: none; }
+.g-svg:active { cursor: grabbing; }
+
+/* edges */
+.g-edge { stroke: color-mix(in srgb, var(--text-3) 60%, transparent); transition: opacity var(--dur); }
+.g-edge.co { stroke: color-mix(in srgb, var(--text-3) 40%, transparent); stroke-dasharray: 1 5; stroke-linecap: round; }
+.g-edge.old { stroke: color-mix(in srgb, var(--text-3) 50%, transparent); stroke-dasharray: 6 5; }
+.g-edge.lit { stroke: var(--beacon); opacity: 1; }
+.g-edge.co.lit { stroke: color-mix(in srgb, var(--beacon) 70%, transparent); }
+.g-edge.dim { opacity: .08; }
+.g-orbit { fill: none; stroke: var(--edge-lit); stroke-dasharray: 4 6; }
+
+/* nodes: lit beads on dark */
+.g-node { cursor: pointer; outline: none; transition: opacity var(--dur); }
+.g-node .g-shape { fill: var(--t); stroke: var(--bg); stroke-width: 1.5px; transition: transform var(--dur-fast) var(--ease); }
+.g-node:hover .g-shape, .g-node:focus-visible .g-shape { transform: scale(1.1); }
+.g-ring { fill: none; stroke: var(--beacon); stroke-width: 2.5; display: none; }
+.g-node:focus-visible .g-ring, .g-node.sel .g-ring { display: block; }
+.g-node.sel .g-ring { stroke-width: 3; }
+.g-node:focus-visible .g-ring { stroke-width: 3.5; stroke-dasharray: 6 4; }
+.g-node .g-icon { fill: none; stroke: var(--bg); color: var(--bg); pointer-events: none; }
+.g-halo { fill: color-mix(in srgb, var(--ember) 30%, transparent); stroke: color-mix(in srgb, var(--ember) 55%, transparent); stroke-width: 1.5; }
+.g-label { font: 500 var(--text-xs) var(--font-ui); fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; opacity: 0; pointer-events: none; transition: opacity var(--dur-fast); }
+.g-label.big { font: 700 var(--text-md) var(--font-ui); }
+.g-label.on, .g-node:hover .g-label, .g-node:focus-visible .g-label { opacity: 1; }
+.g-node.dim { opacity: .16; }
+
+/* edge labels (focus mode): glass pills with beacon text */
+.g-elabel rect { fill: color-mix(in srgb, var(--bg) 85%, transparent); stroke: color-mix(in srgb, var(--beacon) 35%, var(--edge)); }
+.g-elabel text { font: 600 var(--text-xs) var(--font-ui); fill: var(--beacon); }
+.g-elabel.old rect { stroke: var(--edge); }
+.g-elabel.old text { fill: var(--text-3); }
+
+/* legend: a glass footer strip */
+.g-legend { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-5); padding: 10px var(--space-4) var(--space-3); border-top: 1px solid var(--edge); background: var(--glass); font-size: var(--text-xs); color: var(--text-3); }
+.g-legend span { display: inline-flex; align-items: center; gap: var(--space-2); }
+.g-legend i { display: inline-block; width: 28px; }
+.g-legend .l-rel { border-top: 2px solid color-mix(in srgb, var(--text-3) 60%, transparent); }
+.g-legend .l-co { border-top: 3px dotted color-mix(in srgb, var(--text-3) 40%, transparent); }
+.g-legend .l-old { border-top: 2px dashed color-mix(in srgb, var(--text-3) 50%, transparent); }
+.g-legend .l-new { width: 16px; height: 16px; border-radius: 50%; background: color-mix(in srgb, var(--ember) 30%, transparent); border: 1.5px solid color-mix(in srgb, var(--ember) 55%, transparent); }
+.g-legend .l-size { width: 14px; height: 14px; border-radius: 50%; background: var(--text-3); box-shadow: -12px 3px 0 -3px var(--text-3); margin-left: 10px; }
+.g-legend-note { margin-left: auto; color: var(--text-3); }
+
+/* side panel */
+.g-panel { position: sticky; top: calc(var(--topbar-h) + 23px); display: grid; gap: var(--space-4); align-content: start; padding: var(--space-4); border-radius: var(--radius-l); border: 1px solid var(--edge); background: linear-gradient(180deg, var(--glass-2), var(--glass)); box-shadow: inset 0 1px 0 var(--edge-lit); max-height: calc(100vh - var(--topbar-h) - 49px); overflow: auto; }
+.g-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; }
+.g-head h2 { margin: 0; font-size: 20px; font-weight: 800; letter-spacing: -.03em; line-height: 1.15; overflow-wrap: anywhere; }
+.g-head .eyebrow { display: flex; gap: var(--space-2); align-items: center; color: var(--t); }
+.g-badge { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: color-mix(in srgb, var(--t) 18%, transparent); color: var(--t); }
+.g-badge .svg-icon { width: 20px; height: 20px; }
+.g-pick { margin: 0; font-size: 20px; }
+.g-desc { margin: 0; font-size: 15px; line-height: 1.6; color: var(--text-2); }
+.g-sec { display: grid; gap: var(--space-2); }
+.g-rels, .g-co, .g-new { list-style: none; margin: 0; padding: 0; display: grid; }
+.g-rels, .g-co, .g-new { gap: 0; }
+.g-rels li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; padding: 10px 0; }
+.g-rels li + li, .g-co li + li, .g-new li + li { border-top: 1px solid var(--edge); }
+.g-rels li.old { opacity: .65; }
+.g-rels li.new .g-when { color: var(--beacon); }
+.g-sentence { font-size: var(--text-sm); line-height: 1.45; color: var(--text); }
+.g-sentence i { font-style: normal; font-weight: 500; color: var(--text-3); }
+.g-sentence .linkish { font-weight: 600; }
+.g-when { flex: none; font: 600 12px/1.4 var(--font-ui); color: var(--text-3); white-space: nowrap; }
+.g-co li { display: grid; grid-template-columns: minmax(0, 1fr) 70px auto; gap: 10px; align-items: center; padding: 8px 0; font-size: var(--text-sm); }
+.g-co .linkish { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-bar { height: 5px; border-radius: 999px; background: var(--track); overflow: hidden; }
+.g-bar i { display: block; height: 100%; border-radius: inherit; background: var(--beacon); }
+.g-new li { display: block; }
+.g-new button { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 0; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; cursor: pointer; font-size: var(--text-sm); font-weight: 500; transition: background var(--dur-fast); }
+.g-new button:hover { background: var(--glass-hover); }
+.g-new button > span:nth-child(2) { flex: 1; font-weight: 600; }
+.g-actions { display: grid; gap: var(--space-2); padding-top: var(--space-1); }
+.g-actions .btn { justify-content: center; }
+.g-trim { font-size: var(--text-xs); color: var(--text-3); }
+
+/* the list view: a glass table */
+.g-stage.g-list .table-wrap { border: 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); border-radius: 0; background: transparent; box-shadow: none; overflow-x: auto; }
+.g-stage.g-list table.data { width: 100%; min-width: 0; border-collapse: collapse; font-size: var(--text-sm); }
+.g-stage.g-list table.data th { text-align: left; padding: 11px var(--space-3); font-size: 13px; font-weight: 600; color: var(--text-3); }
+.g-stage.g-list table.data td { padding: 10px var(--space-3); border-top: 1px solid var(--edge); vertical-align: middle; }
+.g-stage.g-list table.data tbody tr:hover { background: var(--glass-2); }
+.g-stage.g-list table.data tr.selected { background: var(--glass-hover); box-shadow: inset 3px 0 0 var(--beacon); }
+
+@media (max-width: 1080px) {
+  .g-body { grid-template-columns: minmax(0, 1fr); }
+  .g-panel { position: static; max-height: none; }
+}
+@media (prefers-reduced-motion: reduce) { .g-node, .g-edge, .g-node .g-shape { transition: none; } }
+.g-svg.busy .g-edge:not(.lit) { opacity: .45; }
+.g-svg.busy .g-edge.dim { opacity: .05; }
+
+/* Connections: the archipelago map */
+.g-arch-wrap { position: relative; flex: 1; display: flex; min-height: 560px; background: var(--sea); }
+.g-arch { flex: 1; min-height: 560px; }
+.g-arch .g-edge, .g-arch .g-shape, .g-arch .g-ring, .g-arch .g-halo, .g-isl, .g-route { vector-effect: non-scaling-stroke; }
+.g-arch .g-edge { stroke-width: 1.6px; }
+.g-arch .g-edge.co { stroke-width: 1.2px; }
+.g-isl { stroke-width: 1px; }
+.g-route { fill: none; stroke: color-mix(in srgb, var(--text-3) 45%, transparent); stroke-linecap: round; }
+.g-isl-label { font-family: var(--font-ui); font-weight: 700; paint-order: stroke; stroke: var(--sea); stroke-linejoin: round; cursor: zoom-in; }
+.g-isl-sub { font-family: var(--font-ui); font-weight: 500; fill: var(--text-2); paint-order: stroke; stroke: var(--sea); stroke-linejoin: round; pointer-events: none; }
+.g-isl-sub.unfold { pointer-events: auto; cursor: pointer; fill: var(--beacon); font-weight: 600; text-decoration: underline; }
+.g-arch .g-label { stroke: var(--sea); }
+.g-arch .g-label.dim { opacity: .16; }
+.g-island-tip { position: absolute; top: 12px; left: 12px; padding: 6px 12px; border-radius: var(--radius-s); border: 1px solid var(--edge); background: color-mix(in srgb, var(--bg) 85%, transparent); font-size: var(--text-sm); font-weight: 600; color: var(--text-2); pointer-events: none; }
+.g-legend .l-isl { display: inline-block; width: 16px; height: 11px; border-radius: 6px; background: color-mix(in srgb, var(--isl-0) 10%, transparent); border: 1px solid color-mix(in srgb, var(--isl-0) 35%, transparent); margin-right: 6px; vertical-align: middle; }
+.g-isl:focus { outline: none; }
+.g-isl:focus-visible { stroke: var(--beacon); stroke-width: 3px; }
+@media (max-width: 640px) {
+  .g-stage { min-height: 0; }
+  .g-arch-wrap, .g-arch, .g-svg { min-height: 360px; height: 55vh; max-height: 420px; }
+  .g-panel { display: grid; }
+  .g-legend-note { margin-left: 0; }
+  .g-spacer { display: none; }
+}

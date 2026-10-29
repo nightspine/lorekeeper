@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reader app guide - Lorekeeper docs</title>
+<meta name="description" content="Developer guide: add spoiler-safe lookups to a reader app with the JavaScript client or with plain HTTP.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html" aria-current="page">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Integrate a reader app</h1>
+<p class="lede">Add a spoiler-safe "who is this?" to your reader. You can gate on the device with the JavaScript client, or ask a server over plain HTTP. Both give the same answer.</p>
+
+<h2 id="concepts">Concepts in 200 words</h2>
+<p>An index is a JSON file for one book. Every fact in it has a <strong>from</strong> anchor, the paragraph after which the fact may be shown. An anchor is not a page or a percentage. It is a <strong>fingerprint</strong>: a hash of a paragraph's first twelve words, normalized so that punctuation and letter case do not matter. Your reader holds its own copy of the book, so it computes the same fingerprints and finds each anchor's paragraph in its own edition. That is why one index fits every edition and every font size.</p>
+<p>A <strong>position</strong> is a paragraph, never a screen. Your reader knows where the reader is in its own terms, as a CFI, a word offset or an XPointer, and that is a <strong>locator</strong>. A locator maps to one paragraph, and that paragraph maps to the last anchor the reader has passed.</p>
+<p><strong>Gating</strong> is the filter. Given the index and the position, it returns only the items whose anchor the reader has passed, merged across the books of a series the reader has finished. It is a small pure function, so it runs on the device and nothing about the reader's position has to leave it. A server can run the same function if you prefer to keep your app thin.</p>
+<p>The next sections show both ways. The specification behind them is <a href="spec.html#3-text-model-and-anchors">section 3</a> for the text model and <a href="spec.html#7-gating-algorithm-normative">section 7</a> for gating.</p>
+
+<h2 id="fat">The fat client: gate on the device</h2>
+<p>This path needs the EPUB's XHTML documents and an index. It works offline once the index is cached, and the reading position never leaves the device. The client is one dependency-free ES module, <code>lorekeeper-client.js</code>, plus <code>gating.js</code> next to it. Copy both from <code>src/lorekeeper/web/static/js/</code>. They run in browsers and in Node 22 or later, and any WebView or JavaScript runtime that has <code>DOMParser</code> can use them.</p>
+<p>Four calls take you from an EPUB to an answer:</p>
+<ol>
+<li><code>buildEdition(docs)</code> numbers the paragraphs of the spine and fingerprints them (specification 3.1 to 3.3).</li>
+<li><code>new LorekeeperIndex(indexJson, edition)</code> resolves every anchor against that edition once (3.6).</li>
+<li><code>index.view(locator)</code> returns the whole spoiler-safe view at a position (7).</li>
+<li><code>index.lookup(name, locator)</code> answers a tapped name (8.6).</li>
+</ol>
+<p>Here is the complete example as a browser module. It reads the EPUB with JSZip, asks the server which index matches the book's text hash, and looks up a name.</p>
+<p class="file">app.js</p>
+<pre><code>import JSZip from &quot;https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm&quot;;
+import { buildEdition, LorekeeperIndex } from &quot;./lorekeeper-client.js&quot;;   // copy it and gating.js into your app
+
+const SERVER = &quot;http://localhost:8765&quot;;
+const xml = (s) =&gt; new DOMParser().parseFromString(s, &quot;application/xml&quot;);
+
+// 1. Read the EPUB&#x27;s spine in order. Every itemref counts, linear or not, so the array index is the CFI step.
+async function readSpine(file) {
+  const zip = await JSZip.loadAsync(file);
+  const read = (path) =&gt; zip.file(path).async(&quot;string&quot;);
+  const opfPath = xml(await read(&quot;META-INF/container.xml&quot;)).querySelector(&quot;rootfile&quot;).getAttribute(&quot;full-path&quot;);
+  const opf = xml(await read(opfPath));
+  const manifest = new Map([...opf.querySelectorAll(&quot;manifest &gt; item&quot;)]
+    .map((item) =&gt; [item.getAttribute(&quot;id&quot;), item.getAttribute(&quot;href&quot;)]));
+  const docs = [];
+  for (const ref of opf.querySelectorAll(&quot;spine &gt; itemref&quot;)) {
+    const path = decodeURIComponent(new URL(manifest.get(ref.getAttribute(&quot;idref&quot;)), &quot;http://x/&quot; + opfPath).pathname.slice(1));
+    docs.push({
+      spineChild: docs.length,
+      linear: ref.getAttribute(&quot;linear&quot;) !== &quot;no&quot;,
+      document: new DOMParser().parseFromString(await read(path), &quot;application/xhtml+xml&quot;),
+    });
+  }
+  return docs;
+}
+
+export async function open(file) {
+  const edition = buildEdition(await readSpine(file));                       // 2. blocks, seq, fingerprints (§3.1 to §3.3)
+  const found = await (await fetch(`${SERVER}/v0/lookup?textHash=${edition.textHash}`)).json();
+  const indexJson = await (await fetch(SERVER + found.results[0].href)).json();
+  return new LorekeeperIndex(indexJson, edition);                            // 3. resolves anchors once (§3.6)
+}
+
+// 4. Ask. The locator is whatever your reading system holds.
+const index = await open(document.querySelector(&quot;input[type=file]&quot;).files[0]);
+const cfi = &quot;epubcfi(/6/10!/4/2/30/1:0)&quot;;
+console.log(index.lookup(&quot;Holmes&quot;, { cfi }));</code></pre>
+<p>Two details matter. The array you pass to <code>buildEdition</code> must hold every <code>itemref</code> of the spine, linear or not, so that a CFI step can be turned into an array index. Items marked <code>linear="no"</code> get no blocks but keep their place. And the index is fetched by <code>textHash</code>, so you only ever fetch an index built for your book's text. You can also pass <code>fileHash</code>, <code>isbn</code> or <code>gutenberg</code> to the lookup route.</p>
+
+<h3 id="fat-output">What comes back</h3>
+<p>Run against the Gutenberg edition of <em>A Study in Scarlet</em>, the example prints the following. The CFI points into chapter I, paragraph 14, where Stamford first mentions Holmes.</p>
+<pre><code>[
+  {
+    &quot;entity&quot;: {
+      &quot;id&quot;: &quot;holmes&quot;, &quot;type&quot;: &quot;person&quot;, &quot;name&quot;: &quot;Sherlock Holmes&quot;, &quot;aliases&quot;: [],
+      &quot;profile&quot;: null,
+      &quot;facets&quot;: [{ &quot;id&quot;: &quot;sis.holmes.1&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;book&quot;: &quot;study-in-scarlet&quot;,
+                   &quot;text&quot;: &quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, who is looking for someone to split the cost of a set of rooms.&quot; }],
+      &quot;history&quot;: []
+    },
+    &quot;facets&quot;: [ ...the same facets array... ],
+    &quot;relations&quot;: [],
+    &quot;events&quot;: []
+  }
+]</code></pre>
+<p>The result is an array with one element per matching entity, empty when nothing visible matches. <code>entity</code> is the entity as the view renders it, <code>facets</code> repeats its current facets for convenience, and <code>relations</code> and <code>events</code> list only the visible ones that involve it. Relations appear only when both ends are visible.</p>
+<p>Try the same call with the CFI from the locator page, <code>epubcfi(/6/10!/4/2/14/1:12)</code>, which sits eight paragraphs earlier. It returns <code>[]</code>. Holmes has not been introduced yet, so the lookup finds nothing, and that is the point of the exercise.</p>
+<p>For a series, pass the earlier books' indexes and the manifest: <code>new LorekeeperIndex(indexJson, edition, { series, others: [book1Json] })</code>. Options <code>order</code> and <code>finished</code> match the protocol parameters of the same names. <code>index.at(locator)</code> returns just the anchor id.</p>
+
+<h2 id="thin">The thin client: ask the server over HTTP</h2>
+<p>If your app cannot parse the EPUB, or you want the smallest possible integration, ask a server that holds the book. The server turns the locator into a paragraph and gates for you. The cost is that the reading position is sent to the server, which is fine for a server you run yourself. The server must hold your edition of the book, and tells you with a <code>409</code> when it does not. Then fall back to the fat client.</p>
+<p>The examples below were run against a local server. Long bodies are trimmed with an ellipsis.</p>
+
+<h3 id="thin-discover">1. Discovery</h3>
+<pre><code>curl http://localhost:8765/.well-known/lorekeeper
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;name&quot;:&quot;Lorekeeper&quot;,&quot;api&quot;:&quot;/v0&quot;,
+ &quot;capabilities&quot;:[&quot;lookup&quot;,&quot;index&quot;,&quot;series&quot;,&quot;view&quot;,&quot;view-cfi&quot;,&quot;entities&quot;],
+ &quot;auth&quot;:{&quot;type&quot;:&quot;none&quot;}}</code></pre>
+<p>Check that <code>view</code> or <code>entities</code> is listed. <code>view-cfi</code> means the server accepts <code>cfi</code> and <code>xpointer</code> locators. If <code>auth.type</code> is <code>bearer</code>, send <code>Authorization: Bearer &lt;token&gt;</code> on every other request.</p>
+
+<h3 id="thin-lookup">2. Find the index for your book</h3>
+<pre><code>curl &quot;http://localhost:8765/v0/lookup?textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+
+{&quot;results&quot;:[
+  {&quot;id&quot;:&quot;examples--sherlock-holmes--study-in-scarlet&quot;,
+   &quot;title&quot;:&quot;A Study in Scarlet&quot;,&quot;match&quot;:&quot;text&quot;,&quot;complete&quot;:false,
+   &quot;digest&quot;:&quot;sha256:1c87e7bcc...fe74a51&quot;,
+   &quot;href&quot;:&quot;/v0/indexes/examples--sherlock-holmes--study-in-scarlet&quot;,
+   &quot;series&quot;:{&quot;id&quot;:&quot;sherlock-holmes&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;},
+   &quot;updated&quot;:&quot;2026-10-21T00:00:00Z&quot;},
+  ...
+]}</code></pre>
+<p>Results are best first: <code>file</code> (the very same EPUB file), then <code>text</code> (same text), then <code>identifier</code> (probably another edition). Take the first. You do not need the text model for this call: <code>fileHash</code>, the SHA-256 of the EPUB's bytes, is enough if the server holds that exact file, and <code>isbn</code>, <code>gutenberg</code>, <code>openlibrary</code> and <code>wikidata</code> work too.</p>
+<p>The <code>textHash</code> is the SHA-256 of every normalized word of every block of the edition, joined by single spaces, in order (<a href="spec.html#34-edition-identity">specification 3.4</a>). Computing it takes the whole text model, so it suits fat clients. The client module exports <code>textHash</code> and <code>words</code>, and <code>edition.textHash</code> returns it from <code>buildEdition</code>.</p>
+
+<h3 id="thin-fetch">3. Fetch the index, with caching</h3>
+<pre><code>curl -i http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet
+
+HTTP/1.1 200 OK
+etag: &quot;sha256:1c87e7bccae416374f7aaf4c50a906ac6b7d299bbf6ff05466add8898fe74a51&quot;
+cache-control: private, max-age=0, must-revalidate
+content-type: application/json
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;kind&quot;:&quot;index&quot;,&quot;id&quot;:&quot;sherlock-holmes.study-in-scarlet&quot;, ...}
+
+curl -i -H &#x27;If-None-Match: &quot;sha256:1c87e7bc...fe74a51&quot;&#x27; http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet
+
+HTTP/1.1 304 Not Modified</code></pre>
+<p>Store the body keyed by the <code>etag</code> and send it back as <code>If-None-Match</code> next time. The ETag equals the <code>digest</code> from lookup, so you can also compare digests without fetching.</p>
+
+<h3 id="thin-view">4. Ask for a view or a name</h3>
+<p>Send exactly one position, either an anchor id of the index or one locator form, plus <code>textHash</code> or <code>fileHash</code> to say which edition the locator is about. Here are the same paragraph (chapter I, paragraph 6) as a CFI, an XPointer and a word offset. The server answers each with the same anchor.</p>
+<pre><code># an EPUB CFI
+curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/view&quot; \
+  --data-urlencode &quot;cfi=epubcfi(/6/10!/4/2/14/1:12)&quot; --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;kind&quot;:&quot;view&quot;,
+ &quot;position&quot;:{&quot;book&quot;:&quot;study-in-scarlet&quot;,&quot;anchor&quot;:&quot;ch1.para05&quot;},
+ &quot;coverage&quot;:{&quot;complete&quot;:false,&quot;through&quot;:&quot;ch2.para51&quot;,&quot;exhausted&quot;:false},
+ &quot;entities&quot;:[{&quot;id&quot;:&quot;watson&quot;,&quot;name&quot;:&quot;John H. Watson&quot;, ...}, ...],
+ &quot;relations&quot;:[ ... ], &quot;relationHistory&quot;:[], &quot;events&quot;:[ ... ],
+ &quot;recap&quot;:null, &quot;chapters&quot;:[],
+ &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para05&quot;,&quot;seq&quot;:36,&quot;basis&quot;:&quot;cfi&quot;,&quot;exact&quot;:true}}</code></pre>
+<p>The view is gated in <code>finished</code> mode by default, so the paragraph being read does not count yet. The <code>locator</code> member tells you what the server understood: the anchor, the paragraph number, the form and whether the match was exact.</p>
+<pre><code># a KOReader XPointer, asking who Watson is (inclusive by default for this route)
+curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/entities&quot; \
+  --data-urlencode &quot;name=Watson&quot; \
+  --data-urlencode &quot;xpointer=/body/DocFragment[5]/body/div/p[6]/text().12&quot; \
+  --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+
+{&quot;position&quot;:&quot;ch1.para06&quot;,
+ &quot;entities&quot;:[{&quot;id&quot;:&quot;watson&quot;,&quot;type&quot;:&quot;person&quot;,&quot;name&quot;:&quot;John H. Watson&quot;,&quot;aliases&quot;:[&quot;Watson&quot;],
+   &quot;profile&quot;:null,&quot;facets&quot;:[{&quot;id&quot;:&quot;sis.watson.1&quot;,&quot;basis&quot;:&quot;stated&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;,&quot;text&quot;:&quot;The narrator. Qualified as a doctor ...&quot;}, ...],
+   &quot;history&quot;:[],&quot;relations&quot;:[...],&quot;events&quot;:[...]}],
+ &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para06&quot;,&quot;seq&quot;:36,&quot;basis&quot;:&quot;xpointer&quot;,&quot;exact&quot;:true}}
+
+# a spine document and a word offset
+curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/view&quot; \
+  --data-urlencode &quot;spine=4&quot; --data-urlencode &quot;word=240&quot; --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+
+{ ... &quot;position&quot;:{&quot;book&quot;:&quot;study-in-scarlet&quot;,&quot;anchor&quot;:&quot;ch1.para02&quot;}, ...
+  &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para02&quot;,&quot;seq&quot;:33,&quot;basis&quot;:&quot;word&quot;,&quot;exact&quot;:true}}</code></pre>
+<p>If the server does not hold your edition, the answer is a problem document and the right response is to fall back to the fat client:</p>
+<pre><code>curl &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/view?block=3&amp;textHash=0000&quot;
+
+HTTP/1.1 409 Conflict
+content-type: application/problem+json
+
+{&quot;type&quot;:&quot;https://lorekeeper.dev/problems/edition-not-held&quot;,&quot;title&quot;:&quot;Edition not held&quot;,&quot;status&quot;:409,
+ &quot;detail&quot;:&quot;This server has no copy of the reader&#x27;s edition, so it cannot map the locator. ...&quot;}</code></pre>
+<p>The complete list of routes, parameters and errors is the <a href="protocol.html">protocol reference</a>.</p>
+
+<h2 id="modes">Which mode: finished or inclusive</h2>
+<p>The same locator gives two different positions, depending on whether the paragraph under the reader counts.</p>
+<div class="table-wrap"><table><thead><tr><th>Mode</th><th>The paragraph being read</th><th>Use it for</th><th>Default on</th></tr></thead><tbody><tr><td><code>finished</code></td><td>Does not count yet.</td><td>A view: "what do I know so far", a recap screen, a cast list.</td><td><code>/view</code> and the client's <code>view()</code></td></tr><tr><td><code>inclusive</code></td><td>Counts.</td><td>A name the reader is looking at, such as a tap on the current page.</td><td><code>/entities</code> and the client's <code>lookup()</code></td></tr></tbody></table></div>
+<p>The tap-to-lookup case shows why. A reader taps "Holmes" in the paragraph that introduces him. In <code>finished</code> mode the paragraph is not done, so Holmes is not yet known and the lookup comes back empty, which feels broken. In <code>inclusive</code> mode he is visible, with exactly the facts that paragraph supports. The lookup is the one place where the reader is allowed to see what the current paragraph reveals, because they are looking at it. If you cannot tell where the current paragraph ends, use <code>finished</code>. Override the default with <code>inclusive=true|false</code> over HTTP and <code>{ inclusive }</code> in the client.</p>
+<pre><code>curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/entities&quot; --data-urlencode &quot;name=Holmes&quot; \
+  --data-urlencode &quot;cfi=epubcfi(/6/10!/4/2/30/1:0)&quot; --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot;
+-&gt; position &quot;ch1.para14&quot;, one entity: Sherlock Holmes with one facet
+
+curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-in-scarlet/entities&quot; --data-urlencode &quot;name=Holmes&quot; \
+  --data-urlencode &quot;cfi=epubcfi(/6/10!/4/2/30/1:0)&quot; --data-urlencode &quot;textHash=3ba1a6316fb65ab87f83bbbc65d66b82d0313be6a836e20770dc9571bd8d4ff5&quot; \
+  --data-urlencode &quot;inclusive=false&quot;
+-&gt; position &quot;ch1.para12&quot;, &quot;entities&quot;: []</code></pre>
+
+<h2 id="safety">Spoiler safety checklist</h2>
+<p>Section 7.4 of the specification lists what a client must not do. In practice:</p>
+<ul class="checklist">
+<li>Never display, prefetch into the interface, or search over an item the gating step did not return. That includes full-text search over an index you hold: search the view, not the file.</li>
+<li>Do not reveal an item because an anchor failed to match. Follow the resolution rule: an unresolved anchor takes the location of the next resolved one, so a missing paragraph can only make the app reveal later.</li>
+<li>Show no counts, placeholders or orderings that disclose hidden items. "3 more facts about this character" is a spoiler. So is a sorted list whose gaps reveal what is missing.</li>
+<li>Do not derive a position from a percentage of the whole book or from a page number. Use a locator. The only fraction allowed is <code>progress</code> inside one document, and it is approximate.</li>
+<li>When a locator cannot be mapped, fail. Do not guess. When two guesses are possible, pick the earlier paragraph.</li>
+<li>Let the reader override which books they have finished only as an explicit choice, never as a default.</li>
+<li>Treat index text as untrusted. Show it as text, never as markup.</li>
+</ul>
+
+<h2 id="testing">Testing your port</h2>
+<p>The <code>conformance/</code> folder is the contract. It holds fourteen gating cases and twenty-two locator cases, as plain JSON, and any language can read them. The <a href="conformance.html">conformance page</a> has their exact shapes.</p>
+<ul>
+<li><strong>Gating cases</strong> (<code>conformance/*.json</code>) give index files, an optional series, and a position. They assert the whole view. Compare it with JSON equality, array order significant. Cases cover a position before the first anchor, facets replaced by later facts, a series whose earlier book is finished or not, and carried entities.</li>
+<li><strong>Locator cases</strong> (<code>conformance/locators/*.json</code>) give an EPUB, an index and a locator, and assert the block number, whether it is exact, and the anchor in each mode. They need the Project Gutenberg EPUB, which the README shows how to download.</li>
+<li><strong>Fingerprints</strong> are covered by the locator cases too: if your fingerprints differ from the reference, anchors will not resolve and every case fails at the first step.</li>
+</ul>
+<pre><code>uv run lorekeeper conformance            # run the Python reference against every case
+uv run lorekeeper conformance --update   # regenerate expected output after an intended change
+node tests/js/run_conformance.mjs        # the JavaScript client against the gating cases</code></pre>
+<p>You pass a locator form's cases if you support that form. A server that accepts a form must pass them as well.</p>
+
+<h2 id="porting">Porting notes</h2>
+<ul>
+<li><strong>Fingerprint parity is everything.</strong> A word list is built by applying Unicode NFKC, then <em>full</em> case folding, deleting the joiners (hyphen, apostrophes, soft hyphen and a few invisible characters), then taking every maximal run of letters, marks and numbers. The fingerprint is the SHA-256 of the first twelve words joined by a space, as UTF-8, written as the first sixteen lowercase hex characters. A tiny difference changes every anchor.</li>
+<li><strong>Full case folding is not lowercasing.</strong> German sharp s becomes "ss", and the Greek final sigma folds to an ordinary sigma. The JavaScript client carries a small table of the differences from <code>toLowerCase</code>, generated from Python. In Swift, use the Foundation or ICU folding that implements full case folding, and in Kotlin or Java use ICU4J. Do not use a locale-sensitive lowercase.</li>
+<li><strong>The Unicode version caveat.</strong> Case folding, normalization and the letter, mark and number categories all depend on the Unicode version of your platform. Text with characters added after your version can fingerprint differently from the reference. The result is an unresolved anchor, which can only reveal later, never earlier. Section 3.2 and open question 1 of the specification discuss it. The conformance cases pin the behaviour for the characters they use.</li>
+<li><strong>SHA-256</strong> is the only hash. The JavaScript client ships a small synchronous implementation so it needs no platform crypto. Use your platform's own.</li>
+<li><strong>The text model is the contract, not the HTML.</strong> Paragraph-level blocks are defined by section 3.1: the listed elements, nested blocks excluded, empty ones dropped, and a fallback for books that set every paragraph in a <code>div</code>. Reuse the client's parser as a reference when your DOM differs.</li>
+<li><strong>Lua.</strong> Whether KOReader's Lua runtime can do Unicode categories and SHA-256 cheaply is open question 1 in the specification. The KOReader plugin avoids the question by being a thin client.</li>
+</ul>
+
+<h3 id="koreader">Example thin client: the KOReader plugin</h3>
+<p>The repository ships a KOReader plugin in <code>clients/koreader/lorekeeper.koplugin/</code>, inside the repository you cloned. It is a good reference for a thin client, because KOReader already holds a CREngine XPointer for the reader's position and the EPUB's file hash. It sends those to the server and shows the answer.</p>
+<ol>
+<li>Copy the <code>lorekeeper.koplugin</code> folder into KOReader's <code>plugins/</code> directory on your device.</li>
+<li>Restart KOReader.</li>
+<li>Open the plugin's menu and set the server address, for example <code>http://192.168.1.20:8765</code>. If the server has a token, enter that too.</li>
+</ol>
+<p>The server must hold the same EPUB file you read, which is the case when you built the index from it, and must be reachable from the device. See <a href="self-hosting.html#exposing">exposing the server</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Lorekeeper</title>
+  <meta name="description" content="Generate and explore spoiler-free book companions.">
+  <!-- Fonts are self-hosted (static/fonts): nothing leaves this machine on page load, and the app works offline. -->
+  <link rel="preload" href="/static/fonts/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/static/fonts/fonts.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/library.css">
+  <link rel="stylesheet" href="/static/css/reader.css">
+  <link rel="stylesheet" href="/static/css/graph.css">
+  <link rel="stylesheet" href="/static/css/studio.css">
+  <link rel="stylesheet" href="/static/css/settings.css">
+  <link rel="stylesheet" href="/static/css/features.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <script>
+    // Apply the saved theme before first paint to avoid a flash.
+    try { const t = localStorage.getItem("lk-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="#/library" aria-label="Lorekeeper home">
+      <span class="brand-mark" aria-hidden="true"><span data-icon="book-open"></span></span>
+      <span class="brand-name">Lorekeeper</span>
+    </a>
+    <nav class="tabs" aria-label="Sections">
+      <a class="tab" href="#/library" data-route="library">Library</a>
+    </nav>
+    <div class="topbar-end">
+      <a class="tab" id="docs-link" href="docs/">Docs</a>
+      <a class="queue-pill" id="queue-pill" href="#/studio" hidden>
+        <span class="dot" aria-hidden="true"></span><span class="label"></span><span class="hint"></span>
+      </a>
+      <a class="icon-btn" id="runs-link" href="#/studio" aria-label="Runs" title="Runs">
+        <span data-icon="clock"></span>
+      </a>
+      <button class="icon-btn" id="palette-btn" type="button" aria-label="Search and commands" title="Search and commands (⌘K)">
+        <span data-icon="search"></span>
+      </button>
+      <a class="icon-btn" id="settings-link" href="#/settings" aria-label="Settings" title="Settings">
+        <span data-icon="settings"></span>
+      </a>
+      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme">
+        <span data-icon="moon"></span>
+      </button>
+    </div>
+  </header>
+  <main id="main" tabindex="-1"></main>
+  <div class="toasts" id="toasts"></div>
+  <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
+  <script type="module" src="/static/js/app.js"></script>
+  <script type="module" src="/static/js/palette.js"></script>
+</body>
+</html>

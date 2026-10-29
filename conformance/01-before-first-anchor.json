@@ -1,0 +1,32 @@
+{
+  "description": "Nothing is visible before the reader passes the first anchor.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "study-in-scarlet",
+    "anchor": null
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "study-in-scarlet",
+      "anchor": null
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para51",
+      "exhausted": false
+    },
+    "entities": [],
+    "relations": [],
+    "relationHistory": [],
+    "events": [],
+    "recap": null,
+    "chapters": []
+  }
+}

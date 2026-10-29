@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Locators - Lorekeeper docs</title>
+<meta name="description" content="The five Lorekeeper locator forms, how each maps to a paragraph, and the fallback rules.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html" aria-current="page">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Locators</h1>
+<p class="lede">A reading system rarely knows a paragraph. It knows an EPUB CFI, a KOReader XPointer or a word offset. A locator says which, and the rules here turn it into one paragraph of the reader's own edition.</p>
+
+<h2 id="forms">The five forms</h2>
+<p>A locator is a JSON object with exactly the members of one form. Over HTTP the members become query parameters of the same names.</p>
+<div class="table-wrap"><table><thead><tr><th>Form</th><th>Produced by</th><th>Precision</th><th>Example</th></tr></thead><tbody><tr><td><code>block</code></td><td>Clients that already hold the text model</td><td>Exact</td><td><code class="wrap">{"block": 123}</code></td></tr><tr><td><code>cfi</code></td><td>EPUB readers: Readium, Apple Books, Kobo</td><td>Exact</td><td><code class="wrap">{"cfi": "epubcfi(/6/22!/4/108/1:0)"}</code></td></tr><tr><td><code>xpointer</code></td><td>CREngine, so KOReader</td><td>Exact</td><td><code class="wrap">{"xpointer": "/body/DocFragment[11]/body/div[3]/p[7]/text().0"}</code></td></tr><tr><td><code>spine</code> and <code>word</code></td><td>Readers that count words</td><td>Exact</td><td><code class="wrap">{"spine": 10, "word": 240}</code></td></tr><tr><td><code>spine</code> and <code>progress</code></td><td>Readers that only know a fraction of the document</td><td>Approximate</td><td><code class="wrap">{"spine": 10, "progress": 0.42}</code></td></tr></tbody></table></div>
+
+<h2 id="rules">How a locator maps to a paragraph</h2>
+<p>The result is the <code>seq</code> of the block the locator points into, in the reader's own edition.</p>
+<ul>
+<li><strong>CFI.</strong> The spine step counts every item of the package spine, including non-linear ones, so the document is the spine item at step <em>n</em> divided by 2. The path after the <code>!</code> walks element children of the document: an even step picks the element at that 1-based even index, an odd step a text node. The <code>:n</code> offset is a character offset. If the last <code>[id]</code> assertion names a different element than the steps reach, the asserted element wins, because an id survives edits that renumber children.</li>
+<li><strong>XPointer.</strong> <code>DocFragment[n]</code> is the 1-based index among all spine items, linear or not. The inner path uses element names with 1-based indices among same-named siblings, and <code>text().n</code> is a character offset.</li>
+<li><strong>Spine and word.</strong> <code>spine</code> counts only linear documents from 0. <code>word</code> counts normalized words in that document's blocks, from 0.</li>
+<li><strong>Spine and progress.</strong> The block whose cumulative word range contains the fraction, rounding down.</li>
+<li><strong>Which block.</strong> A CFI or XPointer lands on an element or text node. The block is the innermost block element containing the first text at or after that point.</li>
+</ul>
+
+<h2 id="fallbacks">Fallbacks and errors</h2>
+<p>Every rule errs towards the paragraph before, so a wrong guess can only reveal less.</p>
+<div class="table-wrap"><table><thead><tr><th>Situation</th><th>Result</th></tr></thead><tbody><tr><td>Target lies between two blocks, or before the first block of its document</td><td>The nearest preceding block, never the next.</td></tr><tr><td>Target is before the first block of the edition</td><td>None, which is seq -1.</td></tr><tr><td>Word offset past the end of a document</td><td>The document's last block, marked approximate.</td></tr><tr><td>Character offset past the end of its text</td><td>The same block.</td></tr><tr><td>Document found, but the inner path does not resolve</td><td>The block before that document's first block, marked approximate.</td></tr><tr><td>Malformed locator, members of more than one form, or a document that does not exist or is not linear where the form needs it</td><td>An error. Clients must not guess.</td></tr></tbody></table></div>
+<p>A server reports an approximate result as <code>"exact": false</code> in the <code>locator</code> object of its response.</p>
+
+<h2 id="modes">From a block to a position</h2>
+<p>The block is not yet the position. The mode decides how it becomes an anchor. In <code>finished</code> mode, the default, the block the reader is on is not finished, so the position is the last anchor at or before the previous block. In <code>inclusive</code> mode the block counts, so the position is the last anchor at or before it. Use <code>finished</code> for views and <code>inclusive</code> for a name the reader is looking at.</p>
+
+<h2 id="worked">Worked example</h2>
+<p>Document 10 holds blocks 200 to 230, so its first block is seq 200. The locator <code>{"spine": 10, "word": 240}</code> falls in the word range of block 207, so the result is 207. In <code>finished</code> mode the position is the last anchor at or before seq 206. In <code>inclusive</code> mode it is the last anchor at or before seq 207. If block 207 carries an anchor, a name lookup there sees what that block reveals and the view does not.</p>
+<p>With the repository's example, the CFI <code>epubcfi(/6/10!/4/2/14/1:12)</code> points into chapter I of the Gutenberg edition. It maps to seq 36 and is exact. The finished position is <code>ch1.para05</code> and the inclusive one is <code>ch1.para06</code>.</p>
+
+<h2 id="more">Where this is specified and tested</h2>
+<p>The rules are section 3.8 of the <a href="spec.html#38-locators">specification</a>. The reference code is <code>src/lorekeeper/locators.py</code> and the JavaScript port is in <code>lorekeeper-client.js</code>. Twenty-two cases in <code>conformance/locators/</code> cover every form, and the <a href="conformance.html">conformance page</a> says how to run them.</p>
+
+</main>
+</div>
+</body>
+</html>

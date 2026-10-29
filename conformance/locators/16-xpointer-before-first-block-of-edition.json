@@ -1,0 +1,14 @@
+{
+  "description": "XPointer to the cover image: before the first block of the edition.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[1]/body/div/img"
+  },
+  "expect": {
+    "seq": -1,
+    "exact": true,
+    "finished": null,
+    "inclusive": null
+  }
+}

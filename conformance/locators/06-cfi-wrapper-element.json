@@ -1,0 +1,14 @@
+{
+  "description": "CFI to the chapter's wrapper div, outside any block: the first block that starts inside it.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2)"
+  },
+  "expect": {
+    "seq": 30,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "pt1.note"
+  }
+}

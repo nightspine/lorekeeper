@@ -1,0 +1,14 @@
+{
+  "description": "CFI whose path does not exist in a document that does: the block before the document, not exact.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/900/2/1:0)"
+  },
+  "expect": {
+    "seq": 29,
+    "exact": false,
+    "finished": null,
+    "inclusive": "pt1.note"
+  }
+}

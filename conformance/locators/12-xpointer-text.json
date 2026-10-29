@@ -1,0 +1,14 @@
+{
+  "description": "KOReader XPointer to the text of the third paragraph of chapter I (DocFragment counts every spine item).",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "xpointer": "/body/DocFragment[5]/body/div/p[3]/text().0"
+  },
+  "expect": {
+    "seq": 33,
+    "exact": true,
+    "finished": "ch1.para02",
+    "inclusive": "ch1.para03"
+  }
+}

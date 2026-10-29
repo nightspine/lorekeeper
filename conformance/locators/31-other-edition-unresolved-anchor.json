@@ -1,0 +1,14 @@
+{
+  "description": "Cross-edition: ch2.para14 is not in this edition, so it takes the next anchor's place (an unresolved anchor can only be revealed later).",
+  "edition": "corpus/se-scarlet/scarlet.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/32/1:0)"
+  },
+  "expect": {
+    "seq": 117,
+    "exact": true,
+    "finished": "ch2.para11",
+    "inclusive": "ch2.para16"
+  }
+}

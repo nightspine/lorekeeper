@@ -1,0 +1,14 @@
+{
+  "description": "CFI to the whitespace after one paragraph, between two blocks: the preceding paragraph.",
+  "edition": "corpus/pg244/pg244.epub",
+  "index": "examples/sherlock-holmes/study-in-scarlet.json",
+  "locator": {
+    "cfi": "epubcfi(/6/10!/4/2/5:0)"
+  },
+  "expect": {
+    "seq": 31,
+    "exact": true,
+    "finished": "pt1.note",
+    "inclusive": "ch1.para01"
+  }
+}

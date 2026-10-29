@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/series.schema.json",
+  "title": "Lorekeeper series manifest",
+  "description": "Books in a series and the reading orders spoiler gating may follow. See SPEC.md §5.",
+  "type": "object",
+  "required": ["lorekeeper", "kind", "id", "title", "books", "orders", "defaultOrder"],
+  "additionalProperties": false,
+  "properties": {
+    "lorekeeper": { "const": "0.1" },
+    "kind": { "const": "series" },
+    "id": { "$ref": "#/$defs/slug" },
+    "title": { "type": "string", "minLength": 1 },
+    "books": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["key", "title"],
+        "additionalProperties": false,
+        "properties": {
+          "key": { "$ref": "#/$defs/slug" },
+          "title": { "type": "string", "minLength": 1 },
+          "ids": { "type": "object", "additionalProperties": { "type": ["string", "array"] } }
+        }
+      }
+    },
+    "orders": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "$ref": "#/$defs/slug" },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": true,
+        "items": { "$ref": "#/$defs/slug" }
+      }
+    },
+    "defaultOrder": { "$ref": "#/$defs/slug" }
+  },
+  "$defs": {
+    "slug": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "maxLength": 128 }
+  }
+}
