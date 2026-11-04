@@ -45,12 +45,15 @@ function configure(target, book, ctx, fromJob = null) {
   const t = fromJob?.config || {};
   const picked = new Set(Array.isArray(t.chapters) && t.chapters.length ? t.chapters
     : book.chapters.filter((c) => c.story).map((c) => c.n));
-  const cfg = { provider: "ollama", model: null, check_model: null, chunk_words: 2500, depth: "standard", events: true, verify: true,
+  // A cloud model reads about a chapter per call; a local model keeps a chunk its context allows.
+  const defaultChunk = (pv) => (pv === "ollama" ? 2500 : 8000);
+  const cfg = { provider: "ollama", model: null, check_model: null, chunk_words: null, depth: "standard", events: true, verify: true,
     series_id: "", book_key: "", license: "CC0-1.0", num_ctx: 16384 };
   for (const k of Object.keys(cfg)) if (t[k] !== undefined && t[k] !== null) cfg[k] = t[k];
   // A run from before the fact-check model and smaller chunks re-runs with today's defaults.
   const legacy = Boolean(fromJob) && !("check_model" in t);
-  if (cfg.chunk_words < 1000 || (legacy && cfg.chunk_words > 4000)) cfg.chunk_words = 2500;
+  let chunkChosen = Boolean(fromJob) && cfg.chunk_words >= 1000 && !legacy;   // a size the user set stays
+  if (!chunkChosen) cfg.chunk_words = defaultChunk(cfg.provider);
   let replaceOld = Boolean(fromJob);
   const maxWords = Math.max(1, ...book.chapters.map((c) => c.words));
   const catalogKey = ctx.catalog || fromJob?.config.catalog_key || null;
@@ -124,6 +127,7 @@ function configure(target, book, ctx, fromJob = null) {
     radio.addEventListener("change", () => {
       if (!radio.checked) return;
       cfg.provider = pv; cfg.model = null; cfg.check_model = null;
+      if (!chunkChosen) { cfg.chunk_words = defaultChunk(pv); chunk.value = String(cfg.chunk_words); }
       ctxField.hidden = pv !== "ollama";
       fillModels(); update();
     });
@@ -167,7 +171,7 @@ function configure(target, book, ctx, fromJob = null) {
     } } }, d[0].toUpperCase() + d.slice(1)));
   const events = h("input", { type: "checkbox", checked: cfg.events, id: "cfg-events", role: "switch" });
   events.addEventListener("change", () => { cfg.events = events.checked; update(); });
-  chunk.addEventListener("input", () => { cfg.chunk_words = +chunk.value; update(); });
+  chunk.addEventListener("input", () => { cfg.chunk_words = +chunk.value; chunkChosen = true; update(); });
 
   const verify = h("input", { type: "checkbox", checked: cfg.verify, id: "cfg-verify", role: "switch" });
   verify.addEventListener("change", () => { cfg.verify = verify.checked; checkField.hidden = !isCloud(cfg.provider) || !cfg.verify; update(); });
@@ -311,7 +315,7 @@ function configure(target, book, ctx, fromJob = null) {
           h("div.field", h("label", { for: "cfg-model" }, "Model"), modelSel, modelHint),
           h("div.field", h("div.field-split",
             h("label", { for: "cfg-chunk" }, "Chunk size"), chunkVal), chunk,
-            h("p.hint#chunk-hint", "How much text the model reads per call. Smaller is more accurate; larger is faster and a little cheaper.")),
+            h("p.hint#chunk-hint", "How much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows.")),
           h("div.field", h("span.label", "Depth"), h("div.seg", { role: "group", "aria-label": "Depth" }, depthBtns), depthHint),
           h("label.switch", { for: "cfg-events" }, events,
             h("span", h("span.label.label-block", "Timeline of key events"),

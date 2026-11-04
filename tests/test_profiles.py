@@ -57,7 +57,7 @@ class ProfileLLM:
             return {"new": [], "updates": [], "names": [], "relations": [], "events": [], "summary": [],
                     "profiles": [{"id": "alice-marlow", "p": 2, "text": ALICE_2}],
                     "recap": "Pike admits that Tom stayed at the lighthouse."}
-        return {"unsupported": [], "later": []}
+        return {"verdicts": [], "later": [], "moments": []}
 
 
 def _run(path, out, opts=None):
