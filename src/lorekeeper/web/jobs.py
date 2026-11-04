@@ -378,7 +378,7 @@ class JobManager:
             book_path = self.books.path(job.book_id)
             book = epub.read(book_path)
             opts = generate.Options(
-                chapters=c.get("chapters") or None, chunk_words=int(c.get("chunk_words", 2500)),
+                chapters=c.get("chapters") or None, chunk_words=int(c.get("chunk_words") or generate.default_chunk_words(c.get("provider"))),
                 depth=c.get("depth") if c.get("depth") in generate.DEPTHS else "standard",
                 events=bool(c.get("events", True)),
                 verify=bool(c.get("verify", True)), series_id=c.get("series_id") or None,

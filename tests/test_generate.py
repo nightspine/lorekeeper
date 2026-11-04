@@ -88,6 +88,13 @@ EXTRACT_CH1 = {
 }
 
 
+def verdicts(unsupported=(), unsure=(), later=(), moments=()):
+    """A fact-check answer in the checker's shape: every listed claim gets a verdict and a reason."""
+    out = [{"id": i, "verdict": "unsupported", "because": "the passage says otherwise"} for i in unsupported]
+    out += [{"id": i, "verdict": "unsure", "because": "the passage does not say"} for i in unsure]
+    return {"verdicts": out, "later": list(later), "moments": list(moments)}
+
+
 class FakeLLM:
     name = "fake"
 
@@ -113,13 +120,13 @@ class FakeLLM:
         if "items" in props:
             ids = re.findall(r"^(\S+): ", prompt, re.M)
             return {"items": [{"id": i, "text": "She discovers a concealed note marked T. M."} for i in ids]}
-        if "unsupported" in props:
+        if "verdicts" in props:
             if not self.verdicts:
                 return {}
             bad = [line.split(":")[0] for line in prompt.splitlines() if "famous sailor" in line]
             # The relation is cited at paragraph 3 but (in this script) only shown by paragraph 6.
             later = [{"id": line.split(":")[0], "p": 6} for line in prompt.splitlines() if "sister of" in line]
-            return {"unsupported": bad, "later": later}
+            return verdicts(bad, later=later)
         raise AssertionError("unexpected schema")
 
 
@@ -193,10 +200,11 @@ class _InventedTie(FakeLLM):
         if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
             out = json.loads(json.dumps(out))
             out["new"][0]["desc"] = "Tom's fiancée, at home in England."
-        if "unsupported" in schema.get("properties", {}):
+        if "verdicts" in schema.get("properties", {}):
             out = dict(out)
-            out["unsupported"] = out["unsupported"] + [
-                line.split(":")[0] for line in prompt.splitlines() if "fiancée" in line]
+            out["verdicts"] = out["verdicts"] + [
+                {"id": line.split(":")[0], "verdict": "unsupported", "because": "no passage says fiancée"}
+                for line in prompt.splitlines() if "fiancée" in line]
         return out
 
 
@@ -403,3 +411,98 @@ def test_whole_story_marks_the_index_complete(book_path, tmp_path):
     (tmp_path / "x").mkdir()
     ix, _, _ = _run(book_path, tmp_path / "x", generate.Options(chapters=[1, 2]))
     assert ix["coverage"]["complete"] is False
+
+
+class _Unsure(FakeLLM):
+    """The checker cannot confirm the hidden-letter claims: they are kept and reported."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "verdicts" in schema.get("properties", {}):
+            out = dict(out)
+            out["verdicts"] = out["verdicts"] + [
+                {"id": line.split(":")[0], "verdict": "unsure", "because": "the letter is only implied"}
+                for line in prompt.splitlines() if "hidden letter" in line]
+        return out
+
+
+def test_unsure_claims_are_kept_and_reported_with_reasons(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Unsure())
+    assert any("hidden letter" in ev["summary"] for ev in ix["events"])
+    assert report["stats"]["kept: checker unsure"] == len(report["unsure"]) == 2   # the event and a summary sentence
+    assert {u["because"] for u in report["unsure"]} == {"the letter is only implied"}
+    assert report["rejected"] and all(r["because"] for r in report["rejected"])
+
+
+class _Descriptive(FakeLLM):
+    """A description the checker calls a moment stays a fact: an event is something that happens."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["updates"].append({"id": "Ezra Pike", "p": 4, "desc": "A weathered keeper in oilskins who meets every boat."})
+        if "verdicts" in schema.get("properties", {}):
+            out = dict(out)
+            out["moments"] = list(out.get("moments", [])) + [
+                line.split(":")[0] for line in prompt.splitlines() if "oilskins" in line]
+        return out
+
+
+def test_a_description_is_not_moved_to_events_even_when_called_a_moment(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Descriptive())
+    pike = next(e for e in ix["entities"] if e["id"] == "ezra-pike")
+    assert any("oilskins" in f["text"] for f in pike["facets"])
+    assert not any("oilskins" in ev["summary"] for ev in ix["events"])
+    assert "facts moved to events" not in report["stats"]
+
+
+class _AboutTheText(FakeLLM):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = {**out, "recap": "In this passage Alice comes to the lighthouse looking for Tom."}
+        return out
+
+
+def test_a_recap_about_the_text_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_AboutTheText())
+    assert report["stats"]["dropped: talks about the text"] == 1
+    assert all("passage" not in r["text"] for r in ix["recaps"])
+
+
+class _PikeTie(FakeLLM):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["relations"].append({"a": "Ezra Pike", "label": "denies knowing", "b": "Tom Marlow", "p": 4})
+        return out
+
+
+def test_the_prompt_names_the_chapter_and_lists_existing_ties(book_path, tmp_path):
+    _, _, llm = _run(book_path, tmp_path, llm=_PikeTie())
+    extracts = [c for c in llm.calls if "Update the companion" in c]
+    assert "This passage is from: Chapter One" in extracts[0]
+    assert "ties:" not in extracts[0]
+    assert "ties: denies knowing Tom Marlow" in extracts[1]   # Pike is named in chapter two
+    assert "only if this passage changes it" in extracts[1]
+
+
+class _ManyEvents(FakeLLM):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["events"] = [{"p": 2 + i % 5, "text": f"Step {i + 1} of the day passes at the lighthouse.",
+                              "who": ["Alice Marlow"]} for i in range(6)]
+        return out
+
+
+def test_every_development_is_kept_within_the_budget(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_ManyEvents())
+    assert sum(1 for ev in ix["events"] if ev["summary"].startswith("Step ")) == 6   # the old cap was 2
+    assert "every development" in generate.EXTRACT and "never a description" in generate.EXTRACT
+
+
+def test_default_chunk_size_follows_the_provider():
+    assert generate.default_chunk_words("ollama") == generate.default_chunk_words(None) == 2500
+    assert generate.default_chunk_words("claude") == generate.default_chunk_words("openai") == 8000

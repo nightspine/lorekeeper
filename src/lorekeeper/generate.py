@@ -27,10 +27,11 @@ from . import merge, text, validate
 from .epub import Book
 from .llm import LLM, Cancelled
 
-GENERATOR_VERSION = "0.2.0"
-PROMPT_VERSION = "extract-v5"
+GENERATOR_VERSION = "0.3.0"
+PROMPT_VERSION = "extract-v6"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
+MAX_CONTEXT_TIES = 8
 MAX_KNOWN_LIST = 150
 MAX_DISAMBIGUATE = 4   # model calls per chunk that settle which entry a name belongs to
 
@@ -43,6 +44,12 @@ TYPES = {
     "concept": "an idea, method, discovery or event-like phenomenon (a war, a disease)",
     "term": "a word or phrase with a special meaning in the story",
 }
+
+def default_chunk_words(provider: str | None) -> int:
+    """Words per model call. A cloud model reads about a chapter at a time, so events and summaries
+    come from one reading of it; a local model keeps the smaller chunk its context and speed allow."""
+    return 2500 if (provider or "ollama") == "ollama" else 8000
+
 
 # How much to extract. Output size is what makes generation slow, so depth trades coverage for speed.
 DEPTHS = {
@@ -96,6 +103,13 @@ HINDSIGHT = re.compile(
     r"(would|will) (later|eventually|soon)|turns out|in reality|actually (is|was) the|foreshadow\w*|"
     r"at first glance|for now)\b", re.IGNORECASE)
 
+# A fact that reads as a description ("A tall man in black who welcomes guests") stays a fact even when the
+# checker calls it a moment: an event is something that happens.
+DESCRIPTIVE = re.compile(r"^(a|an|the)\b.*\b(who|whose|that|which)\b", re.IGNORECASE)
+
+# A recap or summary is about the story, never about the text it was written from.
+ABOUT_THE_TEXT = re.compile(r"\b(this|the) (passage|section|excerpt|chunk)\b", re.IGNORECASE)
+
 HONORIFICS = merge.HONORIFICS
 
 SYSTEM = """You keep a spoiler-free reader's companion for a novel, reading it one passage at a time.
@@ -110,13 +124,15 @@ PASSAGE = """Passage (paragraphs are numbered):
 """
 
 EXTRACT = """
+This passage is from: {chapter}
+
 Story so far: {recap}
 
 The section just before this passage: {previous}
 
 Already in the companion (id: name): {known}
 
-What the companion says about entities named in this passage:
+What the companion says about entities named in this passage (their ties are the relations it already has):
 {context}
 
 Entity types: {types}
@@ -126,32 +142,45 @@ Update the companion with what THIS passage adds. Report only new information.
 - updates: what this passage reveals about what an entity IS, for entities in the companion (use the id) or in your "new" list (use the name): identity or role, appearance, nature, abilities, beliefs, allegiances, ties to others, and changes in status (wounded, promoted, captured, turned, dead). Not what they do in a scene: actions and plot belong in events and the summary. Write a lasting fact ("Can boil a person's blood, a power from his father"), not a moment ("He boils Alba's blood"). Something a character says, is told or believes is reported as that ("Has been told his parents died in a crash"), not as fact, unless the text confirms it. ONE sentence under 30 words each, "p" = the paragraph where it is shown, at most {per_entity} per entity. If it overturns something the companion says, put that fact's [id] in "corrects".
 - profiles: for EVERY new person, creature and group, however briefly it appears, and for each other entity this passage teaches something lasting about, a profile (a tie, rank, role, status or whereabouts may be stated ONLY when this passage or the companion's notes for that entity say it, even if you know it from the book: when the passage shows someone only in passing, name the connection the text actually shows and stop, "Someone Harker keeps notes for while travelling", not "Harker's fiancée"): the description a reader would want on a character sheet, of who or what it is as known so far. Identity and role, look, nature, abilities, and the ties that define it ("Harry's best friend", "the king's sister"). Only lasting changes in status count (orphaned, knighted, exiled, dead); never where it is or what it is doing at the moment, and never recent events ("now on the train", "has begun to trust X", "has just arrived"). Timeless present tense: "An orphaned farm boy raised by his uncle who discovers he can work magic; quick-tempered but loyal", not "Now on the road to the capital, he has begun to trust Mira". 1 to 3 sentences, under 70 words, rewritten in full from the companion's profile plus this passage. "id" = id or new name; "p" = the paragraph by which everything in it has been shown. At most {profiles}.
 - names: a new name or title for an entity already in the companion.{relations}
-- events: at most {events} key moments, one short sentence each, with "who" (ids or new names).
+- events: every development in THIS passage that changes the situation: a decision, an arrival or departure, a
+  discovery, a confrontation, a death, a reveal, a promise, a change in someone's standing. One sentence each (under
+  30 words), in order, saying who did what and what it changed, with "who" (ids or new names) and "p" = the paragraph
+  where it happens. An event is something that happens, never a description of how someone looks or what they are.
+  Up to {events}; leave out nothing that a reader catching up would need.
 - summary: what happens in THIS passage, in order, as {summary} sentences (each under 35 words) with the key details:
   who does what and where, what is learned, decided or left unresolved. Use names, not pronouns.
-- recap: the story so far, updated to the end of this passage, in at most 6 sentences: the main threads briefly,
-  then where things stand at the end of this passage (who is where, what they are after, what is unresolved).
-  Only what the story so far and this passage say.
+- recap: the story so far, updated to the end of this passage, for a reader coming back after a break: first the
+  whole arc so far in a few sentences (earlier events compressed to their consequences, never dropped), then the
+  recent stretch in more detail, ending with where things stand (who is where, what they are after, what is
+  unresolved). Up to 10 sentences. Only what the story so far and this passage say. Write about the story, never
+  about the text: no "this passage", "this section" or "the chapter".
 Leave a list empty when there is nothing to add."""
 
 VERIFY = """
-Check each claim against the WHOLE passage. Most claims are right; reject only what is actually wrong.
-"cited at paragraph N" is only where the claim says it is shown. Judge it on the whole passage and the story so
-far; if what it says is only shown after paragraph N, put it under later. Never reject a claim for where it is
-cited. Claims marked (recap) or (summary) may also use the earlier chapters below. Claims marked (profile)
-describe an entity as a whole and may also use the "known" notes given with them. A (profile) claim that states a
-relationship, title, rank, role, status or whereabouts that neither the passage nor its "known" notes state is
-unsupported, even if it is likely or commonly known.
-A (name) claim is unsupported unless the passage itself uses that name for that individual. It is also unsupported when the passage uses that name for a relative or another person (a mother, husband, servant, someone the entity speaks to).
-- unsupported: ids of claims that the text contradicts, or that state something it does not say: invented details,
-  the wrong person, place or number, events out of order, or a guess, rumour or character's claim given as
-  fact. Do NOT list a claim just because its support is spread over several paragraphs or lies in the notes,
-  the story so far or the earlier chapters.
+Check each claim against the WHOLE passage, the story so far and the notes given with it. Most claims are right:
+they were written from this passage. Give every claim a verdict with a one-line reason:
+- supported: the passage (or, for the kinds below, the notes or earlier chapters) shows it. A paraphrase in other
+  words, a detail spread over several paragraphs, or a plain reading of what the passage shows is supported; a
+  claim is not unsupported because it is worded differently from the book or sums several sentences up.
+- unsupported: you can point to the words that contradict it, or to the detail it adds that nothing given says:
+  an invented detail, the wrong person, place, time or number, events in the wrong order, or a guess, rumour or a
+  character's claim stated as fact. Name that detail in "because".
+- unsure: you cannot tell from what you were given. Say what is missing in "because". Use it instead of guessing
+  either way.
+"cited at paragraph N" is only where the claim says it is shown. Judge it on the whole passage; if what it says is
+only shown after paragraph N, put it under later. Never reject a claim for where it is cited. Claims marked (recap)
+or (summary) may also use the earlier chapters below and the story so far. Claims marked (profile) describe an entity
+as a whole and may also use the "known" notes given with them. A (profile) claim that states a relationship, title,
+rank, role, status or whereabouts that neither the passage nor its "known" notes state is unsupported, even if it is
+likely or commonly known.
+A (name) claim is unsupported unless the passage itself uses that name for that individual. It is also unsupported
+when the passage uses that name for a relative or another person (a mother, husband, servant, someone the entity
+speaks to).
 - later: claims that are right but are only fully shown after the paragraph they cite. Give the id and the
   earliest paragraph by which everything in the claim has been shown.
-- moments: ids of (fact) claims that are right but narrate one moment or action in a scene ("He jumps onto the
-  troll") instead of saying what the entity is: its role, look, nature, abilities, beliefs, ties or status.
-Claims not listed are accepted.
+- moments: ids of (fact) claims that are right but narrate one action in a scene ("He jumps onto the troll")
+  instead of saying what the entity is. A description of look, manner, nature, role or standing is not a moment,
+  even when it is first shown in a scene: leave those out of moments.
 
 Story so far: {recap}
 
@@ -293,8 +322,10 @@ def extract_schema(relations: bool) -> dict:
 
 
 EXTRACT_SCHEMA = extract_schema(True)
-VERIFY_SCHEMA = _obj({"unsupported": _ARR(_STR), "later": _ARR(_obj({"id": _STR, "p": _INT}, ["id", "p"])),
-                      "moments": _ARR(_STR)}, ["unsupported", "later", "moments"])
+VERIFY_SCHEMA = _obj({"verdicts": _ARR(_obj({"id": _STR, "verdict": {"enum": ["supported", "unsupported", "unsure"]},
+                                             "because": _STR}, ["id", "verdict", "because"])),
+                      "later": _ARR(_obj({"id": _STR, "p": _INT}, ["id", "p"])),
+                      "moments": _ARR(_STR)}, ["verdicts", "later", "moments"])
 EARLIER_CHAPTERS = 9000   # characters of earlier chapter recaps shown to the fact-check
 REPHRASE_SCHEMA = _obj({"items": _ARR(_obj({"id": _STR, "text": _STR}, ["id", "text"]))}, ["items"])
 
@@ -373,6 +404,7 @@ class Generator:
         self.on_phase: Callable[[str], None] = lambda phase: None
         self.added: list[dict] = []                # items committed by the current chunk, for live UIs
         self.rejected: list[dict] = []             # claims the fact-check turned down (capped), for review
+        self.unsure: list[dict] = []               # claims it kept without being able to confirm (capped)
         self.recap_text = ""
         self.summary_text = ""                     # the previous chunk's summary, for continuity
         self.counters: Counter = Counter()
@@ -867,14 +899,33 @@ class Generator:
             return f"{eid}: {self._names(eid)[0]}" + (f" ({about})" if about else "")
         known_s = "; ".join(who(eid) for eid in known) or "(nothing yet)"
         lines = []
-        for eid in self.mentioned(chunk):
+        mentioned = self.mentioned(chunk)
+        ties = self._ties(set(mentioned))
+        for eid in mentioned:
             lines.append(f"- {eid} ({self._type(eid)}; {', '.join(self._names(eid))})")
             profile = self.current_profile(eid)
             if profile:
                 lines.append(f"    profile: {profile['text']}")
             for f in [f for f in self._current_facets(eid) if f.get("kind") != "profile"][-MAX_CONTEXT_FACTS:]:
                 lines.append(f"    [{f['id']}] {f['text']}")
+            if ties.get(eid):
+                lines.append("    ties: " + "; ".join(ties[eid][-MAX_CONTEXT_TIES:]))
         return known_s, "\n".join(lines) or "(none)"
+
+    def _ties(self, of: set[str]) -> dict[str, list[str]]:
+        """entity → its current relations as sentences ("prisoner of Count Dracula"), so the model
+        reports a tie once rather than in a new wording every chunk."""
+        replaced = {r for rel in self.relations for r in rel.get("replaces", [])}
+        out: dict[str, list[str]] = {}
+        for rel in self.relations:
+            if rel["id"] in replaced:
+                continue
+            for me, other in ((rel["src"], rel["dst"]), (rel["dst"], rel["src"])):
+                if me in of:
+                    name = (self._names(other) or [other])[0]
+                    out.setdefault(me, []).append(f"{rel['label']} {name}" if me == rel["src"]
+                                                  else f"{name} ({rel['label']} this entry)")
+        return out
 
     # ---- one chunk -------------------------------------------------------------------------
 
@@ -886,19 +937,22 @@ class Generator:
         self.scope_start = min(self.scope_start, chunk.start) if hasattr(self, "scope_start") else chunk.start
         depth = DEPTHS.get(self.opts.depth, DEPTHS["standard"])
         words = sum(len(self.book.blocks[s].words) for s in range(chunk.start, chunk.end + 1))
-        n_events = max(2, round(words / 1500)) if self.opts.events else 0
+        n_events = max(6, round(words / 200)) if self.opts.events else 0   # every development, not a highlight reel
         known, context = self._context(chunk)
         passage = self._passage(chunk)
         self._chunk_len = chunk.end - chunk.start + 1
         self.on_phase("extract")
         raw = self.llm.complete(SYSTEM, EXTRACT.format(
-            recap=self.recap_text or "(the book is just beginning)", known=known, context=context,
+            chapter=self.chapter_title(chunk), recap=self.recap_text or "(the book is just beginning)",
+            known=known, context=context,
             previous=self.summary_text or "(none)",
             summary=f"{max(3, min(8, round(words / 700)))} to {max(4, min(12, round(words / 450)))}",
             types="; ".join(f"{k} = {v}" for k, v in TYPES.items()), who=depth["who"],
             per_entity=depth["per_entity"](words), events=n_events, profiles=max(8, min(16, round(words / 300))),   # room for every new entity plus the ones that grew
             relations=("\n- relations: how two entities relate, as a (short label) b, e.g. a=\"Murray\", "
-                       "label=\"orderly who saved\", b=\"Watson\". \"p\" = paragraph that shows it."
+                       "label=\"orderly who saved\", b=\"Watson\". \"p\" = paragraph that shows it. Only ties the "
+                       "companion does not have yet: a tie already listed under an entity's ties above is reported "
+                       "again only if this passage changes it (a prisoner is freed, an ally turns)."
                        if depth["relations"] else "")),
             extract_schema(depth["relations"]), prefix=passage)
         before = Counter(self.stats)
@@ -1142,6 +1196,9 @@ class Generator:
         if HINDSIGHT.search(claim):
             self.stats["dropped: hindsight wording"] += 1
             return None
+        if kind in ("recap", "summary") and ABOUT_THE_TEXT.search(claim):
+            self.stats["dropped: talks about the text"] += 1   # the previous recap stays
+            return None
         cited = [at_seq, *evidence]
         # Reveal no earlier than the last cited paragraph and the entities involved.
         from_seq = max([*cited, *(self.entity_from[e] for e in entities)])
@@ -1217,16 +1274,27 @@ class Generator:
         out = checker.complete(SYSTEM, VERIFY.format(recap=self.recap_text or "(none)", claims=claims,
                                                      chapters="\n".join(reversed(chapters)) or "(none)"),
                                VERIFY_SCHEMA, prefix=passage)
-        verdict = out.get("unsupported") if isinstance(out, dict) else None
-        if not isinstance(verdict, list):
+        verdicts = out.get("verdicts") if isinstance(out, dict) else None
+        if not isinstance(verdicts, list):
             # No usable verdict (e.g. a declined request): keep nothing rather than keep unchecked claims.
             self.stats["dropped: not checked"] += len(cands)
             return []
-        bad = {str(x).strip() for x in verdict}
-        # Facts that narrate a moment are right, but belong among events.
+        why: dict[str, tuple[str, str]] = {}
+        for v in verdicts:
+            if isinstance(v, dict) and v.get("verdict") in ("supported", "unsupported", "unsure"):
+                why[str(v.get("id", "")).strip()] = (v["verdict"], " ".join(str(v.get("because", "")).split())[:300])
+        bad = {cid for cid, (verdict, _) in why.items() if verdict == "unsupported"}
+        # An "unsure" claim is kept (the checker could not point to a contradiction) but reported, so a
+        # reader of the report can see what the text left open.
+        for c in cands:
+            if why.get(c.cid, ("",))[0] == "unsure":
+                self.stats["kept: checker unsure"] += 1
+                if len(self.unsure) < 500:
+                    self.unsure.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start), "because": why[c.cid][1]})
+        # Facts that narrate a moment are right, but belong among events; a description is not a moment.
         for cid in {str(x).strip() for x in out.get("moments") or []} - bad:
             c = next((c for c in cands if c.cid == cid and c.kind == "facet" and not c.data.get("profile")), None)
-            if c:
+            if c and not DESCRIPTIVE.search(c.text):
                 c.kind, c.data = "event", {"entities": [c.data["entity"]]}
                 self.stats["facts moved to events"] += 1
         n = self._chunk_len
@@ -1242,7 +1310,7 @@ class Generator:
         keep = [c for c in cands if c.cid not in bad]
         for c in cands:
             if c.cid in bad and len(self.rejected) < 500:
-                self.rejected.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start)})
+                self.rejected.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start), "because": why[c.cid][1]})
         self.stats["dropped: not supported"] += len(cands) - len(keep)
         return keep
 
@@ -1483,7 +1551,7 @@ def run(book: Book, llm: LLM, opts: Options, epub_path: str | Path, out: str | P
     usage = getattr(llm, "usage", None)
     report = {"model": llm.name, "chunks": len(chunks), "stopped": stopped,
               "seconds": round(time.time() - total_t),
-              "stats": dict(gen.stats), "validation_errors": errors, "rejected": gen.rejected,
+              "stats": dict(gen.stats), "validation_errors": errors, "rejected": gen.rejected, "unsure": gen.unsure,
               "usage": usage.__dict__ if usage else None}
     out.with_suffix(out.suffix + ".report").write_text(json.dumps(report, indent=2) + "\n")
     return report

@@ -34,12 +34,21 @@ FULL_MENTIONS = 4    # a portrait written from fewer passages is redone once the
 GROWTH = 1.5         # rewrite once mentions grow by half (and by at least FULL_MENTIONS),
 STALE = 4            # or once this many chapters have passed with new mentions
 MAX_WINDOWS = 40     # passages sent per portrait, sampled evenly, first and last always kept
+MAX_NOTES = 8        # the entity's checked facts shown with the passages
+
+# A fact that records a lasting change in standing: it earns the entity a new portrait at the next
+# chapter end, however few new mentions there were, so the description never lags the story.
+STATUS = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|married|marries|marriage|wedding|wed|"
+                    r"widow(ed|er)?|engaged|betrothed|captured|captive|prisoner|imprisoned|escaped|freed|"
+                    r"wounded|injured|crippled|blinded|recovered|turned|transformed|knighted|promoted|"
+                    r"appointed|crowned|exiled|banished|disgraced|betrayed|revealed|unmasked|disguised|"
+                    r"orphaned|adopted|pregnant|arrested|sentenced|pardoned|vanished|missing)\b", re.IGNORECASE)
 BUDGET = 24000       # characters of passage text per portrait
 CONTEXT = 1          # paragraphs of context either side of a mention
 WORKERS = 6
 
 PORTRAIT = """Below are passages from a novel, in reading order: the places so far where {name} ({kind}) appears, each with
-a little context. {also}
+a little context. {also}{notes}
 
 Write the description of {name} a reader would want in a companion at this point in the book{sheet}. It
 describes who or what {name} is, not what has happened: a description, never a plot summary.
@@ -47,6 +56,10 @@ describes who or what {name} is, not what has happened: a description, never a p
 - The ties that define it ("Ron's older brother", "Head of Slytherin House"), naming others as the passages do.
 - Events only where they lastingly define it (orphaned as a baby, sorted into Gryffindor, revealed to serve
   someone), one short clause each. Leave out errands, trips, scenes and how they turned out.
+- A lasting change in standing that the passages show (a death, a marriage, a capture or an escape, a turning,
+  a revealed identity, a new rank) goes in the FIRST sentence, stated plainly ("Dead, killed by..."; "Married to
+  Jonathan Harker"), before who {name} was until then. A reader opening the entry must see at once where things
+  stand, never a description that stopped being true chapters ago.
 
 Rules:
 - Use ONLY these passages. You may recognise the book: use nothing you know from elsewhere and hint at nothing later.
@@ -215,6 +228,12 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
     upto = lo - 1
     done: Counter = Counter()     # mentions at the entity's last portrait
     since: dict[str, int] = {}    # entity → index of the mark of its last portrait
+    upto_mark: dict[str, int] = {}   # entity → the mark its last portrait was written at
+    # entity → seqs of its checked facts that record a change in standing
+    status: dict[str, list[int]] = {
+        e["id"]: sorted(seq_of[f["from"]] for f in e["facets"]
+                        if f.get("kind") != "profile" and f["from"] in seq_of and STATUS.search(f["text"]))
+        for e in d["entities"]}
     last_text: dict[str, str] = {}
     written: dict[str, list[dict]] = {}
     marks = sorted(set(marks))
@@ -233,7 +252,8 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 thin = done[eid] < FULL_MENTIONS <= n   # first portrait came from thin evidence
                 grown = n >= max(done[eid] * GROWTH, done[eid] + FULL_MENTIONS)
                 stale = step - since[eid] >= STALE and n >= done[eid] + FULL_MENTIONS
-                if not (thin or grown or stale):
+                changed = any(upto_mark[eid] < s <= mark for s in status.get(eid, ()))
+                if not (thin or grown or stale or changed):
                     continue
             due.append((eid, seen))
         for s in range(upto + 1, mark + 1):
@@ -251,9 +271,15 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # Never before the entity, or any name the prompt gives it, is itself revealed.
             last = max([last, seq_of.get(e["from"], hi)] + [seq_of.get(n["from"], hi) for n in visible])
             prev = last_text.get(eid)
+            # The companion's own checked notes up to here: a status fact ("has died") may sit in a
+            # paragraph that never names the entity, so the passages alone can miss it.
+            noted = [f["text"] for f in e["facets"] if f.get("kind") != "profile"
+                     and seq_of.get(f["from"], hi) <= mark][-MAX_NOTES:]
             prompt = PORTRAIT.format(
                 name=names[0] if names else e["names"][0]["value"], kind=KINDS.get(e["type"], e["type"]),
                 also=f"Also called: {', '.join(names[1:6])}." if len(names) > 1 else "",
+                notes=("\nWhat the companion has noted about " + (names[0] if names else e["names"][0]["value"])
+                       + " from the book so far: " + " / ".join(noted)) if noted else "",
                 sheet=" (as on a character sheet)" if e["type"] in ("person", "creature") else "",
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
                 passages=passages)
@@ -290,10 +316,13 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             at = anchors[i]["id"]
             ev = sorted({a for a in (anchors[j]["id"] for j in (bisect_left(anchor_seqs, s) for s in seen[-8:]))
                          if seq_of[a] <= seq_of[at]} if seen else set(), key=seq_of.get)
+            if eid in written and written[eid][-1]["from"] == at:
+                written[eid].pop()   # the same reveal point: the rewrite stands in for the earlier one
             written.setdefault(eid, []).append({"from": at, "evidence": ev or [at], "text": t})
             last_text[eid] = t
             done[eid] = len(seen)
             since[eid] = step
+            upto_mark[eid] = mark
             stats["portraits"] += 1
         log(f"  {d['work']['title']}: through block {mark}, {stats['portraits']} portraits")
 
@@ -303,7 +332,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
         e = ents[eid]
         first = seq_of[ps[0]["from"]]
         old = [f for f in e["facets"] if f.get("kind") == "profile"]
-        keep = [f for f in old if seq_of.get(f["from"], hi) <= first]
+        keep = [f for f in old if seq_of.get(f["from"], hi) < first]
         gone = {f["id"] for f in old} - {f["id"] for f in keep}
         e["facets"] = [f for f in e["facets"] if f["id"] not in gone]
         stats["superseded"] += len(gone)
