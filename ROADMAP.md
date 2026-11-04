@@ -4,16 +4,7 @@ What comes next, roughly in order. Each item gets a GitHub issue when work start
 
 ## 1. Manual index editor (human in the loop)
 
-Indexes today are built by a model and corrected after the fact through merges. The editor makes a person a first-class author:
-
-- **Create an index from scratch** for a book in the library, with no model involved: pick the book, walk the chapters, add entities, facts, relationships, events and recaps while reading, each anchored to the paragraph it comes from (the editor picks the anchor from the text; the author never types an id).
-- **Edit anything the model produced**: rename an entity, rewrite a description or fact, move its reveal point, change its type, add or remove a relationship or an event, mark a fact as inferred.
-- **Delete entities** (and single facets, relations or events), with the same undo journal the merges use.
-- **Overrides survive regeneration**: an edit is recorded as an override on the entity or item id, so re-running the generator on the same book keeps the human's version.
-- **Spoiler rules enforced in the UI**: a description can only cite text up to its reveal point; the editor shows the passage and refuses hindsight wording the same way the generator does.
-- A beautiful, calm flow in the existing "lit and unlit" design: the Reader's entry panel grows an Edit mode rather than a separate admin area.
-
-Tracked in issue #6.
+Shipped (issue #6): the Reader's edit mode adds, changes and deletes entries, names, details, connections, events and recaps, with the reveal point chosen from the book's paragraphs; "Write it myself" on the build form starts an index with no model; every change is one undoable step in the same journal as merges; hindsight and long quotes are refused as the generator refuses them; and edits are recorded per edition and applied again after a rebuild. Still open: editing indexes that were not built here, and more than one editor at a time.
 
 ## 2. Non-fiction and self-help books
 

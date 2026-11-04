@@ -189,6 +189,7 @@ class JobManager:
         self.keys = keys   # provider id → API key or None; a callable, so a key saved in Settings applies to the next run
         self.provider_config = provider_config   # provider id → {base_url, model} (the custom server)
         self.distinct_for = distinct_for   # job → pairs of entity ids a person marked "not the same"
+        self.after_run = None   # job → dict, run on a finished index (the app sets editor.reapply)
         root.mkdir(parents=True, exist_ok=True)
         index_dir.mkdir(parents=True, exist_ok=True)
         self.jobs: dict[str, Job] = {}
@@ -368,6 +369,20 @@ class JobManager:
         self._emit(job, {"type": "log", "line": f"descriptions: {stats.get('portraits', 0)} written ({cost})"})
         return {**stats, "cost_usd": round(model.usage.cost_usd, 4)}
 
+    def _reapply_edits(self, job: Job) -> dict:
+        """Put the person's recorded edits for this book back onto the fresh index (editor.reapply)."""
+        try:
+            got = self.after_run(job)
+        except Exception as e:  # noqa: BLE001 - the index itself is done; don't fail the run over this
+            self._emit(job, {"type": "log", "line": f"your edits: could not be applied ({type(e).__name__}: {e})"})
+            return {"failed": str(e)}
+        if got.get("failed"):
+            self._emit(job, {"type": "log", "line": f"your edits: not applied, they would make the index invalid ({got['failed']})"})
+        elif got.get("applied") or got.get("skipped"):
+            gone = f", {got['skipped']} no longer apply" if got.get("skipped") else ""
+            self._emit(job, {"type": "log", "line": f"your edits: {got.get('applied', 0)} applied again{gone}"})
+        return got
+
     def _run(self, job: Job) -> None:
         flag = self.stop_flags[job.id] = threading.Event()
         job.status, job.started = "running", job.started or _now()
@@ -413,6 +428,8 @@ class JobManager:
                                   on_event=on_event, should_stop=flag.is_set)
             if not report.get("stopped") and c.get("portraits", True):
                 report["portraits"] = self._portraits(job, book, opts.prior, flag)
+            if not report.get("stopped") and self.after_run is not None:
+                report["edits"] = self._reapply_edits(job)
             job.report = report
             job.status = "stopped" if report.get("stopped") else "done"
             self._emit(job, {"type": job.status, "report": report})
