@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/nightspine/lorekeeper/compare/v0.3.0...v0.4.0) (2026-11-04)
+
+
+### Features
+
+* edit indexes by hand in the Reader, with undo, content rules and edits that survive a rebuild ([#23](https://github.com/nightspine/lorekeeper/issues/23)) ([5315fce](https://github.com/nightspine/lorekeeper/commit/5315fce0bda8d574b05b24834a94b59e4be45b65))
+
 ## [0.3.0](https://github.com/nightspine/lorekeeper/compare/v0.2.0...v0.3.0) (2026-11-04)
 
 
