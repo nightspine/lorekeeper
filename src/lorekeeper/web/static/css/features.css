@@ -159,3 +159,7 @@
 .g-row-switch input::after { top: 2px; left: 2px; width: 16px; height: 16px; }
 .g-row-switch input:checked::after { transform: translateX(14px); }
 .g-display-panel input:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+
+/* ---------- build page: write it by hand ---------- */
+.build-hand { margin: -6px 0 0; text-align: right; }
+.build-hand .linkish { font-size: inherit; }

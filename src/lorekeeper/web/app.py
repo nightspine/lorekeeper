@@ -15,6 +15,7 @@ import os
 import re
 import time
 import urllib.request
+import uuid
 from dataclasses import asdict
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from ..generate import slug
 from . import auth as authmod
 from . import bookorbit, position, protocol
 from .catalog import Catalog, series_num, story_chapters
+from .editor import EditError, Editor, WordingError
 from .identity import Identity
 from .jobs import BookStore, JobManager, describe
 from .secrets import Keys, SecretStore, mask
@@ -766,6 +768,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             parsed_books[k] = epub.read(p)
         return parsed_books[k]
 
+    editor = Editor(identity, library, data_dir, reader=parsed)
+    jobs.after_run = lambda job: editor.reapply(Path(job.output))   # a rebuild keeps the person's edits
+
+    def who(request: Request) -> str:
+        return getattr(request.state, "user", None) or "admin"
+
     @app.get("/api/library/{key}/position")
     def library_position(key: str):
         item = library.scan().get(key)
@@ -844,13 +852,58 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(409, str(e)) from e
 
     @app.post("/api/library/{key}/merge/{merge_id}/undo")
-    def undo_merge(key: str, merge_id: str):
+    @app.post("/api/library/{key}/undo/{merge_id}")
+    def undo_change(key: str, merge_id: str):
+        """Undo the latest journal entry, a merge or a hand edit (both routes do the same)."""
         try:
-            return identity.undo(key, merge_id)
+            return editor.undo(key, merge_id)
         except KeyError as e:
             raise HTTPException(404, "no such index") from e
         except (LookupError, RuntimeError) as e:
             raise HTTPException(409, str(e)) from e
+
+    # ---- editing by hand ---------------------------------------------------------------------
+
+    @app.post("/api/library/{key}/edits")
+    async def edit_index(key: str, request: Request):
+        """Apply one edit (see editor.py for the operations) as one undoable step."""
+        op = await request.json()
+        try:
+            return editor.apply(key, op, user=who(request))
+        except KeyError as e:
+            raise HTTPException(404, "no such index") from e
+        except PermissionError as e:
+            raise HTTPException(403, str(e)) from e
+        except WordingError as e:
+            return JSONResponse({"detail": str(e), "code": "wording"}, status_code=422)
+        except EditError as e:
+            raise HTTPException(400, str(e)) from e
+        except (RuntimeError, ValueError) as e:
+            raise HTTPException(409, str(e)) from e
+
+    @app.post("/api/catalog/books/{key}/handmade")
+    async def handmade(key: str, request: Request):
+        """An empty index for a library book, to be written by hand in the Reader's edit mode."""
+        body = await request.json() if int(request.headers.get("content-length") or 0) else {}
+        local = prepare(key)
+        e = catalog.entry(key)
+        path = books.path(local)
+        series_id = e["series"]["id"] if e["series"] else None
+        try:
+            doc = editor.blank(parsed(path), path, license=str(body.get("license") or "CC0-1.0"), user=who(request),
+                               series_id=series_id, book_key=slug(e["title"]) if series_id else None)
+        except EditError as ex:
+            raise HTTPException(409, str(ex)) from ex
+        if series_id:
+            manifest = catalog.series_manifest(series_id)
+            if manifest:
+                (data_dir / "indexes").mkdir(parents=True, exist_ok=True)
+                (data_dir / "indexes" / f"{series_id}.series.json").write_text(json.dumps(manifest, indent=2))
+        stem = f"{slug(e['title']) or 'book'}-{uuid.uuid4().hex[:12]}"
+        out = data_dir / "indexes" / f"{stem}.lore.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        return {"key": f"generated--{stem}.lore"}
 
     @app.post("/api/library/{key}/distinct")
     async def mark_distinct(key: str, request: Request):
@@ -872,6 +925,15 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         meta = describe(p)
         meta["blockWords"] = [len(b.words) for b in epub.blocks(p)]
         return meta
+
+    @app.get("/api/editions/{text_hash}/blocks")
+    def edition_blocks(text_hash: str, seq: int = 0, before: int = 2, after: int = 2, i: str | None = None):
+        """A passage of the book around paragraph `seq`, for choosing a reveal point by hand."""
+        p = library.edition_path(text_hash)
+        if p is None:
+            raise HTTPException(404, "book file for this edition not found")
+        doc = library.scan().get(i, {}).get("doc") if i else None
+        return editor.passage(parsed(p), seq, before, after, doc=doc)
 
     protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
     return app

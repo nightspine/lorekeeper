@@ -3,7 +3,7 @@
 Entity ids are series-scoped, so a merge rewrites every generated index of the series (all versions
 of all books), and a pair is looked for across all of them. Only generated indexes (our own files)
 are ever changed. Before a merge the affected files are copied to `merges/<id>/`, which is what undo
-restores.
+restores. Hand edits (`editor.py`) go through the same `_commit` and journal, so one "Undo" covers both.
 """
 
 from __future__ import annotations
@@ -171,7 +171,8 @@ class Identity:
                 "checking": self._checking.get(gid), "checkError": self._check_error.get(gid),
                 "checker": getattr(model, "name", None), "unjudged": unjudged,
                 "undo": ({"id": last[0]["id"], "keepNames": last[0]["keepNames"], "dropNames": last[0]["dropNames"],
-                          "auto": bool(last[0].get("auto")), "at": last[0]["at"]} if last else None)}
+                          "auto": bool(last[0].get("auto")), "at": last[0]["at"],
+                          "kind": last[0].get("kind", "merge"), "what": last[0].get("what")} if last else None)}
 
     def check(self, key: str) -> dict:
         """Judge every unjudged pair with a model, in the background. Verdicts are cached per group.
@@ -414,7 +415,7 @@ class Identity:
             gid, items = self.group(key)
             journal = self._journal(gid)
             if not journal or journal[-1]["id"] != merge_id:
-                raise LookupError("only the latest merge can be undone")
+                raise LookupError("only the latest change can be undone")
             if self._busy(items):
                 raise RuntimeError("a build is writing one of these indexes; undo once it has finished")
             snap = self.dir / merge_id
@@ -425,7 +426,7 @@ class Identity:
                 if state.exists():
                     shutil.copy2(state, p.with_name(p.name + ".state"))
             shutil.rmtree(snap)
-            return {"undone": merge_id}
+            return {"undone": merge_id, "kind": journal[-1].get("kind", "merge"), "what": journal[-1].get("what")}
 
     def _journal(self, gid: str) -> list[dict]:
         if not self.dir.is_dir():

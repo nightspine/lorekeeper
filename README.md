@@ -99,6 +99,7 @@ uv run --extra web --extra claude lorekeeper web        # http://127.0.0.1:8765
 - **Library:** every book from your Book Orbit server (sign in under Settings) and your uploads, by series, with each book's index status, versions and a default version. Warns before you build a book whose earlier series books have no index, and can queue a whole series in order, each book building on the ones before it.
 - **Runs:** upload EPUBs, pick sections, model, chunk size and fact-checking, then follow the run live: progress, phase, discoveries, recaps, rejected claims and a filterable log. Runs can be stopped between chunks and resumed.
 - **Reader:** open any index (generated, examples, `bench/runs`) and drag through the book. Only what has been revealed at that point is shown. It supports series, chapter jumps, step-by-reveal and deep links.
+- **Editing:** every index built here can be corrected by hand from the Reader's edit mode: rename or retype an entry, rewrite or delete a description, detail, connection, event or recap, move its reveal point by pointing at the paragraph, or write a whole index yourself with no model ("Write it myself" on the build form). Each change can be undone, hindsight and long quotes are refused the way the generator refuses them, and your edits are applied again when the book is rebuilt.
 
 The Reader's spoiler filter is a JavaScript port of the reference algorithm (`src/lorekeeper/web/static/js/gating.js`), checked against the same conformance suite.
 

@@ -308,6 +308,14 @@ function configure(target, book, ctx, fromJob = null) {
     banner,
     h("section.build-run", h("h2#build-q.build-q", "Where should it run?"), providerCards),
     h("div.build-go", est, startBtn),
+    catalogKey ? h("p.hint.build-hand", "Prefer to write it yourself? Start an empty index and add entries as you read. ",
+      h("button.linkish", { type: "button", on: { click: async (ev) => {
+        ev.currentTarget.disabled = true;
+        try {
+          const { key } = await api.handmade(catalogKey, cfg.license);
+          location.hash = `#/reader?i=${encodeURIComponent(key)}&edit=1`;
+        } catch (e) { toast(e.message, "error"); ev.currentTarget.disabled = false; }
+      } } }, "Write it myself")) : null,
     h("div.build-more",
       h("details.advanced.opts",
         h("summary", icon("chevron"), "Options", optHint),

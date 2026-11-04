@@ -260,6 +260,11 @@ anchor. Past `through`, a client SHOULD tell the reader the index ends there.
 CC0-1.0 or CC-BY-4.0 RECOMMENDED), optional `generator` (`name`, `version`,
 `model`, `promptSet`), `contributors` and `review` records
 (`unreviewed`/`spot-checked`/`reviewed`, optionally `through` an anchor).
+A person who writes an index by hand is a contributor with role `author`; one
+who corrects a generated index has role `editor`, and the tool SHOULD bump
+`updated`. Such edits need no other field: an edited index is an ordinary
+index document, and how a tool remembers edits across regeneration (for
+example a sidecar keyed by the edition's `textHash`) is outside this spec.
 
 ## 5. Series
 
