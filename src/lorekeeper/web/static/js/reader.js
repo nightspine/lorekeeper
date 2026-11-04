@@ -5,6 +5,7 @@ import { view as gate } from "./gating.js";
 import { confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
 import { renderConnections } from "./graph.js";
+import { createEditor } from "./editor.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -44,6 +45,13 @@ class PositionMap {
     return seq < this.cum.length ? this.cum[seq] / this.total : Infinity;
   }
   blockStart(seq) { return seq <= 0 ? 0 : this.blockEnd(seq - 1); }
+  /** The block being read at p: the first whose end lies past p (null without the book file). */
+  seqAt(p) {
+    if (!this.cum) return null;
+    let lo = 0, hi = this.cum.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (this.cum[mid] / this.total <= p + 1e-12) lo = mid + 1; else hi = mid; }
+    return Math.min(lo, this.cum.length - 1);
+  }
   frontier(p) {
     let lo = 0, hi = this.eff.length;
     while (lo < hi) { const mid = (lo + hi) >> 1; if (this.eff[mid] <= p + 1e-12) lo = mid + 1; else hi = mid; }
@@ -66,6 +74,7 @@ export function mountReader(root) {
     p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : 0,
     tab: "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
+    edit: params.get("edit") === "1", hash: null,
   };
   const wrap = h("div.reader");
   root.append(wrap);
@@ -108,7 +117,8 @@ export function mountReader(root) {
     // seq hints are only valid for the edition the index was built from.
     const hashes = (s.doc.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash);
     let edition = null;
-    for (const hsh of hashes) { edition = await api.edition(hsh); if (edition) break; }
+    s.hash = null;
+    for (const hsh of hashes) { edition = await api.edition(hsh); if (edition) { s.hash = hsh; break; } }
     s.map = new PositionMap(s.doc, edition);
     if (!keepPosition) s.p = 0;
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
@@ -263,6 +273,7 @@ export function mountReader(root) {
     urlTimer = setTimeout(() => {
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
+      if (s.edit) q.edit = "1";
       setParams(q);
     }, 250);
   }
@@ -275,8 +286,9 @@ export function mountReader(root) {
     el.headFacts = h("div.head-facts");
     const head = h("div.reader-head",
       h("div.title", el.crumbs, h("h1", s.doc.work.title), h("p.by", `by ${s.doc.work.authors.join(", ")}`), el.headFacts),
-      h("div.reader-switch", h("button.btn", { type: "button", on: { click: pickBook } }, icon("layers"), "Switch book")));
+      h("div.reader-switch", editButton(), h("button.btn", { type: "button", on: { click: pickBook } }, icon("layers"), "Switch book")));
     paintHead();
+    wrap.classList.toggle("editing", s.edit);
 
     el.pctNum = document.createTextNode("");
     el.pct = h("span.pct.num", el.pctNum, h("span.pct-unit", "%"));
@@ -353,6 +365,36 @@ export function mountReader(root) {
 
   /** The catalog book this index belongs to (via its versions), once the catalog has loaded. */
   const catalogBook = () => s.catalog?.books.find((b) => b.versions.some((v) => v.key === s.key)) || null;
+
+  // ---- edit mode ---------------------------------------------------------------------------
+  // Only an index built here can be changed, and only with its book file on disk (reveal points are
+  // chosen by paragraph). Turning it on adds pen and trash controls to every row and "Add" buttons.
+  const canEdit = () => Boolean(s.dupes?.writable && s.map?.exact && s.hash);
+  const editor = createEditor({
+    key: () => s.key, hash: () => s.hash, chapters: () => s.map.chapters, seqAt: () => s.map.seqAt(s.p),
+    docs: () => currentIndexes(), view: () => s.view, book: () => s.book,
+    reload: async (anchor) => {
+      await reloadAfterMerge();
+      const at = anchor ? s.map.anchorPos(anchor) : null;   // something new just ahead: read up to it so it shows
+      if (Number.isFinite(at) && at > s.p) await moveTo(at);
+      if (s.drawer) openDrawer(s.drawer, { refresh: true });   // the drawer shows the index as it is now
+    },
+  });
+  function setEdit(on) {
+    if (on && !canEdit()) return;
+    s.edit = on;
+    wrap.classList.toggle("editing", on);
+    const btn = wrap.querySelector(".edit-toggle");
+    if (btn) { clear(btn, icon(on ? "check" : "pen"), on ? "Done" : "Edit"); btn.setAttribute("aria-pressed", String(on)); }
+    paintTabs();
+    if (s.drawer) openDrawer(s.drawer, { refresh: true });
+    saveUrl();
+  }
+  function editButton() {
+    if (!canEdit()) { s.edit = false; return null; }
+    return h("button.btn.edit-toggle", { type: "button", "aria-pressed": String(s.edit), on: { click: () => setEdit(!s.edit) } },
+      icon(s.edit ? "check" : "pen"), s.edit ? "Done" : "Edit");
+  }
 
   function paintHead() {
     const book = catalogBook();
@@ -630,7 +672,8 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), chips, sort), dupesNotice(), list);
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), chips, sort), dupesNotice(),
+      s.edit ? editor.addEntityButton() : null, list);
     paintList();
   }
 
@@ -751,21 +794,23 @@ export function mountReader(root) {
     const groups = chapterGroups();
     const here = s.map.chapterAt(s.p);
     const hasAny = (s.doc.recaps || []).some((r) => r.scope === "chapter") || [...s.seriesDocs.values()].some((d) => (d?.recaps || []).some((r) => r.scope === "chapter"));
-    const story = h("section.story-now", { "aria-label": "Story so far" },
-      h("span.eyebrow", "Story so far"),
+    const story = h("section.story-now", { "aria-label": "Story so far" });
+    clear(story, h("span.eyebrow", "Story so far"),
       h("p.recap-text", v.recap ? v.recap.text : "Nothing to recap yet. Move forward in the book to see the story so far."),
-      v.recap && bookLabel(v.recap.book));
+      v.recap && bookLabel(v.recap.book),
+      s.edit && v.recap ? editor.recapRowActions(v.recap, story) : null);
+    const addRecap = s.edit ? editor.addRecapButton() : null;
     if (!groups.length) {
-      return clear(el.panel, story, h("div.empty", h("div.art", icon("book-open")),
+      return clear(el.panel, story, addRecap, h("div.empty", h("div.art", icon("book-open")),
         h("h3", hasAny ? "No chapters finished yet" : "No chapter recaps in this index"),
-        h("p", hasAny ? "Each chapter's summary appears once you've read past it." : "This index was built before chapter recaps existed. Build a new version to get a summary of every chapter.")));
+        h("p", hasAny ? "Each chapter's summary appears once you've read past it." : s.edit ? "Add a recap for each chapter as you finish it." : "This index was built before chapter recaps existed. Build a new version to get a summary of every chapter.")));
     }
     const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.chaptersNewest),
       on: { click: () => { s.chaptersNewest = !s.chaptersNewest; paintChapterRecaps(); } } }, icon("refresh"), s.chaptersNewest ? "Newest first" : "In order");
     const numbered = groups.map((g, i) => ({ ...g, n: i + 1, last: i === groups.length - 1 }));
     const ordered = s.chaptersNewest ? [...numbered].reverse() : numbered;
     clear(el.panel, story,
-      h("div.toolbar.chapters-bar", h("span.hint", `${groups.length} chapter${groups.length === 1 ? "" : "s"} so far`), toggle),
+      h("div.toolbar.chapters-bar", h("span.hint", `${groups.length} chapter${groups.length === 1 ? "" : "s"} so far`), addRecap, toggle),
       h("ol.chapter-list", ordered.map((g) => {
         // Still inside this chapter: its summary covers only what has been read.
         const ongoing = g.last && here && here.title === g.title && (!s.series || g.book === s.book);
@@ -775,7 +820,12 @@ export function mountReader(root) {
           h("summary", h("span.ch-num.num", String(g.n)), h("span.ch-title", tidyTitle(g.title)),
             ongoing ? h("span.chip.ch-ongoing", "So far") : null, fresh ? h("span.new-badge", "New") : null,
             bookLabel(g.book)),
-          h("div.ch-body", g.parts.map((t) => h("p", t)),
+          h("div.ch-body", g.parts.map((t, i) => {
+            if (!s.edit) return h("p", t);
+            const part = h("div.ch-part");
+            clear(part, h("p", t), editor.recapRowActions({ id: g.ids[i], text: t }, part, { scope: "chapter", title: g.title }));
+            return part;
+          }),
             who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null));
         return h("li", det);
       })));
@@ -793,10 +843,14 @@ export function mountReader(root) {
     const evs = s.newestFirst ? [...s.view.events].reverse() : s.view.events;
     const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.newestFirst),
       on: { click: () => { s.newestFirst = !s.newestFirst; paintTimeline(); } } }, icon("refresh"), s.newestFirst ? "Newest first" : "Oldest first");
-    clear(el.panel, h("div.toolbar", toggle),
-      evs.length ? h("ol.timeline", evs.map((ev) => h(`li${s.fresh.has(ev.id) ? ".fresh" : ""}`,
-        h("p.ev", ev.summary), h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)))))
-        : h("div.empty", h("div.art", icon("timeline")), h("h3", "No events yet"), h("p", "Key moments appear here as you read.")));
+    clear(el.panel, h("div.toolbar", toggle, s.edit ? editor.addEventButton() : null),
+      evs.length ? h("ol.timeline", evs.map((ev) => {
+        const li = h(`li${s.fresh.has(ev.id) ? ".fresh" : ""}`);
+        clear(li, h("p.ev", ev.summary), h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)),
+          s.edit ? editor.eventRowActions(ev, li) : null);
+        return li;
+      }))
+        : h("div.empty", h("div.art", icon("timeline")), h("h3", "No events yet"), h("p", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read.")));
   }
 
   function relationRow(r) {
@@ -865,7 +919,7 @@ export function mountReader(root) {
     const facts = (list) => h("ul.fact-list", list.map((f) => h("li", f.text,
       f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null,
       bookLabel(f.book) && h("span", " ", bookLabel(f.book)))));
-    const body = h("div.body",
+    const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         bookLabel(e.profile.book)) : null,
@@ -881,7 +935,9 @@ export function mountReader(root) {
         closeDrawer();
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
-    const content = [h("header", h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name)), closeBtn), body];
+    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", e.name), editor.drawerTitle(e))
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name));
+    const content = [h("header", title, closeBtn), body];
     let dlg = document.querySelector("dialog.drawer");
     if (refresh && dlg) {
       const keep = dlg.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id : null;
@@ -923,6 +979,8 @@ export function mountReader(root) {
         run: () => setTimeout(() => el.chapSel?.focus(), 60) },
       { id: "reader:next", label: "Next reveal", group: "Reading", keywords: "forward step", run: () => stepReveal(1) },
       { id: "reader:prev", label: "Previous reveal", group: "Reading", keywords: "back step", run: () => stepReveal(-1) });
+    if (canEdit()) out.push({ id: "reader:edit", label: s.edit ? "Stop editing this index" : "Edit this index", group: "Reading",
+      keywords: "edit change fix entry", run: () => setEdit(!s.edit) });
     return out;
   }
   let unregister = null;

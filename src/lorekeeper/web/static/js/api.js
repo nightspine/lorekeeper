@@ -84,6 +84,15 @@ export const api = {
   merge: (key, pairs) => request("POST", `/api/library/${encodeURIComponent(key)}/merge`, { pairs }),
   undoMerge: (key, id) => request("POST", `/api/library/${encodeURIComponent(key)}/merge/${encodeURIComponent(id)}/undo`),
   markDistinct: (key, a, b) => request("POST", `/api/library/${encodeURIComponent(key)}/distinct`, { a, b }),
+  /** One change to an index built here (see editor.js); the response carries an undo id. */
+  edit: (key, op) => request("POST", `/api/library/${encodeURIComponent(key)}/edits`, op),
+  /** Undo the latest change, edit or merge. */
+  undo: (key, id) => request("POST", `/api/library/${encodeURIComponent(key)}/undo/${encodeURIComponent(id)}`),
+  /** Paragraphs around `seq` in an edition on disk, for choosing a reveal point. */
+  blocks: (hash, seq, before = 2, after = 2, indexKey = null) =>
+    request("GET", `/api/editions/${encodeURIComponent(hash)}/blocks?seq=${seq}&before=${before}&after=${after}${indexKey ? `&i=${encodeURIComponent(indexKey)}` : ""}`),
+  /** Start an empty index for a library book, to write by hand. */
+  handmade: (catalogKey, license = null) => request("POST", `/api/catalog/books/${encodeURIComponent(catalogKey)}/handmade`, license ? { license } : {}),
   /** Book Orbit's reading position for this index. A 404 means an older server: treated as "not synced", no message. */
   position: async (key) => {
     try {
