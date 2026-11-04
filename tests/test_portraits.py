@@ -121,8 +121,12 @@ def test_portraits_never_go_backwards(monkeypatch):
     monkeypatch.setattr(portraits, "_windows", short)
     portraits.portraits([(d, book)], Fake(["A young woman of the mill.", "A young woman of the mill who keeps secrets."]),
                         log=lambda m: None)
-    froms = [int(f["from"][1:]) for f in d["entities"][0]["facets"]]
-    assert len(froms) == 2 and froms == sorted(froms)
+    facets = d["entities"][0]["facets"]
+    froms = [int(f["from"][1:]) for f in facets]
+    assert froms == sorted(froms)
+    # Clamped to the first portrait's reveal point, the rewrite stands in for it rather than
+    # sitting beside it: one description per reveal point, the later text.
+    assert len(facets) == 1 and facets[0]["text"].endswith("keeps secrets.") and "replaces" not in facets[0]
 
 
 def test_first_portrait_after_two_mentions_and_rewrite_at_four():
@@ -180,3 +184,32 @@ def test_a_portrait_that_copies_the_book_is_rewritten_once_then_dropped():
     doc2 = _doc(book, [_mira()])
     stats2 = portraits.portraits([(doc2, book)], Fake([copied, copied]), log=lambda m: None)
     assert stats2.get("dropped") == 1 and not doc2["entities"][0]["facets"]
+
+
+def test_a_change_in_standing_earns_a_rewrite_and_the_notes_reach_the_model():
+    ch1 = ["Mira waited by the gate of the mill for a long while that day.",
+           "Mira came home again in the evening carrying her empty basket."]
+    ch2 = ["The fever took the village that winter and many did not see spring.",
+           "Mira lay in the cold room and did not wake on the third morning."]
+    book = _book([("One", ch1), ("Two", ch2)])
+    fact = {"id": "f1", "from": "b3", "basis": "stated", "evidence": ["b3"], "text": "Died of the fever in winter."}
+    d = _doc(book, [_mira(facets=[fact])])
+    model = Fake(["Mira is a young woman of the village.", "Dead, taken by the fever; a young woman of the village."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2            # one new mention would not have earned a rewrite
+    assert "Died of the fever" not in model.prompts[0]
+    assert "What the companion has noted about Mira" in model.prompts[1] and "Died of the fever" in model.prompts[1]
+    assert "FIRST sentence" in portraits.PORTRAIT
+    ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
+    assert [f["from"] for f in ps] == ["b1", "b3"] and ps[1]["text"].startswith("Dead")
+
+
+def test_an_extraction_profile_at_the_first_portrait_anchor_is_superseded():
+    book = _book([("One", CH1)])
+    early = {"id": "p-early", "kind": "profile", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": "Someone."}
+    same = {"id": "p-same", "kind": "profile", "from": "b4", "basis": "stated", "evidence": ["b4"], "text": "A girl."}
+    d = _doc(book, [_mira(facets=[early, same])])
+    portraits.portraits([(d, book)], Fake(["A young woman of the mill."]), log=lambda m: None)
+    ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
+    assert [f["id"] for f in ps] == ["p-early", "bk.mira.portrait-1"]
+    assert ps[1]["from"] == "b4" and ps[1]["replaces"] == ["p-early"]

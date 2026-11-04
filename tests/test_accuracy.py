@@ -34,9 +34,9 @@ class Script:
                                     {"id": "Ezra Pike", "p": 5, "desc": "He climbs the stairs and lights the lamp."}],
                         "profiles": [], "names": [], "relations": [], "events": [], "summary": [], "recap": "The Marlows live by the sea."}
             return {"new": [], "updates": [], "profiles": [], "names": [], "relations": [], "events": [], "summary": [], "recap": ""}
-        if "unsupported" in props:
+        if "verdicts" in props:
             moment = [line.split(":")[0] for line in prompt.splitlines() if "lights the lamp" in line]
-            return {"unsupported": [], "later": [], "moments": moment}
+            return {"verdicts": [], "later": [], "moments": moment}
         return {}
 
 

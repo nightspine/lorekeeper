@@ -179,7 +179,7 @@ def cmd_generate(args) -> int:
     book = epub.read(args.epub)
     opts = generate.Options(
         chapters=_parse_ranges(args.chapters) if args.chapters else None,
-        chunk_words=args.chunk_words, depth=args.depth, events=not args.no_events,
+        chunk_words=args.chunk_words or generate.default_chunk_words(args.provider), depth=args.depth, events=not args.no_events,
         verify=not args.no_verify, index_id=args.id,
         series_id=args.series_id, book_key=args.book_key, license=args.license)
     if args.provider != "ollama":
@@ -465,7 +465,8 @@ def main(argv: list[str] | None = None) -> int:
     _add_provider_args(s, "ollama")
     s.add_argument("--model", default="gemma4:12b-it-qat", help="Ollama model, or a cloud model id (default: the provider's own default, e.g. claude-haiku-5-5, gpt-5-mini, gemini-2.5-flash)")
     s.add_argument("--chapters", help="table-of-contents entries to index, e.g. 5-6 or 5,7-9 (see `toc`)")
-    s.add_argument("--chunk-words", type=int, default=2500, help="words per model call; smaller is more accurate")
+    s.add_argument("--chunk-words", type=int, default=None,
+                   help="words per model call (default: 8000, about a chapter, for a cloud model; 2500 for Ollama)")
     s.add_argument("--check-model", default=None, help="cloud model of the same provider for the fact-check (e.g. claude-sonnet-5-5); default: the same model")
     s.add_argument("--depth", choices=["light", "standard", "deep"], default="standard")
     s.add_argument("--no-events", action="store_true", help="skip the timeline (faster)")

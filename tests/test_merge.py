@@ -442,10 +442,11 @@ class NamesScript(Script):
 
     def complete(self, system, prompt, schema, prefix=None):
         props = schema.get("properties", {})
-        if "unsupported" in props:
+        if "verdicts" in props:
             self.claims = prompt
             bad = [ln.split(":")[0] for ln in prompt.splitlines() if any(f'"{r}"' in ln for r in self.reject)]
-            return {"unsupported": bad, "later": [], "moments": []}
+            return {"verdicts": [{"id": i, "verdict": "unsupported", "because": "scripted"} for i in bad],
+                    "later": [], "moments": []}
         out = super().complete(system, prompt, schema, prefix)
         if "new" in props:
             out["names"] = self.names
