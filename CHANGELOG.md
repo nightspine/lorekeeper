@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/nightspine/lorekeeper/compare/v0.2.0...v0.3.0) (2026-11-04)
+
+
+### Features
+
+* fact-check verdicts with reasons, full event timelines, chapter-sized cloud chunks and status-aware portraits ([#19](https://github.com/nightspine/lorekeeper/issues/19)) ([a00c1a8](https://github.com/nightspine/lorekeeper/commit/a00c1a893ff450def0a30979676b3ab7e7ee2a2d))
+
 ## [0.2.0](https://github.com/nightspine/lorekeeper/compare/v0.1.0...v0.2.0) (2026-10-29)
 
 
