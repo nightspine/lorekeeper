@@ -12,8 +12,10 @@ on:
         required: true
         type: string
 
+# A release build (called with a tag) gets its own group: it must not queue behind, or be dropped
+# in favour of, the plain main-branch build that the next push to main starts.
 concurrency:
-  group: docker-${{ github.ref }}
+  group: docker-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 env:
