@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/nightspine/lorekeeper/compare/v0.4.0...v0.4.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **ci:** give a release's image build its own concurrency group so a push to main cannot cancel it ([#26](https://github.com/nightspine/lorekeeper/issues/26)) ([e0a8d1f](https://github.com/nightspine/lorekeeper/commit/e0a8d1fc028ed2f5a5b455a70d13c06e0e7a059a))
+
 ## [0.4.0](https://github.com/nightspine/lorekeeper/compare/v0.3.0...v0.4.0) (2026-11-04)
 
 
