@@ -509,9 +509,27 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert by["Alice finds a hidden letter."]["kind"] == "turn"
     assert "kind" not in by["Alice arrives at the lighthouse."]          # "plot" is the ordinary development: no kind
     assert report["stats"]["turning points"] == 1
-    assert '"weight"' in generate.EXTRACT and "leading with" in generate.EXTRACT and "scenery" in generate.EXTRACT
+    assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "scenery" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
     assert generate.PROMPT_VERSION == "extract-v7"
+
+
+class _Labels(FakeLLM):
+    """A model that answers the summary with a heading and an event with one word."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["summary"] = ["unresolved", *out["summary"]]
+            out["events"].append({"p": 2, "text": "Arrival.", "who": ["Alice Marlow"], "weight": "plot"})
+        return out
+
+
+def test_a_label_is_not_a_summary_sentence_or_an_event(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Labels())
+    assert report["stats"]["dropped: not a sentence"] == 2
+    assert not any(ev["summary"] == "Arrival." for ev in ix["events"])
+    assert not any(r["text"].startswith("unresolved") for r in ix["recaps"])
 
 
 def test_default_chunk_size_follows_the_provider():

@@ -106,6 +106,7 @@ HINDSIGHT = re.compile(
 # How much an event drives the story (SPEC.md §4.4): the model weighs each one "turn", "plot" or "minor"; "plot"
 # is the ordinary development and is stored as no kind at all.
 EVENT_KINDS = ("turn", "minor")
+MIN_SENTENCE_WORDS = 4   # a summary sentence or an event shorter than this is a heading or a label, not a claim
 
 # A fact that reads as a description ("A tall man in black who welcomes guests") stays a fact even when the
 # checker calls it a moment: an event is something that happens.
@@ -156,10 +157,11 @@ Update the companion with what THIS passage adds. Report only new information.
   "plot" for a development that moves the main story or changes what a character wants, knows or can do;
   "minor" for a small moment that colours the scene but changes nothing: a meal, a journey detail, small talk, a
   passing mood. Most events are "plot"; a passage has at most one or two turning points and may have none.
-- summary: what matters to the story in THIS passage, as {summary} sentences (each under 35 words), leading with
-  the biggest change: what is revealed, decided, lost, gained or set in motion, and what it means for the people
-  involved; then what is left unresolved. A reader should see from it how this passage moves the plot. Leave out
-  scenery, meals, travel details and side remarks unless they bear on what follows. Use names, not pronouns.
+- summary: {summary} complete sentences (each under 35 words) on what THIS passage does to the story, in reading
+  order, keeping only what moves it: what is revealed, decided, lost, gained or set in motion, and what that means
+  for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label or a
+  single word. Leave out scenery, meals, travel details and side remarks unless they bear on what follows. Use
+  names, not pronouns.
 - recap: the story so far, updated to the end of this passage, for a reader coming back after a break: first the
   whole arc so far in a few sentences (earlier events compressed to their consequences, never dropped), then the
   recent stretch in more detail, ending with where things stand (who is where, what they are after, what is
@@ -1211,6 +1213,9 @@ class Generator:
             return None
         if kind in ("recap", "summary") and ABOUT_THE_TEXT.search(claim):
             self.stats["dropped: talks about the text"] += 1   # the previous recap stays
+            return None
+        if kind in ("summary", "event") and len(text.words(claim)) < MIN_SENTENCE_WORDS:   # "unresolved" is a label, not a sentence
+            self.stats["dropped: not a sentence"] += 1
             return None
         cited = [at_seq, *evidence]
         # Reveal no earlier than the last cited paragraph and the entities involved.
