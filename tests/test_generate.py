@@ -77,7 +77,7 @@ EXTRACT_CH1 = {
         {"id": "Nobody Known", "p": 3, "desc": "Does not exist."},                       # unknown
     ],
     "names": [],
-    "relations": [{"a": "Alice Marlow", "label": "sister of", "b": "Tom Marlow", "p": 3}],
+    "relations": [{"a": "Alice Marlow", "label": "sister of", "b": "Tom Marlow", "p": 3, "kind": "family"}],
     "events": [{"p": 2, "text": "Alice arrives at the lighthouse.", "who": ["Alice Marlow", "lighthouse"], "weight": "plot"},
                {"p": 6, "text": "Alice finds a hidden letter.", "who": ["Alice Marlow"], "weight": "turn"}],
     "summary": ["Alice reaches the lighthouse in search of her brother Tom.",
@@ -513,7 +513,7 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v7"
+    assert generate.PROMPT_VERSION == "extract-v8"
 
 
 class _Labels(FakeLLM):
@@ -550,6 +550,44 @@ def test_a_chapter_with_no_summary_is_recapped_from_its_events(book_path, tmp_pa
     assert "Alice arrives at the lighthouse." in first["text"] and "Alice finds a hidden letter." in first["text"]
     assert "bread and cheese" not in first["text"]          # small moments stay out of the recap
     assert report["stats"]["chapter recap from events"] == 2   # chapter two's scripted answer has no summary either
+
+
+class _Ties(FakeLLM):
+    """Chapter one: a second tie for the same pair, a sentence as a label, and an action as a tie.
+    Chapter two: a newer family tie between the same two, which replaces the first."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        props = schema.get("properties", {})
+        if "new" in props and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["relations"] += [
+                {"a": "Tom Marlow", "label": "brother of", "b": "Alice Marlow", "p": 2, "kind": "family"},     # same kind, shown earlier
+                {"a": "Ezra Pike", "label": "suspicious of", "b": "Alice Marlow", "p": 4, "kind": "hostility"},  # another kind: kept
+                {"a": "Ezra Pike", "label": "keeper who says he has never once heard the name of", "b": "Tom Marlow", "p": 4, "kind": "acquaintance"},
+                {"a": "Alice Marlow", "label": "questions", "b": "Ezra Pike", "p": 4, "kind": "acquaintance"},   # an action
+            ]
+        elif "new" in props:
+            out = json.loads(json.dumps(out))
+            out["relations"] = [{"a": "alice-marlow", "label": "estranged sister of", "b": "tom-marlow", "p": 2, "kind": "family"}]
+        if "verdicts" in props:
+            acts = [line.split(":")[0] for line in prompt.splitlines() if ", questions, " in line]
+            out = {**out, "moments": [*out.get("moments", []), *acts]}
+        return out
+
+
+def test_ties_are_kinds_one_per_pair_and_a_newer_one_replaces_the_old(book_path, tmp_path):
+    ix, report, llm = _run(book_path, tmp_path, llm=_Ties())
+    rels = ix["relations"]
+    assert [(r["label"], r.get("kind")) for r in rels] == [("sister of", "family"), ("suspicious of", "hostility"), ("estranged sister of", "family")]
+    assert rels[2]["replaces"] == [rels[0]["id"]] and "replaces" not in rels[1]
+    st = report["stats"]
+    assert st["dropped: second tie for a pair"] == 1 and st["dropped: not a tie"] == 1
+    assert st["dropped: an action, not a tie"] == 1 and st["ties replaced by a newer one"] == 1
+    assert any("Alice Marlow, sister of, Tom Marlow (family tie)" in c for c in llm.calls)
+    v = view([ix], Position(None, "toc02.para02"))
+    assert [r["label"] for r in v["relations"]] == ["suspicious of", "estranged sister of"] and v["relations"][1]["kind"] == "family"
+    assert [r["label"] for r in v["relationHistory"]] == ["sister of"]
+    assert not [i for i in validate.check_index(ix) if i.level == "error"]
 
 
 def test_default_chunk_size_follows_the_provider():

@@ -286,19 +286,22 @@ export function createEditor(ctx) {
     const other = select(others.map((e) => [e.id, `${e.name} (${TYPE_LABEL[e.type].toLowerCase()})`]), otherId, "The other entry");
     const dir = select([["out", `${me?.name || "This entry"} → the other`], ["in", `The other → ${me?.name || "this entry"}`]], rel && rel.dst === entityId ? "in" : "out", "Direction");
     const label = input(rel?.label, "How they are tied", "e.g. employer of, sister of, lives at");
+    const kindSel = select([["", "Kind of tie"], ["family", "Family"], ["romance", "Romance"], ["friendship", "Friendship"],
+      ["alliance", "Alliance"], ["service", "Service"], ["hostility", "Hostility"], ["acquaintance", "Acquaintance"], ["place", "Place"]],
+      found?.item?.kind || "", "Kind of tie");
     const basis = basisSelect(rel ? found?.item?.basis : null);
     const err = h("p.field-error");
     if (!others.length) return form(h("p.hint", "No other entry is visible here to connect to."), actions(async () => done(), done, "OK"));
     return form(
       h("label.label", "Reads from the first entry to the second: Murray, orderly who saved the life of, Watson."),
-      h("div.edit-row", dir, other), label, err,
+      h("div.edit-row", dir, other), h("div.edit-row", label, kindSel), err,
       h("div.edit-row", basis, h("span.hint", BASIS_HELP)),
       revealLine(state),
       actions(async () => {
         const src = dir.value === "out" ? entityId : other.value, dst = dir.value === "out" ? other.value : entityId;
         const op = rel
-          ? { op: "edit-relation", id: rel.id, label: label.value.trim(), basis: basis.value, src, dst, ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
-          : { op: "add-relation", src, dst, label: label.value.trim(), basis: basis.value, seq: state.seq };
+          ? { op: "edit-relation", id: rel.id, label: label.value.trim(), basis: basis.value, kind: kindSel.value, src, dst, ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
+          : { op: "add-relation", src, dst, label: label.value.trim(), basis: basis.value, kind: kindSel.value, seq: state.seq };
         if (await apply(op, err)) done();
       }, done));
   }

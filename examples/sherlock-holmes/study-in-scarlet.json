@@ -1033,8 +1033,9 @@
       "basis": "stated",
       "evidence": [
         "ch1.para02"
-      ]
-    },
+      ],
+    "kind": "service"
+  },
     {
       "id": "sis.rel.stamford-watson",
       "src": "stamford",
@@ -1044,8 +1045,9 @@
       "basis": "stated",
       "evidence": [
         "ch1.para05"
-      ]
-    },
+      ],
+    "kind": "acquaintance"
+  },
     {
       "id": "sis.rel.holmes-barts",
       "src": "holmes",
@@ -1056,8 +1058,9 @@
       "evidence": [
         "ch1.para12",
         "ch1.para34"
-      ]
-    },
+      ],
+    "kind": "place"
+  },
     {
       "id": "sis.rel.watson-holmes.1",
       "src": "watson",
@@ -1067,8 +1070,9 @@
       "basis": "stated",
       "evidence": [
         "ch1.para60"
-      ]
-    },
+      ],
+    "kind": "friendship"
+  },
     {
       "id": "sis.rel.watson-holmes.2",
       "src": "watson",
@@ -1081,8 +1085,9 @@
       ],
       "replaces": [
         "sis.rel.watson-holmes.1"
-      ]
-    },
+      ],
+    "kind": "friendship"
+  },
     {
       "id": "sis.rel.lestrade-holmes",
       "src": "lestrade",
@@ -1092,8 +1097,9 @@
       "basis": "stated",
       "evidence": [
         "ch2.para28"
-      ]
-    }
+      ],
+    "kind": "service"
+  }
   ],
   "events": [
     {

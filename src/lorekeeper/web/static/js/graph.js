@@ -38,6 +38,10 @@ function jitter(id, salt = 0) {
 const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 /** Everything the view says about connections, as one graph. Independent of filters, so they never move nodes. */
+/** What sort of tie a relation is (SPEC.md §4.3), as the Display panel and the legend name it. */
+export const TIE_LABEL = { family: "Family", romance: "Romance", friendship: "Friendship", alliance: "Alliance",
+  service: "Service", hostility: "Hostility", acquaintance: "Acquaintance", place: "Place" };
+
 function buildGraph(view, chapterMentions) {
   const ents = new Map(view.entities.map((e) => [e.id, e]));
   const edges = new Map();
@@ -54,7 +58,11 @@ function buildGraph(view, chapterMentions) {
   };
   for (const ev of view.events) together(ev.entities, "events");
   for (const ids of chapterMentions) together(ids, "chapters");
-  for (const e of edges.values()) e.weight = e.events + e.chapters * 0.5;
+  for (const e of edges.values()) {
+    e.weight = e.events + e.chapters * 0.5;
+    e.together = e.events >= 2;   // a dotted "appear together" line needs two or more shared events; chapters never count
+    e.kind = e.rels.length ? e.rels[e.rels.length - 1].kind || null : null;   // the latest tie decides its colour
+  }
   // Prominence: what the reader knows about it, plus how connected it is.
   const prom = new Map([...ents.keys()].map((id) => [id, ents.get(id).facets.length]));
   for (const e of edges.values()) {
@@ -167,6 +175,9 @@ export function renderConnections(panel, ctx) {
 
   // What's drawn: filters decide nodes; toggles decide which edges count.
   const typeOn = (id) => !types.size || types.has(graph.ents.get(id).type);
+  // Kinds of tie shown (empty = all); a tie with no kind is always shown.
+  gs.tieKinds ||= new Set();
+  const tieOn = (e) => !gs.tieKinds.size || !e.kind || gs.tieKinds.has(e.kind);
   let shown = new Set([...laid].filter(typeOn));
   const everyoneCount = shown.size;
   // The archipelago folds minor entries itself, so the key-figures cut is for focus and the list.
@@ -184,11 +195,11 @@ export function renderConnections(panel, ctx) {
     shown = keep;
   }
   // "Appear together" links: the weakest strength that keeps them to a readable number for this graph.
-  const coWeights = graph.edges.filter((e) => !e.rels.length && e.weight > 0 && shown.has(e.a) && shown.has(e.b)).map((e) => e.weight);
+  const coWeights = graph.edges.filter((e) => !e.rels.length && e.together && shown.has(e.a) && shown.has(e.b)).map((e) => e.weight);
   const budget = Math.max(24, Math.round(shown.size * 1.2));
   const minCo = [1, 1.5, 2, 3, 4, 6, 8, 12, 16, 24].find((t) => coWeights.filter((w) => w >= t).length <= budget) ?? 32;
   const visibleEdge = (e) => shown.has(e.a) && shown.has(e.b)
-    && (e.rels.length || (gs.history && e.old.length) || (gs.together && (e.weight >= minCo || ((e.a === gs.sel || e.b === gs.sel) && e.weight > 0))));
+    && ((e.rels.length && tieOn(e)) || (gs.history && e.old.length) || (gs.together && e.together && (e.weight >= minCo || e.a === gs.sel || e.b === gs.sel)));
   let edges = graph.edges.filter(visibleEdge);
   const degree = (id) => edges.filter((e) => e.a === id || e.b === id).length;
   if (gs.hideMinor) {
@@ -278,6 +289,9 @@ export function renderConnections(panel, ctx) {
     if (cur.size !== present.length) cur.forEach((x) => types.add(x));   // all shown = no filter
   };
   const refocus = (k) => queueMicrotask(() => panel.querySelector(`[data-k="${k}"]`)?.focus());
+  const tieCounts = {};
+  for (const e of graph.edges) if (e.kind && laid.has(e.a) && laid.has(e.b)) tieCounts[e.kind] = (tieCounts[e.kind] || 0) + 1;
+  const tieKinds = Object.keys(TIE_LABEL).filter((k) => tieCounts[k]);
   const sw = (k, label, hint) => h("label.switch.g-row-switch", { title: hint },
     h("input", { type: "checkbox", "data-k": k, checked: Boolean(gs[k]), on: { change: (ev) => { gs[k] = ev.target.checked; refocus(k); ctx.repaint(); } } }), h("span", label));
   const seg = (items, key) => h("div.seg", { role: "group", "aria-label": key === "hops" ? "Reach" : "View" }, items.map(([v, label, on, off]) => h("button", { type: "button", "data-k": `${key}-${v}`,
@@ -294,9 +308,16 @@ export function renderConnections(panel, ctx) {
     row("Show", h("div.g-d-types", present.map((t) => h("label.g-d-type", h("input", { type: "checkbox", "data-k": `type-${t}`, checked: shownType(t),
       on: { change: (ev) => { setType(t, ev.target.checked); refocus(`type-${t}`); ctx.repaint(); } } }),
       h(`span.g-swatch.t-${t}`), h("span", TYPE_PLURAL[t]), h("span.hint", String(counts[t])))))),
+    tieKinds.length ? row("Ties", h("div.g-d-types", tieKinds.map((k) => h("label.g-d-type", h("input", { type: "checkbox", "data-k": `tie-${k}`,
+      checked: !gs.tieKinds.size || gs.tieKinds.has(k), on: { change: (ev) => {
+        const all = new Set(gs.tieKinds.size ? gs.tieKinds : tieKinds);
+        if (ev.target.checked) all.add(k); else all.delete(k);
+        gs.tieKinds = all.size === tieKinds.length ? new Set() : all;
+        refocus(`tie-${k}`); ctx.repaint();
+      } } }), h(`span.g-tie-swatch.k-${k}`), h("span", TIE_LABEL[k]), h("span.hint", String(tieCounts[k])))))) : null,
     row("Reach", seg([[1, "1 step"], [2, "2 steps"]], "hops")),
     row("Lines",
-      sw("together", "Appear together", "Dotted lines between characters who share events or chapters. Off: only stated relationships are drawn."),
+      sw("together", "Appear together", "Dotted lines between characters who share two or more events. Off: only stated relationships are drawn."),
       sw("history", "Show history", "Show relationships that later changed, dashed."),
       islands ? null : sw("hideMinor", "Hide minor", "Hide anything with one connection or fewer.")),
     islands ? row("Include places and things", sw("things", "Places, groups, objects, ideas", "Also map them, joined only by stated relationships.")) : null,
@@ -400,7 +421,8 @@ export function renderConnections(panel, ctx) {
       h("span.g-zoom", zoomBtn("Zoom in", h("b", "+"), () => gs.arch && zoomBy(gs.arch, 1.4)), zoomBtn("Zoom out", h("b", "−"), () => gs.arch && zoomBy(gs.arch, 0.7)),
         zoomBtn("Fit everything", icon("layers"), () => gs.arch && fitMap(gs.arch))));
     const legend = h("div.g-legend", { role: "note", "aria-label": "Legend" },
-      h("span", h("i.l-rel"), "Stated relationship"),
+      tieKinds.length ? tieKinds.filter((k) => !gs.tieKinds.size || gs.tieKinds.has(k)).map((k) => h("span", h(`i.l-tie.k-${k}`), TIE_LABEL[k]))
+        : h("span", h("i.l-rel"), "Stated relationship"),
       h("span", h("i.l-cross"), "Tie between groups"),
       gs.together ? h("span", h("i.l-co"), "Appear together") : null,
       gs.history ? h("span", h("i.l-old"), "Earlier relationship") : null,
@@ -411,7 +433,7 @@ export function renderConnections(panel, ctx) {
       return clear(panel, toolbar, h("div.g-body", h("div.g-stage", head, h("div.empty", h("p", "Drawing the map…")), legend), side));
     }
     const maxAll = Math.max(1, ...[...laid].map((id) => graph.prom.get(id)));
-    const wrap = archipelago({ gs, graph, laid, typeOn, sel, minCo, revealed: ctx.revealed, select,
+    const wrap = archipelago({ gs, graph, laid, typeOn, tieOn, sel, minCo, revealed: ctx.revealed, select,
       radius: (id) => 4.5 + 8.5 * Math.sqrt(graph.prom.get(id) / maxAll) });   // small dots, sized by prominence
     return clear(panel, toolbar, h("div.g-body", h("div.g-stage", head, wrap, legend), side));
   }

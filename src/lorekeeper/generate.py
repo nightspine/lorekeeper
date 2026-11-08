@@ -28,7 +28,7 @@ from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v7"
+PROMPT_VERSION = "extract-v8"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -106,6 +106,10 @@ HINDSIGHT = re.compile(
 # How much an event drives the story (SPEC.md §4.4): the model weighs each one "turn", "plot" or "minor"; "plot"
 # is the ordinary development and is stored as no kind at all.
 EVENT_KINDS = ("turn", "minor")
+# What sort of tie a relation is (SPEC.md §4.3): the map colours and filters by it, and a newer tie of the
+# same kind between the same two replaces the older one instead of drawing a second line.
+RELATION_KINDS = ("family", "romance", "friendship", "alliance", "service", "hostility", "acquaintance", "place")
+MAX_TIE_WORDS = 8   # a label longer than this is a sentence about the two, not a tie
 MIN_SENTENCE_WORDS = 4   # a summary sentence or an event shorter than this is a heading or a label, not a claim
 
 # A fact that reads as a description ("A tall man in black who welcomes guests") stays a fact even when the
@@ -193,8 +197,12 @@ speaks to).
 - later: claims that are right but are only fully shown after the paragraph they cite. Give the id and the
   earliest paragraph by which everything in the claim has been shown.
 - moments: ids of (fact) claims that are right but narrate one action in a scene ("He jumps onto the troll")
-  instead of saying what the entity is. A description of look, manner, nature, role or standing is not a moment,
-  even when it is first shown in a scene: leave those out of moments.
+  instead of saying what the entity is, and of (relation) claims that narrate one action between the two ("Van
+  Helsing, directs the staking of, Lucy") instead of a lasting tie. A description of look, manner, nature, role or
+  standing is not a moment, even when it is first shown in a scene: leave those out of moments.
+A (relation) claim states a lasting tie between those two: it is unsupported when the passage does not show that
+tie between them (another pair, a guess, a tie the text only hints at stated as fact), or when the kind given is
+wrong for it.
 
 Story so far: {recap}
 
@@ -332,7 +340,8 @@ def extract_schema(relations: bool) -> dict:
         "recap": _STR,
     }
     if relations:
-        props["relations"] = _ARR(_obj({"a": _STR, "label": _STR, "b": _STR, "p": _INT}, ["a", "label", "b", "p"]))
+        props["relations"] = _ARR(_obj({"a": _STR, "label": _STR, "b": _STR, "p": _INT, "kind": {"enum": list(RELATION_KINDS)}},
+                                       ["a", "label", "b", "p", "kind"]))
     return _obj(props, list(props))
 
 
@@ -964,10 +973,15 @@ class Generator:
             summary=f"{max(3, min(8, round(words / 700)))} to {max(4, min(12, round(words / 450)))}",
             types="; ".join(f"{k} = {v}" for k, v in TYPES.items()), who=depth["who"],
             per_entity=depth["per_entity"](words), events=n_events, profiles=max(8, min(16, round(words / 300))),   # room for every new entity plus the ones that grew
-            relations=("\n- relations: how two entities relate, as a (short label) b, e.g. a=\"Murray\", "
-                       "label=\"orderly who saved\", b=\"Watson\". \"p\" = paragraph that shows it. Only ties the "
-                       "companion does not have yet: a tie already listed under an entity's ties above is reported "
-                       "again only if this passage changes it (a prisoner is freed, an ally turns)."
+            relations=("\n- relations: lasting ties between two entities, what one IS to the other, as a (label) b, e.g. "
+                       "a=\"Murray\", label=\"orderly of\", b=\"Watson\". The label reads from a to b in at most 6 words. "
+                       "A tie is a standing state (sister of, employer of, guest of, enemy of, lives at), never one action "
+                       "(stakes, seals the tomb against, gives a transfusion to): actions are events. Only ties this passage "
+                       "states or plainly shows between those two. \"kind\" = family, romance, friendship, alliance, "
+                       "service, hostility, acquaintance or place. \"p\" = paragraph that shows it. At most one tie of each "
+                       "kind per pair, as the passage leaves it. Only ties the companion does not have yet: a tie already listed under an entity's ties above "
+                       "is reported again only if this passage changes it (a prisoner is freed, an ally turns, a fiancée "
+                       "becomes a wife)."
                        if depth["relations"] else "")),
             extract_schema(depth["relations"]), prefix=passage)
         before = Counter(self.stats)
@@ -1148,16 +1162,41 @@ class Generator:
                           "known": [x["text"] for x in ([prev] if prev else [])
                                     + [f for f in self._current_facets(eid) if f.get("kind") != "profile"][-MAX_CONTEXT_FACTS:]]}
                 profiled.add(eid)
-        for i, r in enumerate(raw.get("relations", []) if depth["relations"] else []):
+        # One tie per pair and kind in a passage, the one shown latest: a chapter can turn a guest into a prisoner
+        # (two kinds, both kept), and a second "keeps prisoner" after "holds captive" says nothing new.
+        rels = [r for r in (raw.get("relations", []) if depth["relations"] else []) if isinstance(r, dict)]
+        latest: dict[tuple, int] = {}
+        for i, r in enumerate(rels):
+            k = (frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold())), r.get("kind"))
+            if k not in latest or (isinstance(r.get("p"), int) and r["p"] >= (rels[latest[k]].get("p") or 0)):
+                latest[k] = i
+        keep_rel = set(latest.values())
+        self.stats["dropped: second tie for a pair"] += len(rels) - len(keep_rel)
+        paired: set[tuple] = set()
+        for i, r in enumerate(rels):
+            if i not in keep_rel:
+                continue
             at = seq(r.get("p"))
             a, b = resolve(r.get("a", ""), at), resolve(r.get("b", ""), at)
             if at is None:
                 self.stats["dropped: citation outside passage"] += 1
                 continue
+            if len(text.words(str(r.get("label", "")))) > MAX_TIE_WORDS:
+                self.stats["dropped: not a tie"] += 1   # "Un-Dead, calls Arthur her husband" is a sentence
+                continue
+            kind = r.get("kind") if r.get("kind") in RELATION_KINDS else None
+            if a and b and (frozenset((a, b)), kind) in paired:   # two names for one entity said the same tie twice
+                self.stats["dropped: second tie for a pair"] += 1
+                continue
             c = self._candidate("relation", f"r{i}", r.get("label", ""), at, [],
                                 [a, b] if a and b and a != b else None, 80)
             if c:
-                c.data = {"src": a, "dst": b, "basis": "stated"}
+                paired.add((frozenset((a, b)), kind))
+                # A newer tie of the same kind between the same two replaces the current one: "fiancée of"
+                # becomes history once "wife of" is revealed, and "holds captive" doesn't sit beside "keeps prisoner".
+                prev = self._current_tie(a, b, kind) if kind else None
+                c.data = {"src": a, "dst": b, "basis": "stated", **({"kind": kind} if kind else {}),
+                          **({"replaces": prev["id"]} if prev else {})}
                 cands.append(c)
         for i, ev in enumerate(raw.get("events", [])[:n_events]):
             at = seq(ev.get("p"))
@@ -1224,6 +1263,12 @@ class Generator:
         from_seq = max([*cited, *(self.entity_from[e] for e in entities)])
         return Candidate(kind, cid, claim, from_seq, sorted(set(cited)))
 
+    def _current_tie(self, a: str, b: str, kind: str) -> dict | None:
+        """The newest relation of this kind between a and b (either direction) that nothing replaces yet."""
+        replaced = {x for r in self.relations for x in r.get("replaces", [])}
+        same = [r for r in self.relations if {r["src"], r["dst"]} == {a, b} and r.get("kind") == kind and r["id"] not in replaced]
+        return same[-1] if same else None
+
     def _dedupe(self, cands: list[Candidate]) -> list[Candidate]:
         seen = {(e["id"], f["text"].casefold()) for e in self.entities.values() for f in e["facets"]}
         seen |= {ev["summary"].casefold() for ev in self.events}
@@ -1277,7 +1322,8 @@ class Generator:
         if c.kind == "facet":
             return f"(fact, cited at paragraph {n}) {name(c.data['entity'])}: {c.text}"
         if c.kind == "relation":
-            return f"{where}{name(c.data['src'])}, {c.text}, {name(c.data['dst'])}"
+            kind = f" ({c.data['kind']} tie)" if c.data.get("kind") else ""
+            return f"{where}{name(c.data['src'])}, {c.text}, {name(c.data['dst'])}{kind}"
         return where + c.text
 
     def _verify(self, cands: list[Candidate], passage: str, chunk_start: int) -> list[Candidate]:
@@ -1312,11 +1358,18 @@ class Generator:
                 if len(self.unsure) < 500:
                     self.unsure.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start), "because": why[c.cid][1]})
         # Facts that narrate a moment are right, but belong among events; a description is not a moment.
-        for cid in {str(x).strip() for x in out.get("moments") or []} - bad:
+        moments = {str(x).strip() for x in out.get("moments") or []} - bad
+        for cid in moments:
             c = next((c for c in cands if c.cid == cid and c.kind == "facet" and not c.data.get("profile")), None)
             if c and not DESCRIPTIVE.search(c.text):
                 c.kind, c.data = "event", {"entities": [c.data["entity"]]}
                 self.stats["facts moved to events"] += 1
+        # A "tie" that is one action is not a tie; the action itself is the passage's event to report.
+        acts = {c.cid for c in cands if c.kind == "relation" and c.cid in moments}
+        self.stats["dropped: an action, not a tie"] += len(acts)
+        for cid in acts:
+            why[cid] = ("unsupported", "one action between the two, not a lasting tie")
+        bad |= acts
         n = self._chunk_len
         for r in out.get("later") or []:
             c = next((c for c in cands if c.cid == str(r.get("id", "")).strip()), None)
@@ -1419,7 +1472,9 @@ class Generator:
             self.stats["profiles" if profile else "facets"] += 1
         elif c.kind == "relation":
             item = {"id": self._next_id(f"{self.key}.rel"), "src": c.data["src"], "dst": c.data["dst"],
-                    "label": c.text, **item}
+                    "label": c.text, **item, **({"kind": c.data["kind"]} if c.data.get("kind") else {})}
+            if item.get("replaces"):
+                self.stats["ties replaced by a newer one"] += 1
             self.relations.append(item)
             self.item_seq[item["id"]], self.item_kind[item["id"]] = from_seq, "relation"
             self.added.append({"kind": "relation", "id": item["id"], "src": self._names(c.data["src"])[0],

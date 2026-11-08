@@ -8,20 +8,13 @@ Shipped (issue #6): the Reader's edit mode adds, changes and deletes entries, na
 
 ## 1b. Connections map: what counts as a tie, and a layout that reads as a social network
 
-Two things about the Connections tab are to be re-evaluated, in this order.
+Shipped in 0.6 and 0.7.
 
-**What earns a line.** Today a line is any relation the model proposed and the fact-check accepted, plus "appear together" edges from shared events when asked for. Lines appear between entities that have no real tie. The plan:
+- **Measured first.** The bundled Dracula index had 56 ties over 25 pairs, and 10 pairs carried 41 of them (seven near-synonyms between Dracula and Harker alone). Several labels were actions ("drove the stake through the heart of") and one was a sentence ("Un-Dead, calls Arthur her husband"). Requiring both sides to be named in the cited paragraph was tried and dropped: the novel is first-person diaries, so "I" and "the Count" fail it on correct ties.
+- **Generator.** Ties are lasting states with a `kind` (family, romance, friendship, alliance, service, hostility, acquaintance, place); a label over 8 words is dropped; a passage keeps one tie per pair and kind, the one shown latest; the fact-check drops ties that are one action; a newer tie of the same kind between the same two replaces the older one, which becomes history.
+- **Map.** Glowing dots and hairline ties in loose groups named "Around X", no island shapes; lines tinted by kind and filterable; hovering a line shows its tie and clicking it selects the entry; "appear together" needs two or more shared events. The zoom levels stay only to thin the names when zoomed far out.
 
-- Measure first: on the bundled Dracula index and one series, list every relation with its cited paragraph and mark it stated, inferred-but-fair, or spurious; count how many pairs have several near-synonymous ties. That number is the baseline the rest is judged against.
-- Tighten the generator: a relation must be stated by the passage in words (the way `TIE_WORDS` already guards descriptions), name both sides in the cited paragraph, and be checked as a sentence ("Harker *is the guest of* Dracula") rather than a bare label; one tie per pair per passage unless it changed; the companion's existing ties are already shown so the model repeats fewer.
-- Give relations a `kind` (family, allegiance, service, hostility, acquaintance, place) the map can colour and filter by, the way events now carry a `kind`.
-- Make "appear together" opt-in only and require two or more shared events; show the sentence behind a line on hover and in the panel, so a wrong line is one click from the edit mode's bin.
-
-**How the map is drawn.** The target look: entries as small glowing dots in their type colour on a dark, faintly speckled ground, hairline ties, each group gathered loosely around the entry with the most ties in it and named for it ("Around Van Helsing"), dashed lines between groups that are tied, every entry labelled when there is room, and no island shapes or sea between groups. The plan:
-
-- Keep the grouping and the two-level layout (they already find the hubs and keep positions stable from one position to the next), but drop the hulls, fold nothing, space groups more loosely, and draw cross-group ties as dashed lines between the entries themselves.
-- Restyle: speckled ground, glow on the dots, hairline ties, muted "Around X" labels under each group, names beside the dots.
-- Compare on Dracula at 30%, 60% and 100% and on a series; keep the zoom levels only if they still earn their place once nothing is folded.
+Next, if the results call for it: a kind per tie in the duplicate judge's context, and ties carried across series books with the same replacement rule.
 
 ## 2. Non-fiction and self-help books
 
