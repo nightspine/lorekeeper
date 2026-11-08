@@ -6,6 +6,23 @@ What comes next, roughly in order. Each item gets a GitHub issue when work start
 
 Shipped (issue #6): the Reader's edit mode adds, changes and deletes entries, names, details, connections, events and recaps, with the reveal point chosen from the book's paragraphs; "Write it myself" on the build form starts an index with no model; every change is one undoable step in the same journal as merges; hindsight and long quotes are refused as the generator refuses them; and edits are recorded per edition and applied again after a rebuild. Still open: editing indexes that were not built here, and more than one editor at a time.
 
+## 1b. Connections map: what counts as a tie, and a layout that reads as a social network
+
+Two things about the Connections tab are to be re-evaluated, in this order.
+
+**What earns a line.** Today a line is any relation the model proposed and the fact-check accepted, plus "appear together" edges from shared events when asked for. Lines appear between entities that have no real tie. The plan:
+
+- Measure first: on the bundled Dracula index and one series, list every relation with its cited paragraph and mark it stated, inferred-but-fair, or spurious; count how many pairs have several near-synonymous ties. That number is the baseline the rest is judged against.
+- Tighten the generator: a relation must be stated by the passage in words (the way `TIE_WORDS` already guards descriptions), name both sides in the cited paragraph, and be checked as a sentence ("Harker *is the guest of* Dracula") rather than a bare label; one tie per pair per passage unless it changed; the companion's existing ties are already shown so the model repeats fewer.
+- Give relations a `kind` (family, allegiance, service, hostility, acquaintance, place) the map can colour and filter by, the way events now carry a `kind`.
+- Make "appear together" opt-in only and require two or more shared events; show the sentence behind a line on hover and in the panel, so a wrong line is one click from the edit mode's bin.
+
+**How the map is drawn.** The target look is a night sky: entries as small glowing stars in their type colour on a dark starfield, thin constellation lines for stated ties, each group gathered loosely around the entry with the most ties in it and named for it ("Around Van Helsing"), dashed lines between the hubs of groups that are tied, every star labelled when there is room, and no island shapes or sea between groups. The plan:
+
+- Keep the grouping and the two-level layout (they already find the hubs and keep positions stable from one position to the next), but drop the hulls, fold nothing, space groups more loosely, and draw cross-group ties as dashed lines between the entries themselves.
+- Restyle: starfield ground, glow on the stars, hairline ties, muted "Around X" labels under each group, names beside the stars.
+- Compare on Dracula at 30%, 60% and 100% and on a series; keep the zoom levels only if they still earn their place once nothing is folded.
+
 ## 2. Non-fiction and self-help books
 
 Today's index describes a story. Other books need their own shape:

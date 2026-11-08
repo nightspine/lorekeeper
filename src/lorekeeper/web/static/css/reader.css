@@ -160,7 +160,26 @@
 .story-now { position: relative; overflow: hidden; display: grid; gap: var(--space-3); padding: var(--space-5); border-radius: var(--radius-l); background: linear-gradient(180deg, var(--glass-2), var(--glass)); border: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--edge-lit); }
 .story-now > * { position: relative; }
 .recap-text { font-size: var(--text-md); line-height: 1.65; color: var(--text); }
-.chapters-bar { justify-content: space-between; }
+.chapters-bar { justify-content: space-between; flex-wrap: wrap; gap: 6px 14px; }
+/* A series on the Chapters tab: one rail, a block per book, the book being read lit. */
+.series-rail { position: relative; display: grid; gap: var(--space-4); padding-left: 28px; }
+.series-rail::before { content: ""; position: absolute; left: 9px; top: 14px; bottom: 14px; width: 2px; border-radius: 2px; background: linear-gradient(180deg, var(--beacon), var(--edge)); }
+.series-rail.newest::before { background: linear-gradient(180deg, var(--beacon) 0 40px, var(--edge)); }
+.series-rail:not(.newest)::before { background: linear-gradient(180deg, var(--edge), var(--beacon)); }
+.book-block { position: relative; display: grid; gap: var(--space-3); }
+.book-block::before { content: ""; position: absolute; left: -24px; top: 12px; width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--edge-lit); }
+.book-block.current::before { border-color: var(--beacon); background: var(--beacon); box-shadow: 0 0 0 4px var(--beacon-glow); }
+.book-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-height: 36px; }
+.book-head .book-dot { display: none; }
+.book-head .book-title { font: 700 var(--text-lg)/1.3 var(--font-ui); letter-spacing: -.01em; }
+details.book-block > summary.book-head { cursor: pointer; list-style: none; color: var(--text-2); }
+details.book-block > summary.book-head::-webkit-details-marker { display: none; }
+details.book-block > summary.book-head .book-title { color: var(--text-2); }
+details.book-block[open] > summary.book-head .book-title, details.book-block > summary.book-head:hover .book-title { color: var(--text); }
+details.book-block > summary.book-head .svg-icon { width: 16px; height: 16px; margin-left: auto; color: var(--text-3); transition: transform var(--dur-fast); }
+details.book-block[open] > summary.book-head .svg-icon { transform: rotate(90deg); }
+.book-block.earlier .chapter-list { opacity: .92; }
+.book-none { margin: 0; }
 ol.chapter-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; max-height: none; overflow: hidden; border: 1px solid var(--edge); border-radius: var(--radius-l); background: linear-gradient(180deg, var(--glass-2), var(--glass)); box-shadow: inset 0 1px 0 var(--edge-lit); }
 ol.chapter-list > li + li { border-top: 1px solid var(--edge); }
 .chapter { border: 0; border-radius: 0; background: none; box-shadow: none; }
