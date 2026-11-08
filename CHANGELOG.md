@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/nightspine/lorekeeper/compare/v0.4.0...v0.5.0) (2026-11-08)
+
+
+### Features
+
+* label entries from earlier series books in the Reader and tuck away those not yet in this book ([#29](https://github.com/nightspine/lorekeeper/issues/29)) ([09f3891](https://github.com/nightspine/lorekeeper/commit/09f3891feae80da0c77cfb89cb09fd523fe798cb))
+* weigh events as turning points or small moments, group the timeline by chapter, and aim chapter summaries at the plot ([#30](https://github.com/nightspine/lorekeeper/issues/30)) ([63cc57d](https://github.com/nightspine/lorekeeper/commit/63cc57d9760ac0bfaee8350214cb61a35554da02))
+
+
+### Bug Fixes
+
+* **ci:** give a release's image build its own concurrency group so a push to main cannot cancel it ([#26](https://github.com/nightspine/lorekeeper/issues/26)) ([e0a8d1f](https://github.com/nightspine/lorekeeper/commit/e0a8d1fc028ed2f5a5b455a70d13c06e0e7a059a))
+
 ## [0.4.0](https://github.com/nightspine/lorekeeper/compare/v0.3.0...v0.4.0) (2026-11-04)
 
 
