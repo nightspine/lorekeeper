@@ -95,4 +95,4 @@ def test_run_stops_mid_chunk_and_resumes(tmp_path):
     assert len(json.loads(out.read_text())["recaps"]) == 2          # chapter one only: story + chapter
     report = generate.run(epub.read(book_path), FakeLLM(), generate.Options(), book_path, out,
                           resume=True, log=lambda _: None)
-    assert not report["stopped"] and len(json.loads(out.read_text())["recaps"]) == 3
+    assert not report["stopped"] and len(json.loads(out.read_text())["recaps"]) == 4   # chapter two: story recap + a chapter recap from its event
