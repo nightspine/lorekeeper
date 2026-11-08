@@ -4,7 +4,7 @@
 // merges). Index content and book text are untrusted, so all text is rendered through h().
 import { api } from "./api.js";
 import { confirmDialog, modal } from "./build.js";
-import { clear, h, icon, TYPE_LABEL } from "./dom.js";
+import { clear, foldList, h, icon, TYPE_LABEL } from "./dom.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 const NAME_KINDS = ["primary", "alias", "title", "nickname", "descriptive"];
@@ -440,11 +440,12 @@ export function createEditor(ctx) {
   /** The body of the drawer with pen and trash on every row, add buttons, and the delete-entry foot. */
   function drawerBody(e, rels, evs, { entityChip, bookLabel }) {
     const found = findEntity(e.id);
-    const facts = (list) => h("ul.fact-list", list.map((f) => {
+    const facts = (list) => foldList(list.map((f) => {
       const li = h("li");
       clear(li, h("span.fact-text", f.text), f.basis === "inferred" ? h("span.inferred", "inferred") : null, bookLabel(f.book), factRow(e.id, f, li, false));
       return li;
-    }));
+    }), (nodes) => h("ul.fact-list", nodes), { show: 4, noun: "details" });
+    const eyebrow = (label, n) => h("span.eyebrow", label, n > 1 ? h("span.n", String(n)) : null);
     const profileRow = e.profile ? (() => {
       const p = h("div.profile");
       clear(p, h("span.eyebrow", e.type === "person" || e.type === "group" ? "Who they are" : "What it is"),
@@ -467,20 +468,20 @@ export function createEditor(ctx) {
       h("p.hint.edit-help", "Write what a reader knows at the reveal point, in your own words. The index refuses hindsight and long quotes."),
       profileRow, addProfile,
       namesSection(e.id),
-      h("div.d-sec", h("span.eyebrow", "Details"), e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet."), addFact),
+      h("div.d-sec", eyebrow("Details", e.facets.length), e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet."), addFact),
       e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history)) : null,
-      h("div.d-sec", h("span.eyebrow", "Connections"),
-        rels.length ? h("ul.relations", rels.map((r) => {
+      h("div.d-sec", eyebrow("Connections", rels.length),
+        rels.length ? foldList(rels.map((r) => {
           const li = h("li");
           clear(li, entityChip(r.src), h("span.lbl", r.label), entityChip(r.dst), relationRowActions(e.id, r, li));
           return li;
-        })) : null, addRel),
-      h("div.d-sec", h("span.eyebrow", "Appears in"),
-        evs.length ? h("ol.timeline", evs.map((ev) => {
+        }), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }) : null, addRel),
+      h("div.d-sec", eyebrow("Appears in", evs.length),
+        evs.length ? foldList(evs.map((ev) => {
           const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}`);
           clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary), bookLabel(ev.book), eventRowActions(ev, li));
           return li;
-        })) : null, addEv),
+        }), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" }) : null, addEv),
       mine(found) ? h("div.drawer-foot", del) : null);
   }
 
