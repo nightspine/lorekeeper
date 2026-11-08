@@ -17,10 +17,10 @@ Two things about the Connections tab are to be re-evaluated, in this order.
 - Give relations a `kind` (family, allegiance, service, hostility, acquaintance, place) the map can colour and filter by, the way events now carry a `kind`.
 - Make "appear together" opt-in only and require two or more shared events; show the sentence behind a line on hover and in the panel, so a wrong line is one click from the edit mode's bin.
 
-**How the map is drawn.** The target look is a night sky: entries as small glowing stars in their type colour on a dark starfield, thin constellation lines for stated ties, each group gathered loosely around the entry with the most ties in it and named for it ("Around Van Helsing"), dashed lines between the hubs of groups that are tied, every star labelled when there is room, and no island shapes or sea between groups. The plan:
+**How the map is drawn.** The target look: entries as small glowing dots in their type colour on a dark, faintly speckled ground, hairline ties, each group gathered loosely around the entry with the most ties in it and named for it ("Around Van Helsing"), dashed lines between groups that are tied, every entry labelled when there is room, and no island shapes or sea between groups. The plan:
 
 - Keep the grouping and the two-level layout (they already find the hubs and keep positions stable from one position to the next), but drop the hulls, fold nothing, space groups more loosely, and draw cross-group ties as dashed lines between the entries themselves.
-- Restyle: starfield ground, glow on the stars, hairline ties, muted "Around X" labels under each group, names beside the stars.
+- Restyle: speckled ground, glow on the dots, hairline ties, muted "Around X" labels under each group, names beside the dots.
 - Compare on Dracula at 30%, 60% and 100% and on a series; keep the zoom levels only if they still earn their place once nothing is folded.
 
 ## 2. Non-fiction and self-help books

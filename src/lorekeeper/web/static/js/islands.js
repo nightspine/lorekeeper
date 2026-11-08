@@ -70,39 +70,6 @@ function rng(seed) {
 const sharedEvents = (e) => (e.events >= 2 ? Math.min(e.events, 4) * 0.5 : 0);
 const weightOf = (e) => e.rels.length * 4 + e.old.length + sharedEvents(e);
 // Titles dropped before reading a family name off a name ("Mr. Dursley" → Dursley).
-const TITLE = /^(mr|mrs|miss|ms|mx|dr|sir|dame|lady|lord|master|madam|madame|monsieur|mademoiselle|professor|uncle|aunt|captain|king|queen|prince|princess|duke|duchess|count|countess|baron|baroness|father|mother|brother|sister|saint|st)\.?$/i;
-
-// ---- groups and layout ---------------------------------------------------------------------
-
-/** A family name a third or more of the island shares ("Dursley" for Mr. and Mrs. Dursley, Dudley
- *  Dursley and friends), or null. One-word names count only with a title ("Mr. Dursley"). */
-function familyName(members) {
-  const people = members.filter((e) => e.type === "person");
-  const count = new Map();
-  for (const e of people) {
-    const surnames = new Set();
-    for (const n of [e.name, ...e.aliases]) {
-      const words = n.replace(/\([^)]*\)/g, " ").split(/\s+/).filter(Boolean);
-      const titled = words.length > 1 && TITLE.test(words[0]);
-      const rest = titled ? words.slice(1) : words;
-      if ((rest.length > 1 || titled) && /^[A-Z]/.test(rest[rest.length - 1])) surnames.add(rest[rest.length - 1].replace(/['’]s$/, ""));
-    }
-    for (const w of surnames) count.set(w, (count.get(w) || 0) + 1);
-  }
-  const [best, n] = [...count.entries()].sort((a, b) => b[1] - a[1])[0] || [];
-  return best && n >= 2 && n * 3 >= people.length ? best : null;
-}
-
-/** What a character is called for short: a one-word name they go by ("Filch", "Harry"), else the
- *  first word of their name that isn't a title ("Professor Quirrell" → Quirrell). */
-function shortName(e) {
-  const one = [e.name, ...e.aliases].find((n) => /^[A-Z][^\s]*$/.test(n) && !TITLE.test(n));
-  if (one) return one;
-  const words = e.name.replace(/\([^)]*\)/g, " ").split(/\s+/).filter(Boolean);
-  return words.find((w) => !TITLE.test(w) && !/^the$/i.test(w)) || words[0];
-}
-
-/** Louvain groups as islands; ids (and so colours) follow the members from one position to the next. */
 function findIslands(A, graph, ids, links) {
   const G = new graphology.Graph({ type: "undirected" });
   for (const id of ids) G.addNode(id);
@@ -124,16 +91,15 @@ function findIslands(A, graph, ids, links) {
     m.sort((a, b) => inner.get(b) - inner.get(a) || graph.prom.get(b) - graph.prom.get(a));
     const top = graph.ents.get(m[0]);
     const hub = m.map((x) => graph.ents.get(x)).find((e) => (e.type === "place" || e.type === "group") && inner.get(e.id) >= inner.get(top.id) * 0.6);
-    const family = familyName(m.map((x) => graph.ents.get(x)));
-    const isl = { id, members: m, color: `var(--isl-${id % ISLAND_COLORS})`, hub: Boolean(hub || family), top: top.name,
-      label: family ? `The ${family} family` : hub ? hub.name : m.length > 1 ? `${shortName(top)}'s circle` : top.name };
+    // A group is named for the entry it gathers around ("Around Van Helsing"); a lone entry is just its name.
+    const isl = { id, members: m, color: `var(--isl-${id % ISLAND_COLORS})`, hub: Boolean(hub), top: top.name,
+      label: m.length > 1 ? `Around ${top.name}` : top.name };
     list.push(isl);
     for (const x of m) of.set(x, isl);
   }
   const dup = new Map();
   for (const i of list) dup.set(i.label, (dup.get(i.label) || 0) + 1);
-  // Two islands with the same name: circles use their leader's full name, places add the leader.
-  for (const i of list) if (dup.get(i.label) > 1) i.label = i.hub ? `${i.label} · ${shortName(graph.ents.get(i.members[0]))}` : `${i.top}'s circle`;
+  for (const i of list) if (dup.get(i.label) > 1) i.label = `${i.label} (${i.members.length})`;
   for (const [x, i] of of) A.lastIsland.set(x, i.id);
   return { list, of };
 }
@@ -174,7 +140,7 @@ function layoutIslands(A, graph, isl, links, radius) {
     const pts = sub.mapNodes((id, a) => ({ id, x: a.x, y: a.y }));
     const cx = pts.reduce((t, q) => t + q.x, 0) / pts.length, cy = pts.reduce((t, q) => t + q.y, 0) / pts.length;
     const far = Math.max(1e-6, ...pts.map((q) => Math.hypot(q.x - cx, q.y - cy)));
-    i.r = 26 * Math.sqrt(i.members.length) + 18;
+    i.r = 34 * Math.sqrt(i.members.length) + 28;   // loose, with room between entries
     const room = Math.max(0, i.r - 26);
     for (const q of pts) A.local.set(q.id, { x: ((q.x - cx) / far) * room, y: ((q.y - cy) / far) * room });
   }
@@ -190,9 +156,9 @@ function layoutIslands(A, graph, isl, links, radius) {
   });
   const settled = isl.list.every((i) => A.centres.has(i.id));
   const sim = d3.forceSimulation(meta)
-    .force("link", d3.forceLink(mlinks).id((d) => d.id).distance((d) => d.source.r + d.target.r + 110).strength((d) => Math.min(0.6, 0.02 + Math.log1p(d.w) / 25)))
+    .force("link", d3.forceLink(mlinks).id((d) => d.id).distance((d) => d.source.r + d.target.r + 150).strength((d) => Math.min(0.6, 0.02 + Math.log1p(d.w) / 25)))
     .force("charge", d3.forceManyBody().strength((d) => -6 * d.r))
-    .force("collide", d3.forceCollide((d) => d.r + 80).strength(1).iterations(3))
+    .force("collide", d3.forceCollide((d) => d.r + 110).strength(1).iterations(3))
     .force("x", d3.forceX(0).strength(0.03)).force("y", d3.forceY(0).strength(0.03)).stop();
   sim.alpha(settled ? 0.3 : 1);
   for (let k = 0; k < (settled ? 120 : 400); k++) sim.tick();
@@ -211,7 +177,8 @@ function layoutIslands(A, graph, isl, links, radius) {
 // ---- the map -------------------------------------------------------------------------------
 
 /**
- * The archipelago map element (persistent across repaints).
+ * The map element (persistent across repaints): loose groups of entries, each gathered around the
+ * entry with the most ties in it, hairline ties, dashed ties between groups, no island shapes.
  * ctx: { gs, graph, laid (Set of ids with any connection), typeOn(id), sel, radius(id),
  *        revealed(id), select(id), minCo }
  */
@@ -275,6 +242,17 @@ function build(A) {
     .on("end", () => render(A));
   A.svg.call(A.zoom).on("dblclick.zoom", null);
   A.svg.on("click", (ev) => { if (ev.defaultPrevented) return; if (!ev.target.closest(".g-node") && !ev.target.closest(".g-isl-name")) A.ctx.select(null); });
+  // The stage changes size (a phone turned, a window resized, the side panel folding under): fit again.
+  let lastW = 0, lastH = 0;
+  A.ro = new ResizeObserver((entries) => {
+    const { width, height } = entries[0].contentRect;
+    if (!A.shown || !width || !height) return;
+    if (Math.abs(width - lastW) < 40 && Math.abs(height - lastH) < 40) return;
+    lastW = width; lastH = height;
+    clearTimeout(A.refit);
+    A.refit = setTimeout(() => fit(A, false), 120);
+  });
+  A.ro.observe(A.svg.node());
 }
 
 const levelOf = (k) => (k < 0.42 ? 0 : k < 1.05 ? 1 : 2);
@@ -285,7 +263,7 @@ export function fit(A, animated = true, only = null) {
   const node = A.svg.node();
   const W = node.clientWidth || 800, H = node.clientHeight || 560;
   if (!pts.length) return;
-  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y), pad = 90;
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y), pad = 120;   // room for the names beside the outer dots
   const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
   const k = Math.min(only ? 1.6 : 1.4, W / (x1 - x0), H / (y1 - y0));
   const t = d3.zoomIdentity.translate(W / 2 - k * (x0 + x1) / 2, H / 2 - k * (y0 + y1) / 2).scale(k);
@@ -315,52 +293,22 @@ function render(A) {
   A.level = lvl;
   const isl = A.isl;
   const near = sel ? new Set([sel, ...(A.adj.get(sel) || [])]) : null;
-  const minor = (id) => !A.links.some((e) => (e.a === id || e.b === id) && (e.rels.length || e.old.length)) && A.adj.get(id).length <= 2 && graph.prom.get(id) < 4;
-  const nodes = [...isl.of.keys()].filter((id) => typeOn(id) && (lvl === 2 || !minor(id) || A.unfolded.has(isl.of.get(id).id) || (near && near.has(id))));
+  // Nothing folds: every entry the filters allow is drawn.
+  const nodes = [...isl.of.keys()].filter(typeOn);
   const drawn = new Set(nodes);
-  for (const i of isl.list) i.folded = i.members.filter((id) => typeOn(id) && minor(id) && !drawn.has(id)).length;
-  // Lines: stated relations from the islands level; "appear together" close up within an island;
-  // everything touching the selection at any level.
+  for (const i of isl.list) i.folded = 0;
+  // Lines: stated ties always (dashed when they cross from one group to another), earlier ties with
+  // history on, "appear together" only when asked and only within a group or touching the selection.
   const touches = (e) => sel && (e.a === sel || e.b === sel);
-  // Lines: stated relationships (and earlier ones with history on); "appear together" only when asked.
   const together = (e) => gs.together && !e.rels.length && e.weight >= A.ctx.minCo;
   const edges = A.links.filter((e) => drawn.has(e.a) && drawn.has(e.b) && (
-    (e.rels.length && (lvl >= 1 || touches(e)))
-    || (gs.history && e.old.length && (lvl >= 1 || touches(e)))
-    || (together(e) && (touches(e) || (lvl === 2 && isl.of.get(e.a) === isl.of.get(e.b))))));
-  let routes = [];
-  if (lvl === 0) {
-    const agg = new Map();
-    for (const e of A.links) {
-      const a = isl.of.get(e.a), b = isl.of.get(e.b);
-      if (a === b || !e.rels.length) continue;   // routes are stated ties between islands
-      const kk = a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`;
-      const r = agg.get(kk) || { kk, a: a.id < b.id ? a : b, b: a.id < b.id ? b : a, n: 0 };
-      r.n += weightOf(e);
-      agg.set(kk, r);
-    }
-    routes = [...agg.values()].filter((r) => r.n >= 2);
-  }
+    e.rels.length || (gs.history && e.old.length) || (together(e) && (touches(e) || isl.of.get(e.a) === isl.of.get(e.b)))));
   A.drawn = drawn;
 
-  const showTip = (d) => { clearTimeout(A.tipTimer); A.tip.attr("hidden", null).text(`${d.label} · ${d.members.length} ${d.members.length === 1 ? "entry" : "entries"}`); };
-  A.layers.hulls.selectAll("path").data(isl.list, (d) => d.id).join("path").attr("class", "g-isl")
-    .style("fill", (d) => `color-mix(in srgb, ${d.color} 10%, transparent)`)
-    .style("stroke", (d) => `color-mix(in srgb, ${d.color} 35%, transparent)`)
-    .attr("tabindex", 0).attr("role", "button")
-    .attr("aria-label", (d) => `${d.label}, ${d.members.length} ${d.members.length === 1 ? "entry" : "entries"}, press to zoom in`)
-    .on("mouseenter focus", (ev, d) => showTip(d))
-    .on("mouseleave blur", () => { clearTimeout(A.tipTimer); A.tip.attr("hidden", true); })
-    .on("click", (ev, d) => {
-      ev.stopPropagation();
-      showTip(d);
-      if (ev.pointerType === "touch") { clearTimeout(A.tipTimer); A.tipTimer = setTimeout(() => A.tip.attr("hidden", true), 2000); }
-      fit(A, true, d.members);
-    })
-    .on("keydown", (ev, d) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); fit(A, true, d.members); } });
-  A.layers.routes.selectAll("path").data(routes, (d) => d.kk).join("path").attr("class", "g-route").attr("stroke-width", (d) => 1 + Math.log2(d.n) * 1.3);
+  A.layers.hulls.selectAll("path").data([]).join("path");
+  A.layers.routes.selectAll("path").data([]).join("path");
   A.layers.edges.selectAll("line").data(edges, (d) => d.key).join("line")
-    .attr("class", (d) => `g-edge ${d.rels.length ? "rel" : d.old.length && gs.history ? "old" : "co"}${sel ? (touches(d) ? " lit" : " dim") : ""}`);
+    .attr("class", (d) => `g-edge ${d.rels.length ? "rel" : d.old.length && gs.history ? "old" : "co"}${isl.of.get(d.a) !== isl.of.get(d.b) ? " cross" : ""}${sel ? (touches(d) ? " lit" : " dim") : ""}`);
   const ns = A.layers.nodes.selectAll("g.g-node").data(nodes, (d) => d).join((en) => {
     const g = en.append("g").attr("tabindex", 0).attr("role", "button");
     g.on("click", (ev, id) => { ev.stopPropagation(); A.ctx.select(id === A.ctx.sel ? null : id); })
@@ -371,73 +319,70 @@ function render(A) {
   ns.each(function (id) {
     const e = graph.ents.get(id), r = radius(id), g = this;
     const isNew = A.ctx.revealed(id)?.isNew;
-    const want = `${e.type}|${r.toFixed(1)}|${isNew}|${lvl > 0 && r >= 13}`;
-    g.setAttribute("class", `g-node t-${e.type}${id === sel ? " sel" : ""}${near && !near.has(id) ? " dim" : ""}${isNew ? " new" : ""}`);
+    const want = `${e.type}|${r.toFixed(1)}|${isNew}`;
+    g.setAttribute("class", `g-node g-dot t-${e.type}${id === sel ? " sel" : ""}${near && !near.has(id) ? " dim" : ""}${isNew ? " new" : ""}`);
     g.setAttribute("aria-label", `${e.name}, ${TYPE_LABEL[e.type]}${isNew ? ", new" : ""}`);
     g.setAttribute("aria-pressed", String(id === sel));
     if (g.dataset.look === want) return;
     g.dataset.look = want;
     g.replaceChildren();
-    if (isNew) g.append(s("circle", { class: "g-halo", r: r + 10 }));
+    if (isNew) g.append(s("circle", { class: "g-halo", r: r + 9 }));
     g.append(s("circle", { class: "g-ring", r: r + 6 }));
-    const sh = shape(e.type, r); sh.setAttribute("class", "g-shape"); g.append(sh);
-    if (lvl > 0 && r >= 13) {
-      const ic = icon(e.type), sz = r * 1.05;
-      for (const [kk, v] of Object.entries({ x: -sz / 2, y: -sz / 2, width: sz, height: sz })) ic.setAttribute(kk, v);
-      ic.setAttribute("class", "svg-icon g-icon");
-      Object.assign(ic.style, { width: `${sz}px`, height: `${sz}px` });
-      g.append(ic);
-    }
+    g.append(s("circle", { class: "g-glow", r: r * 2.2 }));
+    g.append(s("circle", { class: "g-shape", r }));
   });
 
-  place(A);   // hulls must exist before names are placed against them
+  place(A);
   const node = A.svg.node(), W = node.clientWidth, H = node.clientHeight;
-  // Island names: sized to the island as it appears, left off islands too small to carry one, never
-  // overlapping (bigger islands first). Hovering an island always names it.
-  const named = [], taken = [];
-  for (const d of isl.list.slice().sort((a, b) => b.members.length - a.members.length)) {
-    if (d.members.length < 3 || !d.hull) continue;
-    const xs = d.hull.map((p) => p[0]), ys = d.hull.map((p) => p[1]);
-    const sw = (Math.max(...xs) - Math.min(...xs)) * k, sh = (Math.max(...ys) - Math.min(...ys)) * k;
-    const fs = lvl === 0 ? Math.min(18, (sw / Math.max(6, d.label.length)) * 2.1) : 16;
-    if (fs < 10) continue;
-    d.fs = fs;
-    d.sub = lvl === 0 ? sw > 150 && sh > 70 : d.folded > 0;
-    const sx = A.t.applyX(d.cx), sy = lvl === 0 ? A.t.applyY(d.cy) : A.t.applyY(Math.min(...ys)) - 18;
-    const w = Math.max(d.label.length * fs * 0.5, d.sub ? 110 : 0), hh = fs * 1.25 + (d.sub ? 15 : 0);
-    const box = [sx - w / 2, sy - fs, sx + w / 2, sy - fs + hh];
-    if (taken.some((o) => box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1])) continue;
-    taken.push(box); named.push(d);
-  }
-  const nm = A.layers.names.selectAll("g.g-isl-name").data(named, (d) => d.id).join((en) => {
-    const g = en.append("g").attr("class", "g-isl-name");
-    g.append("text").attr("class", "g-isl-label").attr("text-anchor", "middle")
-      .on("click", (ev, d) => { ev.stopPropagation(); fit(A, true, d.members); });
-    g.append("text").attr("class", "g-isl-sub").attr("text-anchor", "middle")
-      .on("click", (ev, d) => { ev.stopPropagation(); if (A.unfolded.has(d.id)) A.unfolded.delete(d.id); else A.unfolded.add(d.id); render(A); });
-    return g;
-  });
-  nm.select(".g-isl-label").style("fill", (d) => d.color).attr("font-size", (d) => d.fs / k).attr("stroke-width", 4 / k).text((d) => d.label);
-  nm.select(".g-isl-sub").attr("font-size", 12 / k).attr("stroke-width", 3 / k).attr("display", (d) => (d.sub ? null : "none"))
-    .classed("unfold", (d) => lvl === 1 && (d.folded > 0 || A.unfolded.has(d.id)))
-    .text((d) => (lvl === 0 ? `${d.members.length} entries` : A.unfolded.has(d.id) ? "Fold minor entries" : `+${d.folded} minor`));
-  // Entry names: most prominent first (selection and its neighbours before anything), where they fit.
-  const labels = [];
-  if (lvl >= 1) {
-    const boxes = [];
-    const order = nodes.slice().sort((a, b) => (near ? near.has(b) - near.has(a) : 0) || graph.prom.get(b) - graph.prom.get(a));
-    for (const id of order) {
-      const p = A.shown.get(id), sx = A.t.applyX(p.x), sy = A.t.applyY(p.y), r = radius(id) * k;
-      const name = graph.ents.get(id).name;
-      const b = [sx - name.length * 3.4, sy + r + 2, sx + name.length * 3.4, sy + r + 17];
-      if (b[2] < 0 || b[0] > W || b[3] < 0 || b[1] > H) continue;
+  // Entry names: beside each dot, most prominent first (selection and its neighbours before anything), where they fit.
+  const labels = [], boxes = [];
+  A.side = new Map();   // which side of its dot a name sits: right by default, left or below when the right is taken
+  const order = nodes.slice().sort((a, b) => (near ? near.has(b) - near.has(a) : 0) || graph.prom.get(b) - graph.prom.get(a));
+  const fs = lvl === 0 ? 11 : 12;
+  // Dots themselves are kept clear of names.
+  for (const id of nodes) { const p = A.shown.get(id), sx = A.t.applyX(p.x), sy = A.t.applyY(p.y), r = radius(id) * k; boxes.push([sx - r, sy - r, sx + r, sy + r]); }
+  for (const id of order) {
+    const p = A.shown.get(id), sx = A.t.applyX(p.x), sy = A.t.applyY(p.y), r = radius(id) * k;
+    const name = graph.ents.get(id).name, w = name.length * fs * 0.56;
+    if (lvl === 0 && graph.prom.get(id) < 2 && !(near && near.has(id))) continue;   // from far away, only the prominent entries are named
+    const tries = [["right", [sx + r + 4, sy - fs * 0.7, sx + r + 6 + w, sy + fs * 0.7]],
+      ["left", [sx - r - 6 - w, sy - fs * 0.7, sx - r - 4, sy + fs * 0.7]],
+      ["below", [sx - w / 2, sy + r + 3, sx + w / 2, sy + r + 3 + fs * 1.4]]];
+    for (const [side, b] of tries) {
+      if (b[0] < 0 || b[2] > W || b[1] < 0 || b[3] > H) continue;   // a name cut by the edge moves to another side
       if (boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1])) continue;
-      boxes.push(b); labels.push(id);
+      boxes.push(b); labels.push(id); A.side.set(id, side);
+      break;
     }
   }
   A.layers.labels.selectAll("text").data(labels, (d) => d).join("text")
-    .attr("class", (id) => `g-label on${near && !near.has(id) ? " dim" : ""}`).attr("text-anchor", "middle")
-    .style("font-size", `${12 / k}px`).style("stroke-width", `${4 / k}px`).text((id) => graph.ents.get(id).name);
+    .attr("class", (id) => `g-label on${near && !near.has(id) ? " dim" : ""}${graph.prom.get(id) >= 4 ? " bright" : ""}`)
+    .attr("text-anchor", (id) => ({ right: "start", left: "end", below: "middle" })[A.side.get(id)])
+    .style("font-size", `${fs / k}px`).style("stroke-width", `${3 / k}px`).text((id) => graph.ents.get(id).name);
+  // Group names: "Around X" beneath each group of two or more, where they don't collide.
+  const named = [], taken = boxes.slice();
+  for (const d of isl.list.slice().sort((a, b) => b.members.length - a.members.length)) {
+    if (d.members.length < 2 || !Number.isFinite(d.cx)) continue;
+    d.fs = 13;
+    const sx = A.t.applyX(d.cx), sy = A.t.applyY(d.by) + 22;
+    const w = d.label.length * 13 * 0.56;
+    const box = [sx - w / 2, sy - 13, sx + w / 2, sy + 4];
+    if (taken.some((o) => box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1])) continue;
+    taken.push(box); named.push(d);
+  }
+  const showTip = (d) => { clearTimeout(A.tipTimer); A.tip.attr("hidden", null).text(`${d.label}, ${d.members.length} ${d.members.length === 1 ? "entry" : "entries"}`); };
+  const nm = A.layers.names.selectAll("g.g-isl-name").data(named, (d) => d.id).join((en) => {
+    const g = en.append("g").attr("class", "g-isl-name");
+    g.append("text").attr("class", "g-isl-label").attr("text-anchor", "middle").attr("tabindex", 0).attr("role", "button")
+      .on("mouseenter focus", (ev, d) => showTip(d))
+      .on("mouseleave blur", () => { clearTimeout(A.tipTimer); A.tip.attr("hidden", true); })
+      .on("click", (ev, d) => { ev.stopPropagation(); fit(A, true, d.members); })
+      .on("keydown", (ev, d) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); fit(A, true, d.members); } });
+    g.append("text").attr("class", "g-isl-sub").attr("display", "none");
+    return g;
+  });
+  nm.select(".g-isl-label").attr("aria-label", (d) => `${d.label}, ${d.members.length} entries, press to zoom in`)
+    .attr("font-size", (d) => d.fs / k).attr("stroke-width", 3 / k).text((d) => d.label);
   place(A);
 }
 
@@ -450,22 +395,15 @@ function place(A) {
   for (const i of A.isl.list) {
     const ms = i.members.filter((id) => A.drawn?.has(id));
     const use = ms.length ? ms : i.members;
-    const pts = [];
-    for (const id of use) { const p = at(id), r = radius(id) + 22; for (let a = 0; a < 8; a++) pts.push([p.x + r * Math.cos(a * Math.PI / 4), p.y + r * Math.sin(a * Math.PI / 4)]); }
-    i.hull = d3.polygonHull(pts);
     i.cx = use.reduce((t, id) => t + at(id).x, 0) / use.length;
     i.cy = use.reduce((t, id) => t + at(id).y, 0) / use.length;
+    i.by = Math.max(...use.map((id) => at(id).y + (radius(id) || 0)));   // the group's lowest entry, where its name goes
   }
-  const line = d3.line().curve(d3.curveBasisClosed);
-  A.layers.hulls.selectAll("path").attr("d", (d) => (d.hull ? line(d.hull) : null));
-  A.layers.routes.selectAll("path").attr("d", (d) => `M${d.a.cx},${d.a.cy}L${d.b.cx},${d.b.cy}`);
-  A.layers.names.selectAll("g.g-isl-name").each(function (d) {
-    const g = d3.select(this), top = Math.min(...d.hull.map((p) => p[1]));
-    if (A.level === 0) { g.select(".g-isl-label").attr("x", d.cx).attr("y", d.cy); g.select(".g-isl-sub").attr("x", d.cx).attr("y", d.cy + ((d.fs || 15) * 0.7 + 10) / k); }
-    else { g.select(".g-isl-label").attr("x", d.cx).attr("y", top - 20 / k); g.select(".g-isl-sub").attr("x", d.cx).attr("y", top - 6 / k); }
-  });
+  A.layers.names.selectAll("g.g-isl-name").select(".g-isl-label").attr("x", (d) => d.cx).attr("y", (d) => d.by + 22 / k);
   // Labels of entries the view just dropped (moving back in the book) are still bound until the next join.
-  A.layers.labels.selectAll("text").attr("x", (id) => at(id).x).attr("y", (id) => at(id).y + (radius(id) || 0) + 14 / k);
+  A.layers.labels.selectAll("text")
+    .attr("x", (id) => { const side = A.side?.get(id) || "right"; return at(id).x + (side === "right" ? (radius(id) || 0) + 5 / k : side === "left" ? -((radius(id) || 0) + 5 / k) : 0); })
+    .attr("y", (id) => at(id).y + ((A.side?.get(id) || "right") === "below" ? (radius(id) || 0) + 14 / k : 4 / k));
 }
 
 /** Dragging runs a live simulation: links act as springs (strong within an island, weak across),
