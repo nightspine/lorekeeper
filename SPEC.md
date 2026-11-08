@@ -216,7 +216,13 @@ entities MUST be visible at or before the relation's `from`.
 
 ### 4.4 Events
 
-`{ id, from, summary, entities[], evidence }`: key happenings in reading order.
+`{ id, from, summary, entities[], evidence, kind? }`: happenings in reading
+order. `kind` is optional and says how much the event drives the story:
+`"turn"` marks a turning point (a revelation, twist, reversal, realization,
+death, or a decision that changes the course of the story), `"minor"` a small
+moment that colours a scene without changing its course. An event without
+`kind` is an ordinary development. Clients SHOULD make turning points stand
+out and MAY hide minor events by default.
 
 ### 4.5 Recaps
 

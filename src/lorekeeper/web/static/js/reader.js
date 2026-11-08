@@ -76,6 +76,9 @@ export function mountReader(root) {
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
     earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
+    // Timeline filters, remembered per browser: only turning points; show small moments too.
+    tlTurns: (() => { try { return localStorage.getItem("lk-tl-turns") === "1"; } catch { return false; } })(),
+    tlMinor: (() => { try { return localStorage.getItem("lk-tl-minor") === "1"; } catch { return false; } })(),
   };
   const wrap = h("div.reader");
   root.append(wrap);
@@ -858,18 +861,58 @@ export function mountReader(root) {
   };
   const bookLabel = (b) => (s.series && b && b !== s.book ? h("span.book-label", `from ${bookShort(b)}`) : null);
 
+  /** The chapter an event of this book happens in (null for another book's events or without the book file). */
+  function eventChapter(ev) {
+    const r = revealInfo(ev.id);
+    if (!r || (s.series && r.book !== s.book)) return null;
+    const at = s.map.anchorPos(r.from);
+    return Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+  }
+  /** One timeline row: turning points stand out, small moments stay quiet. */
+  function eventRow(ev, { chips = true } = {}) {
+    const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`);
+    clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
+      chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : bookLabel(ev.book),
+      s.edit ? editor.eventRowActions(ev, li) : null);
+    return li;
+  }
+
   function paintTimeline() {
-    const evs = s.newestFirst ? [...s.view.events].reverse() : s.view.events;
+    const all = s.view.events;
+    const hasKinds = all.some((ev) => ev.kind);   // older indexes weigh nothing: every event shows
+    const turns = all.filter((ev) => ev.kind === "turn").length, minor = all.filter((ev) => ev.kind === "minor").length;
+    const shown = all.filter((ev) => (!s.tlTurns || ev.kind === "turn") && (s.tlMinor || !hasKinds || ev.kind !== "minor"));
+    const evs = s.newestFirst ? [...shown].reverse() : shown;
+    const remember = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch {} };
     const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.newestFirst),
       on: { click: () => { s.newestFirst = !s.newestFirst; paintTimeline(); } } }, icon("refresh"), s.newestFirst ? "Newest first" : "Oldest first");
-    clear(el.panel, h("div.toolbar", toggle, s.edit ? editor.addEventButton() : null),
-      evs.length ? h("ol.timeline", evs.map((ev) => {
-        const li = h(`li${s.fresh.has(ev.id) ? ".fresh" : ""}`);
-        clear(li, h("p.ev", ev.summary), h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)),
-          s.edit ? editor.eventRowActions(ev, li) : null);
-        return li;
-      }))
-        : h("div.empty", h("div.art", icon("timeline")), h("h3", "No events yet"), h("p", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read.")));
+    const turnChip = hasKinds ? h("button.filter-chip.tl-turns", { type: "button", "aria-pressed": String(s.tlTurns),
+      title: "Only the revelations, twists and decisions that change the course of the story",
+      on: { click: () => { s.tlTurns = !s.tlTurns; remember("lk-tl-turns", s.tlTurns); paintTimeline(); } } },
+      icon("sparkle"), "Turning points", h("span.n", String(turns))) : null;
+    const minorChip = hasKinds && minor ? h("button.filter-chip.tl-minor", { type: "button", "aria-pressed": String(s.tlMinor),
+      title: s.tlMinor ? "Hide the small moments that don't change the story" : "Show the small moments too",
+      on: { click: () => { s.tlMinor = !s.tlMinor; remember("lk-tl-minor", s.tlMinor); paintTimeline(); } } },
+      "Small moments", h("span.n", String(minor))) : null;
+    // Events are grouped under the chapter they happen in (another book's events under that book).
+    const groups = [];
+    for (const ev of evs) {
+      const other = s.series && ev.book && ev.book !== s.book;
+      const ch = other ? null : eventChapter(ev);
+      const key = other ? `book:${ev.book}` : ch ? `ch:${ch.start}` : "none";
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) last.events.push(ev);
+      else groups.push({ key, label: other ? `From ${bookShort(ev.book)}` : ch ? tidyTitle(ch.title) : null, events: [ev] });
+    }
+    const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
+      : s.tlTurns ? ["No turning points yet", "Nothing read so far has changed the course of the story."]
+        : ["Only small moments so far", "Turn on small moments to see them."];
+    clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
+      evs.length ? h("ol.timeline", groups.map((g) => [
+        g.label ? h("li.tl-chapter", { "aria-hidden": "true" }, g.label) : null,
+        g.events.map((ev) => eventRow(ev)),
+      ]))
+        : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }
 
   function relationRow(r) {
@@ -892,6 +935,7 @@ export function mountReader(root) {
         if (!d) continue;
         for (const e of d.entities || []) if (!s.reveals.has(e.id)) s.reveals.set(e.id, { book, from: e.from });
         for (const r of d.relations || []) s.reveals.set(r.id, { book, from: r.from });
+        for (const ev of d.events || []) s.reveals.set(ev.id, { book, from: ev.from });
       }
     }
     return s.reveals.get(id) || null;
@@ -989,7 +1033,7 @@ export function mountReader(root) {
       rels.length ? h("div.d-sec", h("span.eyebrow", "Connections"),
         h("ul.relations", rels.map(relationRow))) : null,
       evs.length ? h("div.d-sec", h("span.eyebrow", "Appears in"),
-        h("ol.timeline", evs.map((ev) => h("li", h("p.ev", ev.summary), bookLabel(ev.book))))) : null,
+        h("ol.timeline", evs.map((ev) => eventRow(ev, { chips: false })))) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
         closeDrawer();
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });

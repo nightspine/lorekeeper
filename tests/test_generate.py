@@ -78,8 +78,8 @@ EXTRACT_CH1 = {
     ],
     "names": [],
     "relations": [{"a": "Alice Marlow", "label": "sister of", "b": "Tom Marlow", "p": 3}],
-    "events": [{"p": 2, "text": "Alice arrives at the lighthouse.", "who": ["Alice Marlow", "lighthouse"]},
-               {"p": 6, "text": "Alice finds a hidden letter.", "who": ["Alice Marlow"]}],
+    "events": [{"p": 2, "text": "Alice arrives at the lighthouse.", "who": ["Alice Marlow", "lighthouse"], "weight": "plot"},
+               {"p": 6, "text": "Alice finds a hidden letter.", "who": ["Alice Marlow"], "weight": "turn"}],
     "summary": ["Alice reaches the lighthouse in search of her brother Tom.",
                 "Tom turns out to be a famous sailor.",        # hindsight wording: dropped before checking
                 "Pike says Tom is a famous sailor.",           # rejected by the fact-check
@@ -501,6 +501,17 @@ def test_every_development_is_kept_within_the_budget(book_path, tmp_path):
     ix, _, _ = _run(book_path, tmp_path, llm=_ManyEvents())
     assert sum(1 for ev in ix["events"] if ev["summary"].startswith("Step ")) == 6   # the old cap was 2
     assert "every development" in generate.EXTRACT and "never a description" in generate.EXTRACT
+
+
+def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path)
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert by["Alice finds a hidden letter."]["kind"] == "turn"
+    assert "kind" not in by["Alice arrives at the lighthouse."]          # "plot" is the ordinary development: no kind
+    assert report["stats"]["turning points"] == 1
+    assert '"weight"' in generate.EXTRACT and "leading with" in generate.EXTRACT and "scenery" in generate.EXTRACT
+    assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
+    assert generate.PROMPT_VERSION == "extract-v7"
 
 
 def test_default_chunk_size_follows_the_provider():
