@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.1](https://github.com/nightspine/lorekeeper/compare/v0.7.0...v0.7.1) (2026-11-08)
+
+
+### Bug Fixes
+
+* phone Reader, a shorter Connections panel, names of relatives, portraits that keep a death ([#42](https://github.com/nightspine/lorekeeper/issues/42)) ([b1ad36e](https://github.com/nightspine/lorekeeper/commit/b1ad36ed19bd7cef139558358aa28a838b8d6aa9))
+
 ## [0.7.0](https://github.com/nightspine/lorekeeper/compare/v0.6.0...v0.7.0) (2026-11-08)
 
 
