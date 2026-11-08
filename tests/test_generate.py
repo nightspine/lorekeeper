@@ -336,12 +336,14 @@ def test_recaps_are_checked_and_revealed_at_chunk_end(book_path, tmp_path):
 def test_chapter_recaps_keep_checked_sentences(book_path, tmp_path):
     ix, _, llm = _run(book_path, tmp_path)
     chapters = [r for r in ix["recaps"] if r.get("scope") == "chapter"]
-    assert len(chapters) == 1 and chapters[0]["from"] == "toc01.para05"
+    assert [c["from"] for c in chapters] == ["toc01.para05", "toc02.para02"]
     assert chapters[0]["title"] and chapters[0]["id"].endswith(".chapter.1")
     assert chapters[0]["text"] == "Alice reaches the lighthouse in search of her brother Tom. Alice discovers a hidden letter."
     assert any("(summary) Alice discovers" in c for c in llm.calls)
+    # The scripted model gives chapter two no summary at all: its checked event stands in for one.
+    assert chapters[1]["text"] == "Pike admits Tom stayed."
     v = view([ix], Position(None, "toc02.para02"))
-    assert [c["id"] for c in v["chapters"]] == [chapters[0]["id"]]
+    assert [c["id"] for c in v["chapters"]] == [c["id"] for c in chapters]
     assert v["recap"]["text"].startswith("Pike admits")
 
 
@@ -547,7 +549,7 @@ def test_a_chapter_with_no_summary_is_recapped_from_its_events(book_path, tmp_pa
     first = next(r for r in ix["recaps"] if r.get("scope") == "chapter" and r["title"] == "Chapter One")
     assert "Alice arrives at the lighthouse." in first["text"] and "Alice finds a hidden letter." in first["text"]
     assert "bread and cheese" not in first["text"]          # small moments stay out of the recap
-    assert report["stats"]["chapter recap from events"] == 1
+    assert report["stats"]["chapter recap from events"] == 2   # chapter two's scripted answer has no summary either
 
 
 def test_default_chunk_size_follows_the_provider():
