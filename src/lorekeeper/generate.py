@@ -157,11 +157,12 @@ Update the companion with what THIS passage adds. Report only new information.
   "plot" for a development that moves the main story or changes what a character wants, knows or can do;
   "minor" for a small moment that colours the scene but changes nothing: a meal, a journey detail, small talk, a
   passing mood. Most events are "plot"; a passage has at most one or two turning points and may have none.
-- summary: {summary} complete sentences (each under 35 words) on what THIS passage does to the story, in reading
-  order, keeping only what moves it: what is revealed, decided, lost, gained or set in motion, and what that means
-  for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label or a
-  single word. Leave out scenery, meals, travel details and side remarks unless they bear on what follows. Use
-  names, not pronouns.
+- summary: {summary} complete sentences (each under 35 words) on what happens in THIS passage, in reading order,
+  giving most room to what moves the story: what is revealed, decided, lost, gained or set in motion, and what that
+  means for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label
+  or a single word. Leave out scenery, meals and side remarks unless they bear on what follows, but never leave the
+  summary empty: a quiet passage still gets a sentence or two on where the characters are and what they learn.
+  Use names, not pronouns.
 - recap: the story so far, updated to the end of this passage, for a reader coming back after a break: first the
   whole arc so far in a few sentences (earlier events compressed to their consequences, never dropped), then the
   recent stretch in more detail, ending with where things stand (who is where, what they are after, what is

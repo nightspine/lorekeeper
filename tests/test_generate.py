@@ -509,7 +509,7 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert by["Alice finds a hidden letter."]["kind"] == "turn"
     assert "kind" not in by["Alice arrives at the lighthouse."]          # "plot" is the ordinary development: no kind
     assert report["stats"]["turning points"] == 1
-    assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "scenery" in generate.EXTRACT
+    assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
     assert generate.PROMPT_VERSION == "extract-v7"
 
