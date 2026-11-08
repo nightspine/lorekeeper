@@ -263,9 +263,11 @@ export function fit(A, animated = true, only = null) {
   const node = A.svg.node();
   const W = node.clientWidth || 800, H = node.clientHeight || 560;
   if (!pts.length) return;
-  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y), pad = 120;   // room for the names beside the outer dots
-  const x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
-  const k = Math.min(only ? 1.6 : 1.4, W / (x1 - x0), H / (y1 - y0));
+  // Names are drawn at a fixed screen size, so the margin for them is in screen pixels, not map units: a narrow
+  // stage shrinks the map but not the names, and a group name under the outer dots must not be cut by the edge.
+  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y), px = Math.min(110, W / 4), py = 44;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const k = Math.min(only ? 1.6 : 1.4, (W - 2 * px) / Math.max(1, x1 - x0), (H - 2 * py) / Math.max(1, y1 - y0));
   const t = d3.zoomIdentity.translate(W / 2 - k * (x0 + x1) / 2, H / 2 - k * (y0 + y1) / 2).scale(k);
   const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   (animated && !reduce ? A.svg.transition().duration(600) : A.svg).call(A.zoom.transform, t);

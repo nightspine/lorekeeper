@@ -107,6 +107,16 @@ class Library:
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
+class Revalidated(StaticFiles):
+    """Static files the browser must check before reuse (a 304 when unchanged). Without it a browser guesses a
+    lifetime from Last-Modified and, after an upgrade, runs new scripts against old styles or the reverse."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: list[Path],
                ollama_url: str = "http://localhost:11434",
                allowed_hosts: tuple[str, ...] | None = LOCAL_HOSTS,
@@ -236,12 +246,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return jobs.submit(local, config)
     app = FastAPI(title="Lorekeeper", docs_url="/api/docs", redoc_url=None)
     app.state.auth = accounts
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", Revalidated(directory=STATIC), name="static")
     # The docs site (static/docs) links ../css, ../fonts and ../vendor so that it works unchanged when
     # `lorekeeper docs export` copies it to a static host. Serve those folders at the root to match.
-    app.mount("/docs", StaticFiles(directory=STATIC / "docs", html=True), name="docs")
+    app.mount("/docs", Revalidated(directory=STATIC / "docs", html=True), name="docs")
     for folder in ("css", "fonts", "vendor"):
-        app.mount(f"/{folder}", StaticFiles(directory=STATIC / folder), name=f"docs-{folder}")
+        app.mount(f"/{folder}", Revalidated(directory=STATIC / folder), name=f"docs-{folder}")
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -360,7 +370,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.get("/")
     def root():
-        return FileResponse(STATIC / "index.html")
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     def repo_markdown(name: str):
         """Read-only copy of a repository file for the docs site; absent in an installed wheel."""
