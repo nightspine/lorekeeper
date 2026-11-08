@@ -392,16 +392,16 @@ export function renderConnections(panel, ctx) {
       side));
   }
 
-  // ---- the map: the archipelago --------------------------------------------------------------
+  // ---- the map ----------------------------------------------------------------------------------
   if (!focus) {
     const zoomBtn = (label, ic, fn) => h("button.icon-btn.small", { type: "button", "aria-label": label, title: label, on: { click: fn } }, ic);
     const head = h("div.g-stage-head", h("h3", "Connections"),
-      h("span.hint", "Islands are groups tied by stated relationships."),
+      h("span.hint", "Each group gathers around the entry with the most ties in it."),
       h("span.g-zoom", zoomBtn("Zoom in", h("b", "+"), () => gs.arch && zoomBy(gs.arch, 1.4)), zoomBtn("Zoom out", h("b", "−"), () => gs.arch && zoomBy(gs.arch, 0.7)),
         zoomBtn("Fit everything", icon("layers"), () => gs.arch && fitMap(gs.arch))));
     const legend = h("div.g-legend", { role: "note", "aria-label": "Legend" },
-      h("span", h("i.l-isl"), "Island = characters tied together"),
       h("span", h("i.l-rel"), "Stated relationship"),
+      h("span", h("i.l-cross"), "Tie between groups"),
       gs.together ? h("span", h("i.l-co"), "Appear together") : null,
       gs.history ? h("span", h("i.l-old"), "Earlier relationship") : null,
       h("span", h("i.l-new"), `New in ${ctx.hereLabel}`),
@@ -412,7 +412,7 @@ export function renderConnections(panel, ctx) {
     }
     const maxAll = Math.max(1, ...[...laid].map((id) => graph.prom.get(id)));
     const wrap = archipelago({ gs, graph, laid, typeOn, sel, minCo, revealed: ctx.revealed, select,
-      radius: (id) => 8 + 18 * Math.sqrt(graph.prom.get(id) / maxAll) });
+      radius: (id) => 4.5 + 8.5 * Math.sqrt(graph.prom.get(id) / maxAll) });   // small dots, sized by prominence
     return clear(panel, toolbar, h("div.g-body", h("div.g-stage", head, wrap, legend), side));
   }
 
