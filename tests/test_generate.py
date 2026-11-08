@@ -78,8 +78,8 @@ EXTRACT_CH1 = {
     ],
     "names": [],
     "relations": [{"a": "Alice Marlow", "label": "sister of", "b": "Tom Marlow", "p": 3}],
-    "events": [{"p": 2, "text": "Alice arrives at the lighthouse.", "who": ["Alice Marlow", "lighthouse"]},
-               {"p": 6, "text": "Alice finds a hidden letter.", "who": ["Alice Marlow"]}],
+    "events": [{"p": 2, "text": "Alice arrives at the lighthouse.", "who": ["Alice Marlow", "lighthouse"], "weight": "plot"},
+               {"p": 6, "text": "Alice finds a hidden letter.", "who": ["Alice Marlow"], "weight": "turn"}],
     "summary": ["Alice reaches the lighthouse in search of her brother Tom.",
                 "Tom turns out to be a famous sailor.",        # hindsight wording: dropped before checking
                 "Pike says Tom is a famous sailor.",           # rejected by the fact-check
@@ -336,12 +336,14 @@ def test_recaps_are_checked_and_revealed_at_chunk_end(book_path, tmp_path):
 def test_chapter_recaps_keep_checked_sentences(book_path, tmp_path):
     ix, _, llm = _run(book_path, tmp_path)
     chapters = [r for r in ix["recaps"] if r.get("scope") == "chapter"]
-    assert len(chapters) == 1 and chapters[0]["from"] == "toc01.para05"
+    assert [c["from"] for c in chapters] == ["toc01.para05", "toc02.para02"]
     assert chapters[0]["title"] and chapters[0]["id"].endswith(".chapter.1")
     assert chapters[0]["text"] == "Alice reaches the lighthouse in search of her brother Tom. Alice discovers a hidden letter."
     assert any("(summary) Alice discovers" in c for c in llm.calls)
+    # The scripted model gives chapter two no summary at all: its checked event stands in for one.
+    assert chapters[1]["text"] == "Pike admits Tom stayed."
     v = view([ix], Position(None, "toc02.para02"))
-    assert [c["id"] for c in v["chapters"]] == [chapters[0]["id"]]
+    assert [c["id"] for c in v["chapters"]] == [c["id"] for c in chapters]
     assert v["recap"]["text"].startswith("Pike admits")
 
 
@@ -501,6 +503,53 @@ def test_every_development_is_kept_within_the_budget(book_path, tmp_path):
     ix, _, _ = _run(book_path, tmp_path, llm=_ManyEvents())
     assert sum(1 for ev in ix["events"] if ev["summary"].startswith("Step ")) == 6   # the old cap was 2
     assert "every development" in generate.EXTRACT and "never a description" in generate.EXTRACT
+
+
+def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path)
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert by["Alice finds a hidden letter."]["kind"] == "turn"
+    assert "kind" not in by["Alice arrives at the lighthouse."]          # "plot" is the ordinary development: no kind
+    assert report["stats"]["turning points"] == 1
+    assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
+    assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
+    assert generate.PROMPT_VERSION == "extract-v7"
+
+
+class _Labels(FakeLLM):
+    """A model that answers the summary with a heading and an event with one word."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["summary"] = ["unresolved", *out["summary"]]
+            out["events"].append({"p": 2, "text": "Arrival.", "who": ["Alice Marlow"], "weight": "plot"})
+        return out
+
+
+def test_a_label_is_not_a_summary_sentence_or_an_event(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Labels())
+    assert report["stats"]["dropped: not a sentence"] == 2
+    assert not any(ev["summary"] == "Arrival." for ev in ix["events"])
+    assert not any(r["text"].startswith("unresolved") for r in ix["recaps"])
+
+
+class _NoSummary(FakeLLM):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["summary"] = []
+            out["events"].append({"p": 2, "text": "Alice eats bread and cheese by the fire.", "who": ["Alice Marlow"], "weight": "minor"})
+        return out
+
+
+def test_a_chapter_with_no_summary_is_recapped_from_its_events(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_NoSummary())
+    first = next(r for r in ix["recaps"] if r.get("scope") == "chapter" and r["title"] == "Chapter One")
+    assert "Alice arrives at the lighthouse." in first["text"] and "Alice finds a hidden letter." in first["text"]
+    assert "bread and cheese" not in first["text"]          # small moments stay out of the recap
+    assert report["stats"]["chapter recap from events"] == 2   # chapter two's scripted answer has no summary either
 
 
 def test_default_chunk_size_follows_the_provider():

@@ -172,6 +172,12 @@
               "string",
               "null"
             ]
+          },
+          "kind": {
+            "enum": [
+              "turn",
+              "minor"
+            ]
           }
         }
       }

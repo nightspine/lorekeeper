@@ -217,6 +217,24 @@ def test_edits_are_applied_again_after_a_rebuild(client, tmp_path):
     assert "your edits: 5 applied again" in lines
 
 
+def test_events_can_be_weighed_by_hand(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1)
+    ev = edit(client, key, op="add-event", summary="Alice finds the letter.", entities=["alice-marlow"], seq=5, kind="turn")
+    plain = edit(client, key, op="add-event", summary="Alice has supper.", entities=[], seq=5, kind="")
+    d = doc_of(client, key)
+    kinds = {e["id"]: e.get("kind") for e in d["events"]}
+    assert kinds[ev["id"]] == "turn" and kinds[plain["id"]] is None
+    edit(client, key, op="edit-event", id=ev["id"], kind="minor")
+    edit(client, key, op="edit-event", id=plain["id"], summary="Alice eats.")       # kind untouched when not sent
+    d = doc_of(client, key)
+    kinds = {e["id"]: e.get("kind") for e in d["events"]}
+    assert kinds[ev["id"]] == "minor" and kinds[plain["id"]] is None
+    edit(client, key, op="edit-event", id=ev["id"], kind="")
+    assert "kind" not in next(e for e in doc_of(client, key)["events"] if e["id"] == ev["id"])
+    refuse(client, key, 400, op="add-event", summary="x", entities=[], seq=5, kind="huge")
+
+
 def test_passage_for_the_anchor_picker(client, tmp_path):
     _, key = handmade(client, tmp_path)
     th = doc_of(client, key)["editions"][0]["textHash"]

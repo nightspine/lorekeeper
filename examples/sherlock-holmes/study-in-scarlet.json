@@ -1134,8 +1134,9 @@
       ],
       "evidence": [
         "ch1.para35"
-      ]
-    },
+      ],
+    "kind": "turn"
+  },
     {
       "id": "sis.ev.agree",
       "from": "ch1.para60",
@@ -1198,8 +1199,9 @@
       ],
       "evidence": [
         "ch2.para50"
-      ]
-    }
+      ],
+    "kind": "minor"
+  }
   ],
   "recaps": [
     {

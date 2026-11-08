@@ -28,7 +28,7 @@ from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v6"
+PROMPT_VERSION = "extract-v7"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -103,6 +103,11 @@ HINDSIGHT = re.compile(
     r"(would|will) (later|eventually|soon)|turns out|in reality|actually (is|was) the|foreshadow\w*|"
     r"at first glance|for now)\b", re.IGNORECASE)
 
+# How much an event drives the story (SPEC.md §4.4): the model weighs each one "turn", "plot" or "minor"; "plot"
+# is the ordinary development and is stored as no kind at all.
+EVENT_KINDS = ("turn", "minor")
+MIN_SENTENCE_WORDS = 4   # a summary sentence or an event shorter than this is a heading or a label, not a claim
+
 # A fact that reads as a description ("A tall man in black who welcomes guests") stays a fact even when the
 # checker calls it a moment: an event is something that happens.
 DESCRIPTIVE = re.compile(r"^(a|an|the)\b.*\b(who|whose|that|which)\b", re.IGNORECASE)
@@ -146,9 +151,18 @@ Update the companion with what THIS passage adds. Report only new information.
   discovery, a confrontation, a death, a reveal, a promise, a change in someone's standing. One sentence each (under
   30 words), in order, saying who did what and what it changed, with "who" (ids or new names) and "p" = the paragraph
   where it happens. An event is something that happens, never a description of how someone looks or what they are.
-  Up to {events}; leave out nothing that a reader catching up would need.
-- summary: what happens in THIS passage, in order, as {summary} sentences (each under 35 words) with the key details:
-  who does what and where, what is learned, decided or left unresolved. Use names, not pronouns.
+  Up to {events}; leave out nothing that a reader catching up would need. Give each a "weight":
+  "turn" for a turning point that changes the course of the story or a character's life: a revelation, a twist, a
+  reversal, a realization, a death, a betrayal, a decision there is no going back from;
+  "plot" for a development that moves the main story or changes what a character wants, knows or can do;
+  "minor" for a small moment that colours the scene but changes nothing: a meal, a journey detail, small talk, a
+  passing mood. Most events are "plot"; a passage has at most one or two turning points and may have none.
+- summary: {summary} complete sentences (each under 35 words) on what happens in THIS passage, in reading order,
+  giving most room to what moves the story: what is revealed, decided, lost, gained or set in motion, and what that
+  means for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label
+  or a single word. Leave out scenery, meals and side remarks unless they bear on what follows, but never leave the
+  summary empty: a quiet passage still gets a sentence or two on where the characters are and what they learn.
+  Use names, not pronouns.
 - recap: the story so far, updated to the end of this passage, for a reader coming back after a break: first the
   whole arc so far in a few sentences (earlier events compressed to their consequences, never dropped), then the
   recent stretch in more detail, ending with where things stand (who is where, what they are after, what is
@@ -312,7 +326,8 @@ def extract_schema(relations: bool) -> dict:
         "updates": _ARR(_obj({"id": _STR, "p": _INT, "desc": _STR, "corrects": _STR}, ["id", "p", "desc"])),
         "profiles": _ARR(_obj({"id": _STR, "p": _INT, "text": _STR}, ["id", "p", "text"])),
         "names": _ARR(_obj({"id": _STR, "name": _STR, "p": _INT}, ["id", "name", "p"])),
-        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR)}, ["p", "text", "who"])),
+        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR), "weight": {"enum": ["turn", "plot", "minor"]}},
+                            ["p", "text", "who", "weight"])),
         "summary": _ARR(_STR),
         "recap": _STR,
     }
@@ -1152,7 +1167,8 @@ class Generator:
             ents = list(dict.fromkeys(e for x in ev.get("who", []) for e in resolve_all(x, at) if e))
             c = self._candidate("event", f"e{i}", ev.get("text", ""), at, [], ents or None, 280)
             if c:
-                c.data = {"entities": ents}
+                weight = ev.get("weight")
+                c.data = {"entities": ents, **({"kind": weight} if weight in EVENT_KINDS else {})}
                 cands.append(c)
         summary = raw.get("summary") if isinstance(raw.get("summary"), list) else []
         for i, sentence in enumerate(summary[:14]):
@@ -1174,6 +1190,7 @@ class Generator:
             self.on_phase("verify")
             cands = self._verify(cands, passage, chunk.start)
         self.summary_parts = []
+        self._events_at_chunk_start = len(self.events)
         for c in cands:
             self._commit(c)
         self._commit_summary(chunk)
@@ -1198,6 +1215,9 @@ class Generator:
             return None
         if kind in ("recap", "summary") and ABOUT_THE_TEXT.search(claim):
             self.stats["dropped: talks about the text"] += 1   # the previous recap stays
+            return None
+        if kind in ("summary", "event") and len(text.words(claim)) < MIN_SENTENCE_WORDS:   # "unresolved" is a label, not a sentence
+            self.stats["dropped: not a sentence"] += 1
             return None
         cited = [at_seq, *evidence]
         # Reveal no earlier than the last cited paragraph and the entities involved.
@@ -1318,8 +1338,14 @@ class Generator:
         return self.book.chapters[chunk.chapter].title if chunk.chapter >= 0 else "Opening"
 
     def _commit_summary(self, chunk: Chunk) -> None:
-        """The checked summary sentences become this passage's chapter recap, revealed at its end."""
+        """The checked summary sentences become this passage's chapter recap, revealed at its end. When the
+        model gave none (small models often answer a quiet passage with nothing or a bare label), the
+        passage's own checked events, minor moments left out, stand in for it: a chapter never goes unsummarized."""
         parts, text_ = self.summary_parts, ""
+        if not parts:
+            parts = [ev["summary"] for ev in self.events[getattr(self, "_events_at_chunk_start", 0):] if ev.get("kind") != "minor"]
+            if parts:
+                self.stats["chapter recap from events"] += 1
         for part in parts:
             if len(text_) + len(part) + 1 > 2000:
                 break
@@ -1401,9 +1427,12 @@ class Generator:
             self.stats["relations"] += 1
         else:
             self.events.append({"id": self._next_id(f"{self.key}.ev"), "from": item["from"], "summary": c.text,
-                                "entities": c.data["entities"], "evidence": item["evidence"]})
-            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text})
+                                "entities": c.data["entities"], "evidence": item["evidence"],
+                                **({"kind": c.data["kind"]} if c.data.get("kind") else {})})
+            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text, **({"weight": c.data["kind"]} if c.data.get("kind") else {})})
             self.stats["events"] += 1
+            if c.data.get("kind") == "turn":
+                self.stats["turning points"] += 1
 
     # ---- output ----------------------------------------------------------------------------
 

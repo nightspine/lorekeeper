@@ -545,7 +545,8 @@
           "holmes",
           "barts"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "turn"
       },
       {
         "id": "sis.ev.agree",
@@ -594,7 +595,8 @@
           "watson",
           "marine-sergeant"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "minor"
       },
       {
         "id": "sof.ev.cocaine",

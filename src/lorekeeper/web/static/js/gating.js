@@ -148,7 +148,7 @@ export function view(indexes, position, series = null, order = null, finished = 
     relations: relSorted.filter(([, r]) => !replaced.has(r.id)).map(([, r, b]) => relOut(r, b)),
     relationHistory: relSorted.filter(([, r]) => replaced.has(r.id)).map(([, r, b]) => relOut(r, b)),
     events: events.sort((a, b) => cmp(a[0], b[0]))
-      .map(([, ev, b]) => ({ id: ev.id, summary: ev.summary, entities: ev.entities, book: b })),
+      .map(([, ev, b]) => ({ id: ev.id, summary: ev.summary, entities: ev.entities, book: b, ...(ev.kind !== undefined ? { kind: ev.kind } : {}) })),
     recap: latest ? { id: latest[1].id, text: latest[1].text, book: latest[2] } : null,
     chapters: recaps.filter((t) => t[1].scope === "chapter").sort((a, b) => cmp(a[0], b[0]))
       .map(([, rc, b]) => ({ id: rc.id, title: rc.title ?? null, text: rc.text, book: b })),

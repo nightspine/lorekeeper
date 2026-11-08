@@ -129,3 +129,10 @@ def test_profile_inherited_from_carried_entry(four, series):
     alone = view([four], Position("sign-of-four", "ch1.para05"), series)
     assert _profile(alone, "holmes") == "sof.carried.holmes.1"
     assert _profile(view([four], Position("sign-of-four", "ch1.para12"), series), "holmes") == "sof.holmes.p1"
+
+
+def test_the_view_carries_an_event_kind_only_when_the_index_has_one(scarlet, series):
+    v = view([scarlet], Position("study-in-scarlet", "ch2.para51"), series)
+    kinds = {ev["id"]: ev.get("kind") for ev in v["events"]}
+    assert kinds["sis.ev.meeting"] == "turn" and kinds["sis.ev.sergeant"] == "minor"
+    assert "kind" not in next(ev for ev in v["events"] if ev["id"] == "sis.ev.maiwand")

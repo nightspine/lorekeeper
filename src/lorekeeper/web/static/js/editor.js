@@ -318,6 +318,8 @@ export function createEditor(ctx) {
     const state = { seq: found ? seqOf(found) : ctx.seqAt() };
     const chosen = new Set(ev ? ev.entities : preset);
     const summary = textarea(ev?.summary, 3, "What happens");
+    const kind = select([["", "A development of the story"], ["turn", "A turning point: a revelation, twist or decision that changes its course"],
+      ["minor", "A small moment that changes nothing"]], ev?.kind || "", "How much it matters");
     const err = h("p.field-error");
     const chips = h("div.ents");
     const pick = h("select.select", { "aria-label": "Add an entry involved" });
@@ -331,11 +333,11 @@ export function createEditor(ctx) {
     }
     pick.addEventListener("change", () => { if (pick.value) { chosen.add(pick.value); paintChips(); } });
     paintChips();
-    return form(h("label.label", "What happens, in your own words"), summary, err, chips, pick, revealLine(state),
+    return form(h("label.label", "What happens, in your own words"), summary, err, chips, pick, kind, revealLine(state),
       actions(async () => {
         const op = ev
-          ? { op: "edit-event", id: ev.id, summary: summary.value.trim(), entities: [...chosen], ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
-          : { op: "add-event", summary: summary.value.trim(), entities: [...chosen], seq: state.seq };
+          ? { op: "edit-event", id: ev.id, summary: summary.value.trim(), entities: [...chosen], kind: kind.value, ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
+          : { op: "add-event", summary: summary.value.trim(), entities: [...chosen], kind: kind.value, seq: state.seq };
         if (await apply(op, err)) done();
       }, done));
   }
@@ -475,8 +477,8 @@ export function createEditor(ctx) {
         })) : null, addRel),
       h("div.d-sec", h("span.eyebrow", "Appears in"),
         evs.length ? h("ol.timeline", evs.map((ev) => {
-          const li = h("li");
-          clear(li, h("p.ev", ev.summary), bookLabel(ev.book), eventRowActions(ev, li));
+          const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}`);
+          clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary), bookLabel(ev.book), eventRowActions(ev, li));
           return li;
         })) : null, addEv),
       mine(found) ? h("div.drawer-foot", del) : null);

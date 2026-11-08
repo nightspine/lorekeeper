@@ -536,6 +536,13 @@
         },
         "evidence": {
           "$ref": "#/$defs/evidence"
+        },
+        "kind": {
+          "enum": [
+            "turn",
+            "minor"
+          ],
+          "description": "How much the event drives the story (SPEC.md §4.4): a turning point, or a small moment. Absent for an ordinary development."
         }
       }
     },

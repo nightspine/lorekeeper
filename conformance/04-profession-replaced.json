@@ -453,7 +453,8 @@
           "holmes",
           "barts"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "turn"
       },
       {
         "id": "sis.ev.agree",

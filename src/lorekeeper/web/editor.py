@@ -30,6 +30,7 @@ TYPES = ("person", "creature", "place", "group", "object", "concept", "term")
 NAME_KINDS = ("primary", "alias", "title", "nickname", "descriptive")
 BASES = ("stated", "inferred")
 SCOPES = ("story", "chapter")
+EVENT_KINDS = ("turn", "minor")   # how much an event drives the story; absent = an ordinary development
 # Spec length limits (SPEC.md §6.3), with how the message names each kind of text.
 LIMITS = {"detail": (280, "a detail"), "profile": (800, "a description"), "event": (280, "an event"),
           "label": (80, "a connection"), "name": (120, "a name"), "story": (1200, "a story recap"),
@@ -604,6 +605,9 @@ class Editor:
         ents = self._entity_ids(ctx, op.get("entities", []), anchor)
         summary = self._text(ctx, "event", summary, anchor)
         item = {"id": ctx.new_id(f"{ctx.book_key}.ev"), "from": anchor, "summary": summary, "entities": ents, "evidence": [anchor]}
+        kind = self._event_kind(op)
+        if kind:
+            item["kind"] = kind
         ords = ctx.ords()
         evs = ctx.doc["events"]
         pos = next((k for k, x in enumerate(evs) if ords.get(x["from"], 0) > ords[anchor]), len(evs))
@@ -627,10 +631,26 @@ class Editor:
             self._entity_ids(ctx, ev["entities"], ev["from"])
         if op.get("summary") is not None:
             ev["summary"] = self._text(ctx, "event", op["summary"], ev["from"])
+        if "kind" in op:
+            kind = self._event_kind(op)
+            if kind:
+                ev["kind"] = kind
+            else:
+                ev.pop("kind", None)
         ords = ctx.ords()
         ctx.doc["events"].sort(key=lambda x: ords.get(x["from"], 0))
         ctx.changed.add(j)
         return "Edited an event", {"id": iid, "text": old}
+
+    @staticmethod
+    def _event_kind(op: dict) -> str | None:
+        """An event's weight: "turn" or "minor", or None for an ordinary development ("" and "plot" count as none)."""
+        kind = op.get("kind")
+        if kind in (None, "", "plot"):
+            return None
+        if kind not in EVENT_KINDS:
+            raise EditError("kind must be turn, minor, or left out")
+        return kind
 
     def _op_delete_event(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
         iid, = self._need(op, "id")
