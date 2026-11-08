@@ -110,6 +110,51 @@ EVENT_KINDS = ("turn", "minor")
 # same kind between the same two replaces the older one instead of drawing a second line.
 RELATION_KINDS = ("family", "romance", "friendship", "alliance", "service", "hostility", "acquaintance", "place")
 MAX_TIE_WORDS = 8   # a label longer than this is a sentence about the two, not a tie
+# Words that put a name on somebody else: "her mother Mrs. Westenra", "daughter of Mrs. Westenra".
+KIN_WORDS = TIE_WORDS + ("grandmother", "grandfather", "stepmother", "stepfather", "servant", "maid", "master")
+
+
+def names_a_relative(name: str, texts) -> bool:
+    """True when any of the texts uses `name` for a relative or companion of the subject ("her mother Mrs.
+    Westenra", "daughter of Mrs. Westenra", "Mrs. Westenra's daughter"): that name belongs to another person."""
+    kin = "|".join(sorted(KIN_WORDS, key=len, reverse=True))
+    n = re.escape(name)
+    pats = (rf"\b(?:her|his|their|its|my|your|our)\s+(?:{kin})s?\s*,?\s+{n}(?![\w'’])",
+            rf"\b(?:{kin})s?\s+(?:of|to)\s+(?:the\s+late\s+)?{n}(?![\w'’])",
+            rf"(?<![\w'’]){n}['’]s\s+(?:{kin})\b")
+    return any(re.search(p, t, re.I) for t in texts if t for p in pats)
+
+
+def names_two_people(name: str, own: list[str], texts) -> bool:
+    """True when one sentence uses the titled `name` and one of the entry's own names as two separate mentions
+    ("Mrs. Westenra was naturally anxious concerning Lucy"): the title is someone else's, not a second name.
+    An apposition ("Mina, Mrs. Harker, ...") is the same person and does not count."""
+    if not merge._titles(name):
+        return False
+    forms = set()
+    for o in own:
+        if merge._titles(o):
+            continue
+        forms.add(o)
+        first = o.split()[0]
+        if len(o.split()) > 1 and first[:1].isupper() and len(first) > 2:
+            forms.add(first)
+    # The dot after a title is not a sentence end: hide it while splitting ("Mrs." → "Mrs").
+    hide = lambda x: re.sub(r"\b(Mr|Mrs|Ms|Messrs|Dr|St|Prof|Rev|Capt|Col|Gen|Lt|Sgt|Mme|Mlle)\.", r"\1", x)
+    me = re.compile(rf"(?<![\w'’]){re.escape(hide(name))}(?![\w'’])")
+    for t in texts:
+        for sentence in re.split(r"(?<=[.!?;])\s+", hide(t or "")):
+            spans = [m.span() for m in me.finditer(sentence)]
+            if not spans:
+                continue
+            for f in forms:
+                for m in re.finditer(rf"(?<![\w'’]){re.escape(f)}(?![\w'’])", sentence):
+                    if any(a <= m.start() < b for a, b in spans):
+                        continue   # part of the titled name itself
+                    gap = min(abs(m.start() - b) if m.start() >= b else abs(a - m.end()) for a, b in spans)
+                    if gap > 3:    # "Mina, Mrs. Harker" is one person; words between make two
+                        return True
+    return False
 MIN_SENTENCE_WORDS = 4   # a summary sentence or an event shorter than this is a heading or a label, not a claim
 
 # A fact that reads as a description ("A tall man in black who welcomes guests") stays a fact even when the
@@ -1421,6 +1466,16 @@ class Generator:
                for o in self._ids() if self._type(o) == e["type"]):
             self.stats["dropped: name belongs to another entry"] += 1
             return
+        if e["type"] == "person":
+            start, end = getattr(self, "scope_start", 0), min(len(self.book.blocks), seq + 2)
+            near = [self.book.blocks[q].raw for q in range(max(start, seq - 1), end)]
+            # Any sentence read so far that names the two apart settles it, not only the cited paragraph's.
+            said = [b.raw for b in self.book.blocks[start:end] if name in b.raw] if merge._titles(name) else []
+            if names_a_relative(name, near + [f["text"] for f in e.get("facets", [])]) or \
+                    names_two_people(name, [n["value"] for n in e["names"]], said):
+                # The checker passed "Mrs. Westenra" for Lucy, whose own notes call her "daughter of Mrs. Westenra".
+                self.stats["dropped: name of a relative"] += 1
+                return
         words = text.words(name)
         if len(words) == 1 and e["type"] == "person" and words[0] in self._family():
             # "Harker" is Jonathan and Mina alike: a family name says nothing about who this is.

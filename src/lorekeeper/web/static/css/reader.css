@@ -291,10 +291,27 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 
 /* ---------- small screens ---------- */
 @media (max-width: 640px) {
-  .reader-head { grid-template-columns: 1fr; }
+  /* The book header is one compact block: title and author on the left, Switch book as an icon on the right. */
+  .reader-head { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: start; }
+  .reader-head h1 { font-size: 24px; }
+  .reader-head .title { gap: 2px; }
+  .reader-head .by { font-size: var(--text-sm); }
+  .reader-switch { display: flex; gap: 8px; }
+  .switch-book { width: 44px; min-height: 44px; padding: 0; justify-content: center; }
+  .switch-book .btn-lbl { display: none; }
   .reader-head .select { min-width: 0 !important; }
-  /* The position panel is a strip on a phone, not a dashboard: the lists below it are the point. */
-  .position { position: static; margin-bottom: 0; padding: 14px 16px 10px; gap: 6px; }
+  /* The position panel is a strip on a phone, not a dashboard: the lists below it are the point. Scrolled, it
+     shrinks to one line (percentage, chapter, step buttons) that stays under the top bar. */
+  .position { padding: 14px 16px 10px; gap: 6px; }
+  .position.compact { gap: 10px; padding: 6px 10px 6px 14px; }
+  .position.compact .track { display: none; }
+  .position.compact .where { flex: 1 1 auto; min-width: 0; gap: 10px; }
+  .position.compact .where .pct { font-size: 22px; }
+  .position.compact .where-text { min-width: 0; }
+  .position.compact .where .chap { max-width: none; font-size: 14px; }
+  .position.compact .pos-source { display: none; }
+  .position.compact .pos-controls { width: auto; }
+  .position.compact .icon-btn { width: 36px; height: 36px; }
   .where { gap: 2px 12px; }
   .where .pct { font-size: 30px; }
   .where .pct-unit { font-size: 14px; }
@@ -366,4 +383,23 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 @media (max-width: 640px) {
   .para-bar, .para-nav { flex-wrap: wrap; }
   .para-bar .select { flex-basis: 100%; }
+}
+.tl-earlier { width: 100%; justify-content: center; margin: var(--space-3) 0; }
+.d-jumps { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 6px; }
+.d-jumps .linkish { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; font-size: var(--text-sm); font-weight: 600; }
+.d-jumps .n { color: var(--text-3); font-weight: 600; }
+.drawer .d-sec { scroll-margin-top: var(--space-3); }
+@media (max-width: 640px) {
+  dialog.drawer { border-radius: 0; border-left: 0; }
+  .drawer header { padding: var(--space-4) var(--space-4) var(--space-3); }
+  .drawer .body { padding: var(--space-4) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); }
+}
+.type-chips { display: contents; }
+@media (max-width: 640px) {
+  /* Cast filters: search on its own line, the type chips as one row that scrolls sideways, then the sort. */
+  .filters .search { flex-basis: 100%; max-width: none; }
+  .filters { min-width: 0; }
+  .type-chips { display: flex; gap: 16px; width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap;
+    -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); }
+  .type-chips > * { flex: none; }
 }

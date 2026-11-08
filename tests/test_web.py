@@ -635,3 +635,13 @@ def test_a_run_never_remerges_pairs_a_person_separated(client, tmp_path, monkeyp
     job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
     wait_for(client, job["id"], {"done", "failed"})
     assert seen["distinct"] == set()
+
+
+def test_app_files_are_revalidated(client):
+    """After an upgrade a browser must not mix cached scripts and styles from the old version."""
+    for path in ("/", "/static/js/app.js", "/static/css/base.css", "/css/base.css"):
+        r = client.get(path)
+        assert r.status_code == 200, path
+        assert r.headers["cache-control"] == "no-cache", path
+    etag = client.get("/static/css/base.css").headers["etag"]
+    assert client.get("/static/css/base.css", headers={"If-None-Match": etag}).status_code == 304

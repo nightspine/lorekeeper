@@ -42,7 +42,29 @@ STATUS = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|marri
                     r"widow(ed|er)?|engaged|betrothed|captured|captive|prisoner|imprisoned|escaped|freed|"
                     r"wounded|injured|crippled|blinded|recovered|turned|transformed|knighted|promoted|"
                     r"appointed|crowned|exiled|banished|disgraced|betrayed|revealed|unmasked|disguised|"
-                    r"orphaned|adopted|pregnant|arrested|sentenced|pardoned|vanished|missing)\b", re.IGNORECASE)
+                    r"orphaned|adopted|pregnant|arrested|sentenced|pardoned|vanished|missing|destroyed)\b", re.IGNORECASE)
+# "near death", "feared dead", "as if dead": a status word that states no change. Quoting "found Lucy near death"
+# as a change in standing made Haiku write "Dead, ... buried the same day as her mother" chapters early.
+HEDGED = re.compile(r"\b(near|nearly|almost|close to|on the point of|feared|fears?|thought|believed|seem(ed|s)?|as if|"
+                    r"like|half)\s+(\w+\s+){0,2}?(dead|death|dying|dies|died)\b", re.IGNORECASE)
+
+
+# A death never comes undone (an Un-Dead Lucy is still dead), so a portrait that knows of one must open with it;
+# other changes in standing can reverse ("captured", then "escaped") and only need some status word.
+DEATH = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|destroyed)\b", re.IGNORECASE)
+
+
+def _opens_with(change: str, text: str) -> bool:
+    """Whether `text`'s first sentence states the kind of change `change` records."""
+    first = HEDGED.sub(" ", _first(text))
+    return bool(DEATH.search(first)) if DEATH.search(HEDGED.sub(" ", change)) else bool(STATUS.search(first))
+
+
+def changes_standing(text: str) -> bool:
+    """Whether a fact or turning point records a lasting change in standing (not a hedged "near death")."""
+    return bool(STATUS.search(HEDGED.sub(" ", text)))
+
+
 BUDGET = 24000       # characters of passage text per portrait
 CONTEXT = 1          # paragraphs of context either side of a mention
 WORKERS = 6
@@ -145,6 +167,15 @@ def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int) -> tuple[s
     return "\n…\n".join(out), last
 
 
+def _first(text: str) -> str:
+    """The first sentence."""
+    return re.split(r"(?<=[.!?])\s", text, maxsplit=1)[0]
+
+
+def name_of(e: dict, names: list[str]) -> str:
+    return names[0] if names else e["names"][0]["value"]
+
+
 def _checked(text: str, known: set[str], source: str | None = None,
              book: set[tuple[str, ...]] | None = None) -> tuple[str | None, str]:
     """(text, "") if the portrait is usable, else (None, reason). `known` holds the capitalised
@@ -230,10 +261,19 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
     since: dict[str, int] = {}    # entity → index of the mark of its last portrait
     upto_mark: dict[str, int] = {}   # entity → the mark its last portrait was written at
     # entity → seqs of its checked facts that record a change in standing
-    status: dict[str, list[int]] = {
-        e["id"]: sorted(seq_of[f["from"]] for f in e["facets"]
-                        if f.get("kind") != "profile" and f["from"] in seq_of and STATUS.search(f["text"]))
+    # A change in standing is a checked fact ("Has died") or a turning point naming the entity ("Lucy dies"):
+    # the extraction records a death as either, and Lucy's was only an event in one Dracula build.
+    turns: dict[str, list[tuple[int, str]]] = {}
+    for ev in d.get("events", []):
+        if ev.get("kind") == "turn" and ev["from"] in seq_of and changes_standing(ev.get("summary", "")):
+            for eid in ev.get("entities", []):
+                turns.setdefault(eid, []).append((seq_of[ev["from"]], ev["summary"]))
+    standing: dict[str, list[tuple[int, str]]] = {
+        e["id"]: sorted([(seq_of[f["from"]], f["text"]) for f in e["facets"]
+                         if f.get("kind") != "profile" and f["from"] in seq_of and changes_standing(f["text"])]
+                        + turns.get(e["id"], []))
         for e in d["entities"]}
+    status: dict[str, list[int]] = {eid: [q for q, _ in xs] for eid, xs in standing.items()}
     last_text: dict[str, str] = {}
     written: dict[str, list[dict]] = {}
     marks = sorted(set(marks))
@@ -283,31 +323,68 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 sheet=" (as on a character sheet)" if e["type"] in ("person", "creature") else "",
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
                 passages=passages)
+            # A change in standing the notes record since the last portrait is spelled out, not left among the
+            # notes: told only "her death is reported", Haiku still described Lucy as recovering.
+            since_mark = upto_mark.get(eid, lo - 1)
+            recent = [(q, t) for q, t in standing.get(eid, ()) if since_mark < q <= mark][-3:]
+            changes = [t for _, t in recent]
+            # A portrait that is told of a change is never revealed before it: the paragraphs around Lucy's death
+            # need not name her, and the last mention alone would have put "Dead" before she dies.
+            if recent:
+                last = max(last, recent[-1][0])
+            if changes:
+                prompt += ("\n\nThe companion's checked notes and turning points record a change in standing since your last description: "
+                           + " / ".join(f'"{c}"' for c in changes)
+                           + f"\nIf the passages show it is {name_of(e, names)}'s own, your FIRST sentence states where "
+                           f"{name_of(e, names)} stands now (\"Dead, ...\"), before anything else. Never mention these notes, and state "
+                           "nothing the passages and notes do not show.")
+            # A tie may rest on what the companion already checked up to here (notes, earlier profiles, the last
+            # portrait), not only on the sampled passages: Lucy's "engaged" sits in letters the sample can miss.
+            source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"] if seq_of.get(f["from"], hi) <= mark])
             out = model.complete(SYSTEM, prompt, SCHEMA)
-            got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+            got = _checked(str((out or {}).get("text", "")), known, source, shingles)
+            if changes and got[0] and not _opens_with(" ".join(changes), got[0]):
+                again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nIts first sentence does '
+                                       "not state the change in standing. Rewrite it so the first sentence does.", SCHEMA)
+                retry = _checked(str((again or {}).get("text", "")), known, source, shingles)
+                if retry[0]:
+                    got = (retry[0], "rewritten: change in standing")
             if got[1].startswith("tie not in the text"):
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      f'No passage says {word}. Rewrite it without that tie, stating only what the passages show.', SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("copies the book"):
                 run = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer copied the book\'s wording ("{run}"): "{out.get("text", "")}"\n'
                                      "Rewrite it in your own words, quoting at most 5 consecutive words of the passages.", SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("wording"):
                 # Usually a lasting fact phrased as news ("now works with dragons"): one rewrite.
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      "Rewrite it as a timeless description without that wording.", SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
+            # A rewrite may not quietly drop the standing the last portrait opened with: after the stake, Lucy's
+            # went from "Dead, after a long decline" back to "her health has lately failed". One rewrite that keeps
+            # it, else the previous portrait stands.
+            if got[0] and prev and DEATH.search(HEDGED.sub(" ", _first(prev))) and not _opens_with(_first(prev), got[0]):
+                again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nYour earlier description '
+                                       f'began: "{_first(prev)}" That still holds unless the passages show it changed; '
+                                       "open with where things stand now.", SCHEMA)
+                retry = _checked(str((again or {}).get("text", "")), known, source, shingles)
+                got = (retry[0], "rewritten: kept the change in standing") if retry[0] and _opens_with(_first(prev), retry[0]) \
+                    else (None, "lost the change in standing")
             return eid, seen, last, got
 
         with ThreadPoolExecutor(WORKERS) as pool:
             results = list(pool.map(one, due))
         for eid, seen, last, (t, why) in results:
+            if t is not None and why:
+                stats[why] += 1
             if t is None:
                 stats["dropped"] += 1
+                stats[f"dropped: {why.split(':')[0]}"] += 1
                 log(f"    dropped {ents[eid]['names'][0]['value']}: {why}")
                 continue
             # Never before the previous portrait: it is the one this replaces.

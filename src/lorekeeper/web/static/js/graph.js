@@ -7,7 +7,7 @@
 // only from what has been read, starting from where nodes sat before, so moving forward fills the
 // map in instead of reshuffling it, and nothing about its shape hints at what's still to come
 // (SPEC.md §7.4).
-import { clear, describe, h, icon, TYPE_LABEL, TYPE_PLURAL } from "./dom.js";
+import { clear, describe, foldList, h, icon, TYPE_LABEL, TYPE_PLURAL } from "./dom.js";
 import { archipelago, fit as fitMap, loadLibs, shape, zoomBy } from "./islands.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
@@ -351,39 +351,63 @@ export function renderConnections(panel, ctx) {
     const e = graph.ents.get(sel);
     const r = ctx.revealed(sel);
     const mine = graph.edges.filter((x) => (x.a === sel || x.b === sel) && typeOn(x.a === sel ? x.b : x.a));
-    const relRows = [];
-    for (const x of mine) for (const [rel, old] of [...x.rels.map((q) => [q, false]), ...(gs.history ? x.old.map((q) => [q, true]) : [])]) {
-      const other = rel.src === sel ? rel.dst : rel.src;
-      const at = ctx.revealed(rel.id);
+    // One row per person or thing, not one per tie: the row reads the latest tie as a sentence, and a pair with
+    // several ties (or, in older indexes, several actions) keeps the rest behind "and N more" inside the row.
+    const sentence = (rel, other) => {
       const link = h("button.linkish", { type: "button", on: { click: () => select(other) } }, nameOf(other));
-      relRows.push(h(`li${old ? ".old" : ""}${at?.isNew ? ".new" : ""}`,
-        h("span.g-sentence", rel.src === sel ? [h("b", e.name), " ", h("i", rel.label), " ", link] : [link, " ", h("i", rel.label), " ", h("b", e.name)],
-          old ? h("span.hint", " (earlier)") : null),
-        at ? h("span.g-when", at.where) : null));
-    }
+      return rel.src === sel ? [h("b", e.name), " ", h("i", rel.label), " ", link] : [link, " ", h("i", rel.label), " ", h("b", e.name)];
+    };
+    const tieRow = (x) => {
+      const other = x.a === sel ? x.b : x.a;
+      const ties = [...x.rels.map((q) => [q, false]), ...(gs.history ? x.old.map((q) => [q, true]) : [])];
+      const [[rel, old], ...rest] = [...ties].reverse();
+      const at = ctx.revealed(rel.id);
+      const li = h(`li${old ? ".old" : ""}${at?.isNew ? ".new" : ""}`);
+      const extra = h("ul.g-rel-more", { hidden: true }, rest.map(([q, o]) => h(`li${o ? ".old" : ""}`,
+        h("span.g-sentence", sentence(q, other), o ? h("span.hint", " (earlier)") : null), ctx.revealed(q.id) ? h("span.g-when", ctx.revealed(q.id).where) : null)));
+      const more = rest.length ? h("button.linkish.g-rel-toggle", { type: "button", "aria-expanded": "false", on: { click: (ev) => {
+        const open = extra.hidden; extra.hidden = !open;
+        ev.currentTarget.setAttribute("aria-expanded", String(open));
+        ev.currentTarget.textContent = open ? "Show fewer" : `and ${rest.length} more`;
+      } } }, `and ${rest.length} more`) : null;
+      clear(li, h("div.g-rel-main", h("span.g-sentence", sentence(rel, other), old ? h("span.hint", " (earlier)") : null), at ? h("span.g-when", at.where) : null),
+        more, rest.length ? extra : null);
+      return li;
+    };
+    const tied = mine.filter((x) => x.rels.length || (gs.history && x.old.length))
+      .sort((p, q) => (q.rels.length + q.old.length) - (p.rels.length + p.old.length) || nameOf(p.a === sel ? p.b : p.a).localeCompare(nameOf(q.a === sel ? q.b : q.a)));
     const co = mine.filter((x) => x.weight > 0).sort((a, b) => b.weight - a.weight).slice(0, 8);
     const coMax = Math.max(1, ...co.map((x) => x.weight));
     const older = mine.reduce((n, x) => n + x.old.length, 0);
     const about = describe(e);
+    const desc = about ? h("p.g-desc.clamp", about) : null;
+    const moreDesc = about && about.length > 200 ? h("button.linkish.g-desc-more", { type: "button", "aria-expanded": "false", on: { click: (ev) => {
+      const open = desc.classList.toggle("clamp") === false;
+      ev.currentTarget.setAttribute("aria-expanded", String(open));
+      ev.currentTarget.textContent = open ? "Less" : "Read the whole description";
+    } } }, "Read the whole description") : null;
+    const n = degree(sel);
+    side.classList.add("has-sel");
     clear(side,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
         h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
-      about ? h("p.g-desc", about) : null,
-      h("p.hint", [r ? `First seen ${r.where}` : null, `${degree(sel)} connection${degree(sel) === 1 ? "" : "s"} so far`].filter(Boolean).join(" · ")),
-      relRows.length ? h("div.g-sec", h("span.eyebrow", "Relationships"), h("ul.g-rels", relRows)) : null,
+      h("div.g-actions",
+        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; ctx.repaint(); } } },
+          icon(focus ? "layers" : "eye"), focus ? "Full map" : "Focus"),
+        h("button.btn", { type: "button", on: { click: (ev) => ctx.openEntity(sel, ev.currentTarget) } }, icon("person"), "Open details")),
+      desc, moreDesc,
+      h("p.hint", `${r?.where ? `First seen ${r.where}. ` : ""}${n} connection${n === 1 ? "" : "s"} so far.`),
+      tied.length ? h("div.g-sec", h("span.eyebrow", `Ties with ${tied.length} ${tied.length === 1 ? "other" : "others"}`),
+        foldList(tied, (xs) => h("ul.g-rels", xs.map(tieRow)), { show: 5 })) : null,
       older && !gs.history ? h("button.linkish", { type: "button", on: { click: () => { gs.history = true; ctx.repaint(); } } },
         `Show ${older} earlier relationship${older === 1 ? "" : "s"}`) : null,
-      co.length ? h("div.g-sec", h("span.eyebrow", "Appears with"), h("ul.g-co", co.map((x) => {
+      co.length ? h("div.g-sec", h("span.eyebrow", "Appears with"), foldList(co, (xs) => h("ul.g-co", xs.map((x) => {
         const other = x.a === sel ? x.b : x.a;
         const bits = [x.events && `${x.events} event${x.events === 1 ? "" : "s"}`, x.chapters && `${x.chapters} chapter${x.chapters === 1 ? "" : "s"}`].filter(Boolean);
         return h("li", h("button.linkish", { type: "button", on: { click: () => select(other) } }, nameOf(other)),
           h("span.g-bar", h("i", { style: { width: `${Math.round(x.weight / coMax * 100)}%` } })), h("span.hint", bits.join(", ")));
-      }))) : null,
-      h("div.g-actions",
-        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; ctx.repaint(); } } },
-          icon(focus ? "layers" : "eye"), focus ? "Back to the full map" : `Focus on ${e.name}`),
-        h("button.btn", { type: "button", on: { click: (ev) => ctx.openEntity(sel, ev.currentTarget) } }, icon("person"), "Open details")));
+      })), { show: 4 })) : null);
   } else {
     const fresh = ranked.filter((id) => ctx.revealed(id)?.isNew).slice(0, 10);
     clear(side, h("h3.g-pick", "Pick anyone or anything"),

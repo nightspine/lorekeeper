@@ -593,3 +593,16 @@ def test_ties_are_kinds_one_per_pair_and_a_newer_one_replaces_the_old(book_path,
 def test_default_chunk_size_follows_the_provider():
     assert generate.default_chunk_words("ollama") == generate.default_chunk_words(None) == 2500
     assert generate.default_chunk_words("claude") == generate.default_chunk_words("openai") == 8000
+
+
+def test_a_name_the_text_gives_a_relative_or_another_person_is_not_an_alias():
+    # Dracula: "Mrs. Westenra was naturally anxious concerning Lucy" gave Lucy her mother's name.
+    assert generate.names_two_people("Mrs. Westenra", ["Lucy Westenra"],
+                                     ["Mrs. Westenra was naturally anxious concerning Lucy, and has consulted me."])
+    assert not generate.names_two_people("Mrs. Harker", ["Mina Murray", "Mina Harker"], ["I said to Mina, Mrs. Harker, that we go."])
+    assert not generate.names_two_people("Mrs. Harker", ["Mina Harker"], ["Mrs. Harker smiled at me. Mina was tired."])
+    assert not generate.names_two_people("Lucy", ["Lucy Westenra"], ["Lucy came with Lucy Westenra."])   # untitled: not judged
+    assert generate.names_a_relative("Mrs. Westenra", ["Lucy and her mother, Mrs. Westenra, walked out."])
+    assert generate.names_a_relative("Mrs. Westenra", ["A young woman, daughter of Mrs. Westenra."])
+    assert generate.names_a_relative("Mrs. Westenra", ["Mrs. Westenra's daughter is unwell."])
+    assert not generate.names_a_relative("Mrs. Harker", ["She is Mrs. Harker now, married in Buda-Pesth."])

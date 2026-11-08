@@ -4,7 +4,7 @@
    Surfaces are smoked glass (--glass, --glass-2) over a deep ground with a lit top edge (--edge-lit). One cool accent glows (--beacon),
    one warm accent marks anything new (--ember), rose is for danger.
    Type scale: --text-xs … --text-3xl (nothing below 12px; body is --text-base). Spacing: --space-1 … --space-7 (4–48px).
-   Topbar height: --topbar-h (61px; 104px when the bar wraps at 640px) anchors every sticky offset below the bar.
+   Topbar height: --topbar-h (61px; 57px in one row at 640px) anchors every sticky offset below the bar.
    This file holds tokens, base elements, the top bar and the shared primitives. Area files (library, reader, graph, studio, settings) load after it. */
 
 /* ---------- tokens ---------- */
@@ -325,6 +325,7 @@ input[type="range"].range { width: 100%; height: 44px; background: transparent; 
 .view-tabs button .svg-icon { display: none; }
 .view-tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--beacon); }
 .view-tabs [role="tab"][tabindex="-1"]:focus-visible { outline-offset: 2px; }
+.view-tabs .tab-short { display: none; }
 .view-tabs .count, .tab .count { font-size: 13px; font-weight: 600; color: var(--text-3); background: none; padding: 0; border: 0; }
 
 /* ---------- Modal ---------- */
@@ -346,13 +347,19 @@ dialog.modal::backdrop { background: var(--backdrop); backdrop-filter: blur(6px)
 
 /* ---------- responsive ---------- */
 @media (max-width: 640px) {
-  :root { --topbar-h: 104px; }
-  .topbar { gap: var(--space-3); flex-wrap: wrap; }
+  /* One row on a phone: the brand already leads to the Library and Docs is in the palette, so neither takes a row. */
+  :root { --topbar-h: 57px; }
+  .topbar { gap: var(--space-2); flex-wrap: nowrap; padding-top: 8px; padding-bottom: 8px; }
+  .topbar .tabs, #docs-link { display: none; }
+  .topbar-end { gap: var(--space-2); }
   .brand-name { font-size: var(--text-lg); }
   .status-pill .label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   .tabs { order: 3; width: 100%; justify-content: center; }
-  .view-tabs { gap: 20px; scrollbar-width: thin; scroll-snap-type: x proximity; -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent); mask-image: linear-gradient(to right, black calc(100% - 28px), transparent); }
-  .view-tabs button { scroll-snap-align: start; }
+  /* Four equal tabs on one row with short names, so none hides off the edge. */
+  .view-tabs { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; }
+  .view-tabs button { justify-content: center; gap: 5px; padding: 12px 0; font-size: 15px; }
+  .view-tabs .tab-full { display: none; }
+  .view-tabs .tab-short { display: inline; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
