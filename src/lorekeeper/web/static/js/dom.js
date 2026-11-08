@@ -54,6 +54,24 @@ export function icon(name, label) {
   return span.firstElementChild;
 }
 
+/**
+ * A long list shown short: the first `show` nodes (the last `show` with `fromEnd`) and one quiet
+ * "Show all N" control that expands it in place. `make(nodes)` builds the list element. Lists
+ * barely over the limit are shown whole: a control hiding one item is worse than the item.
+ */
+export function foldList(nodes, make, { show = 4, fromEnd = false, noun = "" } = {}) {
+  if (nodes.length <= show + 1) return make(nodes);
+  const wrap = h("div.fold");
+  const paint = (all) => {
+    const shown = all ? nodes : fromEnd ? nodes.slice(-show) : nodes.slice(0, show);
+    const more = h("button.linkish.fold-more", { type: "button", "aria-expanded": String(all), on: { click: () => paint(!all) } },
+      all ? "Show fewer" : `Show all ${nodes.length}${noun ? ` ${noun}` : ""}`);
+    clear(wrap, make(shown), more);
+  };
+  paint(false);
+  return wrap;
+}
+
 /** h("div.card#id", {attrs, on: {click}}, ...children) */
 export function h(spec, props, ...children) {
   if (props instanceof Node || typeof props === "string" || Array.isArray(props) || props == null) {

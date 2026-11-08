@@ -119,9 +119,7 @@ export function mountSettings(root) {
           h("td.num", m.price ? `$${m.price[1]}/M` : ""),
           h("td.num", perBook(m) != null ? money(perBook(m)) : ""))))))))
         : null,
-      h("p.hint.pricing-note", custom
-        ? "Any server that speaks the OpenAI chat API: LM Studio, vLLM, llama.cpp, a proxy. No price is known, so the estimate says so. Book text is sent to that server."
-        : `${priced.length ? `Estimated from a measured fact-checked run (about ${fmtInt(1.2 * 100000)} full-price input and ${fmtInt(0.58 * 100000)} output tokens per 100k words, standard depth). Prices are the provider's list prices and may have changed. ` : ""}Book text is sent to ${p.label}. The key is tested before saving, stored only on this machine in lorekeeper-data/secrets.json (readable by your user only), and never shown in full again.`));
+      custom ? h("p.hint.pricing-note", "Any server that speaks the OpenAI chat API: LM Studio, vLLM, llama.cpp, a proxy. No price is known, so the estimate says so. Book text is sent to that server.") : null);
   }
   async function paintProvider(id) {
     let p;
@@ -136,7 +134,9 @@ export function mountSettings(root) {
     try { r = await api.providers(fresh); } catch (e) { return clear(cloudBody, h("p.muted", e.message)); }
     for (const k of Object.keys(cards)) delete cards[k];
     for (const p of r.providers) cards[p.id] = providerCard(p);
-    clear(cloudBody, Object.values(cards));
+    // Said once for every provider, not nine times: how estimates are made and how a key is kept.
+    clear(cloudBody, h("p.hint.prov-note", `Per-book estimates come from a measured fact-checked run (about ${fmtInt(1.2 * 100000)} full-price input and ${fmtInt(0.58 * 100000)} output tokens per 100k words, standard depth) at each provider's list prices, which may have changed. Book text is sent to the provider you build with. A key is tested before it is saved, kept only on this machine in lorekeeper-data/secrets.json (readable by your user only), and never shown in full again.`),
+      Object.values(cards));
   }
   paintCloud();
 

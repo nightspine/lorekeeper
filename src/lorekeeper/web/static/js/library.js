@@ -156,7 +156,7 @@ export function mountLibrary(root) {
         bo.connected
           ? h("p.side-note", `Synced ${relTime(bo.synced)}. `, h("a", { href: "#/settings" }, "Settings"))
           : h("a.side-cta", { href: "#/settings" }, icon("link"), "Connect Book Orbit")),
-      h("div.side-group", h("span.eyebrow", "Series"),
+      !s.data.series.length ? null : h("div.side-group", h("span.eyebrow", "Series"),
         h("button.filter-row", { type: "button", on: { click: () => { s.sort = "series"; s.q = ""; paint(); } } },
           h("span", "Browse by series"), h("span.num", fmtInt(s.data.series.length)))));
   }

@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
-import { announce, clear, describe, h, icon, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, foldList, h, icon, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -1019,21 +1019,24 @@ export function mountReader(root) {
     const rels = v.relations.filter((r) => r.src === id || r.dst === id);
     const evs = v.events.filter((ev) => ev.entities.includes(id));
     const closeBtn = h("button.icon-btn", { type: "button", "aria-label": "Close", on: { click: closeDrawer } }, icon("x"));
-    const facts = (list) => h("ul.fact-list", list.map((f) => h("li", f.text,
+    // The panel answers "who is this?" first; the long lists behind it are shown short and open on request.
+    const factNode = (f) => h("li", f.text,
       f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null,
-      bookLabel(f.book) && h("span", " ", bookLabel(f.book)))));
+      bookLabel(f.book) && h("span", " ", bookLabel(f.book)));
+    const facts = (list, show = 4) => foldList(list.map(factNode), (nodes) => h("ul.fact-list", nodes), { show, noun: "details" });
+    const eyebrow = (label, n) => h("span.eyebrow", label, n > 1 ? h("span.n", String(n)) : null);
     const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         bookLabel(e.profile.book)) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(" · "))) : null,
-      h("div.d-sec", h("span.eyebrow", "What you know so far"),
+      h("div.d-sec", eyebrow("What you know so far", e.facets.length),
         e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
-      e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history)) : null,
-      rels.length ? h("div.d-sec", h("span.eyebrow", "Connections"),
-        h("ul.relations", rels.map(relationRow))) : null,
-      evs.length ? h("div.d-sec", h("span.eyebrow", "Appears in"),
-        h("ol.timeline", evs.map((ev) => eventRow(ev, { chips: false })))) : null,
+      e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null,
+      rels.length ? h("div.d-sec", eyebrow("Connections", rels.length),
+        foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" })) : null,
+      evs.length ? h("div.d-sec", eyebrow("Appears in", evs.length),
+        foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
         closeDrawer();
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
