@@ -75,6 +75,7 @@ export function mountReader(root) {
     tab: "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
+    earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
   };
   const wrap = h("div.reader");
   root.append(wrap);
@@ -122,7 +123,7 @@ export function mountReader(root) {
     s.map = new PositionMap(s.doc, edition);
     if (!keepPosition) s.p = 0;
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
-    s.reveals = null;
+    s.reveals = null; s.docOrds = null;
     s.sync = { on: false, override: false, ahead: false, wantAhead: null };
     s.dupes = await api.duplicates(key).catch(() => null);
     watchDupes(key);
@@ -619,7 +620,7 @@ export function mountReader(root) {
   function paintTabs() {
     const v = s.view;
     wrap.classList.toggle("wide", s.tab === "links");   // the map alone gets the full width
-    const tabs = [["chapters", "Chapters", chapterGroups().length], ["cast", "Cast & World", v.entities.length],
+    const tabs = [["chapters", "Chapters", chapterGroups().length], ["cast", "Cast & World", castEntities().length],
       ["timeline", "Timeline", v.events.length], ["links", "Connections", v.relations.length]];
     const keys = tabs.map((x) => x[0]);
     const select = (k, focus) => { s.tab = k; paintTabs(); if (focus) document.getElementById(`tab-${k}`)?.focus(); };
@@ -641,7 +642,8 @@ export function mountReader(root) {
 
   function paintCast() {
     const v = s.view;
-    const counts = Object.fromEntries(TYPES.map((t) => [t, v.entities.filter((e) => e.type === t).length]));
+    const listed = castEntities();
+    const counts = Object.fromEntries(TYPES.map((t) => [t, listed.filter((e) => e.type === t).length]));
     const search = h("input.input", { type: "search", placeholder: "Search names", value: s.q, "aria-label": "Search names and aliases" });
     search.addEventListener("input", () => { s.q = search.value; paintList(); });
     const chips = TYPES.filter((t) => counts[t]).map((t) => h(`button.filter-chip.t-${t}`, { type: "button", "aria-pressed": String(s.types.has(t)),
@@ -650,13 +652,25 @@ export function mountReader(root) {
     const sort = h("select.select.sort-select", { "aria-label": "Sort entries" },
       Object.entries(SORTS).map(([k, label]) => h("option", { value: k, selected: s.sort === k }, label)));
     sort.addEventListener("change", () => { s.sort = sort.value; paintList(); });
+    // In a series, entries met in earlier books that haven't appeared in this one yet are kept out of
+    // the way; one chip brings them back, and a search always looks through them.
+    const dormantN = s.series ? v.entities.filter(dormant).length : 0;
+    const earlierChip = dormantN ? h("button.filter-chip.earlier", { type: "button", "aria-pressed": String(s.earlier),
+      title: s.earlier ? "Hide entries from earlier books that haven't appeared in this one yet" : "Show entries from earlier books that haven't appeared in this one yet",
+      on: { click: () => {
+        s.earlier = !s.earlier;
+        try { localStorage.setItem("lk-earlier", s.earlier ? "1" : "0"); } catch {}
+        paintTabs();
+      } } }, icon("layers"), "From earlier books", h("span.n", String(dormantN))) : null;
     const list = h("div.cast-list");
     function paintList() {
       const q = s.q.trim().toLowerCase();
-      const shown = v.entities.filter((e) => (!s.types.size || s.types.has(e.type))
+      const pool = q ? v.entities : castEntities();
+      const shown = pool.filter((e) => (!s.types.size || s.types.has(e.type))
         && (!q || [e.name, ...e.aliases].some((n) => n.toLowerCase().includes(q))));
-      const order = { first: () => 0, az: (a, b) => a.name.localeCompare(b.name),
+      const by = { first: () => 0, az: (a, b) => a.name.localeCompare(b.name),
         known: (a, b) => b.facets.length - a.facets.length }[s.sort];
+      const order = (a, b) => (s.series ? Number(dormant(a)) - Number(dormant(b)) : 0) || by(a, b);   // this book's cast first
       if (!shown.length) {
         return clear(list, h("div.empty", h("div.art", icon(v.entities.length ? "search" : "book-open")),
           h("h3", v.entities.length ? "No matches" : "Nothing revealed yet"),
@@ -672,7 +686,7 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), chips, sort), dupesNotice(),
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), chips, earlierChip, sort), dupesNotice(),
       s.edit ? editor.addEntityButton() : null, list);
     paintList();
   }
@@ -737,13 +751,18 @@ export function mountReader(root) {
   function row(e) {
     const fresh = entityFresh(e);
     const about = e.profile ? describe(e) : (e.facets.find((f) => !startsWithVerb(f.text))?.text || describe(e));
-    const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}`, { type: "button", "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}${fresh ? ", new" : ""}`,
+    const from = carried(e.id) ? revealInfo(e.id).book : null;
+    const sleeping = from && !inThisBook(e.id);
+    const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}${sleeping ? ".dormant" : ""}`, { type: "button",
+      "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}${fresh ? ", new" : ""}${from ? `, from ${bookShort(from)}${sleeping ? ", not in this book yet" : ""}` : ""}`,
       on: { click: (ev) => openDrawer(e.id, { from: ev.currentTarget }) } },
       h(`span.ent-dot${fresh ? ".fresh" : ""}`, { "aria-hidden": "true", title: fresh ? "New" : null }),
       h("span.ent-name", h("span.nm", e.name),
         e.aliases.length ? h("span.aka", e.aliases.slice(0, 3).join(" · ")) : null),
       h("span.ent-fact", about || h("span.subtle", "Named, but nothing more is known yet.")),
-      h("span.ent-meta", h("span.num", String(e.facets.length)), e.facets.length === 1 ? " fact" : " facts",
+      h("span.ent-meta",
+        from ? h("span.book-label.ent-from", { title: sleeping ? "Met in an earlier book; not in this one yet" : "Met in an earlier book" }, `from ${bookShort(from)}`) : null,
+        h("span.num", String(e.facets.length)), e.facets.length === 1 ? " fact" : " facts",
         e.history.length ? h("span.hist", { title: `${e.history.length} earlier impression${e.history.length === 1 ? "" : "s"}` }, icon("refresh")) : null));
     if (fresh) rowEl.addEventListener("animationend", () => rowEl.classList.remove("arrive"), { once: true });
     return rowEl;
@@ -837,7 +856,7 @@ export function mountReader(root) {
     if (!e) return null;
     return h(`button.link-chip.t-${e.type}`, { type: "button", on: { click: (ev) => openDrawer(id, { from: ev.currentTarget }) } }, e.name);
   };
-  const bookLabel = (b) => (s.series && b && b !== s.book ? h("span.book-label", `from ${s.series.books.find((x) => x.key === b)?.title || b}`) : null);
+  const bookLabel = (b) => (s.series && b && b !== s.book ? h("span.book-label", `from ${bookShort(b)}`) : null);
 
   function paintTimeline() {
     const evs = s.newestFirst ? [...s.view.events].reverse() : s.view.events;
@@ -864,8 +883,8 @@ export function mountReader(root) {
     return m ? `Ch. ${m[1]}` : t.length > 26 ? `${t.slice(0, 25)}…` : t;
   }
 
-  /** Where an entity or relation was first revealed, and whether that's in the chapter being read. */
-  function revealed(id) {
+  /** The series book that introduces an entity (or relation) and the anchor it is revealed at. */
+  function revealInfo(id) {
     if (!s.reveals) {
       s.reveals = new Map();
       const docs = s.series ? [...s.seriesDocs.entries()] : [[null, s.doc]];
@@ -875,9 +894,49 @@ export function mountReader(root) {
         for (const r of d.relations || []) s.reveals.set(r.id, { book, from: r.from });
       }
     }
-    const r = s.reveals.get(id);
+    return s.reveals.get(id) || null;
+  }
+
+  /** An entity first met in an earlier book of the series. */
+  const carried = (id) => Boolean(s.series && revealInfo(id) && revealInfo(id).book !== s.book);
+  /** Has the entity appeared in the book being read, up to the current position? (Its own index lists
+   *  it, revealed at or before the frontier.) Carried entities that haven't are "dormant": still known
+   *  from earlier books, but not part of this book yet. */
+  function inThisBook(id) {
+    const e = s.doc.entities.find((x) => x.id === id);
+    if (!e) return false;
+    if (!s.docOrds) s.docOrds = new Map(s.doc.anchors.map((a, i) => [a.id, i]));
+    const front = s.map.frontier(s.p);
+    return front != null && (s.docOrds.get(e.from) ?? Infinity) <= s.docOrds.get(front);
+  }
+  const dormant = (e) => carried(e.id) && !inThisBook(e.id);
+  /** A book's title without the part every book of the series shares ("Chamber of Secrets"). */
+  function bookShort(key) {
+    const books = s.series?.books || [];
+    const b = books.find((x) => x.key === key);
+    if (!b) return key;
+    const words = books.map((x) => (x.title || "").split(/\s+/));
+    let n = 0;
+    if (words.length > 1) while (words.every((w) => w.length > n + 1 && w[n].toLowerCase() === words[0][n].toLowerCase())) n++;
+    return n >= 2 ? b.title.split(/\s+/).slice(n).join(" ") : b.title;
+  }
+  /** The cast as listed: entries from earlier books that haven't appeared in this one are hidden
+   *  unless the reader asks for them (or is searching). */
+  function castEntities() {
+    return s.series && !s.earlier ? s.view.entities.filter((e) => !dormant(e)) : s.view.entities;
+  }
+  function castView() {
+    if (!s.series || s.earlier) return s.view;
+    const ents = castEntities();
+    const ids = new Set(ents.map((e) => e.id));
+    return { ...s.view, entities: ents, relations: s.view.relations.filter((r) => ids.has(r.src) && ids.has(r.dst)) };
+  }
+
+  /** Where an entity or relation was first revealed, and whether that's in the chapter being read. */
+  function revealed(id) {
+    const r = revealInfo(id);
     if (!r) return null;
-    if (s.series && r.book !== s.book) return { where: `in ${s.series.books.find((x) => x.key === r.book)?.title || r.book}`, isNew: false };
+    if (s.series && r.book !== s.book) return { where: `in ${bookShort(r.book)}`, isNew: false };
     const at = s.map.anchorPos(r.from);
     const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
     const here = s.map.chapterAt(s.p);
@@ -887,7 +946,7 @@ export function mountReader(root) {
   function paintLinks() {
     const here = s.map.chapterAt(s.p);
     renderConnections(el.panel, {
-      view: s.view, types: s.types, gs: s.graph,
+      view: castView(), types: s.types, gs: s.graph,
       chapterMentions: chapterGroups().map((g) => mentions(g.parts.join(" ")).map((e) => e.id)),
       revealed, hereLabel: here ? shortChapter(here) : "this chapter",
       openEntity: (id, from) => openDrawer(id, { from }),
@@ -935,8 +994,9 @@ export function mountReader(root) {
         closeDrawer();
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
-    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", e.name), editor.drawerTitle(e))
-      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name));
+    const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
+    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", e.name), editor.drawerTitle(e), origin)
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name), origin);
     const content = [h("header", title, closeBtn), body];
     let dlg = document.querySelector("dialog.drawer");
     if (refresh && dlg) {
