@@ -244,3 +244,64 @@ def test_a_tie_the_entrys_own_checked_notes_state_is_kept():
     stats = portraits.portraits([(d, book)], model, log=lambda m: None)
     assert stats.get("portraits", 0) >= 1 and not stats.get("dropped")
     assert any("engaged" in f["text"] for f in d["entities"][0]["facets"] if f.get("kind") == "profile" and f["id"] != "f1")
+
+
+def test_a_turning_point_records_a_change_in_standing_too():
+    ch1 = ["Mira waited by the gate of the mill for a long while that day.",
+           "Mira came home again in the evening carrying her empty basket."]
+    ch2 = ["The fever took the village that winter and many did not see spring.",
+           "Mira lay in the cold room and did not wake on the third morning."]
+    book = _book([("One", ch1), ("Two", ch2)])
+    d = _doc(book, [_mira()])
+    # One Dracula build recorded Lucy's death only as the turning point "Lucy dies", never as a fact.
+    d["events"] = [{"id": "e1", "from": "b3", "kind": "turn", "summary": "Mira dies of the fever.", "entities": ["mira"], "evidence": ["b3"]},
+                   {"id": "e2", "from": "b2", "summary": "Mira is feared dead by the village.", "entities": ["mira"], "evidence": ["b2"]}]
+    model = Fake(["Mira is a young woman of the village.", "Dead of the fever; a young woman of the village."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and '"Mira dies of the fever."' in model.prompts[1]
+    assert "feared dead" not in model.prompts[1]           # an ordinary event is not a change in standing
+
+
+def test_a_hedged_near_death_is_not_a_change_in_standing():
+    # "Van Helsing and Seward find Lucy near death" as a change made Haiku write her death chapters early.
+    assert not portraits.changes_standing("Van Helsing and Seward find Lucy near death and pale.")
+    assert not portraits.changes_standing("Seward fears Lucy is dead.")
+    assert portraits.changes_standing("Lucy dies, and Seward leads Arthur away.")
+    assert portraits.changes_standing("Married to Jonathan Harker.")
+
+
+def test_a_portrait_told_of_a_change_is_not_revealed_before_it():
+    ch1 = ["Mira waited by the gate of the mill for a long while that day.",
+           "Mira came home again in the evening carrying her empty basket."]
+    ch2 = ["Mira lay in the cold room through the long winter night alone.",
+           "The fever took her on the third morning, and the whole village mourned."]
+    book = _book([("One", ch1), ("Two", ch2)])
+    d = _doc(book, [_mira()])
+    d["events"] = [{"id": "e1", "from": "b3", "kind": "turn", "summary": "Mira dies of the fever.", "entities": ["mira"], "evidence": ["b3"]}]
+    model = Fake(["Mira is a young woman of the village.", "Dead of the fever; a young woman of the village."])
+    portraits.portraits([(d, book)], model, log=lambda m: None)
+    ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
+    assert ps[-1]["text"].startswith("Dead") and ps[-1]["from"] == "b3"   # the last mention is b2
+
+
+def test_a_rewrite_may_not_drop_the_standing_the_last_portrait_opened_with():
+    ch1 = ["Mira waited by the gate of the mill for a long while that day.",
+           "Mira came home again in the evening carrying her empty basket."]
+    ch2 = [f"Mira was remembered at the mill by all who knew her, said the miller {i}." for i in range(6)]
+    book = _book([("One", ch1), ("Two", ch2)])
+    fact = {"id": "f1", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": "Died of the fever in winter."}
+    d = _doc(book, [_mira(facets=[fact])])
+    # Lucy after the stake: "Dead, after a long decline" became "her health has lately failed".
+    model = Fake(["Dead of the fever; a young woman of the village.", "Mira is a young woman whose health has failed.",
+                  "Mira is a young woman whose health has failed."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert 'began: "Dead of the fever;' in model.prompts[2]
+    assert stats["dropped: lost the change in standing"] == 1
+    ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
+    assert all(p["text"].startswith("Dead") for p in ps)
+
+
+def test_engaged_does_not_stand_in_for_a_death():
+    assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
+    assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")
+    assert portraits._opens_with("Captured by the Count.", "Escaped from the castle; a solicitor.")
