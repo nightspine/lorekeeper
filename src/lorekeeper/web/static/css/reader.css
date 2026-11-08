@@ -230,6 +230,10 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .relations li + li { border-top: 1px solid var(--edge); }
 .relations .lbl { font-size: var(--text-sm); font-weight: 500; color: var(--text-3); }
 .drawer-foot { padding-top: 6px; border-top: 1px solid var(--edge); }
+/* Long lists in the panel open on request; section labels carry their counts. */
+.fold { display: grid; gap: 8px; }
+.fold-more { justify-self: start; font-size: var(--text-sm); }
+.eyebrow .n { margin-left: 8px; font-weight: 500; color: var(--text-3); }
 
 /* ---------- Duplicate review ---------- */
 .dup-notice { align-items: center; flex-wrap: wrap; }
@@ -270,11 +274,19 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 @media (max-width: 640px) {
   .reader-head { grid-template-columns: 1fr; }
   .reader-head .select { min-width: 0 !important; }
-  .position { position: static; margin-bottom: 0; padding: 18px 16px 16px; }
-  .where .pct { font-size: 36px; }
-  .where .chap { font-size: var(--text-md); }
-  .pos-controls { width: 100%; }
-  .jump-group { margin-left: 0; flex: 1 1 100%; }
+  /* The position panel is a strip on a phone, not a dashboard: the lists below it are the point. */
+  .position { position: static; margin-bottom: 0; padding: 14px 16px 10px; gap: 6px; }
+  .where { gap: 2px 12px; }
+  .where .pct { font-size: 30px; }
+  .where .pct-unit { font-size: 14px; }
+  .where .chap { font-size: 15px; }
+  .pos-controls { width: 100%; gap: 8px; }
+  .jump-group { margin-left: 0; flex: 1 1 100%; flex-wrap: nowrap; min-width: 0; }
+  .jump-label { display: none; }
+  .pos-controls .select { flex: 1 1 120px; width: 0; min-width: 0; max-width: none; }   /* the long chapter names must not set the width */
+  .step-btns .icon-btn { width: 40px; height: 40px; }
+  .track { height: 40px; margin-top: 0; }
+  .pos-hint { display: none; }
   .dup-sides { grid-template-columns: minmax(0, 1fr); }
 }
 

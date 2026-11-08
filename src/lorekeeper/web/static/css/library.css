@@ -205,11 +205,16 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
   .lib-panel { position: static; max-width: none; }
 }
 @media (max-width: 900px) {
+  /* Title and search first, then the filters as one scrolling row each, then the books. */
   .library { --lib-bar-h: 0px; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
-  .lib-side { position: static; display: flex; flex-wrap: wrap; gap: 6px var(--space-5); }
-  .lib-side .side-group { display: flex; flex-wrap: wrap; gap: var(--space-1); align-items: center; }
-  .lib-side .side-group .eyebrow { width: 100%; padding: 0; margin: 0; }
-  .lib-bar { position: static; margin: 0; padding: 0 0 var(--space-4); }
+  .lib-main { display: contents; }
+  .lib-bar { order: 1; position: static; margin: 0; padding: 0; }
+  .lib-side { order: 2; position: static; display: grid; gap: 8px; }
+  .lib-content { order: 3; }
+  .lib-side .side-group { display: flex; flex-wrap: nowrap; gap: var(--space-1); align-items: center; overflow-x: auto; scrollbar-width: none; -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); }
+  .lib-side .side-group::-webkit-scrollbar { display: none; }
+  .lib-side .side-group .eyebrow { flex: none; width: auto; padding: 0 var(--space-2) 0 0; margin: 0; }
+  .lib-side .side-group > * { flex: none; }
 }
 @media (max-width: 640px) {
   .shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
