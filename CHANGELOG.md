@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/nightspine/lorekeeper/compare/v0.6.0...v0.7.0) (2026-11-08)
+
+
+### Features
+
+* ties with a kind, one per pair and kind with newer ones replacing older, actions kept out of ties, and the Dracula example rebuilt on them ([#39](https://github.com/nightspine/lorekeeper/issues/39)) ([6582989](https://github.com/nightspine/lorekeeper/commit/658298954ebad3db44fb5be114493874075d0d46))
+
 ## [0.6.0](https://github.com/nightspine/lorekeeper/compare/v0.5.1...v0.6.0) (2026-11-08)
 
 
