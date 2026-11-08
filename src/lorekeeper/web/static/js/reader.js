@@ -79,6 +79,8 @@ export function mountReader(root) {
     // Timeline filters, remembered per browser: only turning points; show small moments too.
     tlTurns: (() => { try { return localStorage.getItem("lk-tl-turns") === "1"; } catch { return false; } })(),
     tlMinor: (() => { try { return localStorage.getItem("lk-tl-minor") === "1"; } catch { return false; } })(),
+    // Chapters tab in a series: show the earlier books' chapters too (as their own blocks), or this book only.
+    chSeries: (() => { try { return localStorage.getItem("lk-ch-series") !== "0"; } catch { return true; } })(),
   };
   const wrap = h("div.reader");
   root.append(wrap);
@@ -811,10 +813,33 @@ export function mountReader(root) {
     }));
   }
 
+  /** One book's chapters as a list; numbering restarts per book. */
+  function chapterList(groups, { current }) {
+    const here = s.map.chapterAt(s.p);
+    const numbered = groups.map((g, i) => ({ ...g, n: i + 1, last: i === groups.length - 1 }));
+    const ordered = s.chaptersNewest ? [...numbered].reverse() : numbered;
+    return h("ol.chapter-list", ordered.map((g) => {
+      // Still inside this chapter: its summary covers only what has been read.
+      const ongoing = current && g.last && here && here.title === g.title;
+      const fresh = g.ids.some((id) => s.fresh.has(id));
+      const who = mentions(g.parts.join(" "));
+      const det = h(`details.chapter${fresh ? ".fresh" : ""}`, { "data-chapter": g.key, open: (current && g.last) || ordered.length <= 3 ? "" : null },
+        h("summary", h("span.ch-num.num", String(g.n)), h("span.ch-title", tidyTitle(g.title)),
+          ongoing ? h("span.chip.ch-ongoing", "So far") : null, fresh ? h("span.new-badge", "New") : null),
+        h("div.ch-body", g.parts.map((t, i) => {
+          if (!s.edit) return h("p", t);
+          const part = h("div.ch-part");
+          clear(part, h("p", t), editor.recapRowActions({ id: g.ids[i], text: t }, part, { scope: "chapter", title: g.title }));
+          return part;
+        }),
+          who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null));
+      return h("li", det);
+    }));
+  }
+
   function paintChapterRecaps() {
     const v = s.view;
     const groups = chapterGroups();
-    const here = s.map.chapterAt(s.p);
     const hasAny = (s.doc.recaps || []).some((r) => r.scope === "chapter") || [...s.seriesDocs.values()].some((d) => (d?.recaps || []).some((r) => r.scope === "chapter"));
     const story = h("section.story-now", { "aria-label": "Story so far" });
     clear(story, h("span.eyebrow", "Story so far"),
@@ -822,35 +847,42 @@ export function mountReader(root) {
       v.recap && bookLabel(v.recap.book),
       s.edit && v.recap ? editor.recapRowActions(v.recap, story) : null);
     const addRecap = s.edit ? editor.addRecapButton() : null;
-    if (!groups.length) {
+    // In a series, each book's chapters are their own block on one rail that runs down to the book being read.
+    const mine = groups.filter((g) => !s.series || !g.book || g.book === s.book);
+    const earlierBooks = s.series ? (s.series.orders[s.order] || []).filter((b) => b !== s.book && groups.some((g) => g.book === b)) : [];
+    if (!groups.length || (!mine.length && !earlierBooks.length)) {
       return clear(el.panel, story, addRecap, h("div.empty", h("div.art", icon("book-open")),
         h("h3", hasAny ? "No chapters finished yet" : "No chapter recaps in this index"),
         h("p", hasAny ? "Each chapter's summary appears once you've read past it." : s.edit ? "Add a recap for each chapter as you finish it." : "This index was built before chapter recaps existed. Build a new version to get a summary of every chapter.")));
     }
     const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.chaptersNewest),
       on: { click: () => { s.chaptersNewest = !s.chaptersNewest; paintChapterRecaps(); } } }, icon("refresh"), s.chaptersNewest ? "Newest first" : "In order");
-    const numbered = groups.map((g, i) => ({ ...g, n: i + 1, last: i === groups.length - 1 }));
-    const ordered = s.chaptersNewest ? [...numbered].reverse() : numbered;
+    const seriesChip = earlierBooks.length ? h("button.filter-chip.ch-series", { type: "button", "aria-pressed": String(s.chSeries),
+      title: s.chSeries ? "Show this book's chapters only" : "Show the earlier books' chapters too",
+      on: { click: () => { s.chSeries = !s.chSeries; try { localStorage.setItem("lk-ch-series", s.chSeries ? "1" : "0"); } catch {} paintChapterRecaps(); } } },
+      icon("layers"), "Whole series", h("span.n", String(groups.length - mine.length))) : null;
+    const count = `${mine.length} chapter${mine.length === 1 ? "" : "s"} so far`;
+    if (!earlierBooks.length) {
+      return clear(el.panel, story, h("div.toolbar.chapters-bar", h("span.hint", count), addRecap, toggle), chapterList(mine, { current: true }));
+    }
+    const title = (b) => s.series.books.find((x) => x.key === b)?.title || b;
+    const currentBlock = h("section.book-block.current", { "aria-label": title(s.book) },
+      h("div.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(s.book)),
+        h("span.hint", mine.length ? `reading now, ${count}` : "reading now")),
+      mine.length ? chapterList(mine, { current: true })
+        : h("p.muted.book-none", "No chapter finished in this book yet. Its summaries appear as you read past each chapter."));
+    const earlierBlocks = earlierBooks.map((b) => {
+      const bg = groups.filter((g) => g.book === b);
+      return h("details.book-block.earlier", { "aria-label": title(b) },
+        h("summary.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(b)),
+          h("span.hint", `finished, ${bg.length} chapter${bg.length === 1 ? "" : "s"}`), icon("chevron")),
+        chapterList(bg, { current: false }));
+    });
+    // Newest first puts the book being read at the top and the earlier books beneath it, latest first.
+    const blocks = s.chSeries ? (s.chaptersNewest ? [currentBlock, ...earlierBlocks.reverse()] : [...earlierBlocks, currentBlock]) : [currentBlock];
     clear(el.panel, story,
-      h("div.toolbar.chapters-bar", h("span.hint", `${groups.length} chapter${groups.length === 1 ? "" : "s"} so far`), addRecap, toggle),
-      h("ol.chapter-list", ordered.map((g) => {
-        // Still inside this chapter: its summary covers only what has been read.
-        const ongoing = g.last && here && here.title === g.title && (!s.series || g.book === s.book);
-        const fresh = g.ids.some((id) => s.fresh.has(id));
-        const who = mentions(g.parts.join(" "));
-        const det = h(`details.chapter${fresh ? ".fresh" : ""}`, { "data-chapter": g.key, open: g.last || ordered.length <= 3 ? "" : null },
-          h("summary", h("span.ch-num.num", String(g.n)), h("span.ch-title", tidyTitle(g.title)),
-            ongoing ? h("span.chip.ch-ongoing", "So far") : null, fresh ? h("span.new-badge", "New") : null,
-            bookLabel(g.book)),
-          h("div.ch-body", g.parts.map((t, i) => {
-            if (!s.edit) return h("p", t);
-            const part = h("div.ch-part");
-            clear(part, h("p", t), editor.recapRowActions({ id: g.ids[i], text: t }, part, { scope: "chapter", title: g.title }));
-            return part;
-          }),
-            who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null));
-        return h("li", det);
-      })));
+      h("div.toolbar.chapters-bar", h("span.hint", s.chSeries ? `${count} in this book, ${groups.length - mine.length} in earlier books` : count), seriesChip, addRecap, toggle),
+      h(`div.series-rail${s.chaptersNewest ? ".newest" : ""}`, blocks));
   }
 
   const nameOf = (id) => s.view.entities.find((e) => e.id === id);
