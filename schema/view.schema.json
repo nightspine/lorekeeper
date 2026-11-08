@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lorekeeper.dev/schema/0.1/view.schema.json",
   "title": "Lorekeeper gated view",
-  "description": "What a reader at one position may see. Output of the gating algorithm (SPEC.md §7) and of GET /v0/indexes/{id}/view.",
+  "description": "What a reader at one position may see. Output of the gating algorithm (SPEC.md \u00a77) and of GET /v0/indexes/{id}/view.",
   "type": "object",
   "required": [
     "lorekeeper",
@@ -126,7 +126,7 @@
                 "$ref": "#/$defs/facet"
               }
             ],
-            "description": "The last visible profile facet, inherited from earlier series books until a later one is visible (SPEC.md §7.3)."
+            "description": "The last visible profile facet, inherited from earlier series books until a later one is visible (SPEC.md \u00a77.3)."
           }
         }
       }
@@ -246,7 +246,7 @@
       }
     },
     "locator": {
-      "description": "Present only when the view was requested with a locator (SPEC.md §8.4).",
+      "description": "Present only when the view was requested with a locator (SPEC.md \u00a78.4).",
       "type": "object",
       "required": [
         "position",
@@ -341,6 +341,18 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "kind": {
+          "enum": [
+            "family",
+            "romance",
+            "friendship",
+            "alliance",
+            "service",
+            "hostility",
+            "acquaintance",
+            "place"
           ]
         }
       }

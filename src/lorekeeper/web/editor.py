@@ -31,6 +31,7 @@ NAME_KINDS = ("primary", "alias", "title", "nickname", "descriptive")
 BASES = ("stated", "inferred")
 SCOPES = ("story", "chapter")
 EVENT_KINDS = ("turn", "minor")   # how much an event drives the story; absent = an ordinary development
+RELATION_KINDS = generate.RELATION_KINDS   # what sort of tie a relation is; absent = not said
 # Spec length limits (SPEC.md §6.3), with how the message names each kind of text.
 LIMITS = {"detail": (280, "a detail"), "profile": (800, "a description"), "event": (280, "an event"),
           "label": (80, "a connection"), "name": (120, "a name"), "story": (1200, "a story recap"),
@@ -559,6 +560,8 @@ class Editor:
         label = self._text(ctx, "label", label, anchor)
         item = {"id": ctx.new_id(f"{ctx.book_key}.rel"), "src": src, "dst": dst, "label": label,
                 "from": anchor, "basis": basis, "evidence": [anchor]}
+        if op.get("kind"):
+            item["kind"] = self._choice(op, "kind", RELATION_KINDS)
         ctx.doc["relations"].append(item)
         ctx.changed.add(ctx.i)
         ctx.extra["id"] = item["id"]
@@ -584,6 +587,11 @@ class Editor:
             r["basis"] = self._choice(op, "basis", BASES)
         if op.get("label") is not None:
             r["label"] = self._text(ctx, "label", op["label"], r["from"])
+        if "kind" in op:
+            if op["kind"]:
+                r["kind"] = self._choice(op, "kind", RELATION_KINDS)
+            else:
+                r.pop("kind", None)
         ctx.changed.add(j)
         return f"Edited a connection of {ctx.names(r['src'])[0]}", {"id": iid, "src": old["src"], "dst": old["dst"], "text": old["label"]}
 

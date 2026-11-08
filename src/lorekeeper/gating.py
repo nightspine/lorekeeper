@@ -189,4 +189,5 @@ def _facet(f: dict, book: str | None) -> dict:
 
 
 def _relation(r: dict, book: str | None) -> dict:
-    return {"id": r["id"], "src": r["src"], "dst": r["dst"], "label": r["label"], "book": book}
+    return {"id": r["id"], "src": r["src"], "dst": r["dst"], "label": r["label"], "book": book,
+            **({"kind": r["kind"]} if "kind" in r else {})}

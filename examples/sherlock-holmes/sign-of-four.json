@@ -798,8 +798,9 @@
       ],
       "replaces": [
         "sis.rel.watson-holmes.2"
-      ]
-    },
+      ],
+    "kind": "friendship"
+  },
     {
       "id": "sof.rel.villard-holmes",
       "src": "le-villard",
@@ -821,8 +822,9 @@
       "evidence": [
         "ch1.para53",
         "ch1.para55"
-      ]
-    },
+      ],
+    "kind": "service"
+  },
     {
       "id": "sof.rel.forrester-holmes",
       "src": "mrs-forrester",
@@ -843,8 +845,9 @@
       "basis": "stated",
       "evidence": [
         "ch2.para09"
-      ]
-    },
+      ],
+    "kind": "family"
+  },
     {
       "id": "sof.rel.captain-sholto",
       "src": "captain-morstan",
@@ -865,8 +868,9 @@
       "basis": "stated",
       "evidence": [
         "ch2.para17"
-      ]
-    },
+      ],
+    "kind": "service"
+  },
     {
       "id": "sof.rel.watson-mary",
       "src": "watson",
@@ -876,8 +880,9 @@
       "basis": "stated",
       "evidence": [
         "ch2.para32"
-      ]
-    }
+      ],
+    "kind": "romance"
+  }
   ],
   "events": [
     {

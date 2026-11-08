@@ -210,9 +210,13 @@ pattern is RECOMMENDED.
 
 ### 4.3 Relations
 
-`{ id, src, dst, label, from, basis, evidence, replaces? }`. `label` reads
+`{ id, src, dst, label, from, basis, evidence, replaces?, kind? }`. `label` reads
 src → dst ("Murray" — *orderly who saved the life of* → "Watson"). Both
-entities MUST be visible at or before the relation's `from`.
+entities MUST be visible at or before the relation's `from`. A relation is a
+lasting tie, what one entity is to the other; a single action between them is
+an event. `kind` is optional: `family`, `romance`, `friendship`, `alliance`,
+`service`, `hostility`, `acquaintance` or `place`. A newer tie of the same kind
+between the same two entities SHOULD list the older one in `replaces`.
 
 ### 4.4 Events
 

@@ -84,7 +84,8 @@
         "src": "murray",
         "dst": "watson",
         "label": "orderly who saved the life of",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "service"
       }
     ],
     "relationHistory": [],

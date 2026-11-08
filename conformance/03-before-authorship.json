@@ -343,28 +343,32 @@
         "src": "murray",
         "dst": "watson",
         "label": "orderly who saved the life of",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "service"
       },
       {
         "id": "sis.rel.stamford-watson",
         "src": "stamford",
         "dst": "watson",
         "label": "former dresser under",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "acquaintance"
       },
       {
         "id": "sis.rel.holmes-barts",
         "src": "holmes",
         "dst": "barts",
         "label": "works in the chemical laboratory of",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "place"
       },
       {
         "id": "sis.rel.watson-holmes.2",
         "src": "watson",
         "dst": "holmes",
         "label": "shares rooms at 221B Baker Street with",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "friendship"
       }
     ],
     "relationHistory": [
@@ -373,7 +377,8 @@
         "src": "watson",
         "dst": "holmes",
         "label": "has agreed to share rooms with",
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "kind": "friendship"
       }
     ],
     "events": [

@@ -503,6 +503,10 @@
         },
         "replaces": {
           "$ref": "#/$defs/replaces"
+        },
+        "kind": {
+          "enum": ["family", "romance", "friendship", "alliance", "service", "hostility", "acquaintance", "place"],
+          "description": "What sort of tie this is (SPEC.md §4.3). Optional."
         }
       }
     },
