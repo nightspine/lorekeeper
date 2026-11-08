@@ -141,6 +141,13 @@
 .ent-meta .num { color: inherit; }
 .ent-meta .hist { display: inline-flex; margin-left: var(--space-2); }
 .ent-meta .hist .svg-icon { width: 13px; height: 13px; }
+/* Entries met in an earlier book of the series: named as such, and dimmed until they appear in this one. */
+.ent-meta .ent-from { margin-right: var(--space-3); color: var(--text-3); }
+.ent-row.dormant .ent-name .nm, .ent-row.dormant .ent-fact { color: var(--text-3); }
+.ent-row.dormant .ent-name .nm::before { opacity: .45; }
+.ent-row.dormant:hover .ent-name .nm, .ent-row.dormant:focus-visible .ent-name .nm { color: var(--text); }
+.filter-chip.earlier { margin-left: auto; }
+.d-from { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
 @media (max-width: 720px) {
   .ent-row { grid-template-columns: 14px minmax(0, 1fr) auto; gap: 0 var(--space-3); padding: 8px 14px; }
   .ent-name { grid-column: 2; }
