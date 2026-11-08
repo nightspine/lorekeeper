@@ -532,6 +532,24 @@ def test_a_label_is_not_a_summary_sentence_or_an_event(book_path, tmp_path):
     assert not any(r["text"].startswith("unresolved") for r in ix["recaps"])
 
 
+class _NoSummary(FakeLLM):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["summary"] = []
+            out["events"].append({"p": 2, "text": "Alice eats bread and cheese by the fire.", "who": ["Alice Marlow"], "weight": "minor"})
+        return out
+
+
+def test_a_chapter_with_no_summary_is_recapped_from_its_events(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_NoSummary())
+    first = next(r for r in ix["recaps"] if r.get("scope") == "chapter" and r["title"] == "Chapter One")
+    assert "Alice arrives at the lighthouse." in first["text"] and "Alice finds a hidden letter." in first["text"]
+    assert "bread and cheese" not in first["text"]          # small moments stay out of the recap
+    assert report["stats"]["chapter recap from events"] == 1
+
+
 def test_default_chunk_size_follows_the_provider():
     assert generate.default_chunk_words("ollama") == generate.default_chunk_words(None) == 2500
     assert generate.default_chunk_words("claude") == generate.default_chunk_words("openai") == 8000

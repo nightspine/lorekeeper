@@ -1190,6 +1190,7 @@ class Generator:
             self.on_phase("verify")
             cands = self._verify(cands, passage, chunk.start)
         self.summary_parts = []
+        self._events_at_chunk_start = len(self.events)
         for c in cands:
             self._commit(c)
         self._commit_summary(chunk)
@@ -1337,8 +1338,14 @@ class Generator:
         return self.book.chapters[chunk.chapter].title if chunk.chapter >= 0 else "Opening"
 
     def _commit_summary(self, chunk: Chunk) -> None:
-        """The checked summary sentences become this passage's chapter recap, revealed at its end."""
+        """The checked summary sentences become this passage's chapter recap, revealed at its end. When the
+        model gave none (small models often answer a quiet passage with nothing or a bare label), the
+        passage's own checked events, minor moments left out, stand in for it: a chapter never goes unsummarized."""
         parts, text_ = self.summary_parts, ""
+        if not parts:
+            parts = [ev["summary"] for ev in self.events[getattr(self, "_events_at_chunk_start", 0):] if ev.get("kind") != "minor"]
+            if parts:
+                self.stats["chapter recap from events"] += 1
         for part in parts:
             if len(text_) + len(part) + 1 > 2000:
                 break
