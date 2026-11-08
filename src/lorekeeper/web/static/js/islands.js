@@ -195,7 +195,7 @@ export function archipelago(ctx) {
   const cast = (id) => CAST.has(graph.ents.get(id).type);
   const mapped = (id) => ctx.laid.has(id) && (gs.things || cast(id));
   const links = graph.edges.filter((e) => mapped(e.a) && mapped(e.b)
-    && (e.rels.length || e.old.length || (cast(e.a) && cast(e.b) && sharedEvents(e) > 0)));
+    && (e.rels.length || e.old.length || (cast(e.a) && cast(e.b) && e.together)));
   const ids = [...new Set(links.flatMap((e) => [e.a, e.b]))];
   if (!ids.length) {
     return h("div.empty", h("div.art", icon("link")), h("h3", "No ties between characters yet"),
@@ -230,7 +230,7 @@ export function archipelago(ctx) {
 function build(A) {
   A.svg = d3.create("svg").attr("class", "g-svg g-arch").attr("role", "group").attr("aria-label", "Connections map");
   A.root = A.svg.append("g");
-  A.layers = Object.fromEntries(["hulls", "routes", "edges", "nodes", "labels", "names"].map((k) => [k, A.root.append("g")]));
+  A.layers = Object.fromEntries(["hulls", "routes", "edges", "hits", "nodes", "labels", "names"].map((k) => [k, A.root.append("g")]));
   A.tip = d3.create("div").attr("class", "g-island-tip").attr("hidden", true);
   A.wrap = d3.create("div").attr("class", "g-arch-wrap").node();
   A.wrap.append(A.svg.node(), A.tip.node());
@@ -300,15 +300,28 @@ function render(A) {
   // Lines: stated ties always (dashed when they cross from one group to another), earlier ties with
   // history on, "appear together" only when asked and only within a group or touching the selection.
   const touches = (e) => sel && (e.a === sel || e.b === sel);
-  const together = (e) => gs.together && !e.rels.length && e.weight >= A.ctx.minCo;
+  const together = (e) => gs.together && !e.rels.length && e.together && e.weight >= A.ctx.minCo;
   const edges = A.links.filter((e) => drawn.has(e.a) && drawn.has(e.b) && (
-    e.rels.length || (gs.history && e.old.length) || (together(e) && (touches(e) || isl.of.get(e.a) === isl.of.get(e.b)))));
+    (e.rels.length && A.ctx.tieOn(e)) || (gs.history && e.old.length) || (together(e) && (touches(e) || isl.of.get(e.a) === isl.of.get(e.b)))));
   A.drawn = drawn;
 
   A.layers.hulls.selectAll("path").data([]).join("path");
   A.layers.routes.selectAll("path").data([]).join("path");
   A.layers.edges.selectAll("line").data(edges, (d) => d.key).join("line")
-    .attr("class", (d) => `g-edge ${d.rels.length ? "rel" : d.old.length && gs.history ? "old" : "co"}${isl.of.get(d.a) !== isl.of.get(d.b) ? " cross" : ""}${sel ? (touches(d) ? " lit" : " dim") : ""}`);
+    .attr("class", (d) => `g-edge ${d.rels.length ? "rel" : d.old.length && gs.history ? "old" : "co"}${d.rels.length && d.kind ? ` k-${d.kind}` : ""}${isl.of.get(d.a) !== isl.of.get(d.b) ? " cross" : ""}${sel ? (touches(d) ? " lit" : " dim") : ""}`);
+  // Each line says what it is: a wide invisible stroke carries the sentence (hover) and selects the first entry (click).
+  const said = (d) => {
+    const nm = (id) => graph.ents.get(id)?.name || id;
+    if (d.rels.length) return d.rels.map((r) => `${nm(r.src)}: ${r.label} ${nm(r.dst)}`).join("\n");
+    if (d.old.length) return d.old.map((r) => `Earlier, ${nm(r.src)}: ${r.label} ${nm(r.dst)}`).join("\n");
+    return `${nm(d.a)} and ${nm(d.b)} appear together in ${d.events} events.`;
+  };
+  A.layers.hits.selectAll("line").data(edges, (d) => d.key).join((en) => {
+    const l = en.append("line").attr("class", "g-hit");
+    l.append("title");
+    l.on("click", (ev, d) => { ev.stopPropagation(); A.ctx.select(d.rels[0]?.src || d.a); });
+    return l;
+  }).select("title").text(said);
   const ns = A.layers.nodes.selectAll("g.g-node").data(nodes, (d) => d).join((en) => {
     const g = en.append("g").attr("tabindex", 0).attr("role", "button");
     g.on("click", (ev, id) => { ev.stopPropagation(); A.ctx.select(id === A.ctx.sel ? null : id); })
@@ -391,7 +404,9 @@ function place(A) {
   const P = A.shown, k = A.t.k, { radius } = A.ctx;
   const at = (id) => P.get(id) || { x: 0, y: 0 };
   A.layers.nodes.selectAll("g.g-node").attr("transform", (id) => { const p = at(id); return `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`; });
-  A.layers.edges.selectAll("line").attr("x1", (d) => at(d.a).x).attr("y1", (d) => at(d.a).y).attr("x2", (d) => at(d.b).x).attr("y2", (d) => at(d.b).y);
+  for (const layer of [A.layers.edges, A.layers.hits]) {
+    layer.selectAll("line").attr("x1", (d) => at(d.a).x).attr("y1", (d) => at(d.a).y).attr("x2", (d) => at(d.b).x).attr("y2", (d) => at(d.b).y);
+  }
   for (const i of A.isl.list) {
     const ms = i.members.filter((id) => A.drawn?.has(id));
     const use = ms.length ? ms : i.members;

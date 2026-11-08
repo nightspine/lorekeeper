@@ -140,7 +140,8 @@
         "src": "watson",
         "dst": "holmes",
         "label": "longtime companion and fellow lodger of",
-        "book": "sign-of-four"
+        "book": "sign-of-four",
+        "kind": "friendship"
       }
     ],
     "relationHistory": [],

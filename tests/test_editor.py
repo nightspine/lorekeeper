@@ -235,6 +235,17 @@ def test_events_can_be_weighed_by_hand(client, tmp_path):
     refuse(client, key, 400, op="add-event", summary="x", entities=[], seq=5, kind="huge")
 
 
+def test_ties_can_be_given_a_kind_by_hand(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1)
+    edit(client, key, op="add-entity", name="Tom Marlow", type="person", seq=2)
+    rel = edit(client, key, op="add-relation", src="alice-marlow", dst="tom-marlow", label="looking for", seq=2, kind="family")
+    assert doc_of(client, key)["relations"][0]["kind"] == "family"
+    edit(client, key, op="edit-relation", id=rel["id"], kind="")
+    assert "kind" not in doc_of(client, key)["relations"][0]
+    refuse(client, key, 400, op="edit-relation", id=rel["id"], kind="enemies")
+
+
 def test_passage_for_the_anchor_picker(client, tmp_path):
     _, key = handmade(client, tmp_path)
     th = doc_of(client, key)["editions"][0]["textHash"]

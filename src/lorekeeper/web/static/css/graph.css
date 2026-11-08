@@ -164,6 +164,15 @@
 .g-arch .g-label.bright { fill: var(--text); font-weight: 600; }
 .g-arch .g-label.dim { opacity: .16; }
 .g-legend .l-cross { border-top: 2px dashed color-mix(in srgb, var(--text) 35%, transparent); }
+/* Ties by kind: the line keeps its hairline weight and takes a quiet tint of the kind's colour. */
+.k-family { --k: var(--isl-3); } .k-romance { --k: var(--isl-6); } .k-friendship { --k: var(--isl-1); } .k-alliance { --k: var(--isl-0); }
+.k-service { --k: var(--isl-5); } .k-hostility { --k: var(--rose); } .k-acquaintance { --k: var(--text-3); } .k-place { --k: var(--isl-4); }
+.g-arch .g-edge.rel[class*=" k-"] { stroke: color-mix(in srgb, var(--k) 62%, transparent); }
+.g-arch .g-edge.rel.cross[class*=" k-"] { stroke: color-mix(in srgb, var(--k) 45%, transparent); }
+.g-arch .g-edge.lit { stroke: var(--beacon) !important; }
+.g-legend .l-tie { border-top: 2px solid color-mix(in srgb, var(--k) 70%, transparent); }
+.g-tie-swatch { width: 14px; height: 0; border-top: 2px solid var(--k); flex: none; }
+.g-hit { stroke: transparent; stroke-width: 12px; vector-effect: non-scaling-stroke; cursor: pointer; pointer-events: stroke; }
 .g-island-tip { position: absolute; top: 12px; left: 12px; padding: 6px 12px; border-radius: var(--radius-s); border: 1px solid var(--edge); background: color-mix(in srgb, var(--bg) 85%, transparent); font-size: var(--text-sm); font-weight: 600; color: var(--text-2); pointer-events: none; }
 
 @media (max-width: 640px) {
