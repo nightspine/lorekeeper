@@ -42,7 +42,7 @@ STATUS = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|marri
                     r"widow(ed|er)?|engaged|betrothed|captured|captive|prisoner|imprisoned|escaped|freed|"
                     r"wounded|injured|crippled|blinded|recovered|turned|transformed|knighted|promoted|"
                     r"appointed|crowned|exiled|banished|disgraced|betrayed|revealed|unmasked|disguised|"
-                    r"orphaned|adopted|pregnant|arrested|sentenced|pardoned|vanished|missing)\b", re.IGNORECASE)
+                    r"orphaned|adopted|pregnant|arrested|sentenced|pardoned|vanished|missing|destroyed)\b", re.IGNORECASE)
 BUDGET = 24000       # characters of passage text per portrait
 CONTEXT = 1          # paragraphs of context either side of a mention
 WORKERS = 6
@@ -143,6 +143,10 @@ def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int) -> tuple[s
         used += len(chunk)
         last = max(last, b)
     return "\n…\n".join(out), last
+
+
+def name_of(e: dict, names: list[str]) -> str:
+    return names[0] if names else e["names"][0]["value"]
 
 
 def _checked(text: str, known: set[str], source: str | None = None,
@@ -283,8 +287,24 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 sheet=" (as on a character sheet)" if e["type"] in ("person", "creature") else "",
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
                 passages=passages)
+            # A change in standing the notes record since the last portrait is spelled out, not left among the
+            # notes: told only "her death is reported", Haiku still described Lucy as recovering.
+            since_mark = upto_mark.get(eid, lo - 1)
+            changes = [f["text"] for f in e["facets"] if f.get("kind") != "profile" and f["from"] in seq_of
+                       and since_mark < seq_of[f["from"]] <= mark and STATUS.search(f["text"])][-3:]
+            if changes:
+                prompt += ("\n\nThe companion's checked notes record a change in standing since your last description: "
+                           + " / ".join(f'"{c}"' for c in changes)
+                           + f"\nIf the passages show it is {name_of(e, names)}'s own, your FIRST sentence states where "
+                           f"{name_of(e, names)} stands now (\"Dead, ...\"), before anything else.")
             out = model.complete(SYSTEM, prompt, SCHEMA)
             got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+            if changes and got[0] and not STATUS.search(re.split(r"(?<=[.!?])\s", got[0], 1)[0]):
+                again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nIts first sentence does '
+                                       "not state the change in standing. Rewrite it so the first sentence does.", SCHEMA)
+                retry = _checked(str((again or {}).get("text", "")), known, passages, shingles)
+                if retry[0]:
+                    got = (retry[0], "rewritten: change in standing")
             if got[1].startswith("tie not in the text"):
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
@@ -306,8 +326,11 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
         with ThreadPoolExecutor(WORKERS) as pool:
             results = list(pool.map(one, due))
         for eid, seen, last, (t, why) in results:
+            if t is not None and why:
+                stats[why] += 1
             if t is None:
                 stats["dropped"] += 1
+                stats[f"dropped: {why.split(':')[0]}"] += 1
                 log(f"    dropped {ents[eid]['names'][0]['value']}: {why}")
                 continue
             # Never before the previous portrait: it is the one this replaces.

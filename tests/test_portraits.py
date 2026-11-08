@@ -213,3 +213,22 @@ def test_an_extraction_profile_at_the_first_portrait_anchor_is_superseded():
     ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
     assert [f["id"] for f in ps] == ["p-early", "bk.mira.portrait-1"]
     assert ps[1]["from"] == "b4" and ps[1]["replaces"] == ["p-early"]
+
+
+def test_a_portrait_that_ignores_a_change_in_standing_is_rewritten_once():
+    ch1 = ["Mira waited by the gate of the mill for a long while that day.",
+           "Mira came home again in the evening carrying her empty basket."]
+    ch2 = ["The fever took the village that winter and many did not see spring.",
+           "Mira lay in the cold room and did not wake on the third morning."]
+    book = _book([("One", ch1), ("Two", ch2)])
+    fact = {"id": "f1", "from": "b3", "basis": "stated", "evidence": ["b3"], "text": "Died of the fever in winter."}
+    d = _doc(book, [_mira(facets=[fact])])
+    # Lucy in the Dracula example: told of her death, the model still described her as recovering.
+    model = Fake(["Mira is a young woman of the village.", "Mira is a young woman of the village, kind to all.",
+                  "Dead of the fever; a young woman of the village."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert '"Died of the fever in winter."' in model.prompts[1] and "change in standing" in model.prompts[1]
+    assert "does not state the change" in model.prompts[2]
+    assert stats["rewritten: change in standing"] == 1
+    ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
+    assert ps[-1]["text"].startswith("Dead")

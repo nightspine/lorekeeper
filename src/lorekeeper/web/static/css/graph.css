@@ -96,7 +96,13 @@
 .g-sec { display: grid; gap: var(--space-2); }
 .g-rels, .g-co, .g-new { list-style: none; margin: 0; padding: 0; display: grid; }
 .g-rels, .g-co, .g-new { gap: 0; }
-.g-rels li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; padding: 10px 0; }
+.g-rels > li { display: grid; gap: 4px; padding: 10px 0; }
+.g-rel-main, .g-rel-more li { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; }
+.g-rel-toggle { justify-self: start; font-size: var(--text-sm); }
+.g-rel-more { list-style: none; margin: 2px 0 0; padding: 0 0 0 12px; display: grid; gap: 6px; border-left: 1px solid var(--edge); font-size: var(--text-sm); }
+.g-rel-more li.old { opacity: .65; }
+.g-desc.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.g-desc-more { justify-self: start; margin-top: calc(-1 * var(--space-3)); font-size: var(--text-sm); }
 .g-rels li + li, .g-co li + li, .g-new li + li { border-top: 1px solid var(--edge); }
 .g-rels li.old { opacity: .65; }
 .g-rels li.new .g-when { color: var(--beacon); }
@@ -112,8 +118,8 @@
 .g-new button { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 0; border: 0; border-radius: 0; background: none; color: var(--text); text-align: left; cursor: pointer; font-size: var(--text-sm); font-weight: 500; transition: background var(--dur-fast); }
 .g-new button:hover { background: var(--glass-hover); }
 .g-new button > span:nth-child(2) { flex: 1; font-weight: 600; }
-.g-actions { display: grid; gap: var(--space-2); padding-top: var(--space-1); }
-.g-actions .btn { justify-content: center; }
+.g-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.g-actions .btn { justify-content: center; white-space: nowrap; padding-inline: 12px; }
 .g-trim { font-size: var(--text-xs); color: var(--text-3); }
 
 /* the list view: a glass table */
@@ -179,6 +185,14 @@
   .g-stage { min-height: 0; }
   .g-arch-wrap, .g-arch, .g-svg { min-height: 360px; height: 55vh; max-height: 420px; }
   .g-panel { display: grid; }
+  /* On a phone a selection opens as a sheet over the bottom of the screen, so the map stays in view and the
+     buttons are within reach instead of a screen-length scroll below the legend. */
+  .g-panel.has-sel { position: fixed; z-index: 35; left: 0; right: 0; bottom: 0; top: auto; max-height: min(44vh, 400px); overflow: auto;
+    overscroll-behavior: contain; border-radius: var(--radius-l) var(--radius-l) 0 0; border-bottom: 0;
+    padding-bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); box-shadow: inset 0 1px 0 var(--edge-lit), 0 -18px 40px rgb(0 0 0 / .45);
+    background: linear-gradient(180deg, var(--glass-2), var(--glass)), var(--bg); }
+  .g-body:has(.g-panel.has-sel) { padding-bottom: min(44vh, 400px); }
+  .g-stage-head .hint { display: none; }
   .g-legend-note { margin-left: 0; }
   .g-spacer { display: none; }
 }

@@ -292,7 +292,7 @@ export function mountReader(root) {
     el.headFacts = h("div.head-facts");
     const head = h("div.reader-head",
       h("div.title", el.crumbs, h("h1", s.doc.work.title), h("p.by", `by ${s.doc.work.authors.join(", ")}`), el.headFacts),
-      h("div.reader-switch", editButton(), h("button.btn", { type: "button", on: { click: pickBook } }, icon("layers"), "Switch book")));
+      h("div.reader-switch", editButton(), h("button.btn.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
     paintHead();
     wrap.classList.toggle("editing", s.edit);
 
@@ -391,7 +391,7 @@ export function mountReader(root) {
     s.edit = on;
     wrap.classList.toggle("editing", on);
     const btn = wrap.querySelector(".edit-toggle");
-    if (btn) { clear(btn, icon(on ? "check" : "pen"), on ? "Done" : "Edit"); btn.setAttribute("aria-pressed", String(on)); }
+    if (btn) { clear(btn, icon(on ? "check" : "pen"), h("span.btn-lbl", on ? "Done" : "Edit")); btn.setAttribute("aria-pressed", String(on)); }
     paintTabs();
     if (s.drawer) openDrawer(s.drawer, { refresh: true });
     saveUrl();
@@ -399,7 +399,7 @@ export function mountReader(root) {
   function editButton() {
     if (!canEdit()) { s.edit = false; return null; }
     return h("button.btn.edit-toggle", { type: "button", "aria-pressed": String(s.edit), on: { click: () => setEdit(!s.edit) } },
-      icon(s.edit ? "check" : "pen"), s.edit ? "Done" : "Edit");
+      icon(s.edit ? "check" : "pen"), h("span.btn-lbl", s.edit ? "Done" : "Edit"));
   }
 
   function paintHead() {
@@ -517,8 +517,7 @@ export function mountReader(root) {
   }
   function watchCompact() {
     compactObs?.disconnect();
-    const narrow = window.matchMedia("(max-width: 640px)");
-    if (narrow.matches || !("IntersectionObserver" in window)) { setCompact(false); return; }
+    if (!("IntersectionObserver" in window)) { setCompact(false); return; }
     const top = (document.querySelector(".topbar")?.offsetHeight ?? 61) - 1;
     el.position.style.setProperty("--hz-top", `${top}px`);
     compactObs = new IntersectionObserver(([e]) => setCompact(!e.isIntersecting && e.boundingClientRect.top < top),
@@ -625,17 +624,18 @@ export function mountReader(root) {
   function paintTabs() {
     const v = s.view;
     wrap.classList.toggle("wide", s.tab === "links");   // the map alone gets the full width
-    const tabs = [["chapters", "Chapters", chapterGroups().length], ["cast", "Cast & World", castEntities().length],
-      ["timeline", "Timeline", v.events.length], ["links", "Connections", v.relations.length]];
+    // The short names are for a phone, where all four tabs share one row without scrolling sideways.
+    const tabs = [["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
+      ["timeline", "Timeline", v.events.length, "Timeline"], ["links", "Connections", v.relations.length, "Map"]];
     const keys = tabs.map((x) => x[0]);
     const select = (k, focus) => { s.tab = k; paintTabs(); if (focus) document.getElementById(`tab-${k}`)?.focus(); };
-    clear(el.tabs, tabs.map(([k, label, n]) => h("button", { type: "button", role: "tab", id: `tab-${k}`, "aria-controls": "panel-view",
+    clear(el.tabs, tabs.map(([k, label, n, short]) => h("button", { type: "button", role: "tab", id: `tab-${k}`, "aria-controls": "panel-view",
       "aria-selected": String(s.tab === k), tabindex: s.tab === k ? "0" : "-1",
       on: { click: () => select(k, false), keydown: (ev) => {
         const i = keys.indexOf(k);
         const to = { ArrowRight: keys[(i + 1) % keys.length], ArrowLeft: keys[(i + keys.length - 1) % keys.length], Home: keys[0], End: keys[keys.length - 1] }[ev.key];
         if (to) { ev.preventDefault(); select(to, true); }
-      } } }, label, h("span.count", String(n)))));
+      } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), h("span.count", String(n)))));
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
     ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks })[s.tab]();
     el.panel.prepend(h("h2.sr-only", tabs.find((x) => x[0] === s.tab)[1]));
@@ -691,7 +691,7 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), chips, earlierChip, sort), dupesNotice(),
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), dupesNotice(),
       s.edit ? editor.addEntityButton() : null, list);
     paintList();
   }
@@ -939,11 +939,18 @@ export function mountReader(root) {
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
       : s.tlTurns ? ["No turning points yet", "Nothing read so far has changed the course of the story."]
         : ["Only small moments so far", "Turn on small moments to see them."];
+    // Deep into a book the timeline runs to hundreds of rows, so only the chapters nearest the position show until
+    // the reader asks for the rest; the fold sits on the far side, where the earlier chapters are.
+    const KEEP = 3, folded = !s.tlAll && groups.length > KEEP + 1;
+    const near = !folded ? groups : s.newestFirst ? groups.slice(0, KEEP) : groups.slice(-KEEP);
+    const hiddenEvents = groups.length - near.length && groups.filter((g) => !near.includes(g)).reduce((n, g) => n + g.events.length, 0);
+    const earlier = folded ? h("button.btn.ghost.tl-earlier", { type: "button", on: { click: () => { s.tlAll = true; paintTimeline(); } } },
+      `Show ${groups.length - KEEP} earlier chapter${groups.length - KEEP === 1 ? "" : "s"} (${hiddenEvents} event${hiddenEvents === 1 ? "" : "s"})`) : null;
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
-      evs.length ? h("ol.timeline", groups.map((g) => [
+      evs.length ? [s.newestFirst ? null : earlier, h("ol.timeline", near.map((g) => [
         g.label ? h("li.tl-chapter", { "aria-hidden": "true" }, g.label) : null,
         g.events.map((ev) => eventRow(ev)),
-      ]))
+      ])), s.newestFirst ? earlier : null]
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }
 
@@ -1061,21 +1068,26 @@ export function mountReader(root) {
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         bookLabel(e.profile.book)) : null,
-      e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(" · "))) : null,
-      h("div.d-sec", eyebrow("What you know so far", e.facets.length),
+      e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
+      h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
         e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
       e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null,
-      rels.length ? h("div.d-sec", eyebrow("Connections", rels.length),
+      rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
         foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" })) : null,
-      evs.length ? h("div.d-sec", eyebrow("Appears in", evs.length),
+      evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
         closeDrawer();
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
     const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
+    // Jump links under the name, so a long entry (most of them, on a phone) is one tap from each section.
+    const jumps = [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]].filter((j) => j[2]);
+    const jumpNav = !s.edit && jumps.length > 1 ? h("nav.d-jumps", { "aria-label": "Sections" }, jumps.map(([k, label, n]) =>
+      h("button.linkish", { type: "button", on: { click: () => body.querySelector(`[data-jump="${k}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) } },
+        label, h("span.n", String(n))))) : null;
     const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", e.name), editor.drawerTitle(e), origin)
-      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name), origin);
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name), origin, jumpNav);
     const content = [h("header", title, closeBtn), body];
     let dlg = document.querySelector("dialog.drawer");
     if (refresh && dlg) {

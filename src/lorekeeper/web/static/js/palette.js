@@ -66,8 +66,10 @@ const NAV = [
   { id: "nav-ready", label: "Ready to read", hint: "Books with an index", hash: "#/library?show=ready" },
   { id: "nav-runs", label: "Runs", hint: "Generation jobs", hash: "#/studio" },
   { id: "nav-settings", label: "Settings", hint: "Models and keys", hash: "#/settings" },
+  { id: "nav-docs", label: "Documentation", hint: "How it works, the format", href: "docs/" },
 ];
-registerProvider("go-to", () => NAV.map((n) => ({ id: n.id, label: n.label, hint: n.hint, group: "Go to", run: go(n.hash) })));
+registerProvider("go-to", () => NAV.map((n) => ({ id: n.id, label: n.label, hint: n.hint, group: "Go to",
+  run: n.href ? () => { location.href = n.href; } : go(n.hash) })));
 
 function defaultVersion(b) {
   return (b.versions || []).find((v) => v.key === b.default) || (b.default ? { key: b.default } : null);

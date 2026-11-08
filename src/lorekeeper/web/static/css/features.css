@@ -163,3 +163,13 @@
 /* ---------- build page: write it by hand ---------- */
 .build-hand { margin: -6px 0 0; text-align: right; }
 .build-hand .linkish { font-size: inherit; }
+
+/* Touch targets on a phone: small controls keep their look but get a hit area of about 44px, through a
+   transparent extension where growing the control itself would make lists bulky. */
+@media (max-width: 640px) {
+  .link-chip { position: relative; min-height: 34px; }
+  .link-chip::after { content: ""; position: absolute; inset: -5px -3px; }
+  .filter-chip, .g-toggle, .seg button, button.chip, .chip[aria-pressed] { min-height: 40px; }
+  .icon-btn.small { width: 40px; height: 40px; }
+  .crumbs a { display: inline-flex; align-items: center; min-height: 40px; }
+}
