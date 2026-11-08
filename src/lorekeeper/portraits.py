@@ -297,30 +297,33 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                            + " / ".join(f'"{c}"' for c in changes)
                            + f"\nIf the passages show it is {name_of(e, names)}'s own, your FIRST sentence states where "
                            f"{name_of(e, names)} stands now (\"Dead, ...\"), before anything else.")
+            # A tie may rest on what the companion already checked up to here (notes, earlier profiles, the last
+            # portrait), not only on the sampled passages: Lucy's "engaged" sits in letters the sample can miss.
+            source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"] if seq_of.get(f["from"], hi) <= mark])
             out = model.complete(SYSTEM, prompt, SCHEMA)
-            got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+            got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             if changes and got[0] and not STATUS.search(re.split(r"(?<=[.!?])\s", got[0], 1)[0]):
                 again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nIts first sentence does '
                                        "not state the change in standing. Rewrite it so the first sentence does.", SCHEMA)
-                retry = _checked(str((again or {}).get("text", "")), known, passages, shingles)
+                retry = _checked(str((again or {}).get("text", "")), known, source, shingles)
                 if retry[0]:
                     got = (retry[0], "rewritten: change in standing")
             if got[1].startswith("tie not in the text"):
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      f'No passage says {word}. Rewrite it without that tie, stating only what the passages show.', SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("copies the book"):
                 run = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer copied the book\'s wording ("{run}"): "{out.get("text", "")}"\n'
                                      "Rewrite it in your own words, quoting at most 5 consecutive words of the passages.", SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("wording"):
                 # Usually a lasting fact phrased as news ("now works with dragons"): one rewrite.
                 word = got[1].split(": ", 1)[1]
                 out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
                                      "Rewrite it as a timeless description without that wording.", SCHEMA)
-                got = _checked(str((out or {}).get("text", "")), known, passages, shingles)
+                got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             return eid, seen, last, got
 
         with ThreadPoolExecutor(WORKERS) as pool:

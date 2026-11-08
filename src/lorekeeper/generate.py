@@ -1467,9 +1467,12 @@ class Generator:
             self.stats["dropped: name belongs to another entry"] += 1
             return
         if e["type"] == "person":
-            near = [self.book.blocks[q].raw for q in range(max(getattr(self, "scope_start", 0), seq - 1), min(len(self.book.blocks), seq + 2))]
+            start, end = getattr(self, "scope_start", 0), min(len(self.book.blocks), seq + 2)
+            near = [self.book.blocks[q].raw for q in range(max(start, seq - 1), end)]
+            # Any sentence read so far that names the two apart settles it, not only the cited paragraph's.
+            said = [b.raw for b in self.book.blocks[start:end] if name in b.raw] if merge._titles(name) else []
             if names_a_relative(name, near + [f["text"] for f in e.get("facets", [])]) or \
-                    names_two_people(name, [n["value"] for n in e["names"]], near):
+                    names_two_people(name, [n["value"] for n in e["names"]], said):
                 # The checker passed "Mrs. Westenra" for Lucy, whose own notes call her "daughter of Mrs. Westenra".
                 self.stats["dropped: name of a relative"] += 1
                 return

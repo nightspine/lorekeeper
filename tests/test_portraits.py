@@ -232,3 +232,15 @@ def test_a_portrait_that_ignores_a_change_in_standing_is_rewritten_once():
     assert stats["rewritten: change in standing"] == 1
     ps = [f for f in d["entities"][0]["facets"] if f.get("kind") == "profile"]
     assert ps[-1]["text"].startswith("Dead")
+
+
+def test_a_tie_the_entrys_own_checked_notes_state_is_kept():
+    book = _book([("One", CH1)])
+    # Lucy in Dracula: "engaged" sat in letters the sampled passages missed, so every later portrait was dropped
+    # and her description stayed from before her death.
+    note = {"id": "f1", "from": "b0", "basis": "stated", "evidence": ["b0"], "text": "Is engaged to the miller."}
+    d = _doc(book, [_mira(facets=[note])])
+    model = Fake(["Mira is a young woman of the village, engaged to the miller."] * 3)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats.get("portraits", 0) >= 1 and not stats.get("dropped")
+    assert any("engaged" in f["text"] for f in d["entities"][0]["facets"] if f.get("kind") == "profile" and f["id"] != "f1")
