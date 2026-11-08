@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.0](https://github.com/nightspine/lorekeeper/compare/v0.5.1...v0.6.0) (2026-11-08)
+
+
+### Features
+
+* Chapters tab shows each series book as its own block on a rail, with a whole-series chip ([#35](https://github.com/nightspine/lorekeeper/issues/35)) ([bd1bb57](https://github.com/nightspine/lorekeeper/commit/bd1bb5798b9164d359d2e147b84f2798fc73ec30))
+* redraw the Connections map as glowing dots and hairline ties in loose groups named for their hub, with no island shapes ([#37](https://github.com/nightspine/lorekeeper/issues/37)) ([b2ab40b](https://github.com/nightspine/lorekeeper/commit/b2ab40b55983acce6ac0dae2ebc717609c2677cd))
+
 ## [0.5.1](https://github.com/nightspine/lorekeeper/compare/v0.5.0...v0.5.1) (2026-11-08)
 
 
