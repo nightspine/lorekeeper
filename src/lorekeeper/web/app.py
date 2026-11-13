@@ -555,16 +555,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def list_jobs():
         return sorted((job_json(j) for j in jobs.jobs.values()), key=lambda j: -j["created"])
 
+    def check_config(config) -> None:
+        """Job config is accepted on two routes; both check it here before anything is queued."""
+        if not isinstance(config, dict):
+            raise HTTPException(400, "config must be an object")
+        if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
+            raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
+        bk = config.get("book_kind")
+        if bk is not None and (not isinstance(bk, str) or not bk.strip()):
+            raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")
+
     @app.post("/api/jobs")
     async def create_job(request: Request):
         body = await request.json()
         config = body.get("config", {})
-        if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
-            raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
-        if "book_kind" in config and config["book_kind"] is not None:
-            bk = config["book_kind"]
-            if not isinstance(bk, str) or not bk.strip():
-                raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")
+        check_config(config)
         try:
             job = (submit_for(config["catalog_key"], config) if config.get("catalog_key")
                    else jobs.submit(body["book_id"], config))
@@ -632,9 +637,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def build_many(request: Request):
         """Queue several books in the given order (e.g. a series' missing books, earliest first)."""
         body = await request.json()
+        config = body.get("config", {})
+        check_config(config)
         out = []
         for key in body.get("keys", []):
-            out.append(job_json(submit_for(key, dict(body.get("config", {})))))
+            out.append(job_json(submit_for(key, dict(config))))
         return {"jobs": out}
 
     @app.get("/api/catalog/cover/{key}")
