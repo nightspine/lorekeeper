@@ -15,10 +15,16 @@ from .llm import Cancelled
 
 KINDS = ("fiction", "non-fiction", "self-help")
 
-# Lowercase substrings looked for in each dc:subject term. Extend these; do not special-case a book.
-FICTION = ("fiction", "novel", "stories", "short stories", "fantasy", "science fiction", "horror", "romance",
-           "mystery", "detective", "thriller", "fairy tale", "gothic", "adventure", "vampires", "ghost",
-           "western", "humorous", "satire", "epistolary", "folklore", "legends", "plays", "drama", "poetry")
+# Lowercase words looked for in each dc:subject term. Extend these; do not special-case a book.
+# Strong terms name fiction itself and beat a non-fiction hit; the rest are also common topics
+# ("Western Australia", "Romance languages", "Folklore -- Ireland").
+FICTION_STRONG = ("fiction", "novel", "stories", "short stories", "tales", "fairy tale", "epistolary",
+                  "science fiction", "plays")
+FICTION_WEAK = ("western", "romance", "ghost", "adventure", "poetry", "drama", "folklore", "legends", "gothic",
+                "horror", "mystery", "detective", "thriller", "fantasy", "vampires", "humorous", "satire")
+FICTION = FICTION_STRONG + FICTION_WEAK
+# A subdivision that says the book is the thing itself, not a study of it ("Poetry -- Collections").
+FORM_SUBDIVISIONS = ("collections", "translations", "texts", "juvenile", "humor", "anecdotes")
 NON_FICTION = ("history", "biography", "autobiography", "memoir", "science", "philosophy", "politics",
                "economics", "religion", "essays", "natural selection", "evolution", "biology", "physics",
                "mathematics", "psychology", "sociology", "travel", "geography", "law", "education",
@@ -68,19 +74,28 @@ def _hits(term: str, needles: tuple[str, ...]) -> list[str]:
 def _from_subjects(subjects: list[str]) -> Inference | None:
     found: dict[str, list[str]] = {k: [] for k in KINDS}
     strong = False
+    fiction_strong = False
     for s in subjects:
         low = s.lower()
         for kind, words in (("fiction", FICTION), ("non-fiction", NON_FICTION), ("self-help", SELF_HELP)):
             hits = _hits(s, words)
             if kind == "fiction" and re.search(r"non-?fiction", low):
                 hits = []   # "Non-fiction" is the opposite of the needle it contains
+            if kind == "fiction" and hits and not set(hits) & set(FICTION_STRONG):
+                tail = low.split("--")[1:]
+                if tail and not _hits(" ".join(tail), FORM_SUBDIVISIONS):
+                    # a topical heading ("Folklore -- Ireland") is about the thing, not an example of it
+                    found["non-fiction"].append(s)
+                    hits = []
             if hits:
                 found[kind].append(s)
+                if kind == "fiction" and set(hits) & set(FICTION_STRONG):
+                    fiction_strong = True
                 if kind == "self-help" and set(hits) & set(SELF_HELP_STRONG):
                     strong = True
-    # "History -- Fiction" is a novel; a vague self-help word ("Success", "Habits") loses to non-fiction.
-    order = ["fiction", "self-help", "non-fiction"] if strong or not found["non-fiction"] else ["fiction", "non-fiction", "self-help"]
-    for kind in order:
+    # "History -- Fiction" is a novel (a strong fiction hit wins); a vague self-help word loses to non-fiction.
+    order = ["self-help", "non-fiction"] if strong or not found["non-fiction"] else ["non-fiction", "self-help"]
+    for kind in (["fiction"] + order if fiction_strong else order + ["fiction"]):
         if found[kind]:
             return Inference(kind, "subjects", f"the book's subjects include {', '.join(repr(x) for x in found[kind][:3])}")
     return None
@@ -99,16 +114,18 @@ def _plain(title: str) -> bool:
 
 
 def _from_titles(titles: list[str]) -> Inference | None:
-    nf = [t for t in titles if set(_words(t)) & set(NON_FICTION_TITLES)]
+    # Numbered chapters first: a novel often opens with an Introduction and Notes.
+    plain = [t for t in titles if _plain(t) and not set(_words(t)) & (set(NON_FICTION_TITLES) | set(SELF_HELP_TITLES))]
+    body = [t for t in titles if not _front_matter(t)]
+    if len(body) >= 2 and len(plain) >= 0.8 * len(body):
+        return Inference("fiction", "structure", "numbered chapters with no headings of an argument or a course")
+    # Front matter (preface, introduction, notes) frames novels too; only the rest leans non-fiction.
+    nf = [t for t in titles if set(_words(t)) & (set(NON_FICTION_TITLES) - set(FRONT_MATTER))]
     sh = [t for t in titles if set(_words(t)) & set(SELF_HELP_TITLES)]
-    # Introductions and notes also frame novels, so a lean needs more than the usual front matter.
     if len(sh) >= 2:
         return Inference("self-help", "structure", f"chapter titles such as {', '.join(repr(x) for x in sh[:3])}")
     if len(nf) >= 2:
         return Inference("non-fiction", "structure", f"chapter titles such as {', '.join(repr(x) for x in nf[:3])}")
-    plain = [t for t in titles if _plain(t) and not set(_words(t)) & (set(NON_FICTION_TITLES) | set(SELF_HELP_TITLES))]
-    if len(titles) >= 2 and len(plain) >= 0.8 * len(titles):
-        return Inference("fiction", "structure", "numbered chapters with no headings of an argument or a course")
     return None
 
 

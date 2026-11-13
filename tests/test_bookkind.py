@@ -39,7 +39,7 @@ def test_fiction_wins_a_tie_with_non_fiction():
 
 
 def test_structure_when_subjects_are_silent():
-    nf = bookkind.infer(fake_book(titles=["Preface", "Introduction", "Part 1", "Notes"]))
+    nf = bookkind.infer(fake_book(titles=["Introduction", "Notes", "Bibliography", "Index"]))
     assert (nf.kind, nf.basis) == ("non-fiction", "structure")
     sh = bookkind.infer(fake_book(titles=["Habit 1: Begin", "Habit 2: Plan", "Exercises"]))
     assert (sh.kind, sh.basis) == ("self-help", "structure")
@@ -156,3 +156,21 @@ def test_model_step_lets_cancellation_through():
     with pytest.raises(Cancelled):
         bookkind.infer(fake_book(titles=['Alpha', 'Beta']), Scripted(Cancelled()))
     assert bookkind.infer(fake_book(titles=['Alpha', 'Beta']), Scripted(RuntimeError("x"))).basis == "default"
+
+
+def test_numbered_chapters_beat_front_matter():
+    t = ["Introduction", "Notes"] + [f"Chapter {i}" for i in range(1, 41)]
+    r = bookkind.infer(fake_book(titles=t))
+    assert (r.kind, r.basis) == ("fiction", "structure")
+    r = bookkind.infer(fake_book(titles=["Preface", "Chapter One", "Chapter Two"]))
+    assert (r.kind, r.basis) == ("fiction", "structure")
+    assert bookkind._from_titles(["Preface", "Introduction", "Alpha", "Beta"]) is None
+
+
+def test_topical_subjects_with_a_fiction_word_are_non_fiction():
+    for s in ("Western Australia -- History", "English poetry -- History and criticism",
+              "Romance languages -- Grammar", "Ghost towns -- Nevada",
+              "Adventure and adventurers -- Biography", "Folklore -- Ireland"):
+        assert bookkind.infer(fake_book([s])).kind == "non-fiction", s
+    for s in ("Ghost stories", "Vampires -- Fiction", "Mystery", "Poetry -- Collections", "Horror tales"):
+        assert bookkind.infer(fake_book([s])).kind == "fiction", s
