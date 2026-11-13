@@ -94,5 +94,5 @@ def test_a_chosen_kind_is_recorded_and_noticed_once(tmp_path):
 
 def test_resume_keeps_the_recorded_kind(tmp_path):
     _gen(tmp_path, generate.Options(book_kind="self-help"))
-    ix, _, logs = _gen(tmp_path, resume=True)
+    ix, _, _logs = _gen(tmp_path, resume=True)
     assert ix["bookKind"] == "self-help"

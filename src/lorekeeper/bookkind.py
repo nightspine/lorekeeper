@@ -116,7 +116,7 @@ def _from_model(book: Book, llm) -> Inference | None:
               + "\n".join(f"- {t}" for t in titles) + "\n\nOpening:\n" + "\n\n".join(opening))
     try:
         out = llm.complete(MODEL_SYSTEM, prompt, MODEL_SCHEMA)
-    except Exception:
+    except Exception:  # noqa: BLE001  any backend failure means "no answer"
         return None
     kind = out.get("kind") if isinstance(out, dict) else None
     if kind not in KINDS:
