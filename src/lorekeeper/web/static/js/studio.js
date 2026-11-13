@@ -48,7 +48,7 @@ function configure(target, book, ctx, fromJob = null) {
   // A cloud model reads about a chapter per call; a local model keeps a chunk its context allows.
   const defaultChunk = (pv) => (pv === "ollama" ? 2500 : 8000);
   const cfg = { provider: "ollama", model: null, check_model: null, chunk_words: null, depth: "standard", events: true, verify: true,
-    series_id: "", book_key: "", license: "CC0-1.0", num_ctx: 16384 };
+    series_id: "", book_key: "", license: "CC0-1.0", num_ctx: 16384, book_kind: "auto" };
   for (const k of Object.keys(cfg)) if (t[k] !== undefined && t[k] !== null) cfg[k] = t[k];
   // A run from before the fact-check model and smaller chunks re-runs with today's defaults.
   const legacy = Boolean(fromJob) && !("check_model" in t);
@@ -295,6 +295,34 @@ function configure(target, book, ctx, fromJob = null) {
       ` run started ${relTime(fromJob.created)}.`),
     h("label.replace-label", { for: "cfg-replace" }, replaceBox, "Delete the old run"));
 
+  // Book kind: the detected one is the first option and means "auto"; the rest are explicit choices.
+  const KINDS = [["fiction", "Fiction"], ["non-fiction", "Non-fiction"], ["self-help", "Self-help"]];
+  const kindName = (k) => (KINDS.find(([v]) => v === k) || [k, k])[1];
+  const BASIS = { subjects: "from the book's subjects", structure: "from its chapter titles", default: "the usual guess: fiction", model: "from reading the book" };
+  const kindRows = h("div.prows", { role: "radiogroup", "aria-labelledby": "kind-q" });
+  const kindRow = (value, title, line) => {
+    const radio = h("input", { type: "radio", name: "cfg-kind", value, checked: cfg.book_kind === value });
+    const card = h("label.prow", { class: cfg.book_kind === value ? "on" : "" }, radio,
+      h("span.pr-text", h("span.pr-title", title), line ? h("span.pr-line", line) : null));
+    radio.addEventListener("change", () => {
+      if (!radio.checked) return;
+      cfg.book_kind = value;
+      kindRows.querySelectorAll(".prow").forEach((r) => r.classList.toggle("on", r.contains(radio)));
+    });
+    return card;
+  };
+  const paintKinds = (det) => {
+    const first = det
+      ? kindRow("auto", `Detected: ${kindName(det.detected)}`, BASIS[det.basis] ? `${cap1(BASIS[det.basis])}.` : null)
+      : kindRow("auto", "Detected", "Lorekeeper decides from the book's subjects and chapter titles.");
+    clear(kindRows, first, ...KINDS.map(([v, l]) => kindRow(v, l)));
+  };
+  const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+  paintKinds(null);
+  if (catalogKey) {
+    api.book(catalogKey).then((b) => { if (b?.bookKind?.detected) paintKinds(b.bookKind); }).catch(() => {});
+  }
+
   const storyCount = storySet.size;
   const sep = () => h("span.sep", { "aria-hidden": "true" }, "/");
   clear(target,
@@ -306,6 +334,7 @@ function configure(target, book, ctx, fromJob = null) {
         h("div", h("h1", book.title), h("p.by", book.authors.length ? `by ${book.authors.join(", ")}` : "Unknown author"))),
       h("p.build-facts", `${fmtInt(book.words)} words, ${storyCount} story ${storyCount === 1 ? "section" : "sections"}.`)),
     banner,
+    h("section.build-run", h("h2#kind-q.build-q", "Book kind"), kindRows),
     h("section.build-run", h("h2#build-q.build-q", "Where should it run?"), providerCards),
     h("div.build-go", est, startBtn),
     catalogKey ? h("p.hint.build-hand", "Prefer to write it yourself? Start an empty index and add entries as you read. ",
