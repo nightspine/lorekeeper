@@ -2,6 +2,7 @@
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -10,6 +11,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from lorekeeper import llm  # noqa: E402
 from lorekeeper.web import app as web_app  # noqa: E402
+from lorekeeper.web import jobs as web_jobs  # noqa: E402
 
 from .test_generate import FakeLLM, make_epub  # noqa: E402
 
@@ -645,3 +647,103 @@ def test_app_files_are_revalidated(client):
         assert r.headers["cache-control"] == "no-cache", path
     etag = client.get("/static/css/base.css").headers["etag"]
     assert client.get("/static/css/base.css", headers={"If-None-Match": etag}).status_code == 304
+
+
+# ---- book kind (issue #13, phase 1) -----------------------------------------------------------
+
+def stamp_kind(monkeypatch, kind=None):
+    """Spy on generate.run: remember the Options it got and stamp `kind` on the index it wrote
+    (the generator itself does that for real; this keeps the web layer's tests independent of it)."""
+    seen = []
+    real = web_jobs.generate.run
+
+    def run(book, model, opts, book_path, out, **kw):
+        seen.append(getattr(opts, "book_kind", "unset"))
+        report = real(book, model, opts, book_path, out, **kw)
+        if kind:
+            d = json.loads(Path(out).read_text())
+            d["bookKind"] = kind
+            Path(out).write_text(json.dumps(d))
+        return report
+    monkeypatch.setattr(web_jobs.generate, "run", run)
+    return seen
+
+
+def test_a_book_reports_its_detected_kind_without_a_model(client, tmp_path):
+    book = upload(client, tmp_path)
+    assert set(book["bookKind"]) == {"detected", "basis", "why"}
+    assert book["bookKind"]["detected"] == "fiction"
+    assert book["bookKind"]["basis"] in ("subjects", "structure", "default")
+    entry = next(e for e in client.get("/api/catalog").json()["books"] if e["localId"] == book["id"])
+    assert entry["bookKind"] == book["bookKind"]
+    assert client.get(f"/api/catalog/books/{entry['key']}").json()["bookKind"] == book["bookKind"]
+
+
+def test_job_config_book_kind_reaches_the_options(client, tmp_path, monkeypatch):
+    seen = stamp_kind(monkeypatch, "non-fiction")
+    book = upload(client, tmp_path)
+    for config in ({"chunk_words": 5000}, {"chunk_words": 5000, "book_kind": "auto"},
+                   {"chunk_words": 5000, "book_kind": "self-help"}):
+        job = client.post("/api/jobs", json={"book_id": book["id"], "config": config}).json()
+        assert wait_for(client, job["id"], {"done", "failed"})["status"] == "done"
+    assert seen == [None, None, "self-help"]
+
+
+def test_library_entries_and_versions_carry_the_index_kind(client, tmp_path, monkeypatch):
+    stamp_kind(monkeypatch, "non-fiction")
+    book = upload(client, tmp_path)
+    job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+    assert wait_for(client, job["id"], {"done", "failed"})["status"] == "done"
+    lib = client.get("/api/library").json()
+    assert [i["bookKind"] for i in lib["indexes"]] == ["non-fiction"]
+    entry = next(e for e in client.get("/api/catalog").json()["books"] if e["localId"] == book["id"])
+    assert [v["bookKind"] for v in entry["versions"]] == ["non-fiction"]
+
+
+def test_an_index_without_a_kind_reads_null(client, tmp_path, monkeypatch):
+    stamp_kind(monkeypatch, None)
+    book = upload(client, tmp_path)
+    job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+    assert wait_for(client, job["id"], {"done", "failed"})["status"] == "done"
+    doc = client.get("/api/library").json()["indexes"][0]
+    assert doc["bookKind"] is None or doc["bookKind"] == "fiction"   # the generator may stamp it itself
+
+
+def series_manifest_after(client, tmp_path, monkeypatch, kinds, books=2):
+    """Build books of one series, each stamped with the next of `kinds`; the manifest the last run wrote."""
+    it = iter(kinds)
+    real = web_jobs.generate.run
+
+    def run(book, model, opts, book_path, out, **kw):
+        report = real(book, model, opts, book_path, out, **kw)
+        d = json.loads(Path(out).read_text())
+        k = next(it)
+        if k:
+            d["bookKind"] = k
+        else:
+            d.pop("bookKind", None)
+        Path(out).write_text(json.dumps(d))
+        return report
+    monkeypatch.setattr(web_jobs.generate, "run", run)
+    ups = []
+    for i, title in enumerate(["Lights One", "Lights Two"][:books], 1):
+        meta = f'<meta name="calibre:series" content="Lights"/><meta name="calibre:series_index" content="{i}"/>'
+        path = make_epub(tmp_path / f"b{i}.epub", title=title, series_meta=meta,
+                         ch1=[f"Book {i}: Ezra Pike kept the old harbour light alone for twenty winters, and the sea took notice."] * 3)
+        ups.append(client.post("/api/books", files={"file": (f"b{i}.epub", path.read_bytes())}).json())
+    for up in ups[:len(kinds)]:   # the rest are in the series but never built
+        job = client.post("/api/jobs", json={"config": {"catalog_key": f"up:{up['id']}", "chunk_words": 5000}}).json()
+        assert wait_for(client, job["id"], {"done", "failed"})["status"] == "done"
+    return json.loads((tmp_path / "data" / "indexes" / "lights.series.json").read_text())
+
+
+def test_series_manifest_has_the_kind_only_when_every_book_agrees(client, tmp_path, monkeypatch):
+    assert series_manifest_after(client, tmp_path, monkeypatch, ["self-help", "self-help"])["bookKind"] == "self-help"
+
+
+def test_series_manifest_omits_a_mixed_or_missing_kind(client, tmp_path, monkeypatch):
+    assert "bookKind" not in series_manifest_after(client, tmp_path, monkeypatch, ["fiction", "non-fiction"])
+
+
+def test_series_manifest_omits_the_kind_while_a_book_has_no_index_yet(client, tmp_path, monkeypatch):
+    assert "bookKind" not in series_manifest_after(client, tmp_path, monkeypatch, ["fiction"])
