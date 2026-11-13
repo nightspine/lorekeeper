@@ -174,3 +174,17 @@ def test_topical_subjects_with_a_fiction_word_are_non_fiction():
         assert bookkind.infer(fake_book([s])).kind == "non-fiction", s
     for s in ("Ghost stories", "Vampires -- Fiction", "Mystery", "Poetry -- Collections", "Horror tales"):
         assert bookkind.infer(fake_book([s])).kind == "fiction", s
+
+
+def test_form_subdivisions_stay_fiction():
+    for s in ("Tragedies (Drama)", "Hamlet (Legendary character) -- Drama", "Kings and rulers -- Succession -- Drama",
+              "Revenge -- Drama", "Princes -- Drama", "Denmark -- Drama", "Love -- Poetry", "Vampires -- Drama",
+              "English drama -- 17th century", "English poetry -- 19th century", "Satire, English -- 18th century"):
+        assert bookkind.infer(fake_book([s])).kind == "fiction", s
+
+
+def test_back_matter_switches_off_the_plain_chapter_shortcut():
+    t = [f"Chapter {i}" for i in range(1, 21)] + ["Bibliography", "Index"]
+    assert bookkind.infer(fake_book(titles=t)).kind == "non-fiction"
+    t = ["Introduction", "Notes"] + [f"Chapter {i}" for i in range(1, 41)]
+    assert bookkind.infer(fake_book(titles=t)).kind == "fiction"
