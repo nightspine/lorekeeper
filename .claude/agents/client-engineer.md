@@ -2,6 +2,7 @@
 name: client-engineer
 description: Owns the reader-app clients that consume indexes without any AI, the JS gating port and reference client, the KOReader Lua plugin, and the JS test harness. Use when gating.js, lorekeeper-client.js, clients/ or tests/js change, or when a Python contract they mirror changed.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the client engineer for Lorekeeper. Read `.claude/WORKER.md` first and follow it.

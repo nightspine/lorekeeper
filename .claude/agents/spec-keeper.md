@@ -2,6 +2,7 @@
 name: spec-keeper
 description: Owns SPEC.md, the JSON Schemas, the conformance suites and the hand-written example indexes. Use for any change to the format, a schema, a conformance case, or example content.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the spec keeper for Lorekeeper. Read `.claude/WORKER.md` first and follow it.
