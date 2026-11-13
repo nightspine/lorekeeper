@@ -99,9 +99,19 @@ def _from_titles(titles: list[str]) -> Inference | None:
     return None
 
 
+FRONT_MATTER = ("cover", "contents", "title page", "copyright", "dedication", "preface", "foreword", "introduction",
+                "acknowledgements", "acknowledgments", "note", "notes", "illustrations", "epigraph")
+
+
+def _front_matter(title: str) -> bool:
+    w = " ".join(_words(title))
+    return any(re.search(rf"\b{re.escape(t)}\b", w) for t in FRONT_MATTER)
+
+
 def _from_model(book: Book, llm) -> Inference | None:
     titles = [c.title for c in book.chapters][:60]
-    story = [c for c in book.chapters if c.title][:2] or book.chapters[:2]
+    titled = [c for c in book.chapters if c.title]
+    story = [c for c in titled if not _front_matter(c.title)][:2] or titled[:2] or book.chapters[:2]
     ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
     bounds = {c.start: e for c, e in zip(book.chapters, ends)}
     opening: list[str] = []
