@@ -8,3 +8,4 @@ lorekeeper-data/
 .playwright-mcp/
 .DS_Store
 build/
+.claude/work/
