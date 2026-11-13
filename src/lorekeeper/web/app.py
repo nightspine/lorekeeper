@@ -561,6 +561,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         config = body.get("config", {})
         if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
             raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
+        if "book_kind" in config and config["book_kind"] is not None:
+            bk = config["book_kind"]
+            if not isinstance(bk, str) or not bk.strip():
+                raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")
         try:
             job = (submit_for(config["catalog_key"], config) if config.get("catalog_key")
                    else jobs.submit(body["book_id"], config))
