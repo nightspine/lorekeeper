@@ -318,8 +318,9 @@ function configure(target, book, ctx, fromJob = null) {
     clear(kindRows, first, ...KINDS.map(([v, l]) => kindRow(v, l)));
   };
   const cap1 = (t) => t.charAt(0).toUpperCase() + t.slice(1);
-  paintKinds(null);
-  if (catalogKey) {
+  if (book.bookKind?.detected) paintKinds(book.bookKind);
+  else paintKinds(null);
+  if (!book.bookKind?.detected && catalogKey) {
     api.book(catalogKey).then((b) => { if (b?.bookKind?.detected) paintKinds(b.bookKind); }).catch(() => {});
   }
 
