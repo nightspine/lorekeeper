@@ -11,6 +11,7 @@ import re
 from dataclasses import dataclass
 
 from .epub import Book
+from .llm import Cancelled
 
 KINDS = ("fiction", "non-fiction", "self-help")
 
@@ -21,10 +22,14 @@ FICTION = ("fiction", "novel", "stories", "short stories", "fantasy", "science f
 NON_FICTION = ("history", "biography", "autobiography", "memoir", "science", "philosophy", "politics",
                "economics", "religion", "essays", "natural selection", "evolution", "biology", "physics",
                "mathematics", "psychology", "sociology", "travel", "geography", "law", "education",
-               "business", "reference", "criticism", "theology", "anthropology", "nature")
+               "business", "reference", "criticism", "theology", "anthropology", "nature", "non-fiction",
+               "nonfiction", "animals", "zoology")
 SELF_HELP = ("self-help", "self help", "self-improvement", "self improvement", "self-actualization",
              "personal development", "motivation", "success", "habits", "productivity", "conduct of life",
-             "happiness", "character", "thrift", "mindfulness", "self-management", "self-culture")
+             "happiness", "thrift", "mindfulness", "self-management", "self-culture")
+# Specific terms: a subject list that hits these and non-fiction is self-help; a vague hit ("success") is not enough.
+SELF_HELP_STRONG = ("self-help", "self help", "self-improvement", "self improvement", "self-actualization",
+                    "personal development", "conduct of life", "self-management", "self-culture", "mindfulness")
 
 # Chapter-title words (whole words, lowercase).
 NON_FICTION_TITLES = ("preface", "introduction", "bibliography", "notes", "index", "references", "appendix",
@@ -48,7 +53,7 @@ MODEL_SCHEMA = {"type": "object", "properties": {"kind": {"type": "string", "enu
 @dataclass(frozen=True)
 class Inference:
     kind: str
-    basis: str       # subjects | structure | model | default | chosen
+    basis: str       # subjects | structure | model | default | chosen | resumed
     why: str
 
     def as_dict(self) -> dict:
@@ -57,17 +62,25 @@ class Inference:
 
 def _hits(term: str, needles: tuple[str, ...]) -> list[str]:
     t = term.lower()
-    return [n for n in needles if re.search(r"(?<![a-z])" + re.escape(n), t)]
+    return [n for n in needles if re.search(r"(?<![a-z])" + re.escape(n) + r"(?:e?s)?(?![a-z])", t)]
 
 
 def _from_subjects(subjects: list[str]) -> Inference | None:
     found: dict[str, list[str]] = {k: [] for k in KINDS}
+    strong = False
     for s in subjects:
+        low = s.lower()
         for kind, words in (("fiction", FICTION), ("non-fiction", NON_FICTION), ("self-help", SELF_HELP)):
-            if _hits(s, words):
+            hits = _hits(s, words)
+            if kind == "fiction" and re.search(r"non-?fiction", low):
+                hits = []   # "Non-fiction" is the opposite of the needle it contains
+            if hits:
                 found[kind].append(s)
-    # "History -- Fiction" is a novel; "Self-help" beats a generic subject such as "Success".
-    for kind in ("fiction", "self-help", "non-fiction"):
+                if kind == "self-help" and set(hits) & set(SELF_HELP_STRONG):
+                    strong = True
+    # "History -- Fiction" is a novel; a vague self-help word ("Success", "Habits") loses to non-fiction.
+    order = ["fiction", "self-help", "non-fiction"] if strong or not found["non-fiction"] else ["fiction", "non-fiction", "self-help"]
+    for kind in order:
         if found[kind]:
             return Inference(kind, "subjects", f"the book's subjects include {', '.join(repr(x) for x in found[kind][:3])}")
     return None
@@ -89,7 +102,7 @@ def _from_titles(titles: list[str]) -> Inference | None:
     nf = [t for t in titles if set(_words(t)) & set(NON_FICTION_TITLES)]
     sh = [t for t in titles if set(_words(t)) & set(SELF_HELP_TITLES)]
     # Introductions and notes also frame novels, so a lean needs more than the usual front matter.
-    if len(sh) >= 2 or (sh and len(sh) > len(nf)):
+    if len(sh) >= 2:
         return Inference("self-help", "structure", f"chapter titles such as {', '.join(repr(x) for x in sh[:3])}")
     if len(nf) >= 2:
         return Inference("non-fiction", "structure", f"chapter titles such as {', '.join(repr(x) for x in nf[:3])}")
@@ -126,6 +139,8 @@ def _from_model(book: Book, llm) -> Inference | None:
               + "\n".join(f"- {t}" for t in titles) + "\n\nOpening:\n" + "\n\n".join(opening))
     try:
         out = llm.complete(MODEL_SYSTEM, prompt, MODEL_SCHEMA)
+    except Cancelled:
+        raise
     except Exception:  # noqa: BLE001  any backend failure means "no answer"
         return None
     kind = out.get("kind") if isinstance(out, dict) else None

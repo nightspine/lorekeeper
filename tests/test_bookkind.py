@@ -95,8 +95,9 @@ def test_a_chosen_kind_is_recorded_and_noticed_once(tmp_path):
 
 def test_resume_keeps_the_recorded_kind(tmp_path):
     _gen(tmp_path, generate.Options(book_kind="self-help"))
-    ix, _, _logs = _gen(tmp_path, resume=True)
+    ix, _r, _logs = _gen(tmp_path, resume=True)
     assert ix["bookKind"] == "self-help"
+    assert _r["bookKind"]["basis"] == "resumed"
 
 
 def test_model_step_skips_front_matter():
@@ -128,3 +129,30 @@ def test_model_reason_stays_out_of_the_run_log(tmp_path):
     finally:
         bookkind.infer = orig
     assert logs == ["book kind: fiction (model)"]
+
+
+def test_non_fiction_subject_is_not_fiction():
+    for s in (["Non-fiction"], ["Nonfiction -- History"]):
+        assert bookkind.infer(fake_book(s)).kind == "non-fiction"
+
+
+def test_vague_self_help_words_lose_to_non_fiction():
+    for s in (["Royal succession"], ["Characters and characteristics"], ["Animals -- Habits and behavior"]):
+        assert bookkind.infer(fake_book(s)).kind != "self-help", s
+    assert bookkind.infer(fake_book(["Animals -- Habits and behavior"])).kind == "non-fiction"
+    assert bookkind.infer(fake_book(["Conduct of life", "Philosophy"])).kind == "self-help"
+    assert bookkind.infer(fake_book(["Success"])).kind == "self-help"
+
+
+def test_one_self_help_title_is_no_lean():
+    r = bookkind.infer(fake_book(titles=["The Lesson", "The Return", "The End"]))
+    assert r.basis != "structure" or r.kind != "self-help"
+    assert bookkind._from_titles(["The Lesson", "The Return", "The End"]) is None
+
+
+def test_model_step_lets_cancellation_through():
+    import pytest
+    from lorekeeper.llm import Cancelled
+    with pytest.raises(Cancelled):
+        bookkind.infer(fake_book(titles=['Alpha', 'Beta']), Scripted(Cancelled()))
+    assert bookkind.infer(fake_book(titles=['Alpha', 'Beta']), Scripted(RuntimeError("x"))).basis == "default"

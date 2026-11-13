@@ -1627,11 +1627,11 @@ NON_STORY_NOTICE = "building a story index for a {kind} book; {kind} extraction 
 
 def _settle_kind(gen: "Generator", book: Book, llm: LLM, opts: Options, out: Path, resume: bool, log) -> None:
     """Decide the book kind once per run: chosen, kept from the run being resumed, or inferred (model last)."""
+    prev = json.loads(out.read_text()).get("bookKind") if resume and not opts.book_kind and out.exists() else None
     if opts.book_kind:
         pass
-    elif resume and out.exists() and json.loads(out.read_text()).get("bookKind"):
-        prev = json.loads(out.read_text())["bookKind"]
-        gen.kind = bookkind.Inference(prev, "chosen", "kept from the run being resumed")
+    elif prev:
+        gen.kind = bookkind.Inference(prev, "resumed", "kept from the run being resumed")
     else:
         gen.kind = bookkind.infer(book, llm)
     # A model's reason may know the book, and the Runs monitor shows the log while discoveries are hidden:
