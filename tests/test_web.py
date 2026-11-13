@@ -747,3 +747,16 @@ def test_series_manifest_omits_a_mixed_or_missing_kind(client, tmp_path, monkeyp
 
 def test_series_manifest_omits_the_kind_while_a_book_has_no_index_yet(client, tmp_path, monkeypatch):
     assert "bookKind" not in series_manifest_after(client, tmp_path, monkeypatch, ["fiction"])
+
+
+def test_job_book_kind_is_checked_at_submit(client, tmp_path):
+    book = upload(client, tmp_path)
+    for bad in (5, ["fiction"], "", "  ", {"a": 1}, True):
+        r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"book_kind": bad}})
+        assert r.status_code == 422, bad
+        assert "book_kind" in r.json()["detail"]
+    assert client.get("/api/jobs").json() == []
+    for ok in ("auto", "non-fiction", None):
+        r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"book_kind": ok, "chunk_words": 5000}})
+        assert r.status_code == 200, ok
+        wait_for(client, r.json()["id"], {"done", "failed"})
