@@ -82,17 +82,49 @@ def test_generate_records_the_inferred_kind(tmp_path):
     assert ix["bookKind"] == "fiction"
     assert report["bookKind"]["basis"] == "structure"
     assert any(m.startswith("book kind: fiction (structure") for m in logs)
-    assert generate.NON_STORY_NOTICE not in logs
+    assert not any("extraction comes in a later phase" in m for m in logs)
 
 
 def test_a_chosen_kind_is_recorded_and_noticed_once(tmp_path):
     ix, report, logs = _gen(tmp_path, generate.Options(book_kind="non-fiction"))
     assert ix["bookKind"] == "non-fiction"
     assert report["bookKind"]["basis"] == "chosen"
-    assert logs.count(generate.NON_STORY_NOTICE) == 1
+    assert logs.count(generate.NON_STORY_NOTICE.format(kind="non-fiction")) == 1
+    assert "building a story index for a non-fiction book; non-fiction extraction comes in a later phase" in logs
 
 
 def test_resume_keeps_the_recorded_kind(tmp_path):
     _gen(tmp_path, generate.Options(book_kind="self-help"))
     ix, _, _logs = _gen(tmp_path, resume=True)
     assert ix["bookKind"] == "self-help"
+
+
+def test_model_step_skips_front_matter():
+    book = fake_book(titles=["Contents", "Preface", "Alpha", "Beta"])
+    book.blocks = [SimpleNamespace(raw=r, words=[r]) for r in ("TOC", "PREF", "OPENALPHA", "OPENBETA")]
+    seen = []
+
+    class Spy(Scripted):
+        def complete(self, system, prompt, schema, prefix=None):
+            seen.append(prompt)
+            return super().complete(system, prompt, schema, prefix)
+
+    bookkind.infer(book, Spy({"kind": "fiction", "why": "x"}))
+    opening = seen[0].split("Opening:")[1]
+    assert "OPENALPHA" in opening and "OPENBETA" in opening
+    assert "TOC" not in opening and "PREF" not in opening
+
+
+def test_model_reason_stays_out_of_the_run_log(tmp_path):
+    llm = FakeLLM()
+    logs = []
+    gen = SimpleNamespace(kind=None)
+    gen.kind = bookkind.Inference("fiction", "model", "secret plot hint")
+    book = fake_book(titles=["Alpha", "Beta"])
+    orig = bookkind.infer
+    bookkind.infer = lambda b, l=None: gen.kind
+    try:
+        generate._settle_kind(gen, book, llm, generate.Options(), tmp_path / "o.json", False, logs.append)
+    finally:
+        bookkind.infer = orig
+    assert logs == ["book kind: fiction (model)"]

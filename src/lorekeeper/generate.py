@@ -1622,7 +1622,7 @@ class Generator:
         self.item_seq, self.item_kind = state["item_seq"], state["item_kind"]
 
 
-NON_STORY_NOTICE = "building a story index for a non-fiction book; non-fiction extraction comes in a later phase"
+NON_STORY_NOTICE = "building a story index for a {kind} book; {kind} extraction comes in a later phase"
 
 
 def _settle_kind(gen: "Generator", book: Book, llm: LLM, opts: Options, out: Path, resume: bool, log) -> None:
@@ -1634,9 +1634,12 @@ def _settle_kind(gen: "Generator", book: Book, llm: LLM, opts: Options, out: Pat
         gen.kind = bookkind.Inference(prev, "chosen", "kept from the run being resumed")
     else:
         gen.kind = bookkind.infer(book, llm)
-    log(f"book kind: {gen.kind.kind} ({gen.kind.basis}: {gen.kind.why})")
+    # A model's reason may know the book, and the Runs monitor shows the log while discoveries are hidden:
+    # the reason stays in the .report for that basis.
+    why = "" if gen.kind.basis == "model" else f": {gen.kind.why}"
+    log(f"book kind: {gen.kind.kind} ({gen.kind.basis}{why})")
     if gen.kind.kind != "fiction":
-        log(NON_STORY_NOTICE)
+        log(NON_STORY_NOTICE.format(kind=gen.kind.kind))
 
 
 def run(book: Book, llm: LLM, opts: Options, epub_path: str | Path, out: str | Path,
