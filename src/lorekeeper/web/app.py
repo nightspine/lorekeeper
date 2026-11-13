@@ -77,6 +77,7 @@ class Library:
                 "key": item["key"], "source": item["source"], "id": doc.get("id"),
                 "title": doc.get("work", {}).get("title"), "authors": doc.get("work", {}).get("authors", []),
                 "series": doc.get("series"), "complete": doc.get("coverage", {}).get("complete"),
+                "bookKind": doc.get("bookKind"),
                 "entities": len(doc.get("entities", [])), "anchors": len(doc.get("anchors", [])),
                 "model": (prov.get("generator") or {}).get("model"), "updated": prov.get("updated") or prov.get("created"),
                 "textHashes": [e.get("textHash") for e in doc.get("editions", [])],
@@ -226,6 +227,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(422, f"Book Orbit's file couldn't be read as an EPUB: {ex}") from ex
         catalog.update_state(lambda st: st["links"].__setitem__(key, meta["id"]))
         return meta["id"]
+
+    def write_manifest(series_id: str) -> None:
+        manifest = catalog.series_manifest(series_id)
+        if manifest:
+            (data_dir / "indexes").mkdir(parents=True, exist_ok=True)
+            (data_dir / "indexes" / f"{series_id}.series.json").write_text(json.dumps(manifest, indent=2))
 
     def submit_for(key: str, config: dict):
         """Queue a build for a catalog book, with series ids filled in from the catalog."""
@@ -779,7 +786,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return parsed_books[k]
 
     editor = Editor(identity, library, data_dir, reader=parsed)
-    jobs.after_run = lambda job: editor.reapply(Path(job.output))   # a rebuild keeps the person's edits
+    def after_run(job):
+        got = editor.reapply(Path(job.output))   # a rebuild keeps the person's edits
+        if job.config.get("series_id"):
+            write_manifest(job.config["series_id"])   # the new index may settle the series' bookKind
+        return got
+    jobs.after_run = after_run
 
     def who(request: Request) -> str:
         return getattr(request.state, "user", None) or "admin"
