@@ -201,7 +201,7 @@ def cmd_kind(args) -> int:
     book = epub.read(args.epub)
     model = None
     if args.model or args.provider != "ollama":
-        model = _make_model(args, args.model if args.model != "gemma4:12b-it-qat" else None)
+        model = _make_model(args, args.model)
     print(json.dumps(bookkind.infer(book, model).as_dict(), indent=2, ensure_ascii=False))
     return 0
 
