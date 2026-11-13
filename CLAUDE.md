@@ -72,3 +72,7 @@ Key format ideas that span several files:
 - Never restart `lorekeeper web` or kill a generate process while a run is active: check `/api/jobs` and **abort** if anything is running, queued or stopping. CLI and Studio runs share one Ollama.
 - Commits and releases: pull requests are squash-merged and the PR title is the commit message, in Conventional Commits form (`feat:`, `fix:`, `docs:`...). Never add `Co-authored-by`, "Generated with" or any other attribution trailer to commits, PR bodies or templates. release-please keeps a release PR open on `main` (version in `pyproject.toml`, `CHANGELOG.md`); merging it tags `vX.Y.Z`, which publishes `ghcr.io/nightspine/lorekeeper` (`latest`, `X.Y.Z`, `X.Y`, `edge` for main, `sha-` tags). See RELEASING.md.
 - Schemas in `schema/` are normative and versioned with the spec (`"lorekeeper": "0.1"`). Keep the schemas, SPEC.md and the code in agreement in the same change.
+
+## Working as lead
+
+In this project Claude Code acts as the lead and delegates feature work to the agents in `.claude/agents/` (spec-keeper, core-engineer, pipeline-engineer, web-engineer, frontend-engineer, client-engineer, docs-writer, and code-reviewer as the gate). The playbook is `.claude/LEAD.md`: scope the feature in `.claude/work/<slug>/brief.md`, give it a worktree and a Herdr space named `lorekeeper: <slug>`, run each worker in a tab named `work: <role>`, have `code-reviewer` pass it in a `review: round <n>` tab, review it once more yourself, then ship. Workers follow `.claude/WORKER.md`.
