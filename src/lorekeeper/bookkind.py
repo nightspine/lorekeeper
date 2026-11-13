@@ -24,7 +24,8 @@ FICTION_WEAK = ("western", "romance", "ghost", "adventure", "poetry", "drama", "
                 "horror", "mystery", "detective", "thriller", "fantasy", "vampires", "humorous", "satire")
 FICTION = FICTION_STRONG + FICTION_WEAK
 # A subdivision that says the book is the thing itself, not a study of it ("Poetry -- Collections").
-FORM_SUBDIVISIONS = ("collections", "translations", "texts", "juvenile", "humor", "anecdotes")
+FORM_SUBDIVISIONS = ("collections", "translations", "texts", "juvenile", "humor", "anecdotes",
+                     "drama", "poetry", "fiction")
 NON_FICTION = ("history", "biography", "autobiography", "memoir", "science", "philosophy", "politics",
                "economics", "religion", "essays", "natural selection", "evolution", "biology", "physics",
                "mathematics", "psychology", "sociology", "travel", "geography", "law", "education",
@@ -71,6 +72,18 @@ def _hits(term: str, needles: tuple[str, ...]) -> list[str]:
     return [n for n in needles if re.search(r"(?<![a-z])" + re.escape(n) + r"(?:e?s)?(?![a-z])", t)]
 
 
+def _topical(low: str, hits: list[str]) -> bool:
+    """A weak fiction word in the main heading with a topical subdivision after it.
+
+    LCSH puts the form in the subdivision ("Revenge -- Drama", "Love -- Poetry"), so a weak word there
+    says the book is the thing; chronological subdivisions ("-- 19th century") say nothing.
+    """
+    head, *tail = [p.strip() for p in low.split("--")]
+    if not tail or not _hits(head, tuple(hits)):
+        return False
+    return any(not re.search(r"\d", p) and not _hits(p, FORM_SUBDIVISIONS) for p in tail)
+
+
 def _from_subjects(subjects: list[str]) -> Inference | None:
     found: dict[str, list[str]] = {k: [] for k in KINDS}
     strong = False
@@ -81,12 +94,10 @@ def _from_subjects(subjects: list[str]) -> Inference | None:
             hits = _hits(s, words)
             if kind == "fiction" and re.search(r"non-?fiction", low):
                 hits = []   # "Non-fiction" is the opposite of the needle it contains
-            if kind == "fiction" and hits and not set(hits) & set(FICTION_STRONG):
-                tail = low.split("--")[1:]
-                if tail and not _hits(" ".join(tail), FORM_SUBDIVISIONS):
-                    # a topical heading ("Folklore -- Ireland") is about the thing, not an example of it
-                    found["non-fiction"].append(s)
-                    hits = []
+            if kind == "fiction" and hits and not set(hits) & set(FICTION_STRONG) and _topical(low, hits):
+                # a topical heading ("Folklore -- Ireland") is about the thing, not an example of it
+                found["non-fiction"].append(s)
+                hits = []
             if hits:
                 found[kind].append(s)
                 if kind == "fiction" and set(hits) & set(FICTION_STRONG):
@@ -117,7 +128,8 @@ def _from_titles(titles: list[str]) -> Inference | None:
     # Numbered chapters first: a novel often opens with an Introduction and Notes.
     plain = [t for t in titles if _plain(t) and not set(_words(t)) & (set(NON_FICTION_TITLES) | set(SELF_HELP_TITLES))]
     body = [t for t in titles if not _front_matter(t)]
-    if len(body) >= 2 and len(plain) >= 0.8 * len(body):
+    back = [t for t in titles if set(_words(t)) & set(BACK_MATTER)]
+    if not back and len(body) >= 2 and len(plain) >= 0.8 * len(body):
         return Inference("fiction", "structure", "numbered chapters with no headings of an argument or a course")
     # Front matter (preface, introduction, notes) frames novels too; only the rest leans non-fiction.
     nf = [t for t in titles if set(_words(t)) & (set(NON_FICTION_TITLES) - set(FRONT_MATTER))]
@@ -129,6 +141,8 @@ def _from_titles(titles: list[str]) -> Inference | None:
     return None
 
 
+# A back-matter title means an argued book: numbered chapters alone no longer say fiction.
+BACK_MATTER = ("bibliography", "index", "references", "glossary", "appendix")
 FRONT_MATTER = ("cover", "contents", "title page", "copyright", "dedication", "preface", "foreword", "introduction",
                 "acknowledgements", "acknowledgments", "note", "notes", "illustrations", "epigraph")
 
