@@ -17,9 +17,10 @@ const letterOf = (key) => { const c = fold(key).charAt(0).toUpperCase(); return 
 const surname = (name) => (name || "").trim().split(/\s+/).pop() || "";
 const isReady = (b) => b.status === "complete" || b.status === "partial";
 const KIND_LABEL = { "non-fiction": "Non-fiction", "self-help": "Self-help" };
-// A plain chip for a book whose default index is not fiction; nothing for fiction or no index.
+// A plain chip for a book whose default index is not fiction; nothing for fiction, no index, or an index
+// without the field. b.bookKind on a catalog entry is a detected object, never read here.
 const kindChip = (b) => {
-  const k = b.versions.find((v) => v.isDefault)?.bookKind || b.bookKind;
+  const k = b.versions.find((v) => v.isDefault)?.bookKind;
   return k && k !== "fiction" ? h("span.chip", KIND_LABEL[k] || k) : null;
 };
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
