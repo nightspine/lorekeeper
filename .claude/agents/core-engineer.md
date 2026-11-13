@@ -2,6 +2,7 @@
 name: core-engineer
 description: Owns the reference implementation's core, the text model, fingerprints, anchor resolution, locators, gating and validation in src/lorekeeper. Use for changes to how positions, anchors or views are computed.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the core engineer for Lorekeeper. Read `.claude/WORKER.md` first and follow it.

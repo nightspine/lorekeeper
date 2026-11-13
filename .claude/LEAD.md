@@ -19,6 +19,8 @@ Definitions live in `.claude/agents/`; every worker also follows `.claude/WORKER
 | `docs-writer` | `web/static/docs`, `site/`, README, SECURITY, RELEASING, spec prose | explaining a change, or docs that drifted |
 | `code-reviewer` | nothing; read-only | every branch, before it comes back to the lead |
 
+Workers run on Sonnet (`model: sonnet` in each definition, `--model sonnet` on the command line) unless the brief says why a step needs Opus: a spec design decision with no precedent, or a change to `text.py` or `gating.py`. The reviewer runs on Opus; the gate is where judgment is cheapest to buy.
+
 A feature that spans areas gets one worker per area, started in sequence when their files overlap (spec first, then core, then clients and docs) and in parallel when they don't.
 
 ## One feature, start to finish
@@ -38,12 +40,24 @@ herdr-app do tab.rename --id <tab> --name shell
 
 The space nests under `lorekeeper` in the sidebar. Its first tab is a plain shell for the person.
 
-**3. Start the workers.** One tab per role, running Claude Code as that agent, with the brief's absolute path in the first message:
+**3. Start the workers.** One tab per role, running Claude Code as that agent, with the brief's absolute path in the first message. Workers run in `--permission-mode auto` like the lead, so they don't stop for every command.
+
+Workers that run at the same time never share a worktree: git state (index, staged files) is per worktree, not per branch. Give each one its own, branched from the feature branch, and merge them back yourself when they hand off:
+
+```sh
+ROLE=core-engineer; RW=~/.herdr/worktrees/lorekeeper/$SLUG--$ROLE
+git -C "$WT" worktree add -b feat/$SLUG-$ROLE "$RW" feat/$SLUG     # from the feature branch
+herdr-app do tab.new --space <space> --name "work: $ROLE" --folder "$RW" ...   # the tab opens there
+# after the handoff:
+git -C "$WT" merge --no-ff feat/$SLUG-$ROLE && git -C "$WT" worktree remove "$RW" && git -C "$WT" branch -d feat/$SLUG-$ROLE
+```
+
+The feature worktree `$WT` is the integration branch; the reviewer runs there. A lone worker can use `$WT` directly.
 
 ```sh
 BRIEF=~/projects/lorekeeper/.claude/work/$SLUG
 herdr-app do tab.new --space <space> --name "work: core-engineer" \
-  --argv '["claude","--agent","core-engineer"]' \
+  --argv '["claude","--agent","core-engineer","--model","sonnet","--permission-mode","auto"]' \
   --task "You are the core-engineer agent for feature $SLUG. Read $BRIEF/brief.md and .claude/WORKER.md, do the work in this worktree on branch feat/$SLUG, and write your handoff to $BRIEF/handoff-core-engineer.md."
 ```
 
@@ -53,7 +67,7 @@ herdr-app do tab.new --space <space> --name "work: core-engineer" \
 
 ```sh
 herdr-app do tab.new --space <space> --name "review: round 1" \
-  --argv '["claude","--agent","code-reviewer"]' \
+  --argv '["claude","--agent","code-reviewer","--model","opus","--permission-mode","auto"]' \
   --task "Review feature $SLUG on branch feat/$SLUG in this worktree. Brief: $BRIEF/brief.md. Handoffs: $BRIEF/handoff-*.md. Write $BRIEF/review-1.md."
 ```
 

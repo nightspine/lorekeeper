@@ -2,6 +2,7 @@
 name: pipeline-engineer
 description: Owns index generation, the LLM providers, prompts, fact-checking, portraits and entity identity (generate.py, llm.py, portraits.py, merge.py, bench/). Use for anything about what a model is asked, how its answers are checked, or which providers and models are offered.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the pipeline engineer for Lorekeeper. Read `.claude/WORKER.md` first and follow it.
