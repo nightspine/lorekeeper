@@ -20,9 +20,9 @@ Next, if the results call for it: a kind per tie in the duplicate judge's contex
 
 Today's index describes a story. Other books need their own shape:
 
-- **A book kind** on every index (`fiction`, `non-fiction`, `self-help`, with room for more), inferred by default from the EPUB and overridable in the build form, recorded in the index and the series manifest.
+- **A book kind** on every index (`fiction`, `non-fiction`, `self-help`, with room for more), inferred by default from the EPUB and overridable in the build form, recorded in the index and the series manifest. *Landed (phase 1):* the `bookKind` field, the inference from subjects and chapter titles (with one optional model call), the build form row, `generate --kind`, `lorekeeper kind`, and the kind in views and `/v0/lookup`. Every kind still builds the story index. What remains is below.
 - **One schema per kind**, versioned with the spec. A non-fiction companion gates concepts and terms with definitions as the book gives them, people and works cited, the argument so far and chapter takeaways; a self-help companion gates practices, principles and exercises as they are introduced and the author's framework. The rule stays the same: nothing appears before the book has said it.
-- **Generation, Reader and protocol per kind**: separate extraction and fact-check prompts, tabs and a concept map in the Reader, the kind in `/v0` responses, new conformance cases.
+- **Generation, Reader and protocol per kind**: separate extraction and fact-check prompts, tabs and a concept map in the Reader, new conformance cases. (The kind in `/v0` lookup results has landed.)
 
 This is a large change across SPEC §4 and §7, the schemas and the conformance suites. It lands as a spec minor version with the fiction schema unchanged, so existing indexes stay valid. Tracked in issue #13.
 
