@@ -16,6 +16,12 @@ const fold = (x) => (x || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 const letterOf = (key) => { const c = fold(key).charAt(0).toUpperCase(); return c >= "A" && c <= "Z" ? c : "#"; };
 const surname = (name) => (name || "").trim().split(/\s+/).pop() || "";
 const isReady = (b) => b.status === "complete" || b.status === "partial";
+const KIND_LABEL = { "non-fiction": "Non-fiction", "self-help": "Self-help" };
+// A plain chip for a book whose default index is not fiction; nothing for fiction or no index.
+const kindChip = (b) => {
+  const k = b.versions.find((v) => v.isDefault)?.bookKind || b.bookKind;
+  return k && k !== "fiction" ? h("span.chip", KIND_LABEL[k] || k) : null;
+};
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
 const plural = (n, one, many = `${one}s`) => `${fmtInt(n)} ${n === 1 ? one : many}`;
 const readerHref = (b) => {
@@ -253,7 +259,7 @@ export function mountLibrary(root) {
     return h(`button.book-card${s.selected === b.key ? ".selected" : ""}`, { type: "button", "aria-label": `${b.title}, ${STATUS[b.status].label}`,
       on: { click: () => { s.selected = b.key; paintPanel(); paintSelection(); persist(); } }, dataset: { key: b.key } },
       h("span.cover-wrap", cover(b)),
-      h("span.card-row", statusChip(b)),
+      h("span.card-row", statusChip(b), kindChip(b)),
       h("span.card-meta", inSeries ? bookNo(b.series) || b.authors[0] || "" : b.series ? `${b.series.name}, ${bookNo(b.series) || "in the series"}` : b.authors[0] || ""));
   }
 
@@ -397,7 +403,7 @@ export function mountLibrary(root) {
       h("div.panel-top", cover(b, "md"),
         h("div", h("span.eyebrow", b.series ? [b.series.name, bookNo(b.series) ? `, ${bookNo(b.series)}` : ""].join("") : "Standalone"),
           h("h2", b.title), h("p.by", b.authors.join(", ") || "Unknown author"),
-          h("div.facts", statusChip(b), h("span.chip", b.source === "bookorbit" ? "Book Orbit" : "Uploaded"),
+          h("div.facts", statusChip(b), kindChip(b), h("span.chip", b.source === "bookorbit" ? "Book Orbit" : "Uploaded"),
             b.words ? h("span.chip", `${fmtInt(b.words)} words`) : null))),
       h("div.panel-actions",
         href ? h("a.btn.primary", { href, "aria-label": `Read ${b.title}` }, icon("book-open"), "Read") : null,
