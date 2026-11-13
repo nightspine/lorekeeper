@@ -76,6 +76,7 @@ class Book:
     language: str = ""
     series: str | None = None          # from EPUB 3 belongs-to-collection or Calibre's series meta
     series_index: str | None = None
+    subjects: list[str] = field(default_factory=list)  # dc:subject terms, whitespace-normalized, in order
     isbns: list[str] = field(default_factory=list)   # ISBN-13s from the package identifiers
     docs: list[Doc] = field(default_factory=list)    # linear spine documents, in reading order
     path: str = ""                                   # the file this was read from (to reopen documents)
@@ -273,7 +274,7 @@ def read(path: str | Path) -> Book:
         series, series_index = _series(md)
         return Book(blocks=blocks, chapters=chapters, title=titles[0] if titles else "",
                     authors=dc("creator"), language=langs[0] if langs else "",
-                    series=series, series_index=series_index, isbns=isbns_from(dc("identifier")), docs=docs, path=str(path))
+                    series=series, series_index=series_index, subjects=[x for x in dc("subject") if x], isbns=isbns_from(dc("identifier")), docs=docs, path=str(path))
 
 
 def _series(md: ET.Element | None) -> tuple[str | None, str | None]:
