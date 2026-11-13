@@ -760,3 +760,18 @@ def test_job_book_kind_is_checked_at_submit(client, tmp_path):
         r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"book_kind": ok, "chunk_words": 5000}})
         assert r.status_code == 200, ok
         wait_for(client, r.json()["id"], {"done", "failed"})
+
+
+def test_catalog_build_checks_the_config_like_jobs_do(client, tmp_path):
+    book = upload(client, tmp_path)
+    keys = [f"up:{book['id']}"]
+    for config, status in (({"book_kind": 5}, 422), ({"book_kind": ""}, 422), ({"book_kind": ["x"]}, 422),
+                           ({"provider": "nope"}, 400)):
+        r = client.post("/api/catalog/build", json={"keys": keys, "config": config})
+        assert r.status_code == status, config
+        r2 = client.post("/api/jobs", json={"book_id": book["id"], "config": config})
+        assert r2.status_code == status, config
+    assert client.get("/api/jobs").json() == []
+    r = client.post("/api/catalog/build", json={"keys": keys, "config": {"book_kind": "auto", "chunk_words": 5000}})
+    assert r.status_code == 200
+    wait_for(client, r.json()["jobs"][0]["id"], {"done", "failed"})
