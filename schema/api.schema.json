@@ -85,6 +85,11 @@
               "title": {
                 "type": "string"
               },
+              "bookKind": {
+                "type": "string",
+                "minLength": 1,
+                "description": "The index's bookKind, present when the index has one"
+              },
               "match": {
                 "enum": [
                   "file",
