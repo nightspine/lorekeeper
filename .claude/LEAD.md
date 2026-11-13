@@ -61,7 +61,7 @@ herdr-app do tab.new --space <space> --name "work: core-engineer" \
   --task "You are the core-engineer agent for feature $SLUG. Read $BRIEF/brief.md and .claude/WORKER.md, do the work in this worktree on branch feat/$SLUG, and write your handoff to $BRIEF/handoff-core-engineer.md."
 ```
 
-`herdr-app do` prints the terminal address. Wait with `hc wait <terminal>`, then read `$BRIEF/handoff-<role>.md` and `hc read <terminal> --lines 60`. Herdr shows the tab as working, blocked (needs the person: tell them which tab) or done.
+`herdr-app do` prints the terminal address. Keep `--task` short and free of quotes: a long task was not delivered once. Read the tab a few seconds later; if it sits at an empty prompt, send the task with `hc send --if idle <terminal> "..."` (it pastes and presses Enter), and put any long notes in a file the message points to. Wait with `hc wait <terminal>`, then read `$BRIEF/handoff-<role>.md` and `hc read <terminal> --lines 60`. Herdr shows the tab as working, blocked (needs the person: tell them which tab) or done.
 
 **4. Review.** When every worker of the round has handed off, start the reviewer in the same space:
 
