@@ -40,7 +40,7 @@ herdr-app do tab.rename --id <tab> --name shell
 
 The space nests under `lorekeeper` in the sidebar. Its first tab is a plain shell for the person.
 
-**3. Start the workers.** One tab per role, running Claude Code as that agent, with the brief's absolute path in the first message. Workers run in `--permission-mode auto` like the lead, so they don't stop for every command.
+**3. Start the workers.** One tab per role, running Claude Code as that agent, with the brief's absolute path in the first message. Workers run in `--permission-mode auto` like the lead, so they don't stop for every command, and with `--add-dir /Users/gperrone/projects/lorekeeper/corpus` so the gitignored test books can be read from any worktree without a prompt (a worker symlinks or copies them; `corpus` must not be committed). A prompt a worker still raises shows as blocked in Herdr; the lead cannot answer it (that would be one Claude approving for another), so tell the person the tab name.
 
 Workers that run at the same time never share a worktree: git state (index, staged files) is per worktree, not per branch. Give each one its own, branched from the feature branch, and merge them back yourself when they hand off:
 
@@ -57,7 +57,7 @@ The feature worktree `$WT` is the integration branch; the reviewer runs there. A
 ```sh
 BRIEF=/Users/gperrone/projects/lorekeeper/.claude/work/$SLUG
 herdr-app do tab.new --space <space> --name "work: core-engineer" \
-  --argv '["claude","--agent","core-engineer","--model","sonnet","--permission-mode","auto"]' \
+  --argv '["claude","--agent","core-engineer","--model","sonnet","--permission-mode","auto","--add-dir","/Users/gperrone/projects/lorekeeper/corpus"]' \
   --task "You are the core-engineer agent for feature $SLUG. Read $BRIEF/brief.md and .claude/WORKER.md, do the work in this worktree on branch feat/$SLUG, and write your handoff to $BRIEF/handoff-core-engineer.md."
 ```
 
@@ -67,7 +67,7 @@ herdr-app do tab.new --space <space> --name "work: core-engineer" \
 
 ```sh
 herdr-app do tab.new --space <space> --name "review: round 1" \
-  --argv '["claude","--agent","code-reviewer","--model","opus","--permission-mode","auto"]' \
+  --argv '["claude","--agent","code-reviewer","--model","opus","--permission-mode","auto","--add-dir","/Users/gperrone/projects/lorekeeper/corpus"]' \
   --task "Review feature $SLUG on branch feat/$SLUG in this worktree. Brief: $BRIEF/brief.md. Handoffs: $BRIEF/handoff-*.md. Write $BRIEF/review-1.md."
 ```
 
