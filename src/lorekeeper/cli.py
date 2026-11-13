@@ -180,7 +180,7 @@ def cmd_generate(args) -> int:
     opts = generate.Options(
         chapters=_parse_ranges(args.chapters) if args.chapters else None,
         chunk_words=args.chunk_words or generate.default_chunk_words(args.provider), depth=args.depth, events=not args.no_events,
-        verify=not args.no_verify, index_id=args.id,
+        verify=not args.no_verify, index_id=args.id, book_kind=None if args.kind == "auto" else args.kind,
         series_id=args.series_id, book_key=args.book_key, license=args.license)
     if args.provider != "ollama":
         # --model keeps its Ollama default; a cloud provider then uses its own default model.
@@ -193,6 +193,17 @@ def cmd_generate(args) -> int:
                           log=lambda m: print(m, flush=True))
     print(json.dumps(report, indent=2))
     return 1 if report["validation_errors"] else 0
+
+
+def cmd_kind(args) -> int:
+    from . import bookkind
+
+    book = epub.read(args.epub)
+    model = None
+    if args.model or args.provider != "ollama":
+        model = _make_model(args, args.model if args.model != "gemma4:12b-it-qat" else None)
+    print(json.dumps(bookkind.infer(book, model).as_dict(), indent=2, ensure_ascii=False))
+    return 0
 
 
 def cmd_web(args) -> int:
@@ -459,6 +470,14 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("epub")
     s.set_defaults(fn=cmd_toc)
 
+    s = sub.add_parser("kind", help="print what kind of book an EPUB is (fiction, non-fiction, self-help) and why")
+    s.add_argument("epub")
+    _add_provider_args(s, "ollama")
+    s.add_argument("--model", default=None, help="ask this model when the subjects and chapter titles are silent (default: no model)")
+    s.add_argument("--ollama-url", default="http://localhost:11434")
+    s.add_argument("--num-ctx", type=int, default=16384)
+    s.set_defaults(fn=cmd_kind)
+
     s = sub.add_parser("generate", help="generate an index from an EPUB with a local Ollama model or a cloud model (your own key)")
     s.add_argument("epub")
     s.add_argument("-o", "--output", required=True)
@@ -469,6 +488,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="words per model call (default: 8000, about a chapter, for a cloud model; 2500 for Ollama)")
     s.add_argument("--check-model", default=None, help="cloud model of the same provider for the fact-check (e.g. claude-sonnet-5-5); default: the same model")
     s.add_argument("--depth", choices=["light", "standard", "deep"], default="standard")
+    s.add_argument("--kind", choices=["auto", "fiction", "non-fiction", "self-help"], default="auto",
+                   help="what kind of book this is (default: auto, inferred from the EPUB and recorded as bookKind)")
     s.add_argument("--no-events", action="store_true", help="skip the timeline (faster)")
     s.add_argument("--no-verify", action="store_true", help="skip the support check (faster, less accurate)")
     s.add_argument("--resume", action="store_true", help="continue an interrupted run")
