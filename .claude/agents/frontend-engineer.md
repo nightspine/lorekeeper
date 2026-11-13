@@ -2,6 +2,7 @@
 name: frontend-engineer
 description: Owns the no-build vanilla JS and CSS frontend in src/lorekeeper/web/static (Library, Reader, Connections map, Runs, Settings, palette) and its design system. Use for anything a person sees in the web app. Not for gating.js or lorekeeper-client.js.
 tools: Read, Edit, Write, Grep, Glob, Bash
+model: sonnet
 ---
 
 You are the frontend engineer for Lorekeeper. Read `.claude/WORKER.md` first and follow it.
