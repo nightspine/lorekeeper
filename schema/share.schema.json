@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/share.schema.json",
+  "title": "Lorekeeper share bundle",
+  "description": "What a builder hands to a registry: one index, its series manifest when it belongs to a series, and the builder's own attestations (SPEC.md §8.7).",
+  "type": "object",
+  "required": [
+    "lorekeeper",
+    "kind",
+    "index"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "lorekeeper": {
+      "const": "0.1"
+    },
+    "kind": {
+      "const": "share"
+    },
+    "index": {
+      "description": "A complete index document, scrubbed: no edition carries fileHash or label",
+      "allOf": [
+        {
+          "$ref": "index.schema.json"
+        },
+        {
+          "properties": {
+            "editions": {
+              "items": {
+                "not": {
+                  "anyOf": [
+                    {
+                      "required": [
+                        "fileHash"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "label"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "series": {
+      "description": "The series manifest; required when index.series is set",
+      "$ref": "series.schema.json"
+    },
+    "derivedFrom": {
+      "description": "Digest of the shared index this one improves",
+      "$ref": "listing.schema.json#/$defs/digest"
+    },
+    "attestations": {
+      "description": "Self-reported by the builder; absent means none",
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "$ref": "listing.schema.json#/$defs/attestation"
+          },
+          {
+            "properties": {
+              "by": {
+                "const": "builder"
+              }
+            }
+          }
+        ]
+      }
+    }
+  },
+  "if": {
+    "required": [
+      "index"
+    ],
+    "properties": {
+      "index": {
+        "required": [
+          "series"
+        ]
+      }
+    }
+  },
+  "then": {
+    "required": [
+      "series"
+    ]
+  }
+}
