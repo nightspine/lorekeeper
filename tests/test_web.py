@@ -775,3 +775,36 @@ def test_catalog_build_checks_the_config_like_jobs_do(client, tmp_path):
     r = client.post("/api/catalog/build", json={"keys": keys, "config": {"book_kind": "auto", "chunk_words": 5000}})
     assert r.status_code == 200
     wait_for(client, r.json()["jobs"][0]["id"], {"done", "failed"})
+
+
+def test_job_book_kind_is_stored_stripped(client, tmp_path):
+    book = upload(client, tmp_path)
+    job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"book_kind": "  fiction ", "chunk_words": 5000}}).json()
+    assert job["config"]["book_kind"] == "fiction"
+    wait_for(client, job["id"], {"done", "failed"})
+    r = client.post("/api/catalog/build", json={"keys": [f"up:{book['id']}"], "config": {"book_kind": " non-fiction\n", "chunk_words": 5000}})
+    assert r.json()["jobs"][0]["config"]["book_kind"] == "non-fiction"
+    wait_for(client, r.json()["jobs"][0]["id"], {"done", "failed"})
+
+
+def test_a_manifest_failure_after_a_run_does_not_spoil_the_edits_result(client, tmp_path, monkeypatch):
+    from lorekeeper.web.catalog import Catalog
+    real = Catalog.series_manifest
+    calls = []
+
+    def flaky(self, series_id):
+        calls.append(series_id)
+        if len(calls) > 1:   # the first call is the one at submit
+            raise OSError("disk full")
+        return real(self, series_id)
+    monkeypatch.setattr(Catalog, "series_manifest", flaky)
+    meta = '<meta name="calibre:series" content="Lights"/><meta name="calibre:series_index" content="1"/>'
+    path = make_epub(tmp_path / "s.epub", title="Lights One", series_meta=meta)
+    up = client.post("/api/books", files={"file": ("s.epub", path.read_bytes())}).json()
+    job = client.post("/api/jobs", json={"config": {"catalog_key": f"up:{up['id']}", "chunk_words": 5000}}).json()
+    done = wait_for(client, job["id"], {"done", "failed"})
+    assert done["status"] == "done"
+    assert len(calls) >= 2
+    assert not done["report"]["edits"].get("failed")
+    assert "series manifest: not refreshed" in "".join(p.read_text() for p in (tmp_path / "data").rglob(f"*{job['id']}*events*"))
+
