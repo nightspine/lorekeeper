@@ -15,22 +15,22 @@ const GOOD = {
   "daughter of": ["child", [], "daughter of"], "sister of": ["sibling", [], "sister of"], "son of": ["child", [], "son of"],
   "father of": ["parent", [], "father of"], "brother of": ["sibling", [], "brother of"], "husband of": ["spouse", [], "husband of"],
   "wife of": ["spouse", [], "wife of"], "cousin of": ["cousin", [], "cousin of"], "mother of": ["parent", [], "mother of"],
-  "half-sister of": ["sibling", ["half"], "half sister of"], "married to": ["spouse", [], "married to"], "aunt of": ["pibling", [], "aunt of"],
+  "half-sister of": ["sibling", ["half"], "half-sister of"], "married to": ["spouse", [], "married to"], "aunt of": ["pibling", [], "aunt of"],
   "guardian of": ["guardian", [], "guardian of"], "nephew of": ["nibling", [], "nephew of"], "widow of": ["spouse", ["late"], "widow of"],
-  "ex-husband of": ["spouse", ["ex"], "ex husband of"], "niece of": ["nibling", [], "niece of"], "younger brother of": ["sibling", ["younger"], "younger brother of"],
+  "ex-husband of": ["spouse", ["ex"], "ex-husband of"], "niece of": ["nibling", [], "niece of"], "younger brother of": ["sibling", ["younger"], "younger brother of"],
   "ward of": ["ward", [], "ward of"], "sibling of": ["sibling", [], "sibling of"], "granddaughter of": ["grandchild", [], "granddaughter of"],
   "grandson of": ["grandchild", [], "grandson of"], "grandfather of": ["grandparent", [], "grandfather of"], "grandchild of": ["grandchild", [], "grandchild of"],
-  "stepson of": ["child", ["step"], "step son of"], "uncle of": ["pibling", [], "uncle of"], "is niece of": ["nibling", [], "niece of"],
+  "stepson of": ["child", ["step"], "stepson of"], "uncle of": ["pibling", [], "uncle of"], "is niece of": ["nibling", [], "niece of"],
   "blood-niece of": ["nibling", ["blood"], "blood niece of"],
   // beyond the data
   "Mom of": ["parent", [], "mother of"], "his wife": ["spouse", [], "wife of"], "the late husband of": ["spouse", ["late"], "late husband of"],
   "mother-in-law of": ["parent", ["in-law"], "mother-in-law of"], "brother-in-law of": ["sibling", ["in-law"], "brother-in-law of"],
-  "step-son of": ["child", ["step"], "step son of"], "greatgrandmother of": ["grandparent", ["great"], "great grandmother of"],
-  "great-grandmother of": ["grandparent", ["great"], "great grandmother of"], "adoptive mother of": ["parent", ["adoptive"], "adoptive mother of"],
+  "step-son of": ["child", ["step"], "stepson of"], "greatgrandmother of": ["grandparent", ["great"], "great-grandmother of"],
+  "great-grandmother of": ["grandparent", ["great"], "great-grandmother of"], "adoptive mother of": ["parent", ["adoptive"], "adoptive mother of"],
   "twin of": ["sibling", [], "twin of"], "twin brother of": ["sibling", ["twin"], "twin brother of"], "second cousin of": ["cousin", ["second"], "second cousin of"],
   "godfather of": ["guardian", [], "godfather of"], "godson of": ["ward", [], "godson of"], "widower of": ["spouse", ["late"], "widower of"],
   "mother in law of": ["parent", ["in-law"], "mother-in-law of"], "brother in law of": ["sibling", ["in-law"], "brother-in-law of"],
-  "sister in-law of": ["sibling", ["in-law"], "sister-in-law of"], "half–sister of": ["sibling", ["half"], "half sister of"],
+  "sister in-law of": ["sibling", ["in-law"], "sister-in-law of"], "half–sister of": ["sibling", ["half"], "half-sister of"],
   "Her sister": ["sibling", [], "sister of"], "foster-daughter of": ["child", ["foster"], "foster daughter of"], "dad of": ["parent", [], "father of"],
 };
 const NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guardian and friend of", "possible father of", "sibling of, fights",
@@ -58,6 +58,17 @@ test("tie: kind family makes an unreadable label 'related'; other kinds do not",
   assert.equal(tie({ label: "wife of", kind: "romance" }).role, "spouse");
 });
 test("reverse", () => { assert.equal(reverse("parent"), "child"); assert.equal(reverse("pibling"), "nibling"); assert.equal(reverse("cousin"), "cousin"); });
+test("normalize spellings", () => {
+  const rows = { "step mother of": "stepmother of", "half sister of": "half-sister of", "ex husband of": "ex-husband of", "great grandmother of": "great-grandmother of",
+    "mother in law of": "mother-in-law of", "great aunt of": "great-aunt of", "grand mother of": null, "younger brother of": "younger brother of", "widow of": "widow of",
+    "godfather of": "godfather of", "half-brother of": "half-brother of", "step-daughter of": "stepdaughter of" };
+  for (const [k, v] of Object.entries(rows)) if (v) assert.equal(normalize(k), v, k);
+});
+test("surname never comes from a kin word or a rank", () => {
+  for (const n of ["Uncle Vernon", "Aunt Marge", "Sister Agnes", "Father Brown"]) assert.equal(surname(n), null, n);
+  assert.equal(surname("Mrs. Dursley"), "Dursley");
+  assert.equal(surname("Professor Moriarty"), "Moriarty");
+});
 test("surname", () => {
   assert.equal(surname("Mr. Dursley"), "Dursley");
   assert.equal(surname("Vernon Dursley"), "Dursley");

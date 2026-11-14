@@ -1057,9 +1057,8 @@ export function mountReader(root) {
   /** The families the Connections tab can draw right now (same input as the tab, so the chip, the palette and the link agree). */
   let famMemo = null;
   function currentFamilies() {
-    const view = castView();
     const history = Boolean(s.graph.history);
-    if (!famMemo || famMemo.view !== view || famMemo.history !== history) famMemo = { view, history, list: families(view, { history }) };
+    if (!famMemo || famMemo.view !== s.view || famMemo.earlier !== s.earlier || famMemo.history !== history) famMemo = { view: s.view, earlier: s.earlier, history, list: families(castView(), { history }) };
     return famMemo.list;
   }
   /** Open the Connections tab drawn as family trees, optionally on one person's family. */

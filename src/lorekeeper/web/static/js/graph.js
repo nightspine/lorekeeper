@@ -303,7 +303,7 @@ export function renderConnections(panel, ctx) {
     h("input", { type: "checkbox", "data-k": k, checked: Boolean(gs[k]), on: { change: (ev) => { gs[k] = ev.target.checked; refocus(k); ctx.repaint(); } } }), h("span", label));
   const seg = (items, key) => h("div.seg", { role: "group", "aria-label": key === "hops" ? "Reach" : "View" }, items.map(([v, label, on, off]) => h("button", { type: "button", "data-k": `${key}-${v}`,
     "aria-pressed": String(key === "hops" ? gs.hops === v : on), disabled: off ? true : null, title: off ? "Select something first" : null,
-    on: { click: () => { if (key === "hops") gs.hops = v; else { gs.list = v === "list"; if (v !== "list") gs.mode = v; } refocus(`${key}-${v}`); ctx.repaint(); } } }, label)));
+    on: { click: () => { if (key === "hops") gs.hops = v; else { gs.list = v === "list"; if (v !== "list") gs.mode = v; if (v !== "map") gs.trees = false; } refocus(`${key}-${v}`); ctx.repaint(); } } }, label)));
   const row = (label, ...kids) => h("div.g-d-row", h("div.g-d-label", label), h("div.g-d-ctl", ...kids));
   const dispId = `g-display-${Math.random().toString(36).slice(2, 8)}`;
   const dispBtn = h("button.btn.g-display-btn", { type: "button", "aria-expanded": String(Boolean(gs.dispOpen)), "aria-controls": dispId, "aria-haspopup": "dialog",
@@ -407,7 +407,7 @@ export function renderConnections(panel, ctx) {
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
         h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
       h("div.g-actions",
-        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; ctx.repaint(); } } },
+        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; if (gs.mode === "focus") gs.trees = false; ctx.repaint(); } } },
           icon(focus ? "layers" : "eye"), focus ? "Full map" : "Focus"),
         h("button.btn", { type: "button", on: { click: (ev) => ctx.openEntity(sel, ev.currentTarget) } }, icon("person"), "Open details")),
       desc, moreDesc,
