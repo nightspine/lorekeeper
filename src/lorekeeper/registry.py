@@ -50,7 +50,7 @@ def now_iso() -> str:
 
 def dumps(doc) -> str:
     """How every stored index is written, once: its bytes are what the digest covers."""
-    return json.dumps(doc, ensure_ascii=False, indent=1) + "\n"
+    return json.dumps(doc, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
 
 
 def digest_of(data: bytes) -> str:
@@ -76,6 +76,10 @@ def errors_of(issues: list[Issue]) -> list[Issue]:
     return [i for i in issues if i.level == "error"]
 
 
+def _no_constant(name: str):
+    raise ValueError(f"{name} is not JSON")
+
+
 def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]]:
     """Read a JSON file, refusing one over the size cap before it is parsed."""
     try:
@@ -89,9 +93,13 @@ def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]
             raw = f.read(MAX_BUNDLE_BYTES + 1)
         if len(raw) > MAX_BUNDLE_BYTES:
             return None, [_err(what, "file is over the 5 MB limit")]
-        return json.loads(raw.decode("utf-8")), []
+        doc = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
+        json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")  # a lone surrogate fails here
+        return doc, []
     except (ValueError, OSError) as e:
-        return None, [_err(what, f"not valid JSON: {e}")]
+        return None, [_err(what, f"not valid JSON for a registry: {e}")]
+    except RecursionError:
+        return None, [_err(what, "not valid JSON for a registry: nested too deeply")]
 
 
 def scrub(index: dict) -> dict:
@@ -310,6 +318,8 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
     for i, a in enumerate(bundle.get("attestations", [])):
         if a.get("by") != "builder":
             issues.append(_err(f"attestations[{i}]", "bundle attestations must be by builder"))
+        elif a.get("kind") == "validates":
+            issues.append(_err(f"attestations[{i}]", "a bundle cannot carry a validates attestation: only the registry adds that one"))
 
     lic = index.get("provenance", {}).get("license")
     if lic not in LICENSES:
@@ -343,6 +353,15 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
     data = dumps(index).encode("utf-8")
     digest = digest_of(data)
     existing = read_listing(source, publisher, slug)
+    if existing is not None and _latest_index(source, existing).get("id") != index["id"]:
+        issues.append(_err("index.id", f"{listing_id} already belongs to a different index "
+                                       f"({_latest_index(source, existing).get('id')!r}); {index['id']!r} would share its slug"))
+    if index.get("series"):
+        for l in _publisher_listings(source, publisher):
+            ls = l.get("series") or {}
+            if l.get("id") != listing_id and ls.get("id") == index["series"]["id"] and ls.get("book") == index["series"]["book"]:
+                issues.append(_err("series", f"{l['id']} is already this publisher's listing for book "
+                                             f"{ls.get('book')!r} of series {ls.get('id')!r}"))
     if existing is not None and any(v.get("digest") == digest for v in existing.get("versions", [])):
         issues.append(_err("digest", f"already shared as {listing_id} ({digest})"))
     for i in bundle.get("attestations", []):
@@ -448,7 +467,7 @@ def _based(base: str, href: str) -> str:
 
 
 def _sorted_json(doc) -> str:
-    return json.dumps(doc, ensure_ascii=False, indent=1, sort_keys=True) + "\n"
+    return json.dumps(doc, ensure_ascii=False, indent=1, sort_keys=True, allow_nan=False) + "\n"
 
 
 def build(source: str | Path, out: str | Path, base_path: str = "", name: str = "Lorekeeper registry") -> dict:

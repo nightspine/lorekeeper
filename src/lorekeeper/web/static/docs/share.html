@@ -28,7 +28,7 @@ uv run lorekeeper share INDEX --epub book.epub -o bundle.json
 uv run lorekeeper share book2.json --series series.json --derived-from sha256:... -o bundle2.json</code></pre>
 <p><code>share</code> copies the index and removes <code>label</code> and <code>fileHash</code> from every edition. A label is often a local file name, and a file hash describes one person's copy. <code>builtFrom</code> stays, because it says which edition the anchors were written for.</p>
 <p>It refuses an index that fails the schema or the validator, and one whose licence is not <code>CC0-1.0</code> or <code>CC-BY-4.0</code>. A book in a series needs <code>--series</code> with the manifest.</p>
-<p>With <code>--epub</code> it also runs the checks that need the book, and records them as attestations signed <code>by: "builder"</code>:</p>
+<p>With <code>--epub</code> it also runs the checks that need the book, and records them as attestations marked <code>by: "builder"</code>:</p>
 <div class="table-wrap"><table><thead><tr><th>Attestation</th><th>What it says</th></tr></thead><tbody>
 <tr><td><code>book-checks</code></td><td>How many anchors the index has, how many resolve in your EPUB, and how many errors the validator found. The bundle is not written if there are errors.</td></tr>
 <tr><td><code>spoiler-gate</code></td><td>For each name, the first paragraph where the book uses it. <code>early</code> counts names the index would show before the book does.</td></tr>

@@ -461,3 +461,71 @@ def test_cli_share_refuses_bad_licence(tmp_path, capsys, dracula):
     p = write(tmp_path / "i.json", dracula)
     assert run("share", p, "-o", tmp_path / "b.json") == 1
     assert not (tmp_path / "b.json").exists()
+
+
+# ---- round 2: hostile bundles ---------------------------------------------------------------
+
+def _raw(tmp_path, text, name="raw.json"):
+    p = tmp_path / name
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+@pytest.mark.parametrize("token", ["NaN", "Infinity", "-Infinity"])
+def test_check_refuses_non_json_numbers(tmp_path, src, dracula, token):
+    text = registry.dumps(make(dracula)).replace('"ids": {', '"ids": {"x": [%s],' % token, 1)
+    if token not in text:
+        text = registry.dumps(make(dracula))[:-2] + ', "x": %s}\n' % token
+    ctx, issues = registry.check(_raw(tmp_path, text), "someone", src)
+    assert ctx is None and any("not valid JSON for a registry" in i for i in errs(issues))
+
+
+def test_work_ids_infinity_is_refused(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["index"]["work"]["ids"] = {"x": ["@@"]}
+    text = registry.dumps(bundle).replace('"@@"', "Infinity")
+    ctx, issues = registry.check(_raw(tmp_path, text), "someone", src)
+    assert ctx is None and errs(issues)
+    with pytest.raises(ValueError):
+        registry.dumps({"a": float("inf")})
+
+
+def test_check_refuses_deep_nesting(tmp_path, src):
+    ctx, issues = registry.check(_raw(tmp_path, "[" * 200000), "someone", src)
+    assert ctx is None and any("not valid JSON for a registry" in i for i in errs(issues))
+
+
+def test_check_refuses_lone_surrogate(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["index"]["work"]["title"] = "@@Dracula"
+    text = registry.dumps(bundle).replace("@@", "\\ud800")
+    ctx, issues = registry.check(_raw(tmp_path, text), "someone", src)
+    assert ctx is None and any("not valid JSON for a registry" in i for i in errs(issues))
+
+
+def test_cli_json_report_for_deep_nesting(tmp_path, capsys):
+    p = _raw(tmp_path, "[" * 200000)
+    assert cli.main(["registry", "check", str(p), "--publisher", "someone", "--source", str(tmp_path / "r"), "--json"]) == 1
+    assert json.loads(capsys.readouterr().out)["ok"] is False
+
+
+def test_check_refuses_second_listing_for_a_series_book(tmp_path, src, scarlet, series):
+    add(tmp_path, src, make(scarlet, series=series), name="one.json")
+    other = copy.deepcopy(scarlet)
+    other["id"] = "scarlet-again"
+    ctx, issues = registry.check(write(tmp_path / "two.json", make(other, series=series)), "someone", src)
+    assert ctx is None and any("someone/sherlock-holmes-study-in-scarlet" in i for i in errs(issues))
+
+
+def test_check_refuses_slug_collision(tmp_path, src, dracula):
+    a = copy.deepcopy(dracula); a["id"] = "a.b"
+    b = copy.deepcopy(dracula); b["id"] = "a-b"
+    add(tmp_path, src, make(a), name="a.json")
+    ctx, issues = registry.check(write(tmp_path / "b.json", make(b)), "someone", src)
+    assert ctx is None and any("different index" in i for i in errs(issues))
+
+
+def test_check_refuses_builder_validates(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["attestations"] = [{"kind": "validates", "by": "builder", "at": NOW}]
+    check_error(tmp_path, src, bundle, "only the registry")

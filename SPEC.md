@@ -596,7 +596,7 @@ is the registry's record of one book shared by one publisher:
   `editor` or `author` (§4.8).
 - `series` is present for a book in a series: `id` and `book` from the index,
   and `requires`, the listing ids of every earlier book in the manifest's
-  `publication` order, all by the same publisher. Entity ids are series-scoped
+  `publication` order (the `defaultOrder` when the manifest has none), all by the same publisher. Entity ids are series-scoped
   and `replaces` may point into earlier books (§5), so a series is shared as a
   set: one publisher's third book cannot sit on another publisher's first. A
   client that installs a book SHOULD also install the books it requires.
@@ -648,7 +648,7 @@ a listing by itself; it is a fact for the client to show.
   from every edition. `builtFrom` stays: it says which edition the anchors'
   `seq` hints are exact for (§3.5).
 - `series` is the series manifest. It is required when the index has `series`.
-- `attestations` are all `by: "builder"`; absent means none.
+- `attestations` are all `by: "builder"` and of kind `book-checks`, `spoiler-gate` or `audit`, never `validates`, which only the registry adds; absent means none.
 
 A bundle comes from a stranger. Before accepting one, a registry MUST:
 
