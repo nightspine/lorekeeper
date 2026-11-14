@@ -35,7 +35,9 @@
 .set-btns { margin-top: 18px; }
 .account-form { width: 100%; max-width: 360px; }
 .account-form .auth-form { gap: 12px; }
-.account-form .toolbar .btn { width: auto; }
+.account-form .auth-form .toolbar .btn { width: auto; min-height: 32px; }
+.account-form .auth-form .input { min-height: 32px; }
+.account-form .auth-form .icon-btn { width: 32px; height: 32px; }
 
 /* states: a mark and a word */
 .st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; font-weight: 600; }
@@ -86,7 +88,7 @@
 .field-error { color: var(--rose); }
 .field-error:empty { display: none; }
 .prov-error { margin: 0; color: var(--rose); font-size: var(--text-xs); max-width: 48ch; }
-.prov-more > td { height: auto; padding: 0 12px 16px; }
+.provs .prov-more > td { height: auto; padding: 0 12px 16px; }
 table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
 .subt th, .subt td { height: 32px; border-bottom: 0; }
 .subt thead th { height: 28px; border-bottom: 1px solid var(--line); }
@@ -103,19 +105,46 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
 .bo-lib input { width: 16px; height: 16px; margin: 0; accent-color: var(--beacon); }
 .bo-lib-name { font-weight: 600; overflow-wrap: anywhere; }
 
-/* Between the phone and a wide window the provider table drops the default model column. */
+/* Between the phone and a wide window the section list runs across the top, and the table drops the default model. */
 @media (max-width: 1100px) {
-  .settings .set { grid-template-columns: 200px minmax(0, 1fr); background: linear-gradient(to right, transparent 199px, var(--line) 199px 200px, transparent 200px); }
+  .settings .set { display: block; background: none; }
+  .set-nav { position: static; flex-direction: row; gap: 4px; padding: 10px 20px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+  .set-link { flex: none; padding: 6px 12px; }
   .provs { min-width: 0; }
-  .provs :is(th, td):nth-child(4) { display: none; }
+  .provs > :is(thead, tbody) > tr > :nth-child(4) { display: none; }
   .sec { padding: 24px 20px 48px; }
 }
 
-/* Phone: the list is a page, a section is the next page; the provider table becomes stacked rows. */
+/* Narrow (and on a phone): the provider table becomes stacked rows: name and price on top, state, key and model under
+   it, the action on the right. */
+@media (max-width: 800px) {
+  .provs, .provs tbody { display: block; min-width: 0; }
+  .provs thead { display: none; }
+  .provs > tbody > tr.prov { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .provs > tbody > tr.prov > :is(th, td) { display: block; height: auto; padding: 0; border: 0; text-align: left; width: auto; }
+  .provs .pn { grid-column: 1; }
+  .provs .pp { grid-column: 2; grid-row: 1; text-align: right; }
+  .provs .ps, .provs .pk, .provs .pm { grid-column: 1; }
+  .provs > tbody > tr.prov > :nth-child(4) { display: block; }
+  .provs .pk:empty { display: none; }
+  .provs .pa { grid-column: 2; grid-row: 2 / span 3; align-self: center; }
+  .provs tr.open, .provs tr.expanded, .provs tr.prov-more { margin: 0 -16px; padding-left: 16px !important; padding-right: 16px !important; }
+  .provs tr.open .pk, .provs tr.open .pa { grid-column: 1 / -1; grid-row: auto; margin-top: 8px; }
+  .provs tr.open .pa .act { justify-content: flex-start; }
+  .provs tr.expanded { border-bottom: 0 !important; }
+  .provs tr.prov-more { display: block; padding-bottom: 12px !important; border-bottom: 1px solid var(--line); }
+  .provs .prov-more > td { display: block; padding: 0; }
+  table.data.subt { min-width: 0; width: 100%; }
+  .keyfield { flex-wrap: nowrap; }
+  .keyfield .input { min-width: 0; }
+  .set-table { overflow: visible; }
+}
+
+/* Phone: the list is a page and a section is the next page with a back link. */
 @media (max-width: 640px) {
   .page-head { display: none; }
-  .settings .set { display: block; min-height: 0; background: none; }
-  .set-nav { position: static; padding: 8px 0; gap: 0; }
+  .settings .set { min-height: 0; }
+  .set-nav { flex-direction: column; overflow: visible; padding: 8px 0; gap: 0; border-bottom: 0; }
   .set-link { display: flex; flex-direction: column; justify-content: center; min-height: 60px; padding: 10px 16px; border-radius: 0; border-bottom: 1px solid var(--line); }
   .set-link[aria-current="page"] { background: none; box-shadow: none; }
   .settings:not(.picking) .set-nav { display: none; }
@@ -126,27 +155,6 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
   .set-row, .set-row.form-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
   .set-act { justify-content: flex-start; }
   .how-body { padding-left: 0; }
-  /* provider table as stacked rows: name and price on top, state, key and model under it, the action on the right */
-  .provs, .provs tbody { display: block; min-width: 0; }
-  .provs thead { display: none; }
-  .provs > tbody > tr.prov { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
-  .provs > tbody > tr.prov > :is(th, td) { display: block; height: auto; padding: 0; border: 0; text-align: left; width: auto; }
-  .provs .pn { grid-column: 1; }
-  .provs .pp { grid-column: 2; grid-row: 1; text-align: right; }
-  .provs .ps, .provs .pk, .provs .pm { grid-column: 1; }
-  .provs :is(th, td):nth-child(4) { display: block; }
-  .provs .pk:empty { display: none; }
-  .provs .pa { grid-column: 2; grid-row: 2 / span 3; align-self: center; }
-  .provs tr.open, .provs tr.expanded, .provs tr.prov-more { margin: 0 -16px; padding-left: 16px !important; padding-right: 16px !important; }
-  .provs tr.open .pk, .provs tr.open .pa { grid-column: 1 / -1; grid-row: auto; margin-top: 8px; }
-  .provs tr.open .pa .act { justify-content: flex-start; }
-  .provs tr.expanded { border-bottom: 0 !important; }
-  .provs tr.prov-more { display: block; padding-bottom: 12px !important; border-bottom: 1px solid var(--line); }
-  .prov-more > td { display: block; padding: 0; }
-  table.data.subt { min-width: 0; width: 100%; }
   .subt :is(th, td):nth-child(2), .subt :is(th, td):nth-child(3) { display: none; }
-  .keyfield { flex-wrap: nowrap; }
-  .keyfield .input { min-width: 0; }
-  .set-table { overflow: visible; }
   .bo-lib { min-height: 44px; }
 }

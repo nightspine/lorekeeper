@@ -106,7 +106,7 @@
 @media (max-width: 640px) {
   :root { --topbar-h: 52px; }   /* fallback; app.js sets the measured height */
   .shell { display: block; background: none; }
-  .rail { display: none; }
+  .app-rail { display: none; }
   .appbar { display: flex; position: sticky; top: 0; z-index: 40; align-items: center; gap: 0; height: 52px; padding: 0 4px 0 16px; background: var(--pane); border-bottom: 1px solid var(--line); }
   .appbar-title { flex: 1; min-width: 0; margin: 0; font-size: 16px; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .appbar .icon-btn { width: 44px; height: 44px; }

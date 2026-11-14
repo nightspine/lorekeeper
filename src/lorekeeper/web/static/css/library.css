@@ -167,12 +167,8 @@ a.series-row:hover { background: var(--glass-hover); text-decoration: none; }
 
 /* ---------- tables (versions here; also the graph list and settings pricing) ---------- */
 .table-wrap { overflow-x: auto; }
-table.data { width: 100%; min-width: 760px; border-collapse: collapse; font-size: var(--text-sm); }
-table.data th { text-align: left; padding: 12px var(--space-4); font-size: var(--text-sm); font-weight: 600; color: var(--text-3); }
-table.data td { padding: 12px var(--space-4); border-top: 1px solid var(--edge); vertical-align: middle; }
-table.data tbody tr:hover { background: var(--glass); }
-table.data tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--beacon); }
-table.data tr.selected { background: var(--glass-2); }
+/* the versions table on a book page keeps its columns and scrolls sideways when narrow */
+.page table.data { min-width: 760px; }
 .cell-actions { text-align: right; white-space: nowrap; }
 .cell-actions > * + * { margin-left: var(--space-4); }
 .cell-actions .linkish { text-decoration: none; }

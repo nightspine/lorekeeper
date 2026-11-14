@@ -124,11 +124,8 @@
 
 /* the list view: a glass table */
 .g-stage.g-list .table-wrap { border: 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); border-radius: 0; background: transparent; box-shadow: none; overflow-x: auto; }
-.g-stage.g-list table.data { width: 100%; min-width: 0; border-collapse: collapse; font-size: var(--text-sm); }
-.g-stage.g-list table.data th { text-align: left; padding: 11px var(--space-3); font-size: var(--text-sm); font-weight: 600; color: var(--text-3); }
-.g-stage.g-list table.data td { padding: 10px var(--space-3); border-top: 1px solid var(--edge); vertical-align: middle; }
-.g-stage.g-list table.data tbody tr:hover { background: var(--glass-2); }
-.g-stage.g-list table.data tr.selected { background: var(--glass-hover); box-shadow: inset 3px 0 0 var(--beacon); }
+.g-stage.g-list table.data { min-width: 0; }
+.g-stage.g-list table.data tr.selected { box-shadow: inset 2px 0 0 var(--beacon); }
 
 @media (max-width: 1080px) {
   .g-body { grid-template-columns: minmax(0, 1fr); }

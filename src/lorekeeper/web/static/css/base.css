@@ -176,7 +176,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* The rail sits on --pane beside the page; the current page is tinted, never boxed. */
 .shell { display: grid; grid-template-columns: var(--rail-w) minmax(0, 1fr); min-height: 100vh;
   background: linear-gradient(to right, var(--pane) calc(var(--rail-w) - 1px), var(--line) calc(var(--rail-w) - 1px) var(--rail-w), transparent var(--rail-w)); }
-.rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; scrollbar-width: none; display: flex; flex-direction: column; gap: 2px; padding: 14px 10px; background: var(--pane); border-right: 1px solid var(--line); }
+.app-rail { position: sticky; top: 0; height: 100vh; overflow-y: auto; scrollbar-width: none; display: flex; flex-direction: column; gap: 2px; padding: 14px 10px; background: var(--pane); border-right: 1px solid var(--line); }
 .rail-brand { padding: 6px 10px 18px; }
 .rail-brand .horizon { width: 22px; height: 10px; flex: none; }
 .horizon .lit { stroke: var(--beacon); }
@@ -209,14 +209,15 @@ main { min-width: 0; padding: 24px 28px 48px; outline: none; }
 /* Pages not yet laid out for the workbench keep a readable width beside the rail. */
 main > .library, main > .reader, main > .studio, main > .page { max-width: 1480px; }
 main[data-route="settings"] { padding: 0; }
+main:focus-visible { outline: none; }   /* the skip link and route changes focus <main>; the page itself is the cue */
 /* Signed out, or before the first password: no rail, the form alone. */
 body[data-signed-in="false"] .shell, body[data-must-change-password="true"] .shell { grid-template-columns: minmax(0, 1fr); background: none; }
-body[data-signed-in="false"] :is(.rail, .tabbar), body[data-must-change-password="true"] :is(.rail, .tabbar) { display: none; }
+body[data-signed-in="false"] :is(.app-rail, .appbar, .tabbar), body[data-must-change-password="true"] :is(.app-rail, .appbar, .tabbar) { display: none !important; }
 
 /* Between the phone and a wide window the rail keeps only its icons; each says its name in a tooltip. */
 @media (min-width: 641px) and (max-width: 1100px) {
   :root { --rail-w: 60px; }
-  .rail { padding: 14px 8px; align-items: stretch; }
+  .app-rail { padding: 14px 8px; align-items: stretch; }
   .rail-brand { justify-content: center; padding: 6px 0 18px; }
   .rail-brand .brand-name, .nav-lbl, .nav-n, .nav-kbd, .rail-label, .reading-title, .reading-where { display: none; }
   .nav { justify-content: center; padding: 0; min-height: 40px; position: relative; }

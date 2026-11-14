@@ -87,7 +87,7 @@ function paintTitle() {
 /** Mark the current page in the rail and the tab bar. In the Reader that is the book (its Reading row, its tab). */
 function paintCurrent(route, section) {
   const open = route === "reader";
-  for (const a of document.querySelectorAll(".rail [data-route], .tabbar [data-route]")) {
+  for (const a of document.querySelectorAll(".app-rail [data-route], .tabbar [data-route]")) {
     const on = a.id === "tab-book" ? open : a.dataset.route === section && !open;
     if (on) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -113,7 +113,7 @@ async function refreshCount(force = false) {
     const d = await api.catalog();
     const n = (d.books || []).length;
     railCount.textContent = n ? fmtInt(n) : "";
-    document.querySelector('.rail [data-route="library"]').title = n ? `Library, ${fmtInt(n)} books` : "Library";
+    document.querySelector('.app-rail [data-route="library"]').title = n ? `Library, ${fmtInt(n)} books` : "Library";
   } catch { /* the rail works without it */ }
   if (pruned) return;
   try {
