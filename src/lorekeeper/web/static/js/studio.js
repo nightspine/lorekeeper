@@ -402,9 +402,11 @@ export function mountStudio(root) {
   const { parts } = parseHash();
   const ctx = { jobs: [], view: parts[0] || null, id: parts[1] || null, cleanup: [] };
   let disposed = false;   // set on unmount: a late answer must not rewrite the address or open a stream for a page that is gone
-  const side = h("aside.studio-side", { "aria-label": "Runs" });
+  // A head row, then the runs as a table and the monitor of the open run beside it (under it when narrow).
+  const count = h("p.runs-count");
+  const side = h("section.studio-side", { "aria-label": "Runs" });
   const mainCol = h("section.studio-main", { "aria-live": "off" });
-  root.append(h("div.studio", side, mainCol));
+  root.append(h("div.studio", h("header.page-head", h("h1", "Runs"), count), h("div.runs-split", side, mainCol)));
 
   /** Re-read the runs. The first read throws so the page can say it failed; later ones only toast. */
   async function refresh({ first = false } = {}) {
@@ -417,27 +419,54 @@ export function mountStudio(root) {
     renderSide();
   }
 
+  /** "part 3 of 12" while it runs, else what it covered when it stopped. */
+  const partText = (j) => {
+    const pr = j.progress || {};
+    if (!Number.isFinite(pr.chunks) || !pr.chunks) return "";
+    const done = Math.min(pr.done ?? 0, pr.chunks);
+    return j.status === "running" ? `part ${Math.min(done + 1, pr.chunks)} of ${pr.chunks}` : `${done} of ${pr.chunks} parts`;
+  };
+  // "15 min ago" within a day, then a short date: the column stays narrow.
+  const when = (t) => (Date.now() / 1000 - t < 86400 ? relTime(t) : new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
+  const rowCells = (j) => [h("span.subtle", (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
+  let tableSig = "";
+  /** The runs table. A poll that only changes a run's state or progress updates those cells in place, so focus and
+   *  the open fold survive; a new or removed run rebuilds the rows. */
   function renderSide() {
-    clear(side, runsCard());
-  }
-
-  function runsCard() {
-    const items = ctx.jobs.map((j) => h("li", h("button.job-item", {
-      type: "button", "aria-current": ctx.view === "job" && ctx.id === j.id ? "true" : "false",
-      on: { click: () => { location.hash = `#/studio/job/${j.id}`; } },
-    }, statusBadge(j.status),
-    h("span", h("span.item-title.job-title", j.book_title),
-      h("span.item-meta", `${(j.config.model || "").split(":")[0]}, ${relTime(j.created)}`)),
-    icon("chevron"))));
-    return h("div.card.card-pad",
-      h("div.section-title", h("h2", "Runs"), h("span.eyebrow", `${ctx.jobs.length}`)),
-      items.length ? foldList(items, (nodes) => h("ul.list", nodes), { show: 12, noun: "runs", open: runsOpen,
-        onToggle: (on) => { runsOpen = on; }, keep: ctx.jobs.flatMap((j, i) => (ctx.view === "job" && ctx.id === j.id ? [i] : [])) }) : h("p.muted", "Runs you start appear here with live progress."));
+    const active = ctx.jobs.filter((j) => ["running", "queued", "stopping"].includes(j.status)).length;
+    count.textContent = ctx.jobs.length ? `${ctx.jobs.length} run${ctx.jobs.length === 1 ? "" : "s"}${active ? `, ${active} building` : ""}.` : "";
+    const sig = ctx.jobs.map((j) => j.id).join(",");
+    if (sig === tableSig && side.querySelector("tbody")) {
+      for (const j of ctx.jobs) {
+        const tr = side.querySelector(`tr[data-id="${CSS.escape(j.id)}"]`);
+        if (!tr) continue;
+        rowCells(j).forEach((c, i) => {
+          const td = tr.children[i + 1];
+          const next = h("td", c);
+          if (td && td.textContent !== next.textContent) clear(td, c);
+        });
+      }
+      return;
+    }
+    tableSig = sig;
+    if (!ctx.jobs.length) return clear(side);
+    const rows = ctx.jobs.map((j) => {
+      const here = ctx.view === "job" && ctx.id === j.id;
+      return h(`tr${here ? ".selected" : ""}`, { dataset: { id: j.id }, on: { click: (ev) => { if (!ev.target.closest("a")) location.hash = `#/studio/job/${j.id}`; } } },
+        h("td.c-book", h("a", { href: `#/studio/job/${j.id}`, "aria-current": here ? "true" : null }, j.book_title)),
+        ...rowCells(j).map((c, i) => h(`td${["", ".c-state", ".c-part.num", ".c-when.subtle"][i]}`, c)));
+    });
+    const table = (trs) => h("div.table-wrap", h("table.data.runs",
+      h("caption.sr-only", "Runs, newest first"),
+      h("thead", h("tr", ["Book", "Model", "State", "Progress", "Started"].map((t) => h("th", { scope: "col" }, t)))),
+      h("tbody", trs)));
+    clear(side, foldList(rows, table, { show: 12, noun: "runs", open: runsOpen,
+      onToggle: (on) => { runsOpen = on; }, keep: ctx.jobs.flatMap((j, i) => (ctx.view === "job" && ctx.id === j.id ? [i] : [])) }));
   }
 
   function renderMain() {
     if (ctx.view === "job" && ctx.id) return monitor(ctx.id);
-    clear(mainCol, h("p.muted.runs-empty", "Runs appear here while an index builds. Start one from a book in ",
+    clear(mainCol, h("p.muted.runs-empty", "No runs yet. Start one from a book in ",
       h("a", { href: "#/library" }, "the Library"), "."));
   }
 
@@ -448,7 +477,7 @@ export function mountStudio(root) {
     clear(mainCol, loading("Opening the run…"));
     try { job = await api.job(jobId); } catch (e) {
       if (disposed) return;
-      if (e.status === 404) return clear(mainCol, h("div.card.empty", h("h3", "Run not found")));
+      if (e.status === 404) return clear(mainCol, h("div.empty", h("h3", "Run not found")));
       return clear(mainCol, loadError("open the run", e, () => monitor(jobId)));
     }
     if (disposed) return;
@@ -459,7 +488,7 @@ export function mountStudio(root) {
 
     const el = {
       badge: h("span"), pct: h("div.progress-pct", "0", h("small", "%")), fill: h("div.fill"),
-      bar: null, where: h("div.meta-row"), phases: h("ol.phases"), stats: h("div.stats", { role: "group", "aria-label": "Totals" }), drops: h("div.drops"),
+      bar: null, where: h("div.meta-row"), phases: h("ol.phases"), stats: h("dl.stats", { "aria-label": "Totals" }), drops: h("div.drops"),
       feed: h("ul.feed", { "aria-label": "Latest discoveries" }), recap: h("p.recap-quote"), summary: h("div"), chart: h("div.chunks-chart", { "aria-hidden": "true" }),
       log: h("pre", { tabindex: "0", "aria-label": "Generation log" }), actions: h("div.actions"), error: h("div"),
     };
@@ -468,8 +497,8 @@ export function mountStudio(root) {
     const revealKey = `lk-reveal-${job.book_id}`;
     let revealed = false;
     try { revealed = localStorage.getItem(revealKey) === "1"; } catch {}
-    el.foundHead = h("div.section-title", h("h2", "Discoveries"), h("span.eyebrow", "Newest first"));
-    el.recapCard = h("div.card.card-pad.recap-card", h("div.section-title", h("h2", "Story so far")), el.recap, el.summary);
+    el.foundHead = h("div.section-title", h("h3", "Discoveries"), h("span.eyebrow", "Newest first"));
+    el.recapCard = h("section.mon-sec.recap-card", h("div.section-title", h("h3", "Story so far")), el.recap, el.summary);
     el.shield = h("div.spoiler-shield",
       icon("shield"),
       h("h3", "Hidden to avoid spoilers"),
@@ -481,7 +510,7 @@ export function mountStudio(root) {
       try { on ? localStorage.setItem(revealKey, "1") : localStorage.removeItem(revealKey); } catch {}
       el.shield.style.display = on ? "none" : "";
       el.feed.style.display = el.recapCard.style.display = on ? "" : "none";
-      clear(el.foundHead, h("h2", "Discoveries"), on
+      clear(el.foundHead, h("h3", "Discoveries"), on
         ? h("button.linkish", { type: "button", on: { click: () => setRevealed(false) } }, "Hide")
         : h("span.eyebrow", "Hidden"));
     }
@@ -500,25 +529,27 @@ export function mountStudio(root) {
       if (!atBottom && follow) { follow = false; followBtn.setAttribute("aria-pressed", "false"); }
     });
 
+    // Flat regions on hairlines: the head with its actions, the progress line, the totals as one row, then the
+    // discoveries beside the story, the quality gate and the part timings, and the log under everything.
     clear(mainCol,
-      h("div.card.card-pad",
+      h("section.mon-sec.monitor-top",
         h("div.monitor-head",
-          h("div", h("span.eyebrow", "Run"), h("h1", job.book_title),
-            h("p.muted.run-meta",
-              el.badge, el.model = h("span.chip", icon((job.config.provider || "ollama") === "ollama" ? "cpu" : "sparkle"), job.config.model || "default model"),
-              h("span.chip", `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
-              h("span.chip", icon("shield"), job.config.verify === false ? "No fact-check" : "Fact-checked"))),
+          h("div.monitor-id", h("h2", job.book_title),
+            h("p.run-meta",
+              el.badge, el.model = h("span.run-model", job.config.model || "default model"),
+              h("span", `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
+              h("span", job.config.verify === false ? "no fact-check" : "fact-checked"))),
           el.actions),
         el.error,
-        h("div.progress-hero.progress-hero-wrap",
+        h("div.progress-hero",
           h("div.progress-top", el.pct, el.where), el.bar, el.phases)),
       el.stats,
       h("div.split",
-        h("div.card.card-pad", el.foundHead, el.shield, el.feed),
+        h("section.mon-sec", el.foundHead, el.shield, el.feed),
         h("div.monitor-right",
           el.recapCard,
-          h("div.card.card-pad", h("div.section-title", h("h2", "Quality gate"), h("span.eyebrow", "Dropped claims")), el.drops),
-          h("div.card.card-pad", h("div.section-title", h("h2", "Parts"), h("span.eyebrow", "Seconds each")), el.chart))),
+          h("section.mon-sec", h("div.section-title", h("h3", "Quality gate"), h("span.eyebrow", "Dropped claims")), el.drops),
+          h("section.mon-sec", h("div.section-title", h("h3", "Parts"), h("span.eyebrow", "Seconds each")), el.chart))),
       h("div.console",
         h("div.console-bar", h("span.title", icon("terminal"), "Log"), h("div.ctrls", filter, followBtn, copyBtn)),
         el.log));
@@ -550,7 +581,13 @@ export function mountStudio(root) {
       if (follow) el.log.scrollTop = el.log.scrollHeight;
     }
 
+    // The actions repaint only when what they offer changes (the 1 s tick would otherwise take focus off Stop).
+    let actionsKey = "";
     function paintActions() {
+      const key = `${m.status}|${m.wordsDone > 0}`;
+      if (key === actionsKey) return;
+      actionsKey = key;
+      const keep = el.actions.contains(document.activeElement) ? document.activeElement.textContent : null;
       const a = [];
       if (["running", "queued"].includes(m.status)) a.push(h("button.btn.danger", { type: "button", on: { click: async () => {
         try { await api.stopJob(jobId); toast(m.status === "queued" ? "Run cancelled" : "Stopping. Resume picks up from the last finished part."); } catch (e) { toast(e.message, "error"); }
@@ -560,18 +597,19 @@ export function mountStudio(root) {
         try { await api.resumeJob(jobId); toast("Resuming"); } catch (e) { toast(e.message, "error"); }
       } } }, icon("refresh"), "Resume"));
       if (m.wordsDone > 0 || m.status === "done") {
-        a.push(h(`a.btn${m.status === "done" ? ".primary" : ""}`, { "aria-label": `Read ${job.book_title}`, href: `#/reader?i=${encodeURIComponent(libraryKey(job))}` }, icon("book-open"), "Read"));
-        a.push(h("a.btn", { href: `/api/jobs/${jobId}/download`, download: "" }, icon("download"), "Download index"));
+        a.push(h(`a.btn${m.status === "done" ? ".primary" : ".quiet"}`, { "aria-label": `Read ${job.book_title}`, href: `#/reader?i=${encodeURIComponent(libraryKey(job))}` }, icon("book-open"), "Read"));
+        a.push(h("a.btn.quiet", { href: `/api/jobs/${jobId}/download`, download: "" }, icon("download"), "Download index"));
       }
       if (["done", "stopped", "interrupted", "failed"].includes(m.status)) {
-        a.push(h("a.btn", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
-        a.push(h("button.btn.danger", { type: "button", on: { click: async () => {
+        a.push(h("a.btn.quiet", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
+        a.push(h("button.btn.quiet.danger", { type: "button", on: { click: async () => {
           if (!await confirmDialog({ title: "Delete this run?",
             message: "Its generated index is deleted too. This can't be undone.", confirmLabel: "Delete run" })) return;
           try { await api.deleteJob(jobId); toast("Run deleted"); location.hash = "#/studio"; } catch (e) { toast(e.message, "error"); }
         } } }, icon("trash"), "Delete run"));
       }
       clear(el.actions, a);
+      if (keep) [...el.actions.children].find((x) => x.textContent === keep)?.focus();
     }
 
     function paint() {
@@ -606,12 +644,12 @@ export function mountStudio(root) {
       const s = m.stats, d = m.lastDelta;
       const dropped = Object.entries(s).filter(([k]) => k.startsWith("dropped")).reduce((a, [, v]) => a + v, 0);
       const droppedDelta = Object.entries(d).filter(([k]) => k.startsWith("dropped")).reduce((a, [, v]) => a + v, 0);
-      const tile = (k, ic, v, dv, warn) => h(`div.stat${warn ? ".warn" : ""}`, h("span.k", icon(ic), k), h("span.v", fmtInt(v)),
-        h("span.d", dv ? `+${dv} last part` : ""));
+      // One row of plain label / number pairs; "+N" is what the last part added.
+      const pair = (k, v, dv, warn) => h(`div.stat${warn ? ".warn" : ""}`, h("dt", k), h("dd", h("span.v", fmtInt(v)), dv ? h("span.d", ` +${dv}`) : null));
       clear(el.stats,
-        tile("Entries", "person", s.entities, d.entities), tile("Details", "scroll", s.facets, d.facets),
-        tile("Connections", "link", s.relations, d.relations), tile("Events", "timeline", s.events, d.events),
-        tile("Recaps", "feather", s.recaps, d.recaps), tile("Dropped", "scissors", dropped, droppedDelta, true));
+        pair("Entries", s.entities, d.entities), pair("Details", s.facets, d.facets),
+        pair("Connections", s.relations, d.relations), pair("Events", s.events, d.events),
+        pair("Recaps", s.recaps, d.recaps), pair("Dropped", dropped, droppedDelta, true));
 
       const reasons = Object.entries(s).filter(([k, v]) => k.startsWith("dropped") && v).sort((a, b) => b[1] - a[1]);
       clear(el.drops, reasons.length

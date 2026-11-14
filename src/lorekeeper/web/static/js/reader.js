@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { rememberReading } from "./reading.js";
-import { announce, clear, crumbs, describe, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -99,7 +99,7 @@ export function mountReader(root) {
         h("a.btn.primary", { href: "#/library?show=ready" }, icon("layers"), "Books ready to read")));
       return;
     }
-    api.catalog().then((c) => { s.catalog = c; if (el.crumbs) paintHead(); }).catch(() => {});
+    api.catalog().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
     await load(s.key, { keepPosition: true });
   }
 
@@ -299,7 +299,7 @@ export function mountReader(root) {
       // The rail's "Reading" list: the title and the position the person set, nothing from the index.
       const back = { ...q };
       delete back.edit;   // reopening from the rail reads; it does not reopen edit mode
-      rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p)?.title,
+      rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p) ? tidyTitle(s.map.chapterAt(s.p).title) : null,
         hash: `#/reader?${new URLSearchParams(back)}` });
     }, 250);
   }
@@ -308,11 +308,12 @@ export function mountReader(root) {
 
   const el = {};
   function render() {
-    el.crumbs = h("nav.crumbs", { "aria-label": "Breadcrumb" });
-    el.headFacts = h("div.head-facts");
-    const head = h("div.reader-head",
-      h("div.title", el.crumbs, h("h1", s.doc.work.title), h("p.by", `by ${s.doc.work.authors.join(", ")}`), el.headFacts),
-      h("div.reader-switch", editButton(), h("button.btn.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
+    // One compact head row: the title, one quiet line (author, series), Edit and Switch book.
+    el.headLine = h("p.rd-by");
+    el.headFacts = h("span.rd-cover");
+    const head = h("header.page-head.rd-head",
+      h("div.rd-title", h("h1", s.doc.work.title), el.headLine),
+      h("div.reader-switch", editButton(), h("button.btn.quiet.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
     paintHead();
     wrap.classList.toggle("editing", s.edit);
 
@@ -323,15 +324,14 @@ export function mountReader(root) {
     el.range = h("input.range", { type: "range", min: "0", max: "1000", step: "1", value: String(Math.round(s.p * 1000)),
       "aria-label": "Reading position in the book" });
     el.ticks = h("div.ticks");
-    el.labels = h("div.hz-labels", { "aria-hidden": "true" });
     el.pctInput = h("input.input.pct-input", { type: "number", min: "0", max: "100", step: "1", "aria-label": "Reading position, percent" });
-    el.chapSel = h("select.select#jump-chapter", { "aria-label": "Jump to chapter" });
-    el.hint = h("p.hint.pos-hint");
+    el.chapSel = h("select.select.chsel#jump-chapter", { "aria-label": "Jump to chapter" });
+    el.hint = h("span.pos-hint");
     el.notice = h("div.pos-notices");
     el.series = h("div.pos-series");
 
-    const prev = h("button.icon-btn", { type: "button", "aria-label": "Previous reveal", title: "Previous reveal" }, icon("skip-back"));
-    const next = h("button.icon-btn", { type: "button", "aria-label": "Next reveal", title: "Next reveal" }, icon("skip-fwd"));
+    const prev = h("button.icon-btn.rbtn", { type: "button", "aria-label": "Previous reveal", title: "Previous reveal" }, icon("skip-back"));
+    const next = h("button.icon-btn.rbtn", { type: "button", "aria-label": "Next reveal", title: "Next reveal" }, icon("skip-fwd"));
     prev.addEventListener("click", () => stepReveal(-1));
     next.addEventListener("click", () => stepReveal(1));
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
@@ -366,24 +366,26 @@ export function mountReader(root) {
       el.chapSel.value = "";
     });
 
-    // The horizon: what you've read is lit, what is ahead stays dark. The real range input sits transparent over a
-    // decorative rail (glow, tick marks), so keyboard and touch work as for any slider.
-    el.track = h("div.track", h("div.rail", { "aria-hidden": "true" }, h("span.glow"), el.ticks), el.range);
-    el.position = h("section.position", { "aria-label": "Reading position" },
-      h("div.position-row", h("div.where", el.pct, h("div.where-text", el.chap, el.source)),
-        h("div.pos-controls", h("div.step-btns", prev, next),
-          h("div.jump-group", h("label.jump-label", { for: "jump-chapter" }, "Jump to"), el.chapSel, h("span.pct-group", el.pctInput, h("span.subtle", "%"))))),
-      el.track, el.labels,
-      el.hint,
-      el.series, el.notice);
-    el.sentinel = h("div.pos-sentinel", { "aria-hidden": "true" });
-    const position = el.position;
-
+    // The ruler, pinned under the head on every tab: what you've read is lit, what is ahead stays dark. The real range
+    // input sits transparent over a decorative rail (tick marks), so keyboard and touch work as for any slider.
+    el.track = h("div.track", h("div.rail", { "aria-hidden": "true" }, el.ticks), el.range);
+    el.jump = h("div.jump-group", el.chapSel, h("span.pct-group", el.pctInput, h("span.subtle", "%")));
+    el.position = h("section.ruler", { "aria-label": "Reading position" },
+      h("div.step-btns", prev, next), el.pct, el.chap, el.track, el.jump);
+    // Secondary lines sit under the ruler only when they have something to say.
+    el.sub = h("div.ruler-sub", el.source, el.hint, el.headFacts, el.notice);
+    placeJump();
     el.tabs = h("div.view-tabs", { role: "tablist", "aria-label": "Index views" });
-    el.panel = h("div", { role: "tabpanel", id: "panel-view", tabindex: "0", style: { display: "grid", gap: "16px", paddingTop: "16px" } });
+    el.panel = h("div.rd-panel", { role: "tabpanel", id: "panel-view", tabindex: "0" });
+    // The entry opens beside the list (1101px and up); below that it is the modal drawer.
+    el.pane = h("aside.entry-pane.drawer", { role: "complementary", "aria-labelledby": "drawer-title", hidden: true,
+      on: { input: markDirty, change: markDirty, keydown: (ev) => { if (ev.key === "Escape" && !ev.defaultPrevented) { ev.preventDefault(); requestCloseDrawer(); } } } });
+    // The Connections tab's side panel sits in the same right-hand place as the entry.
+    el.mapSide = h("div.map-side");
+    el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
+    el.panel.addEventListener("keydown", onListKey);
 
-    clear(wrap, head, el.sentinel, position, h("div.reader-body", h("section", el.tabs, el.panel)));
-    watchCompact();
+    clear(wrap, head, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
     paint();
@@ -423,16 +425,17 @@ export function mountReader(root) {
   }
 
   function paintHead() {
+    // One quiet line: the author, and the series with this book's number; the book page link sits on the series name.
     const book = catalogBook();
     const series = book?.series ? s.catalog.series.find((g) => g.id === book.series.id) : null;
-    crumbs([{ label: "Library", href: "#/library" },
-      ...(series ? [{ label: series.name, href: `#/series/${encodeURIComponent(series.id)}` }] : []),
-      book ? { label: book.title, href: `#/book/${encodeURIComponent(book.key)}` } : { label: s.doc.work.title }], el.crumbs);
+    const authors = s.doc.work.authors.join(", ") || "Unknown author";
+    clear(el.headLine, book ? h("a", { href: `#/book/${encodeURIComponent(book.key)}`, title: "Versions, runs and book settings" }, authors) : authors,
+      series ? [", ", h("a", { href: `#/series/${encodeURIComponent(series.id)}` }, series.name), bookNo(book.series) ? `, ${bookNo(book.series)}` : ""] : null);
     // Provenance (who built the index, review state, versions) lives on the book page.
     const cov = s.doc.coverage || {};
     const through = !cov.complete && cov.through ? s.map.anchorPos(cov.through) : null;
     clear(el.headFacts, Number.isFinite(through) && through < 0.995
-      ? h("p.hint.cover-line", `This index covers the first ${Math.max(1, Math.round(through * 100))}% of the book.`) : null);
+      ? `This index covers the first ${Math.max(1, Math.round(through * 100))}% of the book.` : null);
   }
 
   /** Pick another book to read: a searchable list of every book with an index. */
@@ -483,71 +486,21 @@ export function mountReader(root) {
     }
   }
 
-  /** Tick marks on the rail, chapter names under it (Part/Book starts, or every chapter in a short book), and the end of the index. */
+  /** Tick marks on the ruler (each with its chapter as a tooltip; Part and Book starts stronger), and the end of the index. */
   function paintTicks() {
-    const ticks = [], items = [];
-    let end = null;
+    const ticks = [];
+    if (s.map.exact) {
+      const isPart = (c) => /^(part|book)\b/i.test(c.title);
+      for (const c of s.map.chapters) {
+        ticks.push(h(`span.tick${isPart(c) ? ".part" : ""}`, { style: { left: `${s.map.blockStart(c.start) * 100}%` }, title: tidyTitle(c.title) }));
+      }
+    }
     if (!s.doc.coverage.complete) {
       const at = s.map.anchorPos(s.doc.coverage.through);
-      if (Number.isFinite(at) && at < 0.995) end = at;
-    }
-    if (s.map.exact) {
-      const chs = s.map.chapters;
-      const isPart = (c) => /^(part|book)\b/i.test(c.title);
-      for (const c of chs) {
-        ticks.push(h(`span.tick${isPart(c) ? ".part" : ""}`, { style: { left: `${s.map.blockStart(c.start) * 100}%` } }));
-      }
-      for (const c of chs.length <= 8 ? chs : chs.filter(isPart)) {
-        const x = s.map.blockStart(c.start);
-        if (end == null || x < end - 0.02) items.push({ x, start: c.start, text: tidyTitle(c.title) });
-      }
-    }
-    const labels = [];
-    el.labelItems = [];
-    items.forEach((it, i) => {
-      const limit = Math.min(items[i + 1]?.x ?? 1, end != null ? end - 0.1 : 1);
-      const room = (limit - it.x) * 100;
-      if (room < 5) return;
-      const lab = h("span.hz-label", { style: { left: `${it.x * 100}%`, maxWidth: `calc(${room}% - 8px)` } }, it.text);
-      el.labelItems.push({ el: lab, start: it.start });
-      labels.push(lab);
-    });
-    if (end != null) {
-      ticks.push(h("span.end-mark", { style: { left: `${end * 100}%` } }));
-      labels.push(h(`span.hz-label.end${end < 0.1 ? ".start" : ""}`, { style: { left: `${end * 100}%` } }, "Index ends"));
+      if (Number.isFinite(at) && at < 0.995) ticks.push(h("span.end-mark", { style: { left: `${at * 100}%` }, title: "The index ends here" }));
     }
     clear(el.ticks, ticks);
-    clear(el.labels, labels);
   }
-
-  // The horizon shrinks to a slim strip under the top bar once the page scrolls past it. A zero-height sentinel above
-  // the panel tells us when; `--slack` keeps the layout height unchanged so nothing below jumps.
-  let compactObs;
-  function setCompact(on) {
-    const p = el.position;
-    if (!p || p.classList.contains("compact") === on) return;
-    if (on) {
-      const full = p.offsetHeight;
-      p.classList.add("compact");
-      p.style.setProperty("--slack", `${Math.max(0, full - p.offsetHeight)}px`);
-    } else {
-      p.classList.remove("compact");
-      p.style.removeProperty("--slack");
-    }
-  }
-  function watchCompact() {
-    compactObs?.disconnect();
-    if (!("IntersectionObserver" in window)) { setCompact(false); return; }
-    // Beside the rail nothing sits above the page; on a phone the app bar does.
-    const top = Math.max(0, (document.querySelector(".appbar")?.offsetHeight || 0) - 1);
-    el.position.style.setProperty("--hz-top", `${top}px`);
-    compactObs = new IntersectionObserver(([e]) => setCompact(!e.isIntersecting && e.boundingClientRect.top < top),
-      { rootMargin: `-${top}px 0px 0px 0px`, threshold: 0 });
-    compactObs.observe(el.sentinel);
-  }
-  let resizeTimer;
-  const onResize = () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => { if (el.sentinel) watchCompact(); }, 150); };
-  window.addEventListener("resize", onResize);
 
   function paintChapters() {
     if (!s.map.exact) { el.chapSel.hidden = true; return; }
@@ -611,8 +564,8 @@ export function mountReader(root) {
     el.hint.hidden = !(s.p === 0 && !v.entities.length && !v.events.length && !v.chapters.length);
     el.hint.textContent = el.hint.hidden ? "" : "Drag the slider to where you are in the book. Everything below updates to what you've read, and nothing further.";
     const ch = s.map.chapterAt(s.p);
-    el.chap.textContent = ch ? ch.title : anchor ? `after paragraph ${anchor}` : "before the first reveal";
-    for (const l of el.labelItems || []) l.el.classList.toggle("here", Boolean(ch) && l.start === ch.start);
+    el.chap.textContent = ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal";
+    el.chap.title = el.chap.textContent;
     paintSource();
 
     const notices = [];
@@ -662,6 +615,7 @@ export function mountReader(root) {
         if (to) { ev.preventDefault(); select(to, true); }
       } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), h("span.count", String(n)))));
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
+    if (s.tab !== "links") { clear(el.mapSide); el.split.classList.remove("has-side"); }
     ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks })[s.tab]();
     el.panel.prepend(h("h2.sr-only", tabs.find((x) => x[0] === s.tab)[1]));
   }
@@ -783,7 +737,9 @@ export function mountReader(root) {
     const about = e.profile ? describe(e) : (e.facets.find((f) => !startsWithVerb(f.text))?.text || describe(e));
     const from = carried(e.id) ? revealInfo(e.id).book : null;
     const sleeping = from && !inThisBook(e.id);
-    const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}${sleeping ? ".dormant" : ""}`, { type: "button",
+    const open = s.drawer === e.id && el.pane && !el.pane.hidden;
+    const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}${sleeping ? ".dormant" : ""}${open ? ".sel" : ""}`, { type: "button",
+      dataset: { ent: e.id }, "aria-current": open ? "true" : null,
       "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}${fresh ? ", new" : ""}${from ? `, from ${bookShort(from)}${sleeping ? ", not in this book yet" : ""}` : ""}`,
       on: { click: (ev) => openDrawer(e.id, { from: ev.currentTarget }) } },
       h(`span.ent-dot${fresh ? ".fresh" : ""}`, { "aria-hidden": "true", title: fresh ? "New" : null }),
@@ -879,10 +835,16 @@ export function mountReader(root) {
     const groups = chapterGroups();
     const hasAny = (s.doc.recaps || []).some((r) => r.scope === "chapter") || [...s.seriesDocs.values()].some((d) => (d?.recaps || []).some((r) => r.scope === "chapter"));
     const story = h("section.story-now", { "aria-label": "Story so far" });
-    clear(story, h("span.eyebrow", "Story so far"),
-      h("p.recap-text", v.recap ? v.recap.text : "Nothing to recap yet. Move forward in the book to see the story so far."),
+    // Three lines, then "Read the whole recap": the lists below are the point of a glance.
+    const recapText = h(`p.recap-text${s.recapOpen ? "" : ".clamp"}`, v.recap ? v.recap.text : "Nothing to recap yet. Move forward in the book to see the story so far.");
+    const more = v.recap ? h("button.linkish.recap-more", { type: "button", "aria-expanded": String(Boolean(s.recapOpen)),
+      on: { click: () => { s.recapOpen = !s.recapOpen; recapText.classList.toggle("clamp", !s.recapOpen); more.setAttribute("aria-expanded", String(s.recapOpen)); more.textContent = s.recapOpen ? "Show less" : "Read the whole recap"; } } },
+      s.recapOpen ? "Show less" : "Read the whole recap") : null;
+    clear(story, h("span.eyebrow", "Story so far"), recapText, more,
       v.recap && bookLabel(v.recap.book),
       s.edit && v.recap ? editor.recapRowActions(v.recap, story) : null);
+    // The control is only worth showing when the recap runs past three lines.
+    if (more) requestAnimationFrame(() => { if (!s.recapOpen && recapText.scrollHeight <= recapText.clientHeight + 2) more.hidden = true; });
     const addRecap = s.edit ? editor.addRecapButton() : null;
     // In a series, each book's chapters are their own block on one rail that runs down to the book being read.
     const mine = groups.filter((g) => !s.series || !g.book || g.book === s.book);
@@ -1070,47 +1032,110 @@ export function mountReader(root) {
       openEntity: (id, from) => openDrawer(id, { from }),
       repaint: () => paintTabs(),
     });
+    // Beside the list (1101px and up) the map's details take the entry's place on the right; narrower they stay under the map.
+    const side = el.panel.querySelector(".g-panel");
+    const keep = el.mapSide.contains(document.activeElement) ? document.activeElement : null;
+    if (side && paneMode()) { const scroll = el.mapSide.scrollTop; clear(el.mapSide, side); el.mapSide.scrollTop = scroll; el.split.classList.add("has-side"); }
+    else { clear(el.mapSide); el.split.classList.remove("has-side"); }
+    if (keep && !document.contains(keep)) el.mapSide.querySelector("button")?.focus({ preventScroll: true });
   }
 
-  // ---- drawer ----------------------------------------------------------------------------
+  // ---- the entry: a pane beside the list, or the modal drawer ----------------------------------
+  // From 1101px the entry opens in a pane on the right (not modal: the list stays usable, another row swaps it,
+  // arrow keys in the list move it, Escape or Close returns focus to the row). Narrower, it is the modal drawer.
+  // Both are `.drawer`, so the edit forms, the dirty check and the folds work the same in either.
 
+  const paneMode = () => matchMedia("(min-width: 1101px)").matches;
+  const host = () => (el.pane && !el.pane.hidden ? el.pane : document.querySelector("dialog.drawer"));
   let lastFocus = null;
-  /** True while an edit form in the open drawer holds text that was typed and not saved. */
+  /** True while an edit form in the open entry holds text that was typed and not saved. */
   function drawerDirty() {
     // A form is dirty once anything in it was edited (see markDirty), or a text field differs from what it opened with.
-    return [...document.querySelectorAll("dialog.drawer .edit-form, dialog.drawer .editing-title")].some((f) =>
+    const box = host();
+    return Boolean(box) && [...box.querySelectorAll(".edit-form, .editing-title")].some((f) =>
       f.dataset.dirty === "1" || [...f.querySelectorAll("textarea, input")].some((i) => i.value !== i.defaultValue));
   }
-  /** One delegated listener on the drawer: any input or change inside an edit form marks that form dirty.
+  /** One delegated listener on the entry: any input or change inside an edit form marks that form dirty.
    *  The flag lives on the form element, so cancelling or saving (which removes the form) clears it. */
   function markDirty(ev) {
     const form = ev.target.closest?.(".edit-form, .editing-title");
     if (form) form.dataset.dirty = "1";
   }
-  /** Every way a person dismisses the drawer (×, Escape, the backdrop) asks first when it would lose typed text. */
+  /** Every way a person dismisses the entry (×, Escape, the backdrop) asks first when it would lose typed text. */
   async function requestCloseDrawer() {
     if (!drawerDirty() || await confirmDialog({ title: "Discard what you wrote?", confirmLabel: "Discard", cancelLabel: "Keep editing" })) closeDrawer();
   }
-  function closeDrawer() {
+  /** Close the entry. `focus` hands focus back to the row it was opened from (not when the position moved it away). */
+  function closeDrawer({ focus = true } = {}) {
+    const id = s.drawer;
     const d = document.querySelector("dialog.drawer");
     s.drawer = null;
     if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); }
-    if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
+    if (el.pane && !el.pane.hidden) { el.pane.hidden = true; clear(el.pane); el.split.classList.remove("has-entry"); }
+    markOpenRow();
+    if (!focus) return;
+    // The list repaints as the position moves, so the row it came from may be a new element by now.
+    const row = lastFocus && document.contains(lastFocus) ? lastFocus : id ? el.panel?.querySelector(`[data-ent="${CSS.escape(id)}"]`) : null;
+    row?.focus();
   }
   // Escape closes a native dialog without going through closeDrawer.
   function onDialogClose() { closeDrawer(); }
+  /** The row of the open entry carries `aria-current` and the selected tint. */
+  function markOpenRow() {
+    el.panel?.querySelectorAll("[data-ent]").forEach((r) => {
+      const on = r.dataset.ent === s.drawer && !el.pane.hidden;
+      r.classList.toggle("sel", on);
+      if (on) r.setAttribute("aria-current", "true"); else r.removeAttribute("aria-current");
+    });
+  }
 
-  function openDrawer(id, { from = null, refresh = false, discard = false } = {}) {
-    // Opening another entry from a chip inside a drawer with unsaved text asks first.
-    if (!refresh && !discard && document.querySelector("dialog.drawer") && drawerDirty()) {
+  /** Up and down in the Cast list move between entries; with the pane open the entry follows. Escape closes it. */
+  function onListKey(ev) {
+    if (ev.key === "Escape" && s.drawer && !el.pane.hidden && !ev.defaultPrevented && !/^(INPUT|TEXTAREA|SELECT)$/.test(ev.target.tagName)) {
+      ev.preventDefault(); requestCloseDrawer(); return;
+    }
+    const row = ev.target.closest?.("[data-ent]");
+    if (!row || !["ArrowDown", "ArrowUp", "Home", "End"].includes(ev.key)) return;
+    const rows = [...el.panel.querySelectorAll("button[data-ent]")];
+    const i = rows.indexOf(row);
+    const next = rows[{ ArrowDown: i + 1, ArrowUp: i - 1, Home: 0, End: rows.length - 1 }[ev.key]];
+    if (!next) return;
+    ev.preventDefault();
+    next.focus();
+    if (s.drawer && !el.pane.hidden) openDrawer(next.dataset.ent, { from: next, keepFocus: true });
+  }
+  /** On a phone the ruler is one line; the chapter select and the percent field go to the line under it. */
+  function placeJump() {
+    if (!el.jump) return;
+    const target = matchMedia("(max-width: 640px)").matches ? el.sub : el.position;
+    if (el.jump.parentNode !== target) target.append(el.jump);
+  }
+  // The width can cross 1100px with an entry open: move it to the other form.
+  let modeWas = paneMode();
+  const onResize = () => {
+    placeJump();
+    const now = paneMode();
+    if (now !== modeWas) {
+      modeWas = now;
+      if (s.drawer && !drawerDirty()) { const id = s.drawer; closeDrawer({ focus: false }); openDrawer(id); }
+      if (s.tab === "links" && el.panel) paintTabs();
+    }
+  };
+  window.addEventListener("resize", onResize);
+
+  function openDrawer(id, { from = null, refresh = false, discard = false, keepFocus = false } = {}) {
+    // Opening another entry with unsaved text in the open one asks first.
+    if (!refresh && !discard && host() && drawerDirty()) {
       confirmDialog({ title: "Discard what you wrote?", confirmLabel: "Discard", cancelLabel: "Keep editing" })
-        .then((ok) => { if (ok) openDrawer(id, { from, discard: true }); });
+        .then((ok) => { if (ok) openDrawer(id, { from, discard: true, keepFocus }); });
       return;
     }
     const e = nameOf(id);
-    if (!e) { if (refresh) closeDrawer(); return; }
+    // Moved back past where it is revealed: the entry closes (nothing past the position may show).
+    if (!e) { if (refresh) closeDrawer({ focus: false }); return; }
     if (!refresh) lastFocus = from || document.activeElement;
     s.drawer = id;
+    modeWas = paneMode();
     const v = s.view;
     const rels = v.relations.filter((r) => r.src === id || r.dst === id);
     const evs = v.events.filter((ev) => ev.entities.includes(id));
@@ -1134,7 +1159,7 @@ export function mountReader(root) {
       evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
-        closeDrawer();
+        closeDrawer({ focus: false });
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
     const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
@@ -1143,9 +1168,31 @@ export function mountReader(root) {
     const jumpNav = !s.edit && jumps.length > 1 ? h("nav.d-jumps", { "aria-label": "Sections" }, jumps.map(([k, label, n]) =>
       h("button.linkish", { type: "button", on: { click: () => body.querySelector(`[data-jump="${k}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) } },
         label, h("span.n", String(n))))) : null;
-    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", e.name), editor.drawerTitle(e), origin)
-      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", e.name), origin, jumpNav);
+    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin)
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav);
     const content = [h("header", title, closeBtn), body];
+
+    if (paneMode()) {
+      document.querySelector("dialog.drawer")?.remove();
+      const pane = el.pane;
+      const was = !pane.hidden;
+      const keep = was && refresh && pane.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id : null;
+      const scroll = refresh ? pane.scrollTop : 0;
+      pane.className = `entry-pane drawer t-${e.type}`;
+      pane.setAttribute("aria-label", e.name);
+      pane.hidden = false;
+      clear(pane, content);
+      pane.scrollTop = scroll;
+      el.split.classList.add("has-entry");
+      markOpenRow();
+      if (keep) document.getElementById(keep)?.focus();
+      else if (!refresh) {
+        if (!keepFocus) pane.querySelector("#drawer-title")?.focus({ preventScroll: true });
+        announce(e.name);
+      }
+      return;
+    }
+
     let dlg = document.querySelector("dialog.drawer");
     if (refresh && dlg) {
       const keep = dlg.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id : null;
@@ -1196,8 +1243,8 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer(); clearTimeout(urlTimer); clearInterval(pollTimer);
-    compactObs?.disconnect(); clearTimeout(resizeTimer); window.removeEventListener("resize", onResize);
+    disposed = true; unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
 }

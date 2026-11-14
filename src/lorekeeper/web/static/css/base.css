@@ -216,7 +216,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .appbar, .tabbar { display: none; }
 main { min-width: 0; padding: 24px var(--main-px) 48px; outline: none; }
 /* Pages not yet laid out for the workbench keep a readable width beside the rail. */
-main > .reader, main > .studio { max-width: 1480px; }
+main > .studio { max-width: 1480px; }
 main[data-route="settings"] { padding: 0; }
 main:focus-visible { outline: none; }   /* the skip link and route changes focus <main>; the page itself is the cue */
 /* Signed out, or before the first password: no rail, the form alone. */
