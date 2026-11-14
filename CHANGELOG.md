@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.8.0](https://github.com/nightspine/lorekeeper/compare/v0.7.1...v0.8.0) (2026-11-14)
+
+
+### Features
+
+* a book kind on every index, inferred from the EPUB or chosen in the build form ([#47](https://github.com/nightspine/lorekeeper/issues/47)) ([a8e1f9f](https://github.com/nightspine/lorekeeper/commit/a8e1f9fa7d765798f30ac55441c22d3bb75f7474))
+
+
+### Bug Fixes
+
+* usability audit, 22 findings across the web app ([#50](https://github.com/nightspine/lorekeeper/issues/50)) ([c28fe3e](https://github.com/nightspine/lorekeeper/commit/c28fe3e95a4e5ffda9dde55454431c164e08d016))
+
 ## [0.7.1](https://github.com/nightspine/lorekeeper/compare/v0.7.0...v0.7.1) (2026-11-08)
 
 
