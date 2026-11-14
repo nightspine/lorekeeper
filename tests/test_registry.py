@@ -592,3 +592,33 @@ def test_add_writes_nothing_when_serialising_fails(tmp_path, src, dracula, monke
     listing, issues = registry.add(write(tmp_path / "b.json", make(dracula)), "someone", src, NOW)
     assert listing is None and errs(issues)
     assert not (src / "indexes/someone/dracula").exists()
+
+
+# ---- round 4: removed.json capped, relative paths in findings -------------------------------
+
+def test_build_reads_removed_json_capped(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    (src / "removed.json").write_text("[" * 200000, encoding="utf-8")
+    with pytest.raises(registry.RegistryError, match="removed.json"):
+        registry.build(src, tmp_path / "out")
+    (src / "removed.json").write_text(json.dumps([_nest(500)]), encoding="utf-8")
+    with pytest.raises(registry.RegistryError, match="nested deeper"):
+        registry.build(src, tmp_path / "out")
+
+
+def test_findings_never_name_absolute_paths(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    (src / "indexes/someone/dracula/v1.lore.json").unlink()
+    again = copy.deepcopy(dracula)
+    again["work"]["title"] = "Again"
+    ctx, issues = registry.check(write(tmp_path / "n.json", make(again)), "someone", src)
+    assert ctx is None
+    assert str(tmp_path) not in "\n".join(str(i) for i in issues)
+    assert any("indexes/someone/dracula/v1.lore.json" in str(i) for i in issues)
+    (src / "indexes/someone/dracula/listing.json").write_text("{", encoding="utf-8")
+    with pytest.raises(registry.RegistryError) as e:
+        registry.build(src, tmp_path / "out")
+    assert str(tmp_path) not in str(e.value) and "someone/dracula" in str(e.value)
+    with pytest.raises(registry.RegistryError) as e:
+        registry.read_listing(src, "someone", "dracula")
+    assert str(tmp_path) not in str(e.value)

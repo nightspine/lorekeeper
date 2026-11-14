@@ -94,6 +94,14 @@ def _too_deep(doc) -> str | None:
     return None
 
 
+def _rel(source: Path, p: Path) -> str:
+    """A source-tree file as a path relative to the source directory: reports end up in public places."""
+    try:
+        return p.relative_to(source).as_posix()
+    except ValueError:
+        return p.name
+
+
 def _no_constant(name: str):
     raise ValueError(f"{name} is not JSON")
 
@@ -117,7 +125,9 @@ def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]
             return None, [_err(what, f"not valid JSON for a registry: nested deeper than {MAX_DEPTH} levels at {deep}")]
         json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")  # a lone surrogate fails here
         return doc, []
-    except (ValueError, OSError) as e:
+    except OSError as e:
+        return None, [_err(what, f"cannot read: {e.strerror or 'error'}")]
+    except ValueError as e:
         return None, [_err(what, f"not valid JSON for a registry: {e}")]
     except RecursionError:
         return None, [_err(what, "not valid JSON for a registry: nested too deeply")]
@@ -268,9 +278,9 @@ def read_listing(source: Path, publisher: str, slug: str) -> dict | None:
     p = _listing_dir(source, publisher, slug) / "listing.json"
     if not p.is_file():
         return None
-    data, issues = _read_json_capped(p, str(p))
+    data, issues = _read_json_capped(p, _rel(source, p))
     if issues or not isinstance(data, dict):
-        raise RegistryError(f"{p} is not readable")
+        raise RegistryError(f"{_rel(source, p)} is not readable")
     return data
 
 
@@ -281,7 +291,7 @@ def _publisher_listings(source: Path, publisher: str) -> list[dict]:
         for d in sorted(root.iterdir()):
             p = d / "listing.json"
             if d.is_dir() and p.is_file():
-                data, issues = _read_json_capped(p, str(p))
+                data, issues = _read_json_capped(p, _rel(source, p))
                 if not issues and isinstance(data, dict):
                     out.append(data)
     return out
@@ -290,9 +300,10 @@ def _publisher_listings(source: Path, publisher: str) -> list[dict]:
 def _latest_index(source: Path, listing: dict) -> dict:
     pub, slug = listing["publisher"], listing["slug"]
     path = _listing_dir(source, pub, slug) / f"v{int(listing['version'])}.lore.json"
-    doc, issues = _read_json_capped(path, str(path))
+    rel = _rel(source, path)
+    doc, issues = _read_json_capped(path, rel)
     if issues or not isinstance(doc, dict):
-        raise RegistryError("; ".join(f"{i.where}: {i.message}" for i in issues) or f"{path} is not an index")
+        raise RegistryError("; ".join(f"{i.where}: {i.message}" for i in issues) or f"{rel} is not an index")
     return doc
 
 
@@ -550,13 +561,13 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
                 listings.append((data, d))
     removed_raw = None
     if (source / "removed.json").is_file():
-        removed_raw = (source / "removed.json").read_bytes()
-        try:
-            removed = json.loads(removed_raw)
+        removed, rissues = _read_json_capped(source / "removed.json", "removed.json")
+        if rissues:
+            problems += [f"{i.where}: {i.message}" for i in rissues]
+        else:
+            removed_raw = (source / "removed.json").read_bytes()
             bad = validate.check_schema(removed, "api", "removed")
             problems += [f"removed.json{i.where}: {i.message}" for i in bad]
-        except ValueError as e:
-            problems.append(f"removed.json: not valid JSON: {e}")
     if problems:
         raise RegistryError("\n".join(problems))
 
