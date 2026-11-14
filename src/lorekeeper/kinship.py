@@ -96,7 +96,7 @@ def parse(label) -> dict | None:
 
 
 SEPARATE = ("younger", "older", "elder", "eldest", "youngest", "twin", "identical", "adoptive", "adopted", "foster",
-            "late", "former", "blood", "first", "second")   # kept as words, in this order, before the kin word
+            "late", "former", "blood", "first", "second")   # kept as words, as given, before the kin word
 
 
 def normalize(label) -> str | None:
@@ -104,7 +104,7 @@ def normalize(label) -> str | None:
     does ("step mother of" → "stepmother of", "grand mother" → "grandmother", "half sister of" → "half-sister of",
     "ex wife of" → "ex-wife of", "great grandmother of" → "great-grandmother of", "mother in law of" →
     "mother-in-law of"); "younger", "older", "elder", "eldest", "youngest", "twin", "identical", "adoptive",
-    "adopted", "foster", "late", "former", "blood", "first" and "second" stay separate words, in that order."""
+    "adopted", "foster", "late", "former", "blood", "first" and "second" stay separate words, in the order the label gave them."""
     p = parse(label)
     if p is None:
         return None
@@ -113,7 +113,7 @@ def normalize(label) -> str | None:
     mods = [m for m in p["modifiers"] if m != "in-law"]
     if p["word"] in ("widow", "widower") and mods[:1] == ["late"]:
         mods = mods[1:]   # implied by the word
-    head = sorted((m for m in mods if m in SEPARATE), key=SEPARATE.index)
+    head = [m for m in mods if m in SEPARATE]   # in the order the label gave them
     word = p["word"]
     if "step" in mods:
         word = "step" + word
