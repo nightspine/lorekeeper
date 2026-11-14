@@ -105,6 +105,7 @@ export function mountReader(root) {
 
   /** Open an index. Resolves true once it is on screen; on failure nothing about the current book changes. */
   async function load(key, { keepPosition = false, book = null } = {}) {
+    dropPending();
     const meta = s.lib.indexes.find((i) => i.key === key);
     let doc;
     try { doc = await api.index(key); } catch (e) {
@@ -200,38 +201,43 @@ export function mountReader(root) {
       }
     }
     const apply = () => {
+      // A sync waits only for the book and the moment it was made for: gone after unmount, a book switch or a move by hand.
+      if (disposed || s.key !== key || s.sync.override) return;
       setP(p, first ? (prev != null ? { prev } : { quiet: true }) : {});
       if (!first) announce("Position updated from Book Orbit");
       writeLast(p);
     };
     // An edit form with typed text keeps the entry as it is: the synced position waits until the form is
     // saved, discarded or closed (applyPending), so the entry never shows what the position no longer reveals.
-    if (drawerDirty()) { pendingMove = apply; return; }
+    if (drawerDirty()) { pendingMove = { key, run: apply }; return; }
     apply();
   }
 
   // ---- moves while an edit form holds typed text ---------------------------------------------
   // A deliberate move asks "Discard what you wrote?" first and stays put on "Keep editing"; an automatic one
   // (the Book Orbit sync) waits in pendingMove until the form is resolved.
+  // Every deliberate change of what the view reveals (the position, the finished earlier books, the reading order,
+  // the series book) goes through okToMove first; see the handoff for the list of call sites.
   let pendingMove = null, asking = null;
-  /** Resolves true when the move may go ahead (nothing typed, or the person discards it). */
-  function okToMove() {
-    if (!drawerDirty()) return Promise.resolve(true);
+  const dropPending = () => { pendingMove = null; };
+  /** Resolves true when the change may go ahead (nothing typed, or the person discards it). A deliberate change
+   *  also drops a waiting sync: the person has just said where they are. */
+  function okToMove(message = "Moving your position closes the form you were editing.") {
+    if (!drawerDirty()) { dropPending(); return Promise.resolve(true); }
     if (asking) return asking;
-    asking = confirmDialog({ title: "Discard what you wrote?", message: "Moving your position closes the form you were editing.",
-      confirmLabel: "Discard", cancelLabel: "Keep editing" }).then((ok) => {
+    asking = confirmDialog({ title: "Discard what you wrote?", message, confirmLabel: "Discard", cancelLabel: "Keep editing" }).then((ok) => {
       asking = null;
-      if (ok && s.drawer) openDrawer(s.drawer, { refresh: true });   // drops the forms; the move then refreshes or closes the entry
+      if (ok) { dropPending(); if (s.drawer) openDrawer(s.drawer, { refresh: true, discard: true }); }   // drops the forms; the change then refreshes or closes the entry
       return ok;
     });
     return asking;
   }
   /** After a click or key in the entry: once no form holds typed text, a waiting sync is applied. */
   function applyPending() {
-    if (!pendingMove || drawerDirty()) return;
-    const run = pendingMove;
+    if (!pendingMove || disposed || drawerDirty()) return;
+    const { key, run } = pendingMove;
     pendingMove = null;
-    run();
+    if (key === s.key) run();
   }
   const checkPending = () => setTimeout(applyPending, 0);
   /** Put the ruler back where the position is (a move that was refused). */
@@ -253,6 +259,7 @@ export function mountReader(root) {
 
   /** Called for every manual move. */
   function markOverride() {
+    dropPending();
     // Counts before the first sync response too, so a move made while it loads is not overwritten.
     if (!s.sync.override) { s.sync.override = true; if (s.sync.on) paintSource(); }
   }
@@ -329,7 +336,9 @@ export function mountReader(root) {
   let urlTimer;
   function saveUrl() {
     clearTimeout(urlTimer);
+    if (disposed) return;   // a page that is gone never writes the address or the Reading list
     urlTimer = setTimeout(() => {
+      if (disposed) return;
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
@@ -372,13 +381,16 @@ export function mountReader(root) {
     const next = h("button.icon-btn.rbtn", { type: "button", "aria-label": "Next reveal", title: "Next reveal" }, icon("skip-fwd"));
     prev.addEventListener("click", () => stepReveal(-1));
     next.addEventListener("click", () => stepReveal(1));
+    let dragWant = null;
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
     el.range.addEventListener("input", () => {
       const want = +el.range.value / 1000;
       // Typed text in an edit form: the ruler stays put until the person says to discard it.
       if (drawerDirty()) {
         rulerBack();
-        okToMove().then((ok) => { if (ok) moveTo(want); });
+        const first = dragWant == null;
+        dragWant = want;   // only the latest place the ruler was dragged to counts
+        if (first) okToMove().then((ok) => { const to = dragWant; dragWant = null; if (ok) moveTo(to); });
         return;
       }
       const line = aheadLine();
@@ -454,8 +466,11 @@ export function mountReader(root) {
       checkPending();
     },
   });
-  function setEdit(on) {
+  async function setEdit(on) {
     if (on && !canEdit()) return;
+    // Done with typed text in a form: ask, as closing the entry does.
+    if (!on && drawerDirty() && !(await confirmDialog({ title: "Discard what you wrote?", message: "Leaving edit mode closes the form you were editing.",
+      confirmLabel: "Discard", cancelLabel: "Keep editing" }))) return;
     s.edit = on;
     wrap.classList.toggle("editing", on);
     const btn = wrap.querySelector(".edit-toggle");
@@ -511,6 +526,7 @@ export function mountReader(root) {
   }
 
   function setP(p, { defer = false, quiet = false, prev = null } = {}) {
+    if (disposed) return;
     if (quiet) { s.prevIds = null; s.prevP = null; }   // no earlier position to compare: nothing is "new"
     else s.prevP = prev ?? s.p;
     s.p = Math.min(1, Math.max(0, p));
@@ -569,14 +585,19 @@ export function mountReader(root) {
         : h("button.chip", { type: "button", disabled: !has, title: has ? b.title : "No index for this book", on: { click: () => switchBook(k) } }, text);
     }));
     const orderSel = Object.keys(s.series.orders).length > 1 && h("select.select", { "aria-label": "Reading order", style: { width: "auto" },
-      on: { change: (e) => { s.order = e.target.value; render(); saveUrl(); } } },
+      on: { change: async (e) => {
+        const want = e.target.value;
+        if (!(await okToMove("Changing the reading order closes the form you were editing."))) { e.target.value = s.order; return; }
+        s.order = want; render(); saveUrl();
+      } } },
       Object.keys(s.series.orders).map((o) => h("option", { value: o, selected: o === s.order }, `${o} order`)));
     const before = order.slice(0, order.indexOf(s.book));
     const fin = new Set(finishedSet());
     const boxes = before.map((k) => {
       const b = s.series.books.find((x) => x.key === k);
       const box = h("input", { type: "checkbox", checked: fin.has(k) });
-      box.addEventListener("change", () => {
+      box.addEventListener("change", async () => {
+        if (!(await okToMove("Changing which books you have finished closes the form you were editing."))) { box.checked = !box.checked; return; }
         const now = new Set(finishedSet());
         box.checked ? now.add(k) : now.delete(k);
         s.finished = [...now].join(",");
@@ -639,8 +660,16 @@ export function mountReader(root) {
     const repaint = () => {
       frame = 0;
       paintTabs();
-      // A position change must not wipe what someone is typing into an edit form in the drawer.
-      if (s.drawer && !drawerDirty()) openDrawer(s.drawer, { refresh: true });
+      // A position change must not wipe what someone is typing into an edit form in the drawer. But the spoiler
+      // rule outranks the typed text: if the view now hides anything the open entry shows, the entry closes.
+      if (s.drawer && drawerDirty()) {
+        const e = nameOf(s.drawer);
+        const now = e ? new Set(entryIds(e)) : new Set();
+        if (!e || [...(s.drawerShows || [])].some((x) => !now.has(x))) {
+          closeDrawer({ focus: false });
+          toast("The position moved back, so the entry closed. What you typed was not saved.");
+        }
+      } else if (s.drawer) openDrawer(s.drawer, { refresh: true });
     };
     if (defer) { if (!frame) frame = requestAnimationFrame(repaint); }
     else { if (frame) cancelAnimationFrame(frame); repaint(); }
@@ -1082,6 +1111,15 @@ export function mountReader(root) {
   }
 
   // ---- the entry: a pane beside the list, or the modal drawer ----------------------------------
+
+  /** Everything the open entry shows, as ids: names, profile, details, earlier impressions, connections, events. */
+  function entryIds(e) {
+    const v = s.view;
+    return [`name:${e.name}`, ...e.aliases.map((a) => `name:${a}`), e.profile ? `p:${e.profile.id}` : null,
+      ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`),
+      ...v.relations.filter((r) => r.src === e.id || r.dst === e.id).map((r) => `r:${r.id}`),
+      ...v.events.filter((ev) => ev.entities.includes(e.id)).map((ev) => `e:${ev.id}`)].filter(Boolean);
+  }
   // From 1101px the entry opens in a pane on the right (not modal: the list stays usable, another row swaps it,
   // arrow keys in the list move it, Escape or Close returns focus to the row). Narrower, it is the modal drawer.
   // Both are `.drawer`, so the edit forms, the dirty check and the folds work the same in either.
@@ -1250,6 +1288,7 @@ export function mountReader(root) {
     const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin)
       : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav);
     const content = [h("header", title, closeBtn), body];
+    s.drawerShows = entryIds(e);
 
     if (paneMode()) {
       document.querySelector("dialog.drawer")?.remove();
@@ -1282,8 +1321,8 @@ export function mountReader(root) {
     }
     dlg?.remove();
     dlg = h(`dialog.drawer.t-${e.type}`, { "aria-labelledby": "drawer-title",
-      on: { input: markDirty, change: markDirty, click: checkPending, keyup: checkPending, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
-        click: (ev) => { if (ev.target === dlg) requestCloseDrawer(); } } }, content);
+      on: { input: markDirty, change: markDirty, keyup: checkPending, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
+        click: (ev) => { checkPending(); if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
     dlg.showModal();
     if (!refresh) closeBtn.focus();
@@ -1318,11 +1357,14 @@ export function mountReader(root) {
       keywords: "edit change fix entry", run: () => setEdit(!s.edit) });
     return out;
   }
+  // For tests only: with window.__lkTest set before the page loads, the safety net can be exercised by changing the
+  // position past every guard (setP directly).
+  if (window.__lkTest) window.__lkTest.reader = { setP: (p) => setP(p), state: s };
   let unregister = null;
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
