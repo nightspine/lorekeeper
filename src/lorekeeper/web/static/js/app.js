@@ -1,5 +1,5 @@
 import { api, hooks, safeNext } from "./api.js";
-import { hydrateIcons, icon } from "./dom.js";
+import { announce, hydrateIcons, icon } from "./dom.js";
 import { mountStudio, mountBuild } from "./studio.js";
 import { mountReader } from "./reader.js";
 import { mountSettings } from "./settings.js";
@@ -19,7 +19,9 @@ function currentTheme() {
 function paintToggle() {
   const dark = currentTheme() === "dark";
   toggle.replaceChildren(icon(dark ? "sun" : "moon"));
-  toggle.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+  const label = dark ? "Switch to light theme" : "Switch to dark theme";
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
 }
 toggle.addEventListener("click", () => {
   const next = currentTheme() === "dark" ? "light" : "dark";
@@ -65,7 +67,7 @@ async function pollQueue() {
   const left = Number.isFinite(pr.chunks) && Number.isFinite(pr.done) ? Math.max(0, pr.chunks - pr.done) : null;
   const hint = queuePill.querySelector(".hint");
   hint.textContent = left ? `${left} left` : "";
-  queuePill.title = `${active.map((j) => j.book_title).filter(Boolean).join(", ")}${left ? ` · ${left} parts left in the current run` : ""}`;
+  queuePill.title = `${active.map((j) => j.book_title).filter(Boolean).join(", ")}${left ? `. ${left} parts left in the current run` : ""}`;
 }
 
 // ---- session and polling -----------------------------------------------------------------------
@@ -124,14 +126,27 @@ export function setParams(params, { replace = true } = {}) {
   const { route, parts } = parseHash();
   const q = new URLSearchParams(params).toString();
   const url = `#/${[route, ...parts].join("/")}${q ? "?" + q : ""}`;
-  ownHash = url;
-  if (replace) history.replaceState(null, "", url);
-  else location.hash = url;
+  shownHash = url;
+  if (replace) history.replaceState(null, "", url);   // no hashchange follows, so there is nothing to skip
+  else { ownHash = url; location.hash = url; }
 }
 let ownHash = null;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
+let shownHash = null;   // the hash of the page on screen, so a stray "#main" can put it back
+/** Change the address without adding history or re-rendering (a view that picked what to show for the person). */
+export function replaceHash(url) { shownHash = url; history.replaceState(null, "", url); }
+let firstRender = true;
 
 function render() {
   const { route, parts, params } = parseHash();
+  // "#main" is the skip link's target, not a page: leave the page alone and put the address back.
+  if (route === "main") {
+    if (shownHash != null) { history.replaceState(null, "", shownHash); main.focus(); return; }
+    history.replaceState(null, "", "#/library");   // first load on "#main": nothing is on screen, so open the Library
+    return render();
+  }
+  ownHash = null;   // a hash a view wrote itself is spent once a real navigation arrives
+  // An error toast outlives its page only until the person moves on.
+  document.querySelectorAll("#toasts .toast.error").forEach((t) => t.remove());
   // Gate the routes on the session: signed out, only the sign-in page renders; before the first password, only that page.
   if (!signedIn() && route !== "login") {
     const next = safeNext(location.hash);
@@ -163,13 +178,24 @@ function render() {
   const [mount, title] = views[route] || views.library;
   unmount = mount(main) || null;
   document.title = `${title} · Lorekeeper`;
+  shownHash = location.hash;
+  // After the first load a navigation moves focus to the new page and says where we are. A page that
+  // already put focus somewhere (a dialog, the sign-in field) keeps it.
+  if (!firstRender && !main.contains(document.activeElement) && !document.querySelector("dialog[open]")) {
+    main.focus({ preventScroll: true });
+    announce(title);
+  }
+  firstRender = false;
   document.getElementById("settings-link").toggleAttribute("aria-current", route === "settings");
   for (const x of [runsLink, queuePill]) { if (route === "studio") x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); }
   if (ollamaTimer) pollQueue();
 }
 
+// The skip link moves focus to <main> and leaves the address and the page alone.
+document.querySelector(".skip-link")?.addEventListener("click", (e) => { e.preventDefault(); main.focus(); });
 window.addEventListener("hashchange", () => {
-  if (location.hash !== ownHash) render();
+  if (location.hash === ownHash) { ownHash = null; return; }   // the view's own change, already on screen
+  render();
 });
 hydrateIcons();
 applySession(await api.session());
