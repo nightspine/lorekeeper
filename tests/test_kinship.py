@@ -33,6 +33,15 @@ def test_normalize():
     assert kinship.normalize("is niece of") == "niece of"
     assert kinship.normalize("Mom of") == "mother of"
     assert kinship.normalize("blood-niece of") == "blood niece of"
+    for src, want in {"step mother of": "stepmother of", "Step-father of": "stepfather of", 
+                      "half sister of": "half-sister of", "half–brother of": "half-brother of", "ex husband of": "ex-husband of",
+                      "great grandmother of": "great-grandmother of", "greatgrandfather of": "great-grandfather of",
+                      "great aunt of": "great-aunt of", "great great grandmother of": "great-great-grandmother of",
+                      "mother in law of": "mother-in-law of", "step sister in law of": "stepsister-in-law of",
+                      "younger brother of": "younger brother of", "widow of": "widow of",
+                      "ex spouse of": "ex-spouse of", "older half sister of": "older half-sister of",
+                      "late husband of": "late husband of", "eldest step son of": "eldest stepson of"}.items():
+        assert kinship.normalize(src) == want, src
     assert kinship.normalize("married to") == "married to"
     assert kinship.normalize("Brother in law of") == "brother-in-law of"
     assert kinship.normalize("wife") == "wife of"
@@ -60,20 +69,30 @@ def test_tag_and_ties_command(tmp_path, capsys):
     path = tmp_path / "x.json"
     path.write_text(json.dumps(doc))
     n = kinship.tag(json.loads(path.read_text()))
-    assert n["tagged"] >= 1 and n["left"] == 1 and n["normalised"] == 1
+    assert n["tagged"] == 2 and n["normalised"] == 1 and n["left"] >= 1
     assert cli.main(["ties", str(path)]) == 0
     assert json.loads(path.read_text()) == doc                      # dry run writes nothing
     assert cli.main(["ties", str(path), "--write"]) == 0
     out = {r["id"]: r for r in json.loads(path.read_text())["relations"]}
     assert (out["kx1"]["label"], out["kx1"]["kind"]) == ("wife of", "family")
-    assert "kind" not in out["kx2"] and out["kx3"]["kind"] == "friendship"
+    assert "kind" not in out["kx2"] and (out["kx3"]["label"], out["kx3"]["kind"]) == ("half-brother of", "family")
     assert json.loads(path.with_name("x.json.bak").read_text()) == doc
 
 
-def test_tag_leaves_a_tie_of_another_kind_alone():
-    from lorekeeper import kinship
-    doc = {"relations": [{"label": "Half–brother of", "kind": "friendship"}, {"label": "half–sister of"}]}
+def test_tag_tags_every_parsed_label_family_and_leaves_unparsed_ones():
+    doc = {"relations": [{"label": "Half–brother of", "kind": "friendship"}, {"label": "half–sister of"},
+                         {"label": "possible father of", "kind": "alliance"}, {"label": "friend of", "kind": "friendship"}]}
     n = kinship.tag(doc)
-    assert doc["relations"][0] == {"label": "Half–brother of", "kind": "friendship"}
-    assert doc["relations"][1] == {"label": "half sister of", "kind": "family"}
-    assert (n["left"], n["tagged"], n["normalised"]) == (1, 1, 1)
+    assert doc["relations"][0] == {"label": "half-brother of", "kind": "family"}
+    assert doc["relations"][1] == {"label": "half-sister of", "kind": "family"}
+    assert doc["relations"][2] == {"label": "possible father of", "kind": "alliance"}
+    assert (n["left"], n["tagged"], n["normalised"]) == (2, 2, 2)
+
+
+def test_role_key_is_the_same_from_either_end():
+    assert kinship.role_key("wife of", "a", "b") == kinship.role_key("husband of", "b", "a")
+    assert kinship.role_key("mother of", "a", "b") == kinship.role_key("daughter of", "b", "a")
+    assert kinship.role_key("mother of", "a", "b") == kinship.role_key("stepmother of", "a", "b")
+    assert kinship.role_key("mother of", "a", "b") != kinship.role_key("daughter of", "a", "b")
+    assert kinship.role_key("cousin of", "a", "b") != kinship.role_key("wife of", "a", "b")
+    assert kinship.role_key("friend of", "a", "b") is None

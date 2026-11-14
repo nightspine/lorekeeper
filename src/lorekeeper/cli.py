@@ -357,7 +357,7 @@ def cmd_ties(args) -> int:
         before = {str(e) for e in validate.check_index(doc) if e.level == "error"}
         n = kinship.tag(doc)
         print(f"{path.name}: {n['tagged']} kinship ties tagged, {n['normalised']} labels normalised, "
-              f"{n['left']} left alone")
+              f"{n['left']} not kinship, left alone")
         if not (n["tagged"] or n["normalised"]):
             continue
         doc.setdefault("provenance", {})["updated"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

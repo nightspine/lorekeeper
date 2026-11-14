@@ -21,7 +21,15 @@ twin brother of|second cousin of|godfather of|godson of|widower of|Her sister|fo
 Wife Of|  wife   of |consort of|spouse of|goddaughter of|granny of|grandpa of|papa of|mama of|parent of|child of
 older sister of|elder brother of|eldest son of|youngest daughter of|former wife of|identical twin of|first cousin of
 half brother of|ex wife of|their daughter|an aunt of|godmother of|sister-in-law of|father-in-law of
-mother in law of|brother in law of|sister in-law of|half–sister of|half—brother of""".replace("\n", "|").split("|")
+mother in law of|brother in law of|sister in-law of|half–sister of|half—brother of
+stepmother of|step mother of|stepfather of|stepparent of|stepdaughter of|stepchild of|stepbrother of|stepsister of
+step brother of|grandmother of|granddaughter of|grandparent of|godfather of|godmother of
+half-sibling of|half sibling of|half-brother of|ex-wife of|ex wife of|ex-spouse of|ex spouse of|exwife of
+great-grandfather of|great grandfather of|great-grandson of|great-granddaughter of|great-grandchild of|great-aunt of
+great aunt of|great-uncle of|great-niece of|great-nephew of|great great grandmother of|older half sister of
+younger sister of|elder sister of|eldest brother of|youngest son of|adopted son of|late wife of|former husband of
+blood sister of|first cousin of|second cousin of|twin sister of|identical twin brother of|foster mother of
+older stepbrother of|eldest step son of|half-sister-in-law of""".replace("\n", "|").split("|")
 
 NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guardian and friend of", "possible father of",
          "sibling of, fights", "calls cousin, rebuffed by", "grandson of the cast-out daughter of", "remembers late wife",
@@ -62,3 +70,13 @@ def test_labels_cover_the_data():
     assert all(m in _labels() for m in must)
     assert sum(1 for g in GOOD if kinship.parse(g)) == len(GOOD)
     assert not [n for n in NOISE if kinship.parse(n)]
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_role_reverse_table_agrees():
+    script = ("import(process.argv[1]).then(m => console.log(JSON.stringify(Object.fromEntries("
+              "process.argv.slice(2).map(r => [r, m.reverse(r)])))))")
+    mod = (ROOT / "src/lorekeeper/web/static/js/kinship.js").as_uri()
+    r = subprocess.run(["node", "-e", script, mod, *kinship.ROLES], capture_output=True, text=True, cwd=ROOT)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == kinship.ROLES

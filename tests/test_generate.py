@@ -662,3 +662,49 @@ def test_a_courtship_and_a_wife_tie_in_one_passage_keep_the_wife(book_path, tmp_
     ix, _, report = _run(book_path, tmp_path, llm=Both())
     labels = [r["label"] for r in ix["relations"]]
     assert "wife of" in labels and "engaged to" not in labels
+
+
+def _family_chain(*chapters):
+    """Family ties per chapter (the fake model's two chapters): each a list of (a, label, b, kind)."""
+    class Chain(FakeLLM):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "new" in schema.get("properties", {}):
+                out = json.loads(json.dumps(out))
+                first = "Alice Marlow arrived" in (prefix or "")
+                ch = chapters[0 if first else 1]
+                ident = (lambda n: n) if first else (lambda n: n.lower().replace(" ", "-"))   # later chapters name ids
+                out["relations"] = [{"a": ident(a), "label": label, "b": ident(b), "p": 2 if i or not first else 4, "kind": kind}
+                                    for i, (a, label, b, kind) in enumerate(ch)]
+            return out
+    return Chain()
+
+
+def _current_labels(ix):
+    gone = {x for r in ix["relations"] for x in r.get("replaces", [])}
+    return [r["label"] for r in ix["relations"] if r["id"] not in gone]
+
+
+def test_cousins_who_marry_keep_both_ties(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "cousin of", "Ezra Pike", "family")], [("Alice Marlow", "wife of", "Ezra Pike", "family")]))
+    assert _current_labels(ix) == ["cousin of", "wife of"]
+    assert all("replaces" not in r for r in ix["relations"])
+
+
+def test_a_wife_tie_retires_the_engagement(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "engaged to", "Ezra Pike", "romance")], [("Alice Marlow", "wife of", "Ezra Pike", "family")]))
+    assert _current_labels(ix) == ["wife of"]
+
+
+def test_a_half_brother_tie_replaces_a_brother_tie(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "brother of", "Tom Marlow", "family")], [("Alice Marlow", "half-brother of", "Tom Marlow", "friendship")]))
+    assert _current_labels(ix) == ["half-brother of"]
+
+
+def test_one_passage_keeps_a_tie_per_role(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "cousin of", "Ezra Pike", "family"), ("Alice Marlow", "wife of", "Ezra Pike", "family")], []))
+    assert sorted(_current_labels(ix)) == ["cousin of", "wife of"]
