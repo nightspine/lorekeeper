@@ -374,4 +374,3 @@ dialog.modal::backdrop { background: var(--backdrop); backdrop-filter: blur(6px)
 .load-error { display: grid; justify-items: center; gap: var(--space-3); text-align: center; padding: var(--space-7) var(--space-5); }
 .load-error h2 { font-size: var(--text-xl); }
 .load-error p { max-width: 52ch; overflow-wrap: anywhere; }
-.crumbs a[aria-current="page"] { text-decoration: none; }

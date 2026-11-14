@@ -102,16 +102,18 @@ export function mountReader(root) {
     await load(s.key, { keepPosition: true });
   }
 
+  /** Open an index. Resolves true once it is on screen; on failure nothing about the current book changes. */
   async function load(key, { keepPosition = false, book = null } = {}) {
-    s.key = key;
     const meta = s.lib.indexes.find((i) => i.key === key);
     let doc;
     try { doc = await api.index(key); } catch (e) {
-      if (disposed) return;
-      if (!s.doc) return clear(wrap, loadError("open the index", e, retryStart));
-      return toast(`Could not open index: ${e.message}`, "error");   // switching books: the current one stays open
+      if (disposed) return false;
+      if (!s.doc) { clear(wrap, loadError("open the index", e, retryStart)); return false; }
+      toast(`Could not open index: ${e.message}`, "error");   // switching books: the current one stays open, key and all
+      return false;
     }
-    if (disposed) return;
+    if (disposed) return false;
+    s.key = key;
     s.doc = doc;
     s.series = null; s.seriesDocs = new Map();
     const sid = s.doc.series?.id;
@@ -145,6 +147,7 @@ export function mountReader(root) {
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     render();
     await syncPosition(key);
+    return true;
   }
 
   // ---- Book Orbit position sync ------------------------------------------------------------
@@ -579,7 +582,10 @@ export function mountReader(root) {
   async function switchBook(k) {
     const target = s.lib.indexes.find((i) => i.series?.id === s.series.id && i.series.book === k
       && s.seriesDocs.get(k) && i.id === s.seriesDocs.get(k).id);
-    if (target) { s.finished = null; await load(target.key, { book: k }); saveUrl(); }
+    if (!target) return;
+    const was = s.finished;
+    s.finished = null;
+    if (await load(target.key, { book: k })) saveUrl(); else s.finished = was;
   }
 
   let frame = 0;
@@ -1063,8 +1069,15 @@ export function mountReader(root) {
   let lastFocus = null;
   /** True while an edit form in the open drawer holds text that was typed and not saved. */
   function drawerDirty() {
+    // A form is dirty once anything in it was edited (see markDirty), or a text field differs from what it opened with.
     return [...document.querySelectorAll("dialog.drawer .edit-form, dialog.drawer .editing-title")].some((f) =>
-      [...f.querySelectorAll("textarea, input")].some((i) => i.value !== i.defaultValue));
+      f.dataset.dirty === "1" || [...f.querySelectorAll("textarea, input")].some((i) => i.value !== i.defaultValue));
+  }
+  /** One delegated listener on the drawer: any input or change inside an edit form marks that form dirty.
+   *  The flag lives on the form element, so cancelling or saving (which removes the form) clears it. */
+  function markDirty(ev) {
+    const form = ev.target.closest?.(".edit-form, .editing-title");
+    if (form) form.dataset.dirty = "1";
   }
   /** Every way a person dismisses the drawer (×, Escape, the backdrop) asks first when it would lose typed text. */
   async function requestCloseDrawer() {
@@ -1079,7 +1092,13 @@ export function mountReader(root) {
   // Escape closes a native dialog without going through closeDrawer.
   function onDialogClose() { closeDrawer(); }
 
-  function openDrawer(id, { from = null, refresh = false } = {}) {
+  function openDrawer(id, { from = null, refresh = false, discard = false } = {}) {
+    // Opening another entry from a chip inside a drawer with unsaved text asks first.
+    if (!refresh && !discard && document.querySelector("dialog.drawer") && drawerDirty()) {
+      confirmDialog({ title: "Discard what you wrote?", confirmLabel: "Discard", cancelLabel: "Keep editing" })
+        .then((ok) => { if (ok) openDrawer(id, { from, discard: true }); });
+      return;
+    }
     const e = nameOf(id);
     if (!e) { if (refresh) closeDrawer(); return; }
     if (!refresh) lastFocus = from || document.activeElement;
@@ -1129,7 +1148,7 @@ export function mountReader(root) {
     }
     dlg?.remove();
     dlg = h(`dialog.drawer.t-${e.type}`, { "aria-labelledby": "drawer-title",
-      on: { close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
+      on: { input: markDirty, change: markDirty, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
         click: (ev) => { if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
     dlg.showModal();

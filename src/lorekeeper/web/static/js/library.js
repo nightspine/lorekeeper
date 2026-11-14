@@ -51,6 +51,7 @@ export function mountLibrary(root) {
     try { s.data = await api.catalog(); } catch (e) {
       // A failed first load says so in the page; a failed background reload keeps what is shown.
       if (!s.data) clear(body, loadError("load the library", e, () => { clear(body, loading("Loading your library…")); load(); }));
+      else if (s.data.books.some((b) => b.status === "building")) { clearTimeout(timer); timer = setTimeout(load, 5000); }   // stay silent, try again
       return;
     }
     // Screenshot flags: ?demo=empty pretends there are no books, ?demo=none-ready that no book has an index yet.

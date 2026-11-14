@@ -9,17 +9,20 @@ export function mountBook(root) {
   const key = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer, painted = false;
+  let timer, painted = false, building = false;
   clear(wrap, loading("Opening the book…"));
 
   async function load() {
     let b;
     try { b = await api.book(key); } catch (e) {
-      if (painted) return;   // a failed background reload keeps what is shown
+      if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
+        if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
+        return;
+      }
       if (e.status === 404) return clear(wrap, h("div.card.empty", h("h3", "Book not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
       return clear(wrap, loadError("open the book", e, () => { clear(wrap, loading("Opening the book…")); load(); }));
     }
-    painted = true;
+    painted = true; building = b.status === "building";
     paint(b);
     clearTimeout(timer);
     if (b.status === "building") timer = setTimeout(load, 5000);
@@ -116,13 +119,16 @@ export function mountSeries(root) {
   const id = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer, painted = false;
+  let timer, painted = false, building = false;
   clear(wrap, loading("Loading the series…"));
 
   async function load() {
     let data;
     try { data = await api.catalog(); } catch (e) {
-      if (painted) return;   // a failed background reload keeps what is shown
+      if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
+        if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
+        return;
+      }
       return clear(wrap, loadError("load the series", e, () => { clear(wrap, loading("Loading the series…")); load(); }));
     }
     painted = true;
@@ -156,7 +162,8 @@ export function mountSeries(root) {
           h("button.btn.primary", { type: "button", on: { click: () => buildDialog(todo.map((b) => ({ key: b.key, title: b.title, words: b.words })),
             { title: `Build ${g.name} in order` }) } }, icon("play"), todo.length === 1 ? "Build 1 book" : `Build ${todo.length} in order`)) : null));
     clearTimeout(timer);
-    if (books.some((b) => b.status === "building")) timer = setTimeout(load, 5000);
+    building = books.some((b) => b.status === "building");
+    if (building) timer = setTimeout(load, 5000);
   }
   load();
   return () => clearTimeout(timer);

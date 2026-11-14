@@ -168,7 +168,7 @@ export function createEditor(ctx) {
     }
     change.addEventListener("click", async () => {
       const got = await pickParagraph(state.seq ?? ctx.seqAt() ?? 0);
-      if (got != null) { state.seq = got; paint(); }
+      if (got != null) { state.seq = got; paint(); line.dispatchEvent(new Event("change", { bubbles: true })); }
     });
     paint();
     return line;
@@ -324,7 +324,7 @@ export function createEditor(ctx) {
     function paintChips() {
       clear(chips, [...chosen].map((id) => {
         const e = v.entities.find((x) => x.id === id);
-        return h("button.chip", { type: "button", "aria-label": `Remove ${e?.name || id}`, on: { click: () => { chosen.delete(id); paintChips(); } } }, e?.name || id, icon("x"));
+        return h("button.chip", { type: "button", "aria-label": `Remove ${e?.name || id}`, on: { click: () => { chosen.delete(id); paintChips(); chips.dispatchEvent(new Event("change", { bubbles: true })); } } }, e?.name || id, icon("x"));
       }));
       clear(pick, h("option", { value: "" }, "Who is involved…"),
         v.entities.filter((e) => !chosen.has(e.id)).sort((a, b) => a.name.localeCompare(b.name)).map((e) => h("option", { value: e.id }, e.name)));

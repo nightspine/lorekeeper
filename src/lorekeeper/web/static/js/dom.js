@@ -59,16 +59,18 @@ export function icon(name, label) {
  * "Show all N" control that expands it in place. `make(nodes)` builds the list element. Lists
  * barely over the limit are shown whole: a control hiding one item is worse than the item.
  */
-export function foldList(nodes, make, { show = 4, fromEnd = false, noun = "" } = {}) {
+export function foldList(nodes, make, { show = 4, fromEnd = false, noun = "", open = false, onToggle = null, keep = [] } = {}) {
   if (nodes.length <= show + 1) return make(nodes);
   const wrap = h("div.fold");
   const paint = (all) => {
-    const shown = all ? nodes : fromEnd ? nodes.slice(-show) : nodes.slice(0, show);
-    const more = h("button.linkish.fold-more", { type: "button", "aria-expanded": String(all), on: { click: () => paint(!all) } },
+    // `open` and `onToggle` let a caller that repaints the list keep it open; `keep` indexes stay visible when it is short.
+    const base = fromEnd ? nodes.slice(-show) : nodes.slice(0, show);
+    const shown = all ? nodes : nodes.filter((n, i) => base.includes(n) || keep.includes(i));
+    const more = h("button.linkish.fold-more", { type: "button", "aria-expanded": String(all), on: { click: () => { onToggle?.(!all); paint(!all); } } },
       all ? "Show fewer" : `Show all ${nodes.length}${noun ? ` ${noun}` : ""}`);
     clear(wrap, make(shown), more);
   };
-  paint(false);
+  paint(open);
   return wrap;
 }
 
@@ -177,7 +179,8 @@ export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb"
   items.forEach((it, i) => {
     const current = i === items.length - 1 ? "page" : null;
     if (i) nav.append(h("span.sep", { "aria-hidden": "true" }, "/"));
-    nav.append(it.href ? h("a", { href: it.href, "aria-current": current }, it.label) : h("span", { "aria-current": current }, it.label));
+    // Only the page itself is "current"; a link to another page is not, even in the last place.
+    nav.append(it.href ? h("a", { href: it.href }, it.label) : h("span", { "aria-current": current }, it.label));
   });
   return nav;
 }

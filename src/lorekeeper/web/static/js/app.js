@@ -126,21 +126,27 @@ export function setParams(params, { replace = true } = {}) {
   const { route, parts } = parseHash();
   const q = new URLSearchParams(params).toString();
   const url = `#/${[route, ...parts].join("/")}${q ? "?" + q : ""}`;
-  ownHash = url;
   shownHash = url;
-  if (replace) history.replaceState(null, "", url);
-  else location.hash = url;
+  if (replace) history.replaceState(null, "", url);   // no hashchange follows, so there is nothing to skip
+  else { ownHash = url; location.hash = url; }
 }
 let ownHash = null;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
 let shownHash = null;   // the hash of the page on screen, so a stray "#main" can put it back
 /** Change the address without adding history or re-rendering (a view that picked what to show for the person). */
-export function replaceHash(url) { ownHash = shownHash = url; history.replaceState(null, "", url); }
+export function replaceHash(url) { shownHash = url; history.replaceState(null, "", url); }
 let firstRender = true;
 
 function render() {
   const { route, parts, params } = parseHash();
   // "#main" is the skip link's target, not a page: leave the page alone and put the address back.
-  if (route === "main") { if (shownHash != null) history.replaceState(null, "", shownHash); main.focus(); return; }
+  if (route === "main") {
+    if (shownHash != null) { history.replaceState(null, "", shownHash); main.focus(); return; }
+    history.replaceState(null, "", "#/library");   // first load on "#main": nothing is on screen, so open the Library
+    return render();
+  }
+  ownHash = null;   // a hash a view wrote itself is spent once a real navigation arrives
+  // An error toast outlives its page only until the person moves on.
+  document.querySelectorAll("#toasts .toast.error").forEach((t) => t.remove());
   // Gate the routes on the session: signed out, only the sign-in page renders; before the first password, only that page.
   if (!signedIn() && route !== "login") {
     const next = safeNext(location.hash);
@@ -188,7 +194,8 @@ function render() {
 // The skip link moves focus to <main> and leaves the address and the page alone.
 document.querySelector(".skip-link")?.addEventListener("click", (e) => { e.preventDefault(); main.focus(); });
 window.addEventListener("hashchange", () => {
-  if (location.hash !== ownHash) render();
+  if (location.hash === ownHash) { ownHash = null; return; }   // the view's own change, already on screen
+  render();
 });
 hydrateIcons();
 applySession(await api.session());

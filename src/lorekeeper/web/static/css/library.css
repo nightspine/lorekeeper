@@ -45,8 +45,6 @@
 .az-letter:hover:not(:disabled) { color: var(--text); background: var(--glass-hover); }
 .az-letter:disabled { opacity: .35; cursor: default; }
 .az-letter.here { background: var(--beacon); color: var(--beacon-ink); }
-/* On touch the rail looks the same, but each letter can be hit about 44px wide. */
-@media (hover: none) { .az-letter { position: relative; } .az-letter::after { content: ""; position: absolute; inset: 0 -10px; } }
 
 /* ---------- ready shelf ---------- */
 .ready-strip { position: relative; overflow: hidden; display: grid; gap: var(--space-3); padding: 22px 26px 24px; border: 1px solid var(--edge); border-radius: var(--radius-l); background: linear-gradient(180deg, var(--glass-2), var(--glass)); box-shadow: inset 0 1px 0 var(--edge-lit); }
@@ -234,3 +232,12 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
   .book-row-act { justify-self: start; padding: 0 16px 14px 58px; }
 }
 .track-book .cover { align-self: flex-start; }
+
+/* On touch the rail looks the same (a 24px pill), but its column and each letter are 44px wide, so the hit area is real and nothing overflows. */
+@media (hover: none) {
+  .lib-content, .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px; }
+  .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px minmax(280px, 340px); }
+  .az-rail { overflow-x: clip; }
+  .az-letter { width: 44px; padding: 0 10px; background-clip: content-box; }
+}
+@media (hover: none) and (max-width: 640px) { .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px; } }

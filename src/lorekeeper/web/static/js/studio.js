@@ -389,9 +389,13 @@ function configure(target, book, ctx, fromJob = null) {
 
 // ---- the Runs page ------------------------------------------------------------------------------
 
+// Whether the runs list is expanded survives a click on a run, which re-mounts the page.
+let runsOpen = false;
+
 export function mountStudio(root) {
   const { parts } = parseHash();
   const ctx = { jobs: [], view: parts[0] || null, id: parts[1] || null, cleanup: [] };
+  let disposed = false;   // set on unmount: a late answer must not rewrite the address or open a stream for a page that is gone
   const side = h("aside.studio-side", { "aria-label": "Runs" });
   const mainCol = h("section.studio-main", { "aria-live": "off" });
   root.append(h("div.studio", side, mainCol));
@@ -421,7 +425,8 @@ export function mountStudio(root) {
     icon("chevron"))));
     return h("div.card.card-pad",
       h("div.section-title", h("h2", "Runs"), h("span.eyebrow", `${ctx.jobs.length}`)),
-      items.length ? foldList(items, (nodes) => h("ul.list", nodes), { show: 12, noun: "runs" }) : h("p.muted", "Runs you start appear here with live progress."));
+      items.length ? foldList(items, (nodes) => h("ul.list", nodes), { show: 12, noun: "runs", open: runsOpen,
+        onToggle: (on) => { runsOpen = on; }, keep: ctx.jobs.flatMap((j, i) => (ctx.view === "job" && ctx.id === j.id ? [i] : [])) }) : h("p.muted", "Runs you start appear here with live progress."));
   }
 
   function renderMain() {
@@ -436,9 +441,11 @@ export function mountStudio(root) {
     let job;
     clear(mainCol, loading("Opening the run…"));
     try { job = await api.job(jobId); } catch (e) {
+      if (disposed) return;
       if (e.status === 404) return clear(mainCol, h("div.card.empty", h("h3", "Run not found")));
       return clear(mainCol, loadError("open the run", e, () => monitor(jobId)));
     }
+    if (disposed) return;
 
     const m = { status: job.status, chunks: 0, wordsTotal: 0, wordsDone: 0, current: null, phase: null, stats: {},
       chunkTimes: [], feed: [], recap: null, summary: null, logs: [], runStart: null, runWords: 0, runSeconds: 0, usage: null,
@@ -705,12 +712,12 @@ export function mountStudio(root) {
   };
   const first = () => {
     clear(mainCol, loading("Loading your runs…"));
-    refresh({ first: true }).then(() => { pickRun(); renderSide(); renderMain(); },
-      (e) => clear(mainCol, loadError("load your runs", e, first)));
+    refresh({ first: true }).then(() => { if (disposed) return; pickRun(); renderSide(); renderMain(); },
+      (e) => { if (!disposed) clear(mainCol, loadError("load your runs", e, first)); });
   };
   first();
   const poll = setInterval(async () => {
     try { const jobs = await api.jobs(); if (JSON.stringify(jobs.map((j) => [j.id, j.status])) !== JSON.stringify(ctx.jobs.map((j) => [j.id, j.status]))) { ctx.jobs = jobs; renderSide(); } } catch {}
   }, 5000);
-  return () => { clearInterval(poll); ctx.cleanup.forEach((fn) => fn()); };
+  return () => { disposed = true; clearInterval(poll); ctx.cleanup.forEach((fn) => fn()); };
 }
