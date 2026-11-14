@@ -9032,7 +9032,10 @@
       "evidence": [
         "toc12.para08"
       ],
-      "kind": "family"
+      "kind": "family",
+      "replaces": [
+        "dracula.rel.5"
+      ]
     },
     {
       "id": "dracula.rel.14",
@@ -9173,21 +9176,6 @@
       "evidence": [
         "toc23.para05"
       ]
-    },
-    {
-      "id": "dracula.rel.25",
-      "src": "mina",
-      "dst": "jonathan-harker",
-      "label": "fiancée of",
-      "from": "toc25.para35",
-      "basis": "stated",
-      "evidence": [
-        "toc25.para35"
-      ],
-      "replaces": [
-        "dracula.rel.5"
-      ],
-      "kind": "romance"
     },
     {
       "id": "dracula.rel.26",
