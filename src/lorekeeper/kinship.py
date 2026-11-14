@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import re
 
-# kin word → (role, reverse role)
+# role → the role seen from the other end of the tie (`role_key` orients ties with it)
 ROLES = {"parent": "child", "child": "parent", "spouse": "spouse", "sibling": "sibling",
          "grandparent": "grandchild", "grandchild": "grandparent", "pibling": "nibling", "nibling": "pibling",
-         "cousin": "cousin", "guardian": "ward", "ward": "guardian"}
+         "cousin": "cousin", "guardian": "ward", "ward": "guardian", "related": "related"}
 
 # Every spelling that is kinship → (role, canonical word)
 KIN = {}
@@ -95,9 +95,16 @@ def parse(label) -> dict | None:
     return {"role": KIN[word], "modifiers": mods, "word": CANONICAL.get(word, word)}
 
 
+SEPARATE = ("younger", "older", "elder", "eldest", "youngest", "twin", "identical", "adoptive", "adopted", "foster",
+            "late", "former", "blood", "first", "second")   # kept as words, in this order, before the kin word
+
+
 def normalize(label) -> str | None:
-    """The canonical form of a kinship label ("is niece of" → "niece of", "Mom of" → "mother of",
-    "blood-niece of" → "blood niece of", "mother in law of" → "mother-in-law of"), or None when it is not one."""
+    """The canonical form of a kinship label, or None when it is not one: compounds are written the way English
+    does ("step mother of" → "stepmother of", "grand mother" → "grandmother", "half sister of" → "half-sister of",
+    "ex wife of" → "ex-wife of", "great grandmother of" → "great-grandmother of", "mother in law of" →
+    "mother-in-law of"); "younger", "older", "elder", "eldest", "youngest", "twin", "identical", "adoptive",
+    "adopted", "foster", "late", "former", "blood", "first" and "second" stay separate words, in that order."""
     p = parse(label)
     if p is None:
         return None
@@ -106,8 +113,28 @@ def normalize(label) -> str | None:
     mods = [m for m in p["modifiers"] if m != "in-law"]
     if p["word"] in ("widow", "widower") and mods[:1] == ["late"]:
         mods = mods[1:]   # implied by the word
-    word = p["word"] + ("-in-law" if "in-law" in p["modifiers"] else "")
-    return " ".join([*mods, word, "of"])
+    head = sorted((m for m in mods if m in SEPARATE), key=SEPARATE.index)
+    word = p["word"]
+    if "step" in mods:
+        word = "step" + word
+    for m in [*(["great"] * mods.count("great")), *(m for m in ("half", "ex") if m in mods)]:
+        word = f"{m}-{word}"
+    if "in-law" in p["modifiers"]:
+        word += "-in-law"
+    return " ".join([*head, word, "of"])
+
+
+def role_key(label, src: str, dst: str):
+    """What kind of tie a kinship label states between two entities, independent of modifiers and of which end is
+    which: (role as seen from the lower of the two ids, in-law). "wife of" a→b and "husband of" b→a give the same
+    key; "stepmother of" and "mother of" in one direction too. None when the label is not kinship."""
+    p = parse(label)
+    if p is None:
+        return None
+    role = p["role"]
+    if src > dst:
+        role = ROLES.get(role, role)
+    return role, "in-law" in p["modifiers"]
 
 
 def is_spouse(label) -> bool:
@@ -117,24 +144,21 @@ def is_spouse(label) -> bool:
 
 def tag(doc: dict) -> dict:
     """Bring the kinship ties of one index to the canonical form, in place: a label that parses is written
-    canonically and tagged `family` when it has no kind or is a spouse tie filed as `romance`. A parsed tie of
-    any other kind is left as it is. Returns counts: tagged, normalised, left (kept another kind), same (already right)."""
+    canonically and tagged `family`, whatever kind it had (a label is better evidence than a guess at a kind).
+    Labels that are not kinship are left as they are. Returns counts: tagged, normalised, left (not kinship),
+    same (already right)."""
     n = {"tagged": 0, "normalised": 0, "left": 0, "same": 0}
     for r in doc.get("relations", []):
-        p = parse(r.get("label"))
-        if p is None:
+        canon = normalize(r.get("label"))
+        if canon is None:
+            n["left"] += 1
             continue
         changed = False
-        kind = r.get("kind")
-        if kind not in (None, "family") and not (kind == "romance" and p["role"] == "spouse"):
-            n["left"] += 1   # another kind: the tie is left entirely alone, label included
-            continue
-        canon = normalize(r["label"])
         if canon != r["label"]:
             r["label"] = canon
             n["normalised"] += 1
             changed = True
-        if kind != "family":
+        if r.get("kind") != "family":
             r["kind"] = "family"
             n["tagged"] += 1
             changed = True
