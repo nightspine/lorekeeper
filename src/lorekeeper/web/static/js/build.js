@@ -84,7 +84,7 @@ export async function startBuild(entry) {
     ...missing.map((x) => h("li.series-row", h("span.subtle.num", `${x.index}.`), h("span", x.title),
       x.canBuild ? h("span.status-chip.missing", "No index") : h("span.chip", "No EPUB to index"))),
     ...absent.map((n) => h("li.series-row", h("span.subtle.num", `${n}.`), h("span.muted", "Not in your library"),
-      h("a", { href: "#/settings" }, "Add it"))),
+      h("a", { href: "#/settings/cloud" }, "Add it"))),
   ]);
   clear(m.body,
     h("p.muted", `You're building `, h("b", entry.title), `, ${bookNo(entry.series) || "a later book"} of ${entry.series.name}. These earlier books can't be built on yet:`),
@@ -172,7 +172,7 @@ export async function buildDialog(books, { title } = {}) {
   clear(m.body,
     h("ol.list.ordered", books.map((b, i) => h("li.series-row", h("span.subtle.num", `${i + 1}.`), h("span", b.title)))),
     h("div.field", h("span.label", "Runs on"), seg([["ollama", "Ollama (local)"], ...Object.values(clouds).map((c) => [c.id, c.label])], "provider"),
-      Object.keys(clouds).length ? null : h("p.hint", "For a cloud model, ", h("a", { href: "#/settings" }, "add a key in Settings"), ".")),
+      Object.keys(clouds).length ? null : h("p.hint", "For a cloud model, ", h("a", { href: "#/settings/cloud" }, "add a key in Settings"), ".")),
     h("div.field", h("label", { for: "bd-model" }, "Model"), modelSel),
     h("div.field", h("span.label", "Depth"), seg([["light", "Light"], ["standard", "Standard"], ["deep", "Deep"]], "depth")),
     h("label.switch", { for: "bd-verify" }, verify, h("span", h("span.label", { style: { display: "block" } }, "Fact-check every claim"),

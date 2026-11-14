@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Lorekeeper</title>
   <meta name="description" content="Generate and explore spoiler-free book companions.">
   <!-- Fonts are self-hosted (static/fonts): nothing leaves this machine on page load, and the app works offline. -->
@@ -24,34 +24,40 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="topbar">
-    <a class="brand" href="#/library" aria-label="Lorekeeper home">
-      <span class="brand-mark" aria-hidden="true"><span data-icon="book-open"></span></span>
-      <span class="brand-name">Lorekeeper</span>
-    </a>
-    <nav class="tabs" aria-label="Sections">
-      <a class="tab" href="#/library" data-route="library">Library</a>
+  <div class="shell">
+    <!-- The rail: where you are, what is building, what you are reading. On a phone it gives way to the app bar and tab bar below. -->
+    <nav class="rail" id="rail" aria-label="App">
+      <a class="brand rail-brand" href="#/library" aria-label="Lorekeeper, go to the Library" title="Library">
+        <svg class="horizon" viewBox="0 0 22 10" aria-hidden="true"><path class="lit" d="M1 5h11" stroke-width="2" stroke-linecap="round"/><path class="unlit" d="M14 5h7" stroke-width="2" stroke-linecap="round"/><circle class="orb" cx="12.5" cy="5" r="3"/></svg>
+        <span class="brand-name">Lorekeeper</span>
+      </a>
+      <a class="nav" href="#/library" data-route="library" title="Library"><span data-icon="library"></span><span class="nav-lbl">Library</span><span class="nav-n" id="rail-count"></span></a>
+      <a class="nav" href="#/studio" data-route="studio" id="runs-link" title="Runs"><span data-icon="pulse"></span><span class="nav-lbl">Runs</span><span class="nav-busy" id="runs-busy"></span></a>
+      <a class="nav" href="#/settings" data-route="settings" title="Settings"><span data-icon="settings"></span><span class="nav-lbl">Settings</span></a>
+      <p class="rail-label" id="rail-reading-label" hidden>Reading</p>
+      <ul class="rail-reading" id="rail-reading" aria-labelledby="rail-reading-label" hidden></ul>
+      <div class="rail-foot">
+        <button class="nav" id="palette-btn" type="button" data-palette title="Search and commands"><span data-icon="search"></span><span class="nav-lbl">Search</span><kbd class="nav-kbd" id="palette-kbd">Ctrl K</kbd></button>
+        <a class="nav" id="docs-link" href="docs/" title="Docs"><span data-icon="file"></span><span class="nav-lbl">Docs</span></a>
+        <button class="nav" id="theme-toggle" type="button" data-theme-toggle><span data-icon="sun"></span><span class="nav-lbl">Light theme</span></button>
+        <a class="nav rail-who" id="rail-who" href="#/settings/account" hidden><span data-icon="user"></span><span class="nav-lbl"></span></a>
+      </div>
     </nav>
-    <div class="topbar-end">
-      <a class="tab" id="docs-link" href="docs/">Docs</a>
-      <a class="queue-pill" id="queue-pill" href="#/studio" hidden>
-        <span class="dot" aria-hidden="true"></span><span class="label"></span><span class="hint"></span>
-      </a>
-      <a class="icon-btn" id="runs-link" href="#/studio" aria-label="Runs" title="Runs">
-        <span data-icon="clock"></span>
-      </a>
-      <button class="icon-btn" id="palette-btn" type="button" aria-label="Search and commands" title="Search and commands (⌘K)">
-        <span data-icon="search"></span>
-      </button>
-      <a class="icon-btn" id="settings-link" href="#/settings" aria-label="Settings" title="Settings">
-        <span data-icon="settings"></span>
-      </a>
-      <button class="icon-btn" id="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
-        <span data-icon="moon"></span>
-      </button>
-    </div>
-  </header>
-  <main id="main" tabindex="-1"></main>
+    <!-- Phone only: the page title, search and theme in one row. -->
+    <header class="appbar" id="appbar">
+      <p class="appbar-title" id="appbar-title">Lorekeeper</p>
+      <button class="icon-btn" type="button" data-palette aria-label="Search and commands" title="Search and commands"><span data-icon="search"></span></button>
+      <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to light theme" title="Switch to light theme"><span data-icon="sun"></span></button>
+    </header>
+    <main id="main" tabindex="-1"></main>
+    <!-- Phone only: Library, the open book, Runs, Settings. -->
+    <nav class="tabbar" id="tabbar" aria-label="App">
+      <a href="#/library" data-route="library"><span data-icon="library"></span><span>Library</span></a>
+      <a href="#/library" id="tab-book" data-route="reader" hidden><span data-icon="book-open"></span><span class="tab-book-title">Book</span></a>
+      <a href="#/studio" data-route="studio"><span data-icon="pulse"></span><span>Runs</span><span class="tab-busy" id="tab-busy" hidden></span></a>
+      <a href="#/settings" data-route="settings"><span data-icon="settings"></span><span>Settings</span></a>
+    </nav>
+  </div>
   <div class="toasts" id="toasts"></div>
   <div class="sr-only" id="announcer" aria-live="polite" aria-atomic="true"></div>
   <script type="module" src="/static/js/app.js"></script>

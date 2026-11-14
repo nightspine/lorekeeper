@@ -171,8 +171,8 @@ export function mountLibrary(root) {
         row(s.source === "upload", "Added here", n((b) => b.source === "upload"), () => { s.source = "upload"; paint(); })]),
       h("div.side-group",
         bo.connected
-          ? h("p.side-note", `Synced ${relTime(bo.synced)}. `, h("a", { href: "#/settings" }, "Settings"))
-          : h("a.side-cta", { href: "#/settings" }, icon("link"), "Connect Book Orbit")),
+          ? h("p.side-note", `Synced ${relTime(bo.synced)}. `, h("a", { href: "#/settings/bookorbit" }, "Settings"))
+          : h("a.side-cta", { href: "#/settings/bookorbit" }, icon("link"), "Connect Book Orbit")),
       !s.data.series.length ? null : h("div.side-group", h("span.eyebrow", "Series"),
         h("button.filter-row", { type: "button", on: { click: () => { s.sort = "series"; s.q = ""; paint(); } } },
           h("span", "Browse by series"), h("span.num", fmtInt(s.data.series.length)))));
@@ -230,7 +230,7 @@ export function mountLibrary(root) {
           h("p", "Drag the position slider and watch the cast, places and events appear only as the book reveals them."),
           h("a.btn.primary.lg", { href }, "Try it now"))),
       h("p.demo-then", "Then bring your own books: ", h("label.demo-link", { for: "lib-upload" }, "add an EPUB"),
-        ", or ", h("a", { href: "#/settings" }, "connect Book Orbit"), "."));
+        ", or ", h("a", { href: "#/settings/bookorbit" }, "connect Book Orbit"), "."));
   }
 
   function readyStrip() {
@@ -296,7 +296,7 @@ export function mountLibrary(root) {
       return clear(body, h("div.card.empty", h("div.art", icon("book-open")), h("h3", "Your library is empty"),
         h("p", "Connect Book Orbit to see all your books, or add an EPUB."),
         h("div.toolbar", { style: { justifyContent: "center" } },
-          h("a.btn.primary", { href: "#/settings" }, icon("link"), "Connect Book Orbit"),
+          h("a.btn.primary", { href: "#/settings/bookorbit" }, icon("link"), "Connect Book Orbit"),
           h("label.btn", { for: "lib-upload" }, "Add an EPUB"))));
     }
     const list = matches();
@@ -430,7 +430,7 @@ export function mountLibrary(root) {
         build,
         h("a.btn.ghost", { href: `#/book/${encodeURIComponent(b.key)}` }, "Versions and runs")),
       warn ? h("div.notice.warn", icon("alert"), h("div", `${warn}. `, /library/.test(warn)
-        ? ["Add it (", h("a", { href: "#/settings" }, "connect Book Orbit"), " or add the EPUB) and build it first so characters and relationships carry over, or build this book on its own."]
+        ? ["Add it (", h("a", { href: "#/settings/bookorbit" }, "connect Book Orbit"), " or add the EPUB) and build it first so characters and relationships carry over, or build this book on its own."]
         : "Build it first so characters and relationships carry over, or build this book on its own.")) : null,
       !b.canBuild ? h("div.notice.info", icon("info"), h("div", NO_EPUB)) : null,
       d ? h("p.hint", `Index built with ${d.model}.${d.coverage != null ? ` Covers ${d.complete ? "the whole book" : `${d.coverage}% of it`}.` : ""}`) : null,

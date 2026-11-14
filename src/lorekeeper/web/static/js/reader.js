@@ -1,5 +1,6 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
+import { rememberReading } from "./reading.js";
 import { announce, clear, crumbs, describe, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
@@ -146,6 +147,7 @@ export function mountReader(root) {
     watchDupes(key);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     render();
+    saveUrl();   // also puts the book at the top of the rail's Reading list
     await syncPosition(key);
     return true;
   }
@@ -294,6 +296,11 @@ export function mountReader(root) {
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
       setParams(q);
+      // The rail's "Reading" list: the title and the position the person set, nothing from the index.
+      const back = { ...q };
+      delete back.edit;   // reopening from the rail reads; it does not reopen edit mode
+      rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p)?.title,
+        hash: `#/reader?${new URLSearchParams(back)}` });
     }, 250);
   }
 
@@ -531,7 +538,8 @@ export function mountReader(root) {
   function watchCompact() {
     compactObs?.disconnect();
     if (!("IntersectionObserver" in window)) { setCompact(false); return; }
-    const top = (document.querySelector(".topbar")?.offsetHeight ?? 61) - 1;
+    // Beside the rail nothing sits above the page; on a phone the app bar does.
+    const top = Math.max(0, (document.querySelector(".appbar")?.offsetHeight || 0) - 1);
     el.position.style.setProperty("--hz-top", `${top}px`);
     compactObs = new IntersectionObserver(([e]) => setCompact(!e.isIntersecting && e.boundingClientRect.top < top),
       { rootMargin: `-${top}px 0px 0px 0px`, threshold: 0 });

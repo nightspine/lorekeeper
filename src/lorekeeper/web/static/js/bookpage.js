@@ -68,7 +68,7 @@ export function mountBook(root) {
             "Build ", missing.length === 1 ? "it" : "them", " first so this book can build on them.")) : null,
           (b.preflight?.notInLibrary || []).length ? h("div.notice.warn", icon("alert"), h("div",
             `Book${b.preflight.notInLibrary.length === 1 ? "" : "s"} ${b.preflight.notInLibrary.map(numWord).join(", ")} of ${b.series.name} ${b.preflight.notInLibrary.length === 1 ? "isn't" : "aren't"} in your library, so this book can't build on ${b.preflight.notInLibrary.length === 1 ? "it" : "them"}. `,
-            h("a", { href: "#/settings" }, "Connect Book Orbit"), " or add the EPUB.")) : null,
+            h("a", { href: "#/settings/bookorbit" }, "Connect Book Orbit"), " or add the EPUB.")) : null,
           h("div.toolbar",
             d ? h("a.btn.primary", { href: `#/reader?i=${encodeURIComponent(d.key)}` }, icon("book-open"), "Read") : null,
             b.status === "building" ? h("a.btn", { href: `#/studio/job/${b.job.id}` }, icon("eye"), "View progress")

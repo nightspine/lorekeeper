@@ -138,7 +138,7 @@ function configure(target, book, ctx, fromJob = null) {
   };
   const cardOllama = prow("ollama", "On this computer");
   const cloudRows = {};   // provider id → row, rebuilt when the provider list arrives
-  const noCloud = h("p.hint.prow-add", "With a cloud model: ", h("a", { href: "#/settings" }, "add a key in Settings"));
+  const noCloud = h("p.hint.prow-add", "With a cloud model: ", h("a", { href: "#/settings/cloud" }, "add a key in Settings"));
   const providerCards = h("div.prows", { role: "radiogroup", "aria-labelledby": "build-q" }, cardOllama.card);
   const paintRows = () => {
     for (const r of Object.values(cloudRows)) r.card.remove();
@@ -238,7 +238,7 @@ function configure(target, book, ctx, fromJob = null) {
           ? `Your own server. Price unknown. Book text is sent to ${c.base_url || "that server"}.`
           : `Much faster. ${e.cost != null && words ? `About ${money(e.cost)}` : e.cost == null && words ? "Price unknown" : "Costs a little"}, billed to your ${c.label} account. Book text is sent to ${c.label}.`)
         : c?.configured ? (c.error || `${c.label} isn't working.`)
-          : [`${c?.label || pv} isn't set up yet. `, h("a", { href: "#/settings" }, "Add a key in Settings")]);
+          : [`${c?.label || pv} isn't set up yet. `, h("a", { href: "#/settings/cloud" }, "Add a key in Settings")]);
     }
     cardOllama.radio.checked = !cloudNow;
     cardOllama.card.classList.toggle("on", !cloudNow);
@@ -257,7 +257,7 @@ function configure(target, book, ctx, fromJob = null) {
     startBtn.disabled = Boolean(reason);
     est.classList.toggle("why", Boolean(reason));
     clear(est, reason
-      ? [reason, cloudNow && clouds && !cs?.ok ? [" ", h("a", { href: "#/settings" }, "Open Settings")] : null]
+      ? [reason, cloudNow && clouds && !cs?.ok ? [" ", h("a", { href: "#/settings/cloud" }, "Open Settings")] : null]
       : cloudNow
         ? `${cur.cost != null ? `About ${money(cur.cost)}` : "Price unknown"} with ${cs.label}, ${when(cur.secs)}`
         : `About ${fmtDuration(cur.secs)} on this computer`);

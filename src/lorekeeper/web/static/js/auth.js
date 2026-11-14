@@ -34,9 +34,12 @@ function busy(button, text) {
  * Change-password form, shared by the forced page and Settings.
  * onSaved runs after the server accepted the new password. requireCurrent=false hides the current-password field.
  */
-export function passwordForm({ onSaved, requireCurrent = true, username = state.session.user?.name || "admin" } = {}) {
+export const PASSWORD_RULE = `${MIN} to ${MAX} characters, with no other rules`;
+
+export function passwordForm({ onSaved, requireCurrent = true, username = state.session.user?.name || "admin", ruleHint = true } = {}) {
   const current = passwordField({ id: "pw-current", label: "Current password", autocomplete: "current-password" });
-  const next = passwordField({ id: "pw-new", label: "New password", autocomplete: "new-password", hint: `${MIN} to ${MAX} characters.` });
+  // Settings states the rule once, under "How this works"; the forced page keeps it under the field.
+  const next = passwordField({ id: "pw-new", label: "New password", autocomplete: "new-password", hint: ruleHint ? `${MIN} to ${MAX} characters.` : null });
   const confirm = passwordField({ id: "pw-confirm", label: "Confirm new password", autocomplete: "new-password" });
   const err = h("p.hint.field-error", { role: "alert", id: "pw-error" });
   const save = h("button.btn.primary", { type: "submit" }, "Save password");
@@ -75,8 +78,24 @@ export function passwordForm({ onSaved, requireCurrent = true, username = state.
   return form;
 }
 
+const SVG = "http://www.w3.org/2000/svg";
+/** The horizon mark: a lit stroke, the orb, the unlit rest. Built with createElementNS, no markup strings. */
+function horizon() {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("class", "horizon"); svg.setAttribute("viewBox", "0 0 22 10"); svg.setAttribute("aria-hidden", "true");
+  const part = (tag, attrs) => { const el = document.createElementNS(SVG, tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); svg.append(el); };
+  part("path", { class: "lit", d: "M1 5h11", "stroke-width": "2", "stroke-linecap": "round" });
+  part("path", { class: "unlit", d: "M14 5h7", "stroke-width": "2", "stroke-linecap": "round" });
+  part("circle", { class: "orb", cx: "12.5", cy: "5", r: "3" });
+  return svg;
+}
+
+/** Signed out there is no rail, so the brand row carries the theme switch. */
 function brand() {
-  return h("div.auth-brand", h("span.brand-mark", { "aria-hidden": "true" }), h("span.brand-name", "Lorekeeper"));
+  const dark = (document.documentElement.dataset.theme || "dark") === "dark";
+  const label = dark ? "Switch to light theme" : "Switch to dark theme";
+  return h("div.auth-brand", horizon(), h("span.brand-name", "Lorekeeper"),
+    h("button.icon-btn", { type: "button", "data-theme-toggle": "", "aria-label": label, title: label }, icon(dark ? "sun" : "moon")));
 }
 
 export function mountLogin(root) {
