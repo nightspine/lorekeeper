@@ -2,7 +2,7 @@
 // Every section says at most one sentence up front; the rest of what it used to explain sits behind one
 // "How this works" disclosure. Server text (provider errors, library names) only ever goes through h().
 import { api } from "./api.js";
-import { onOllama, parseHash, showHash, signOut, state } from "./app.js";
+import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./app.js";
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
@@ -59,7 +59,7 @@ export function mountSettings(root) {
     if (to == null) return;
     e.preventDefault();
     const id = ids[(to + ids.length) % ids.length];
-    go(id);
+    go(id, { replace: true });   // stepping through the list does not stack history entries
     links[id].focus();
   });
 
@@ -73,10 +73,11 @@ export function mountSettings(root) {
   const page = h("div.settings", h("header.page-head", h("h1", "Settings")), h("div.set", nav, body));
   root.append(page);
 
-  function go(id) {
+  function go(id, { replace = false } = {}) {
+    const url = `#/settings/${id}`;
+    if (replace) replaceHash(url); else if (location.hash !== url) showHash(url);
     explicit = id;
     current = id;
-    showHash(`#/settings/${id}`);
     show();
   }
   function show() {

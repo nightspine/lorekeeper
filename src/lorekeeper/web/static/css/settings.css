@@ -31,6 +31,7 @@
 .set-val { min-width: 0; display: grid; gap: 4px; justify-items: start; }
 .set-val > .input { width: 100%; }
 .set-act { display: flex; gap: 8px; }
+.set-val > span:has(> .st) { display: flex; flex-wrap: wrap; align-items: center; column-gap: .3em; }
 .btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .set-btns { margin-top: 18px; }
 .account-form { width: 100%; max-width: 360px; }
@@ -59,7 +60,8 @@
 .how-body { display: grid; gap: 10px; padding: 8px 0 0 20px; max-width: 70ch; color: var(--text-2); line-height: 1.55; }
 
 /* tables in Settings */
-.set-table { max-width: 1180px; }
+.set-table { max-width: 860px; }
+.set-table:has(> .provs) { max-width: 1180px; }
 .set-table table.data th[scope="row"] { font-weight: 600; color: var(--text); font-size: var(--text-base); }
 .model-name { overflow-wrap: anywhere; }
 
