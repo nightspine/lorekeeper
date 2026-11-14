@@ -18,6 +18,12 @@
 // `hits` is [{entity, facets, relations, events}], limited to what the reader has already read.
 // `index.view(locator)` gives the whole spoiler-safe view, `index.at(locator)` just the position.
 // Locators (§3.8): {block}, {cfi}, {xpointer}, {spine, word}, {spine, progress}.
+//
+// Family trees: kinship.js (same folder, no dependencies) is reusable on its own. Relation labels
+// are free text, so `parse("half-sister of")` reads kinship from them ({role, modifiers, word} or
+// null), `normalize` gives the canonical label, and `families(view)` lays out the families found in
+// a spoiler-safe view (`index.view(locator)`), so a tree never shows a tie the reader has not reached.
+// It agrees with src/lorekeeper/kinship.py label for label (tests/test_js_kinship.py checks that).
 
 import { view as gate } from "./gating.js";
 

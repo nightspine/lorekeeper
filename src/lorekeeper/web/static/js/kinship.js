@@ -80,7 +80,7 @@ export function parse(label) {
     } else if (MOD.has(tok)) mods.push(tok);
     else return null;                                       // "killed", "barracks", "possible", a second kin word...
   }
-  if (word === "widow" || word === "widower") mods.push("late");
+  if ((word === "widow" || word === "widower") && !mods.includes("late")) mods.unshift("late");
   if (inlaw) mods.push("in-law");
   return { role: KIN[word][0], modifiers: mods, word };
 }
