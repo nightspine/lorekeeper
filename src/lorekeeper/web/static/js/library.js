@@ -44,16 +44,20 @@ export function mountLibrary(root) {
   const rail = h("nav.az-rail", { "aria-label": "Jump to letter" });
   const panel = h("aside.lib-panel", { "aria-label": "Book details", hidden: true });
   root.append(h("div.library", side, h("section.lib-main", bar, h("div.lib-content", h("div.lib-list", body), rail, panel))));
-  let timer, observer, searchTimer;
+  let timer, observer, searchTimer, disposed = false;
   clear(body, loading("Loading your library…"));
 
   async function load() {
-    try { s.data = await api.catalog(); } catch (e) {
+    let data;
+    try { data = await api.catalog(); } catch (e) {
+      if (disposed) return;
       // A failed first load says so in the page; a failed background reload keeps what is shown.
       if (!s.data) clear(body, loadError("load the library", e, () => { clear(body, loading("Loading your library…")); load(); }));
       else if (s.data.books.some((b) => b.status === "building")) { clearTimeout(timer); timer = setTimeout(load, 5000); }   // stay silent, try again
       return;
     }
+    if (disposed) return;
+    s.data = data;
     // Screenshot flags: ?demo=empty pretends there are no books, ?demo=none-ready that no book has an index yet.
     if (params.get("demo") === "empty") s.data = { ...s.data, books: [], series: [] };
     else if (params.get("demo") === "none-ready") s.data = { ...s.data, books: s.data.books.map((b) => (isReady(b) ? { ...b, status: "missing", versions: [] } : b)) };
@@ -65,6 +69,7 @@ export function mountLibrary(root) {
         s.demo = ex.find((i) => i.key.includes("dracula")) || ex.find((i) => i.key.includes("study-in-scarlet")) || ex[0] || null;
       } catch { s.demo = null; }
     }
+    if (disposed) return;   // left while the example was being looked up: no paint, no address rewrite, no timer
     paint();
     clearTimeout(timer);
     if (s.data.books.some((b) => b.status === "building")) timer = setTimeout(load, 5000);
@@ -445,5 +450,5 @@ export function mountLibrary(root) {
   document.addEventListener("keydown", onKey);
 
   load();
-  return () => { clearTimeout(timer); observer?.disconnect(); document.removeEventListener("keydown", onKey); };
+  return () => { disposed = true; clearTimeout(timer); observer?.disconnect(); document.removeEventListener("keydown", onKey); };
 }

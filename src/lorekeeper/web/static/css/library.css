@@ -236,8 +236,8 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
 /* On touch the rail looks the same (a 24px pill), but its column and each letter are 44px wide, so the hit area is real and nothing overflows. */
 @media (hover: none) {
   .lib-content, .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px; }
-  .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px minmax(280px, 340px); }
+  .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px; }   /* the panel floats at 1100px and below, so it takes no track */
   .az-rail { overflow-x: clip; }
   .az-letter { width: 44px; padding: 0 10px; background-clip: content-box; }
 }
-@media (hover: none) and (max-width: 640px) { .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px; } }
+@media (hover: none) and (min-width: 1101px) { .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 44px minmax(280px, 340px); } }

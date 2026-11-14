@@ -9,12 +9,13 @@ export function mountBook(root) {
   const key = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer, painted = false, building = false;
+  let timer, painted = false, building = false, disposed = false;
   clear(wrap, loading("Opening the book…"));
 
   async function load() {
     let b;
     try { b = await api.book(key); } catch (e) {
+      if (disposed) return;
       if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
         if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
         return;
@@ -22,6 +23,7 @@ export function mountBook(root) {
       if (e.status === 404) return clear(wrap, h("div.card.empty", h("h3", "Book not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
       return clear(wrap, loadError("open the book", e, () => { clear(wrap, loading("Opening the book…")); load(); }));
     }
+    if (disposed) return;
     painted = true; building = b.status === "building";
     paint(b);
     clearTimeout(timer);
@@ -112,25 +114,27 @@ export function mountBook(root) {
   }
 
   load();
-  return () => clearTimeout(timer);
+  return () => { disposed = true; clearTimeout(timer); };
 }
 
 export function mountSeries(root) {
   const id = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer, painted = false, building = false;
+  let timer, painted = false, building = false, disposed = false;
   clear(wrap, loading("Loading the series…"));
 
   async function load() {
     let data;
     try { data = await api.catalog(); } catch (e) {
+      if (disposed) return;
       if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
         if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
         return;
       }
       return clear(wrap, loadError("load the series", e, () => { clear(wrap, loading("Loading the series…")); load(); }));
     }
+    if (disposed) return;
     painted = true;
     const g = data.series.find((x) => x.id === id);
     if (!g) return clear(wrap, h("div.card.empty", h("h3", "Series not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
@@ -166,5 +170,5 @@ export function mountSeries(root) {
     if (building) timer = setTimeout(load, 5000);
   }
   load();
-  return () => clearTimeout(timer);
+  return () => { disposed = true; clearTimeout(timer); };
 }
