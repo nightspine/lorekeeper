@@ -103,7 +103,7 @@ Merging is the one outward action; ask the person first unless they said to ship
 - Feature spaces are `lorekeeper: <slug>`, one worktree each, nested under the repo space.
 - Tabs in a feature space: `shell`, `work: <role>`, `review: round <n>`, `fix: <role> round <n>`. The tab name says the role; the crew robot's name is Herdr's, not ours.
 - A worker that needs the person shows as blocked; tell the person the space and tab name.
-- Don't close a worker tab until the feature shipped: the person may want to read what it did. Rename it `done: <role>` once its branch is merged, so the space reads at a glance; a review tab becomes `done: review round <n>`.
+- The lead dismisses its agents on its own judgment (the person said so on 2026-11-13): close a worker or review tab once its branch is merged and its handoff or verdict is on disk, and close the feature space when the PR has merged. The lasting record is `.claude/work/<slug>/`, not the terminal. While a tab stays open, rename it `done: <role>` (a review tab `done: review round <n>`) so the space reads at a glance.
 - One Ollama run at a time across all spaces. Prefer a cloud provider for worker generation runs and say what it cost.
 - Never restart `lorekeeper web` or kill a generate process while `/api/jobs` shows a run.
 
