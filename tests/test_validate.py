@@ -70,3 +70,37 @@ def test_verbatim_quote_rejected(scarlet):
 def test_schema_errors_short_circuit(scarlet):
     del scarlet["anchors"]
     assert _errors(validate.check_index(scarlet))
+
+
+def test_book_kind_known_unknown_and_empty(scarlet):
+    assert not _errors(validate.check_index(scarlet))
+    scarlet["bookKind"] = "self-help"
+    assert not _errors(validate.check_index(scarlet))
+    scarlet["bookKind"] = "cookbook"
+    assert not _errors(validate.check_index(scarlet))
+    scarlet["bookKind"] = ""
+    assert _errors(validate.check_index(scarlet))
+
+
+def test_book_kind_on_series_manifest(scarlet, four, series):
+    series["bookKind"] = "fiction"
+    assert not _errors(validate.check_series(series, [scarlet, four]))
+    series["bookKind"] = ""
+    assert _errors(validate.check_series(series, [scarlet, four]))
+
+
+def test_book_kind_in_view_and_lookup_schemas():
+    view = {"lorekeeper": "0.1", "kind": "view", "bookKind": "non-fiction",
+            "position": {"book": None, "anchor": None}, "coverage": {"complete": True, "through": "a1", "exhausted": False},
+            "entities": [], "relations": [], "relationHistory": [], "events": [], "recap": None, "chapters": []}
+    assert not _errors(validate.check_schema(view, "view"))
+    view["bookKind"] = ""
+    assert _errors(validate.check_schema(view, "view"))
+    row = {"id": "a.b", "title": "T", "bookKind": "self-help", "match": "text", "complete": True,
+           "digest": "sha256:" + "0" * 64, "href": "/v0/indexes/a.b"}
+    lookup = {"$schema": "https://json-schema.org/draft/2020-12/schema",
+              "$defs": validate.schema("api")["$defs"], "$ref": "#/$defs/lookup"}
+    from jsonschema import Draft202012Validator as V
+    assert not list(V(lookup).iter_errors({"results": [row]}))
+    row["bookKind"] = ""
+    assert list(V(lookup).iter_errors({"results": [row]}))

@@ -142,6 +142,7 @@ export function view(indexes, position, series = null, order = null, finished = 
   return {
     lorekeeper: SPEC_VERSION,
     kind: "view",
+    ...(curIndex.bookKind !== undefined ? { bookKind: curIndex.bookKind } : {}),
     position: { book: series ? position.book : null, anchor: position.anchor },
     coverage: { complete: coverage.complete, through: coverage.through, exhausted },
     entities: outEntities,

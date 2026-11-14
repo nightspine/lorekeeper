@@ -11,6 +11,7 @@
     "kind": { "const": "series" },
     "id": { "$ref": "#/$defs/slug" },
     "title": { "type": "string", "minLength": 1 },
+    "bookKind": { "type": "string", "minLength": 1, "description": "Set when every book in the series has the same bookKind; omitted otherwise. Known values: fiction, non-fiction, self-help. Absent means fiction.", "examples": ["fiction", "non-fiction", "self-help"] },
     "books": {
       "type": "array",
       "minItems": 1,

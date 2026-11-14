@@ -20,7 +20,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .. import epub, generate, llm, portraits, text, validate
+from .. import bookkind, epub, generate, llm, portraits, text, validate
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
@@ -84,7 +84,7 @@ class BookStore:
         if "cover" not in meta and meta_path.with_suffix(".epub").exists():
             meta["cover"] = self._save_cover(meta["id"])
             meta_path.write_text(json.dumps(meta))
-        if "series" not in meta or "isbns" not in meta or meta.get("storyRules") != STORY_RULES:
+        if "series" not in meta or "isbns" not in meta or "bookKind" not in meta or meta.get("storyRules") != STORY_RULES:
             epub_path = meta_path.with_suffix(".epub")
             if epub_path.exists():
                 keep = {k: meta[k] for k in ("id", "filename", "uploaded", "cover") if k in meta}
@@ -157,7 +157,8 @@ def describe(path: Path) -> dict:
                  "words": sum(len(b.words) for b in book.blocks[c.start:end])}
                 for i, (c, end) in enumerate(zip(book.chapters, ends))]
     mark_story(chapters)
-    return {"storyRules": STORY_RULES, "title": book.title or path.stem, "authors": book.authors, "language": book.language,
+    found = bookkind.infer(book)   # no model call here; a build may ask one (generate)
+    return {"bookKind": {"detected": found.kind, "basis": found.basis, "why": found.why}, "storyRules": STORY_RULES, "title": book.title or path.stem, "authors": book.authors, "language": book.language,
             "series": book.series, "seriesIndex": book.series_index, "isbns": book.isbns,
             "blocks": len(book.blocks), "words": sum(len(b.words) for b in book.blocks),
             "chapters": chapters, "textHash": text.text_hash(b.words for b in book.blocks)}
@@ -400,6 +401,8 @@ class JobManager:
                 book_key=c.get("book_key") or None, license=c.get("license") or "CC0-1.0",
                 prior=self.prior_for(job) if c.get("series_id") else [],
                 whole_story=bool(c.get("whole_story")), distinct=set(self.distinct_for(job)))
+            kind = c.get("book_kind") or "auto"
+            opts.book_kind = None if kind == "auto" else kind   # None: the generator infers it
             if opts.prior:
                 self._emit(job, {"type": "log", "line": f"building on {len(opts.prior)} earlier book(s) in the series"})
             provider = c.get("provider") or "ollama"

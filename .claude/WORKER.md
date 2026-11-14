@@ -13,7 +13,7 @@ You were started by the lead agent with a brief. The brief is a file whose absol
 ## How you ship
 
 - Commit as you go. Conventional Commits (`feat:`, `fix:`, `docs:`, `test:`, `refactor:`), one concern per commit. Never add `Co-authored-by`, "Generated with" or any attribution trailer.
-- Before handing off, run the checks that cover your change (your definition lists them) and the full `uv run pytest -q`. Tests that need `corpus/` skip without it; say so if they did.
+- Before handing off, run the checks that cover your change (your definition lists them) and the full `uv run --extra web --extra claude pytest -q` (plain `uv run` lacks the web extra and fails three CLI tests for that reason alone). Tests that need `corpus/` skip without it; say so if they did.
 - Never restart `lorekeeper web` or kill a generate process while a run is active: check `/api/jobs` first.
 - The spoiler invariant comes first: nothing past the reader's position may be revealed by any view, count, marker, graph or protocol response.
 

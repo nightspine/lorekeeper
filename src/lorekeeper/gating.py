@@ -168,6 +168,7 @@ def view(
     return {
         "lorekeeper": SPEC_VERSION,
         "kind": "view",
+        **({"bookKind": cur_index["bookKind"]} if "bookKind" in cur_index else {}),
         "position": {"book": position.book if series else None, "anchor": position.anchor},
         "coverage": {"complete": coverage["complete"], "through": coverage["through"],
                      "exhausted": exhausted},

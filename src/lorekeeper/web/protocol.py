@@ -356,6 +356,8 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
                  "digest": digest_of(item["path"]), "href": f"/v0/indexes/{item['key']}"}
             if doc.get("series"):
                 r["series"] = {"id": doc["series"]["id"], "book": doc["series"]["book"]}
+            if doc.get("bookKind"):
+                r["bookKind"] = doc["bookKind"]
             if isinstance(prov.get("updated") or prov.get("created"), str):
                 r["updated"] = prov.get("updated") or prov.get("created")
             results.append(r)

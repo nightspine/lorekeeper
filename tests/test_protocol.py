@@ -310,3 +310,18 @@ def test_docs_list_protocol_tag(client):
     spec = client.get("/openapi.json").json()
     tagged = [p for p, ops in spec["paths"].items() if any("Protocol" in o.get("tags", []) for o in ops.values())]
     assert "/v0/indexes/{id}/view" in tagged and "/.well-known/lorekeeper" in tagged
+
+
+def test_lookup_carries_the_book_kind_when_the_index_has_it(client, tmp_path):
+    assert "bookKind" not in client.get("/v0/lookup", params={"gutenberg": "244"}).json()["results"][0]
+    data = tmp_path / "other"
+    (data / "x").mkdir(parents=True)
+    doc = scarlet_doc()
+    doc["bookKind"] = "non-fiction"
+    (data / "x" / "kind.lore.json").write_text(json.dumps(doc))
+    app = web_app.create_app(tmp_path / "d2", [("kinds", data / "x")], [], ollama_url="http://127.0.0.1:9",
+                             allowed_hosts=("testserver",), auth=False)
+    with TestClient(app) as c:
+        body = c.get("/v0/lookup", params={"gutenberg": "244"}).json()
+        check_def("lookup", body)
+        assert body["results"][0]["bookKind"] == "non-fiction"
