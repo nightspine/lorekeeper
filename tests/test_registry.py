@@ -529,3 +529,66 @@ def test_check_refuses_builder_validates(tmp_path, src, dracula):
     bundle = make(dracula)
     bundle["attestations"] = [{"kind": "validates", "by": "builder", "at": NOW}]
     check_error(tmp_path, src, bundle, "only the registry")
+
+
+# ---- round 3: depth, unreadable versions, all-or-nothing add --------------------------------
+
+def _nest(n):
+    x = []
+    for _ in range(n - 1):
+        x = [x]
+    return x
+
+
+def test_check_refuses_deep_but_parseable_nesting(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["index"]["work"]["ids"] = {"x": _nest(500)}
+    ctx, issues = registry.check(_raw(tmp_path, json.dumps(bundle)), "someone", src)
+    assert ctx is None and any("nested deeper" in i for i in errs(issues))
+
+
+def test_build_reports_deep_listing(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    lp = src / "indexes/someone/dracula/listing.json"
+    listing = json.loads(lp.read_text())
+    listing["editions"][0]["ids"] = {"x": _nest(500)}
+    lp.write_text(json.dumps(listing), encoding="utf-8")
+    with pytest.raises(registry.RegistryError, match="nested deeper"):
+        registry.build(src, tmp_path / "out")
+    assert run("registry", "build", src, "-o", tmp_path / "out2", "--json") == 1
+
+
+def test_build_reports_deep_index_version(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    v = src / "indexes/someone/dracula/v1.lore.json"
+    doc = json.loads(v.read_text())
+    doc["work"]["ids"] = {"x": _nest(500)}
+    data = registry.dumps(doc).encode()
+    v.write_bytes(data)
+    lp = src / "indexes/someone/dracula/listing.json"
+    listing = json.loads(lp.read_text())
+    listing["digest"] = listing["versions"][-1]["digest"] = registry.digest_of(data)
+    lp.write_text(json.dumps(listing), encoding="utf-8")
+    with pytest.raises(registry.RegistryError, match="nested deeper"):
+        registry.build(src, tmp_path / "out")
+
+
+def test_missing_latest_version_is_a_finding(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    (src / "indexes/someone/dracula/v1.lore.json").unlink()
+    again = copy.deepcopy(dracula)
+    again["work"]["title"] = "Dracula, again"
+    ctx, issues = registry.check(write(tmp_path / "n.json", make(again)), "someone", src)
+    assert ctx is None and any("unreadable" in i for i in errs(issues))
+
+
+def test_add_writes_nothing_when_serialising_fails(tmp_path, src, dracula, monkeypatch):
+    real = registry.dumps
+    def boom(doc):
+        if isinstance(doc, dict) and doc.get("slug"):
+            raise ValueError("no")
+        return real(doc)
+    monkeypatch.setattr(registry, "dumps", boom)
+    listing, issues = registry.add(write(tmp_path / "b.json", make(dracula)), "someone", src, NOW)
+    assert listing is None and errs(issues)
+    assert not (src / "indexes/someone/dracula").exists()

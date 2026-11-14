@@ -30,6 +30,7 @@ from .epub import Block
 from .validate import Issue
 
 MAX_BUNDLE_BYTES = 5 * 1024 * 1024
+MAX_DEPTH = 32  # no real index nests this deep; deeper data would only break copying and re-serialising later
 LICENSES = ("CC0-1.0", "CC-BY-4.0")
 PUBLISHER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$")
 LOOKUP_VALUE_RE = re.compile(r"^[A-Za-z0-9]{1,64}$")
@@ -76,6 +77,23 @@ def errors_of(issues: list[Issue]) -> list[Issue]:
     return [i for i in issues if i.level == "error"]
 
 
+def _too_deep(doc) -> str | None:
+    """Path of the first value nested deeper than MAX_DEPTH, found without recursion."""
+    stack = [(doc, 0, "$")]
+    while stack:
+        node, depth, path = stack.pop()
+        if isinstance(node, dict):
+            kids = [(v, f"{path}.{k}") for k, v in node.items()]
+        elif isinstance(node, list):
+            kids = [(v, f"{path}[{i}]") for i, v in enumerate(node)]
+        else:
+            continue
+        if depth + 1 > MAX_DEPTH:
+            return path
+        stack += [(v, depth + 1, q) for v, q in kids]
+    return None
+
+
 def _no_constant(name: str):
     raise ValueError(f"{name} is not JSON")
 
@@ -94,6 +112,9 @@ def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]
         if len(raw) > MAX_BUNDLE_BYTES:
             return None, [_err(what, "file is over the 5 MB limit")]
         doc = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
+        deep = _too_deep(doc)
+        if deep:
+            return None, [_err(what, f"not valid JSON for a registry: nested deeper than {MAX_DEPTH} levels at {deep}")]
         json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")  # a lone surrogate fails here
         return doc, []
     except (ValueError, OSError) as e:
@@ -269,7 +290,10 @@ def _publisher_listings(source: Path, publisher: str) -> list[dict]:
 def _latest_index(source: Path, listing: dict) -> dict:
     pub, slug = listing["publisher"], listing["slug"]
     path = _listing_dir(source, pub, slug) / f"v{int(listing['version'])}.lore.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    doc, issues = _read_json_capped(path, str(path))
+    if issues or not isinstance(doc, dict):
+        raise RegistryError("; ".join(f"{i.where}: {i.message}" for i in issues) or f"{path} is not an index")
+    return doc
 
 
 def requires_for(index: dict, series: dict, source: Path, publisher: str) -> tuple[list[str], list[dict], list[Issue]]:
@@ -290,7 +314,10 @@ def requires_for(index: dict, series: dict, source: Path, publisher: str) -> tup
                                          f"{publisher} yet: add it first"))
             continue
         ids.append(listing["id"])
-        priors.append(_latest_index(source, listing))
+        try:
+            priors.append(_latest_index(source, listing))
+        except RegistryError as e:
+            issues.append(_err("series", f"latest version of {listing['id']} is unreadable: {e}"))
     return ids, priors, issues
 
 
@@ -353,9 +380,14 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
     data = dumps(index).encode("utf-8")
     digest = digest_of(data)
     existing = read_listing(source, publisher, slug)
-    if existing is not None and _latest_index(source, existing).get("id") != index["id"]:
-        issues.append(_err("index.id", f"{listing_id} already belongs to a different index "
-                                       f"({_latest_index(source, existing).get('id')!r}); {index['id']!r} would share its slug"))
+    if existing is not None:
+        try:
+            latest_id = _latest_index(source, existing).get("id")
+            if latest_id != index["id"]:
+                issues.append(_err("index.id", f"{listing_id} already belongs to a different index "
+                                               f"({latest_id!r}); {index['id']!r} would share its slug"))
+        except RegistryError as e:
+            issues.append(_err("id", f"{listing_id}: latest version is unreadable: {e}"))
     if index.get("series"):
         for l in _publisher_listings(source, publisher):
             ls = l.get("series") or {}
@@ -433,11 +465,16 @@ def add(bundle_path: str | Path, publisher: str, source: str | Path, now: str | 
     if bad:
         return None, issues + [Issue("error", f"listing{i.where}", i.message) for i in bad]
     d: Path = ctx["dir"]
+    try:  # serialise everything before the first write, so a failure leaves nothing half-written
+        listing_text = dumps(listing)
+        series_text = dumps(ctx["bundle"]["series"]) if ctx["bundle"].get("series") is not None else None
+    except (ValueError, RecursionError) as e:
+        return None, issues + [_err("listing", f"cannot be serialised: {e}")]
     d.mkdir(parents=True, exist_ok=True)
     (d / f"v{listing['version']}.lore.json").write_bytes(ctx["data"])
-    if ctx["bundle"].get("series") is not None:
-        (d / "series.json").write_text(dumps(ctx["bundle"]["series"]), encoding="utf-8")
-    (d / "listing.json").write_text(dumps(listing), encoding="utf-8")
+    if series_text is not None:
+        (d / "series.json").write_text(series_text, encoding="utf-8")
+    (d / "listing.json").write_text(listing_text, encoding="utf-8")
     return listing, issues
 
 
@@ -505,6 +542,9 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
                         problems.append(f"{where}: missing {f.name}")
                     elif digest_of(f.read_bytes()) != v["digest"]:
                         problems.append(f"{where}: {f.name} does not match its digest")
+                    else:
+                        _, idx_issues = _read_json_capped(f, f"{where}/{f.name}")
+                        problems += [f"{i.where}: {i.message}" for i in idx_issues]
                 if data["versions"][-1]["version"] != data["version"] or data["versions"][-1]["digest"] != data["digest"]:
                     problems.append(f"{where}: the listing's latest version differs from its versions list")
                 listings.append((data, d))
