@@ -61,7 +61,7 @@ herdr-app do tab.new --space <space> --name "work: core-engineer" \
   --task "You are the core-engineer agent for feature $SLUG. Read $BRIEF/brief.md and .claude/WORKER.md, do the work in this worktree on branch feat/$SLUG, and write your handoff to $BRIEF/handoff-core-engineer.md."
 ```
 
-`herdr-app do` prints the terminal address. Keep `--task` short and free of quotes: a long task was not delivered once. Read the tab a few seconds later; if it sits at an empty prompt, send the task with `hc send --if idle <terminal> "..."` (it pastes and presses Enter), and put any long notes in a file the message points to. Wait with `hc wait <terminal>`, then read `$BRIEF/handoff-<role>.md` and `hc read <terminal> --lines 60`. Herdr shows the tab as working, blocked (needs the person: tell them which tab) or done.
+`herdr-app do` prints the terminal address. `hc wait <terminal>` returns at a check-in (about three minutes), not when the agent is done, so loop on it until `hc ls --json` shows the terminal's status is no longer `working` (`idle`, `done` or `blocked`). Keep `--task` short and free of quotes: a long task was not delivered once. Read the tab a few seconds later; if it sits at an empty prompt, send the task with `hc send --if idle <terminal> "..."` (it pastes and presses Enter), and put any long notes in a file the message points to. Wait with `hc wait <terminal>`, then read `$BRIEF/handoff-<role>.md` and `hc read <terminal> --lines 60`. Herdr shows the tab as working, blocked (needs the person: tell them which tab) or done.
 
 **4. Review.** When every worker of the round has handed off, start the reviewer in the same space:
 
@@ -101,7 +101,7 @@ Merging is the one outward action; ask the person first unless they said to ship
 - Feature spaces are `lorekeeper: <slug>`, one worktree each, nested under the repo space.
 - Tabs in a feature space: `shell`, `work: <role>`, `review: round <n>`, `fix: <role> round <n>`. The tab name says the role; the crew robot's name is Herdr's, not ours.
 - A worker that needs the person shows as blocked; tell the person the space and tab name.
-- Don't close a worker tab until the feature shipped: the person may want to read what it did.
+- Don't close a worker tab until the feature shipped: the person may want to read what it did. Rename it `done: <role>` once its branch is merged, so the space reads at a glance; a review tab becomes `done: review round <n>`.
 - One Ollama run at a time across all spaces. Prefer a cloud provider for worker generation runs and say what it cost.
 - Never restart `lorekeeper web` or kill a generate process while `/api/jobs` shows a run.
 
