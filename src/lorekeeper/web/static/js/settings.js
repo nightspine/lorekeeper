@@ -108,7 +108,7 @@ export function mountSettings(root) {
   // ---- Local models (Ollama) --------------------------------------------------------------------
   // Built once; each 15-second poll repaints only the status rows and the model table, so the open
   // "How this works" and the keyboard focus survive it.
-  const ollamaLede = h("p.sec-lede");
+  const ollamaLede = h("p.sec-lede", "Free and private, slower: a novel takes a few hours.");
   const ollamaUrl = document.createTextNode("http://localhost:11434");
   const ollamaBody = h("div.set-local", h("p.set-note", "Checking Ollama…"));
   clear(panes.local,
@@ -119,7 +119,6 @@ export function mountSettings(root) {
   const paintOllama = (o) => {
     lines.local.textContent = o.ok ? "Ollama running" : "Ollama not running";
     const url = o.url || "http://localhost:11434";
-    ollamaLede.textContent = "Free and private, slower: a novel takes a few hours.";
     ollamaUrl.textContent = url;
     clear(ollamaBody,
       h("div.set-rows",

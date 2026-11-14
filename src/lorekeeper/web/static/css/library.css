@@ -14,9 +14,10 @@
 .side-cta { display: inline-flex; align-items: center; gap: var(--space-2); margin: var(--space-1) 14px 0; font-weight: 600; font-size: var(--text-sm); }
 .lib-main { min-width: 0; display: grid; gap: var(--space-5); }
 
-/* sticky toolbar: translucent ground, blurred, with a hairline under it */
+/* sticky toolbar on the page ground, with a hairline under it that runs to the page edge */
 .lib-bar { position: sticky; top: var(--topbar-h); z-index: 30; display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 14px 24px;
-  margin: 0 calc(-1 * clamp(16px, 3vw, 32px)) 0 -16px; padding: 16px clamp(16px, 3vw, 32px) 16px 16px;
+  /* right: out to the page edge by main's padding; left: halfway into the gap beside the filter column */
+  margin: 0 calc(-1 * var(--main-px)) 0 -16px; padding: 16px var(--main-px) 16px 16px;
   background: var(--bg); border-bottom: 1px solid var(--edge); }
 .lib-title h1 { line-height: 1.1; }
 .lib-count { margin: 4px 0 0; font-size: var(--text-s); line-height: 1.4; color: var(--text-3); background: none; border: 0; padding: 0; }
@@ -32,7 +33,7 @@
 /* From 800px the tools stay on one row; from 1400px the title joins them, centred on it. */
 @media (min-width: 800px) {
   .lib-tools { flex-wrap: nowrap; }
-  .lib-search-wrap { min-width: 160px; }
+  .lib-search-wrap { min-width: 120px; }
 }
 @media (min-width: 1400px) {
   .lib-bar { flex-wrap: nowrap; align-items: center; }

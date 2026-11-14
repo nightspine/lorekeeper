@@ -108,8 +108,9 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
 .bo-lib input { width: 16px; height: 16px; margin: 0; accent-color: var(--beacon); }
 .bo-lib-name { font-weight: 600; overflow-wrap: anywhere; }
 
-/* Between the phone and a wide window the section list runs across the top, and the table drops the default model. */
-@media (max-width: 1100px) {
+/* Up to 1420px (below that the full rail plus two panes leave the 860px provider table too little room) the section list runs
+   across the top, and the table drops the default model. */
+@media (max-width: 1420px) {
   .settings .set { display: block; background: none; }
   .set-nav { position: static; flex-direction: row; gap: 4px; padding: 10px 20px; border-bottom: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
   .set-link { flex: none; padding: 6px 12px; }
@@ -118,9 +119,9 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
   .sec { padding: 24px 20px 48px; }
 }
 
-/* Narrow (and on a phone): the provider table becomes stacked rows: name and price on top, state, key and model under
+/* Narrow (860px and below, and on a phone): the provider table becomes stacked rows: name and price on top, state, key and model under
    it, the action on the right. */
-@media (max-width: 800px) {
+@media (max-width: 860px) {
   .provs, .provs tbody { display: block; min-width: 0; }
   .provs thead { display: none; }
   .provs > tbody > tr.prov { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); }
@@ -131,7 +132,7 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
   .provs > tbody > tr.prov > :nth-child(4) { display: block; }
   .provs .pk:empty { display: none; }
   .provs .pa { grid-column: 2; grid-row: 2 / span 3; align-self: center; }
-  .provs tr.open, .provs tr.expanded, .provs tr.prov-more { margin: 0 -16px; padding-left: 16px !important; padding-right: 16px !important; }
+  .provs tr.open, .provs tr.expanded, .provs tr.prov-more { padding-left: 12px !important; padding-right: 12px !important; }   /* tinted, inside the table: a bleed would make its box scroll */
   .provs tr.open .pk, .provs tr.open .pa { grid-column: 1 / -1; grid-row: auto; margin-top: 8px; }
   .provs tr.open .pa .act { justify-content: flex-start; }
   .provs tr.expanded { border-bottom: 0 !important; }

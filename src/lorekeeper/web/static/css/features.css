@@ -122,7 +122,8 @@
   /* "N building" on the Runs tab: an ember dot; its words are there for screen readers. */
   .tab-busy { position: absolute; top: 9px; left: calc(50% + 8px); width: 7px; height: 7px; border-radius: 50%; background: var(--ember); overflow: hidden; font-size: 0; color: transparent; }
   .tab-busy[hidden] { display: none; }
-  main { padding: 16px 16px calc(60px + env(safe-area-inset-bottom, 0px) + 32px); }
+  :root { --main-px: 16px; }
+  main { padding: 16px var(--main-px) calc(60px + env(safe-area-inset-bottom, 0px) + 32px); }
   main[data-route="settings"] { padding: 0 0 calc(60px + env(safe-area-inset-bottom, 0px) + 16px); }
   body[data-signed-in="false"] main, body[data-must-change-password="true"] main { padding-bottom: 32px; }
   .toasts { left: 12px; right: 12px; bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 12px); max-width: none; }
