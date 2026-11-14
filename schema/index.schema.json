@@ -26,6 +26,12 @@
     "id": {
       "$ref": "#/$defs/slug"
     },
+    "bookKind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What kind of book this is. Known values: fiction, non-fiction, self-help; any other non-empty string is allowed. Absent means fiction. See SPEC.md §4.",
+      "examples": ["fiction", "non-fiction", "self-help"]
+    },
     "work": {
       "type": "object",
       "required": [

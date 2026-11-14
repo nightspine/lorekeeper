@@ -136,3 +136,15 @@ def test_the_view_carries_an_event_kind_only_when_the_index_has_one(scarlet, ser
     kinds = {ev["id"]: ev.get("kind") for ev in v["events"]}
     assert kinds["sis.ev.meeting"] == "turn" and kinds["sis.ev.sergeant"] == "minor"
     assert "kind" not in next(ev for ev in v["events"] if ev["id"] == "sis.ev.maiwand")
+
+
+def test_the_view_carries_book_kind_only_when_the_index_has_one(scarlet, series):
+    pos = Position("study-in-scarlet", "ch2.para51")
+    assert "bookKind" not in view([scarlet], pos, series)
+    v = view([{**scarlet, "bookKind": "self-help"}], pos, series)
+    assert v["bookKind"] == "self-help"
+
+
+def test_the_view_takes_book_kind_from_the_current_book_only(scarlet, four, series):
+    v = view([{**scarlet, "bookKind": "non-fiction"}, four], Position("sign-of-four", "ch1.para12"), series)
+    assert "bookKind" not in v
