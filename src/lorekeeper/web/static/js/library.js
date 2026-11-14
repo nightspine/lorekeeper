@@ -18,6 +18,8 @@ const surname = (name) => (name || "").trim().split(/\s+/).pop() || "";
 const isReady = (b) => b.status === "complete" || b.status === "partial";
 const KIND_LABEL = { fiction: "Fiction", "non-fiction": "Non-fiction", "self-help": "Self-help" };
 const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+/** "Non-fiction" or "Self-help" for a book whose default index is not fiction; nothing for fiction or no index. */
+const kindOf = (b) => { const k = b.versions.find((v) => v.isDefault)?.bookKind; return k && k !== "fiction" ? KIND_LABEL[k] || k : null; };
 const plural = (n, one, many = `${one}s`) => `${fmtInt(n)} ${n === 1 ? one : many}`;
 const updatedAt = (b) => Math.max(0, ...b.versions.map((v) => Date.parse(v.updated) || 0));
 const shortDate = (t) => (t ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short" }) : "");
@@ -32,9 +34,9 @@ const seriesText = (b) => (b.series ? `${b.series.name}${b.series.index != null 
 export function rowAction(b, { small = true } = {}) {
   const href = readerHref(b);
   const cls = small ? ".small" : "";
-  if (href) return h(`a.btn${cls}`, { href, "aria-label": `Read ${b.title}`, tabindex: "-1" }, "Read");
-  if (b.status === "building" && b.job) return h(`a.btn${cls}`, { href: `#/studio/job/${b.job.id}`, "aria-label": `${b.title}: view progress`, tabindex: "-1" }, "Progress");
-  return h(`button.btn${cls}`, { type: "button", tabindex: "-1", "aria-label": `Build ${b.title}`, "aria-disabled": b.canBuild ? null : "true",
+  if (href) return h(`a.btn${cls}`, { href, "aria-label": `Read ${b.title}`, tabindex: "-1", dataset: { role: "act" } }, "Read");
+  if (b.status === "building" && b.job) return h(`a.btn${cls}`, { href: `#/studio/job/${b.job.id}`, "aria-label": `${b.title}: view progress`, tabindex: "-1", dataset: { role: "act" } }, "Progress");
+  return h(`button.btn${cls}`, { type: "button", tabindex: "-1", dataset: { role: "act" }, "aria-label": `Build ${b.title}`, "aria-disabled": b.canBuild ? null : "true",
     on: { click: (e) => { e.stopPropagation(); b.canBuild ? startBuild(b) : toast(NO_EPUB, "error"); } } }, "Build");
 }
 
@@ -279,7 +281,7 @@ export function mountLibrary(root) {
 
   function tableView(gs) {
     const table = h("table.data.books",
-      h("caption.sr-only", "Books. Use the up and down arrows to move between books, Enter to show one's details."),
+      h("caption.sr-only", "Books. Up and down arrows move between books, Enter shows one's details, Tab reaches its action."),
       h("thead", h("tr",
         sortHeader(".c-title", ["title", "author"]),
         sortHeader(".c-series", ["series"]),
@@ -318,7 +320,9 @@ export function mountLibrary(root) {
               "aria-label": `${b.title}${b.authors.length ? `, by ${b.authors.join(", ")}` : ""}, ${chipText(b)}. Show details`,
               on: { click: (e) => { e.stopPropagation(); select(b.key, floating()); } } }, b.title),
             h("span.t-sub", b.authors.join(", ") || "Unknown author",
+              // The series repeats here only when the Series column is hidden (narrow, or the pane is open).
               inSeries ? null : b.series ? h("span.t-series", `, ${seriesText(b)}`) : null,
+              kindOf(b) ? h("span.t-kind", `, ${kindOf(b)}`) : null,
               warn ? h("span.row-warn", `. ${warn}.`) : null)))),
       h("td.c-series.muted", inSeries ? bookNo(b.series) ? cap(bookNo(b.series)) : "" : seriesText(b)),
       h("td.c-status", statusChip(b)),
@@ -346,10 +350,15 @@ export function mountLibrary(root) {
     next.focus();
     next.closest("tr")?.scrollIntoView({ block: "nearest" });
   }
+  /** One book at a time is in the tab order: its title button and, in the table, its row action (Read, Progress, Build). */
   function rove(key) {
     const opens = [...list.querySelectorAll("[data-role=open]")];
     const target = opens.find((x) => x.closest("[data-key]").dataset.key === key) || opens[0];
-    opens.forEach((x) => x.setAttribute("tabindex", x === target ? "0" : "-1"));
+    opens.forEach((x) => {
+      const on = x === target ? "0" : "-1";
+      x.setAttribute("tabindex", on);
+      x.closest("tr")?.querySelector(".c-act .btn")?.setAttribute("tabindex", on);
+    });
   }
 
   // ---- covers ------------------------------------------------------------------------------
@@ -384,7 +393,7 @@ export function mountLibrary(root) {
         on: { click: () => select(b.key, floating()) } },
         h("span.cover-wrap", cover(b)),
         h("span.card-title", b.title),
-        h("span.card-meta", inSeries ? cap(bookNo(b.series) || b.authors[0] || "") : b.authors[0] || "")),
+        h("span.card-meta", inSeries ? cap(bookNo(b.series) || b.authors[0] || "") : b.authors[0] || "", kindOf(b) ? `, ${kindOf(b)}` : "")),
       h("span.card-row", statusChip(b)));
   }
 
@@ -424,7 +433,11 @@ export function mountLibrary(root) {
     pane.hidden = !open;
     split.classList.toggle("with-pane", open);
     if (!b) { paneSig = ""; clear(pane); return; }
-    const sig = JSON.stringify([b, b.series && s.data.series.find((g) => g.id === b.series.id)]);
+    // The pane also shows the rest of the series (its list and the earlier-book warning), so their state is in the signature too.
+    const sg = b.series && s.data.series.find((g) => g.id === b.series.id);
+    const siblings = sg ? sg.books.map((k) => s.data.books.find((x) => x.key === k)).filter(Boolean)
+      .map((x) => [x.key, x.status, x.coverage, x.canBuild, x.job?.progress]) : null;
+    const sig = JSON.stringify([b, sg, siblings, b.series && s.data.books.filter((x) => x.series?.id === b.series.id).map((x) => [x.key, x.status])]);
     if (sig === paneSig) return;   // a reload that changed nothing about this book leaves the pane, its focus and scroll alone
     paneSig = sig;
     const keep = pane.contains(document.activeElement) ? document.activeElement.dataset.act : null;

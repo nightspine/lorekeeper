@@ -52,6 +52,7 @@ table.books { table-layout: fixed; }
 .t-open:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; border-radius: 3px; }
 .t-sub { font-size: var(--text-xs); line-height: 1.3; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-warn { color: var(--ember); }
+.books .t-series { display: none; }   /* shown only where the Series column is hidden */
 .sort { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
 .sort:hover, .sort[aria-pressed="true"] { color: var(--text); }
 .sort-sep { color: var(--text-3); font-weight: 400; }
@@ -175,6 +176,7 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
 /* With the pane open the table drops Series and Last indexed until there is room. */
 @media (max-width: 1300px) {
   .with-pane .books :is(.c-series, .c-date) { display: none; }
+  .with-pane .books .t-series { display: inline; }
 }
 /* Below 1100px the pane floats over the right edge instead of taking a column. */
 @media (max-width: 1100px) {
@@ -184,6 +186,7 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
 }
 @media (max-width: 860px) {
   .books :is(th, td).c-series { display: none; }
+  .books .t-series { display: inline; }
   .lib-search-wrap { width: 220px; }
 }
 @media (max-width: 640px) {

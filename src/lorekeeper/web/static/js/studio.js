@@ -329,15 +329,16 @@ function configure(target, book, ctx, fromJob = null) {
   }
 
   const storyCount = storySet.size;
+  // The book is a link when its page exists; the page you are on (Build) is plain text.
   const trail = crumbs([{ label: "Library", href: "#/library" },
-    { label: book.title, href: catalogKey ? `#/book/${encodeURIComponent(catalogKey)}` : null }]);
+    { label: book.title, href: catalogKey ? `#/book/${encodeURIComponent(catalogKey)}` : null }, { label: "Build" }]);
   trail.classList.add("build-crumbs");
   clear(target,
     trail,
     h("header.build-head",
       h("div.build-id",
         cover({ title: book.title, authors: book.authors, cover: book.cover ? `/api/catalog/cover/up:${book.id}` : null }, "sm"),
-        h("div", h("h1", book.title), h("p.by", book.authors.length ? `by ${book.authors.join(", ")}` : "Unknown author"))),
+        h("div", h("h1", book.title), h("p.by", book.authors.join(", ") || "Unknown author"))),
       h("p.build-facts", `${fmtInt(book.words)} words, ${storyCount} story ${storyCount === 1 ? "section" : "sections"}.`)),
     banner,
     h("section.build-run", h("h2#kind-q.build-q", "Book kind"), kindRows),

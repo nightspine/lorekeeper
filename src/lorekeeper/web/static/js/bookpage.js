@@ -16,7 +16,8 @@ export function mountBook(root) {
   let timer, painted = false, building = false, disposed = false, sig = "";
   clear(wrap, loading("Opening the book…"));
 
-  async function load() {
+  /** `force` repaints even while the series form has focus (after the form or a version change saved). */
+  async function load({ force = false } = {}) {
     let b;
     try { b = await api.book(key); } catch (e) {
       if (disposed) return;
@@ -29,10 +30,13 @@ export function mountBook(root) {
     }
     if (disposed) return;
     painted = true; building = b.status === "building";
-    // The 5 s reload while building repaints only when something changed, and only if no field is being edited.
+    // A background reload repaints only when something changed, and waits while the series form is being edited:
+    // it tries again in 5 s, so a run that ends meanwhile still shows. A save forces the repaint.
     const next = JSON.stringify(b);
-    if (next !== sig && !wrap.querySelector(".series-form")?.contains(document.activeElement)) { sig = next; paint(b); }
+    const editing = wrap.querySelector(".series-form")?.contains(document.activeElement);
     clearTimeout(timer);
+    if (next !== sig && (force || !editing)) { sig = next; paint(b); }
+    else if (next !== sig) { timer = setTimeout(load, 5000); return; }
     if (b.status === "building") timer = setTimeout(load, 5000);
   }
 
@@ -50,7 +54,7 @@ export function mountBook(root) {
       const index = h("input.input.w-90", { id: "s-index", value: b.series?.index || "", placeholder: "No.", inputmode: "decimal", "aria-label": "Number in the series" });
       return h("form.series-form", { on: { submit: async (e) => {
         e.preventDefault();
-        try { await api.setSeries(b.key, name.value, index.value); toast(name.value ? "Series saved" : "Removed from series"); sig = ""; load(); }
+        try { await api.setSeries(b.key, name.value, index.value); toast(name.value ? "Series saved" : "Removed from series"); sig = ""; load({ force: true }); }
         catch (ex) { toast(ex.message, "error"); }
       } } }, name, index, h("button.btn", { type: "submit" }, "Save"));
     })() : null;
@@ -75,7 +79,7 @@ export function mountBook(root) {
         cover(b, "sm"),
         h("div.bk-head-main",
           h("h1", b.title),
-          h("p.by", `${b.authors.join(", ") || "Unknown author"}.${b.series ? ` ${b.series.name}${bookNo(b.series) ? `, ${bookNo(b.series)}` : ""}.` : ""}`),
+          h("p.by", [b.authors.join(", ") || "Unknown author", b.series ? `${b.series.name}${bookNo(b.series) ? `, ${bookNo(b.series)}` : ""}` : null].filter(Boolean).join(", ")),
           h("div.btns",
             d ? h("a.btn.primary", { href: `#/reader?i=${encodeURIComponent(d.key)}` }, "Read") : null,
             main,
@@ -116,7 +120,7 @@ export function mountBook(root) {
             h("td.cell-actions",
               h("a", { href: `#/reader?i=${encodeURIComponent(v.key)}` }, "Read"),
               v.isDefault ? null : h("button.linkish", { type: "button", on: { click: async () => {
-                try { await api.setDefault(b.key, v.key); toast("Default version changed"); sig = ""; load(); } catch (e) { toast(e.message, "error"); }
+                try { await api.setDefault(b.key, v.key); toast("Default version changed"); sig = ""; load({ force: true }); } catch (e) { toast(e.message, "error"); }
               } } }, "Make default"))))))) : h("p.muted", "No index yet."),
         b.versions.length > 1 ? h("p.hint", "The default version is what the Reader and connected apps receive.") : null),
 
