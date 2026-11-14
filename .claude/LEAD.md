@@ -25,6 +25,8 @@ A feature that spans areas gets one worker per area, started in sequence when th
 
 ## One feature, start to finish
 
+**Every branch gets a worktree, with no exceptions.** The main checkout at `/Users/gperrone/projects/lorekeeper` stays on `main` and is never switched: it holds the briefs, the corpus and the lead's own checks. A feature, a fix round, a chore to the playbook, all of them are branched into `~/.herdr/worktrees/lorekeeper/<name>` (`git worktree add -b <branch> <path> main`) and the worktree is removed once its PR merged.
+
 **0. The setup must be on `main`.** Worktrees branch from `main`, and a worker reads its definition from its own worktree. If `.claude/agents/` is not on `main` yet, ship it first.
 
 **1. Scope.** Pick a slug: kebab-case, verb first (`fix-phone-reader`, `add-series-export`). Write `.claude/work/<slug>/brief.md` from the template at the end of this file. Name the roles, the files, what done means, and what is out of scope. The brief is the contract; a worker may not ask questions, so it has to be complete.
