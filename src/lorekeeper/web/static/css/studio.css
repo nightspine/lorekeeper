@@ -1,5 +1,7 @@
 /* ---------- Studio: the Runs page. Glass panels on the deep ground; the progress hero is the one lit element. ---------- */
 .studio { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: var(--space-5); align-items: start; }
+/* A region that starts its column needs no hairline over it. */
+:is(.studio-side, .studio-main) > .card:first-child { border-top: 0; padding-top: 0; }
 .studio-side { display: grid; gap: var(--space-5); position: sticky; top: calc(var(--topbar-h) + 23px); }
 .studio-main { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
 .studio > * { min-width: 0; }

@@ -106,11 +106,22 @@ export function mountSettings(root) {
   }
 
   // ---- Local models (Ollama) --------------------------------------------------------------------
+  // Built once; each 15-second poll repaints only the status rows and the model table, so the open
+  // "How this works" and the keyboard focus survive it.
+  const ollamaLede = h("p.sec-lede");
+  const ollamaUrl = document.createTextNode("http://localhost:11434");
+  const ollamaBody = h("div.set-local", h("p.set-note", "Checking Ollama…"));
+  clear(panes.local,
+    h("div.sec-head", h("h2", { id: "sec-h-local" }, "Local models"), ollamaLede),
+    ollamaBody,
+    howItWorks(h("span", "Lorekeeper talks to the Ollama server at ", ollamaUrl, ". To use another one, start Lorekeeper with --ollama-url."),
+      "Add a model with ollama pull. One model runs at a time; builds wait in a queue."));
   const paintOllama = (o) => {
     lines.local.textContent = o.ok ? "Ollama running" : "Ollama not running";
     const url = o.url || "http://localhost:11434";
-    clear(panes.local,
-      head("local", "Local models", "Free and private, slower: a novel takes a few hours."),
+    ollamaLede.textContent = "Free and private, slower: a novel takes a few hours.";
+    ollamaUrl.textContent = url;
+    clear(ollamaBody,
       h("div.set-rows",
         row("Ollama", o.ok ? h("span", state_("ok", "Running"), " at ", h("span.num", url))
           : h("span", state_("bad", "Not running"), " at ", h("span.num", url))),
@@ -126,11 +137,8 @@ export function mountSettings(root) {
               h("td.r.muted", gb(m.size)),
               h("td", o.loaded.includes(m.name) ? state_("ok", "Loaded") : state_("off", "On disk")))))))
           : h("p.set-note", "No models installed yet. Try ", h("span.mono", "ollama pull gemma4:12b-it-qat"), "."))
-        : null,
-      howItWorks(`Lorekeeper talks to the Ollama server at ${url}. To use another one, start Lorekeeper with --ollama-url.`,
-        "Add a model with ollama pull. One model runs at a time; builds wait in a queue."));
+        : null);
   };
-  clear(panes.local, head("local", "Local models"), h("p.set-note", "Checking Ollama…"));
   const off = onOllama((o) => { if (!disposed) paintOllama(o); });
 
   // ---- Cloud models: one table, a row per provider ------------------------------------------------

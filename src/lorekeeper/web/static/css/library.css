@@ -29,6 +29,17 @@
 .inline-label { display: inline-flex; align-items: center; gap: 10px; }
 .inline-label > span { font-size: var(--text-s); color: var(--text-2); }
 .lib-tools .select { width: 132px; }
+/* From 800px the tools stay on one row; from 1400px the title joins them, centred on it. */
+@media (min-width: 800px) {
+  .lib-tools { flex-wrap: nowrap; }
+  .lib-search-wrap { min-width: 160px; }
+}
+@media (min-width: 1400px) {
+  .lib-bar { flex-wrap: nowrap; align-items: center; }
+  .lib-title { flex: none; }
+  .lib-count { white-space: nowrap; }
+  .lib-tools { flex: 1 1 auto; justify-content: flex-end; min-width: 0; }
+}
 
 .lib-content { display: grid; grid-template-columns: minmax(0, 1fr) 30px; gap: var(--space-3); align-items: start; }
 .lib-content.with-panel { grid-template-columns: minmax(0, 1fr) 30px minmax(280px, 340px); }
