@@ -226,6 +226,24 @@ an event. `kind` is optional: `family`, `romance`, `friendship`, `alliance`,
 `service`, `hostility`, `acquaintance` or `place`. A newer tie of the same kind
 between the same two entities SHOULD list the older one in `replaces`.
 
+Kinship ties (informative). A family tie is best written `<modifiers> <kin word>
+of`: `mother of`, `father of`, `son of`, `daughter of`, `brother of`, `sister of`,
+`husband of`, `wife of`, `grandmother of`, `aunt of`, `nephew of`, `cousin of`,
+`guardian of`, or `married to`, with a modifier before the word when the book
+says so. Canonical spelling: `step`, `grand` and `god` join the kin word
+(`stepmother`, `grandfather`, `godson`); `half`, `ex` and `great` take a hyphen
+(`half-sister`, `ex-husband`, `great-aunt`), as does `in-law` after the word
+(`mother-in-law`); `younger`, `older`, `elder`, `eldest`, `youngest`, `twin`,
+`identical`, `adoptive`, `adopted`, `foster`, `late`, `former`, `blood`, `first`
+and `second` are separate words before it (`younger brother of`). So `half-sister
+of`, `stepmother of`, `ex-husband of` and `mother-in-law of` are the written
+forms. Modifiers are written in the order the book gives them; `step` joins the kin word first and `half`, `ex` and `great` hyphenate in front of it (`half-stepbrother of`, `ex-stepmother of`); `late` is left out before `widow` and `widower`. Readers of labels SHOULD accept other spacings and dashes. Direction is the usual one: `src` "daughter of" `dst` means
+`src` is the child. A spouse tie is `family`, not `romance`; `romance` is for
+courtship and affairs. A label that is not plainly kinship (`killed mother of`,
+`brother-in-arms of`, `possible father of`) is not read as such. Clients MAY read
+kinship from labels this way, as the reference client's `kinship.js` does, and
+SHOULD NOT infer ties the book never states.
+
 ### 4.4 Events
 
 `{ id, from, summary, entities[], evidence, kind? }`: happenings in reading
@@ -427,6 +445,7 @@ A server MAY compute views (§8.4). Its output MUST equal the client algorithm's
 - Mark `inferred` facets subtly; show `history` collapsed under "Earlier impressions".
 - Label merged series content with its book ("From *A Study in Scarlet*").
 - Offer a lookup that searches visible names and aliases only.
+- A family tree MAY be drawn from the visible kinship ties (§4.3) alone; it must not show a marriage, birth or parentage before its `from`, nor count families it does not draw.
 
 ## 8. Protocol
 

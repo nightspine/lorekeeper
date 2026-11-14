@@ -5,6 +5,7 @@ import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
 import { renderConnections } from "./graph.js";
+import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
@@ -1053,6 +1054,24 @@ export function mountReader(root) {
     return { where: ch ? `in ${shortChapter(ch)}` : null, isNew: Boolean(here && ch && ch.start === here.start) };
   }
 
+  /** The families the Connections tab can draw right now (same input as the tab, so the chip, the palette and the link agree). */
+  let famMemo = null;
+  function currentFamilies() {
+    const history = Boolean(s.graph.history);
+    if (!famMemo || famMemo.view !== s.view || famMemo.earlier !== s.earlier || famMemo.history !== history) famMemo = { view: s.view, earlier: s.earlier, history, list: families(castView(), { history }) };
+    return famMemo.list;
+  }
+  /** Open the Connections tab drawn as family trees, optionally on one person's family. */
+  function showFamilyTree(id = null) {
+    closeDrawer();
+    s.tab = "links";
+    s.graph.trees = true;
+    s.graph.mode = "map"; s.graph.list = false;
+    if (id) { s.graph.sel = id; s.graph.treeTo = id; }
+    paintTabs();
+    el.panel.scrollIntoView?.({ block: "start" });
+  }
+
   function paintLinks() {
     const here = s.map.chapterAt(s.p);
     renderConnections(el.panel, {
@@ -1122,7 +1141,8 @@ export function mountReader(root) {
         e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
       e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null,
       rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
-        foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" })) : null,
+        foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
+        currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null,
       evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
@@ -1180,6 +1200,7 @@ export function mountReader(root) {
         run: () => setTimeout(() => el.chapSel?.focus(), 60) },
       { id: "reader:next", label: "Next reveal", group: "Reading", keywords: "forward step", run: () => stepReveal(1) },
       { id: "reader:prev", label: "Previous reveal", group: "Reading", keywords: "back step", run: () => stepReveal(-1) });
+    if (currentFamilies().length) out.push({ id: "reader:trees", label: "Family trees", group: "Reading", keywords: "family tree kin relatives genealogy connections", run: () => showFamilyTree() });
     if (canEdit()) out.push({ id: "reader:edit", label: s.edit ? "Stop editing this index" : "Edit this index", group: "Reading",
       keywords: "edit change fix entry", run: () => setEdit(!s.edit) });
     return out;

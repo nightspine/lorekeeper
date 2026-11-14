@@ -513,7 +513,7 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v8"
+    assert generate.PROMPT_VERSION == "extract-v9"
 
 
 class _Labels(FakeLLM):
@@ -606,3 +606,105 @@ def test_a_name_the_text_gives_a_relative_or_another_person_is_not_an_alias():
     assert generate.names_a_relative("Mrs. Westenra", ["A young woman, daughter of Mrs. Westenra."])
     assert generate.names_a_relative("Mrs. Westenra", ["Mrs. Westenra's daughter is unwell."])
     assert not generate.names_a_relative("Mrs. Harker", ["She is Mrs. Harker now, married in Buda-Pesth."])
+
+
+class _Kin(FakeLLM):
+    """Kinship labels as models write them: other casings and forms, a wrong kind, and noise that must stay as is."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["relations"] = [
+                {"a": "Alice Marlow", "label": "Is Sister of", "b": "Tom Marlow", "p": 3, "kind": "friendship"},
+                {"a": "Ezra Pike", "label": "possible brother of", "b": "Tom Marlow", "p": 4, "kind": "acquaintance"},
+            ]
+        return out
+
+
+def test_kinship_labels_are_normalised_and_tagged_family(book_path, tmp_path):
+    ix, report, llm = _run(book_path, tmp_path, llm=_Kin())
+    rels = {(r["label"], r.get("kind")) for r in ix["relations"]}
+    assert ("sister of", "family") in rels                    # parsed: canonical label, family whatever the model said
+    assert ("possible brother of", "acquaintance") in rels    # uncertain: left alone
+    assert not [i for i in validate.check_index(ix) if i.level == "error"]
+
+
+def test_the_prompt_names_the_canonical_family_labels(book_path, tmp_path):
+    _, _, llm = _run(book_path, tmp_path, llm=_Kin())
+    assert any("husband of, wife of, married to, grandmother of" in c for c in llm.calls)
+
+
+def test_a_wife_tie_ends_a_courtship_tie(book_path, tmp_path):
+    class Wed(FakeLLM):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "new" in schema.get("properties", {}):
+                out = json.loads(json.dumps(out))
+                first = "Alice Marlow arrived" in (prefix or "")
+                out["relations"] = [{"a": "Alice Marlow", "label": "engaged to" if first else "Wife of", "b": "Ezra Pike",
+                                     "p": 4 if first else 2, "kind": "romance" if first else "friendship"}]
+            return out
+    ix, _, _ = _run(book_path, tmp_path, llm=Wed())
+    first, second = ix["relations"][0], ix["relations"][-1]
+    assert (second["label"], second["kind"]) == ("wife of", "family") and second["replaces"] == [first["id"]]
+
+
+def test_a_courtship_and_a_wife_tie_in_one_passage_keep_the_wife(book_path, tmp_path):
+    class Both(FakeLLM):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "new" in schema.get("properties", {}):
+                out = json.loads(json.dumps(out))
+                out["relations"] = [
+                    {"a": "Alice Marlow", "label": "engaged to", "b": "Ezra Pike", "p": 4, "kind": "romance"},
+                    {"a": "Alice Marlow", "label": "wife of", "b": "Ezra Pike", "p": 2, "kind": "family"}]
+            return out
+    ix, _, report = _run(book_path, tmp_path, llm=Both())
+    labels = [r["label"] for r in ix["relations"]]
+    assert "wife of" in labels and "engaged to" not in labels
+
+
+def _family_chain(*chapters):
+    """Family ties per chapter (the fake model's two chapters): each a list of (a, label, b, kind)."""
+    class Chain(FakeLLM):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "new" in schema.get("properties", {}):
+                out = json.loads(json.dumps(out))
+                first = "Alice Marlow arrived" in (prefix or "")
+                ch = chapters[0 if first else 1]
+                ident = (lambda n: n) if first else (lambda n: n.lower().replace(" ", "-"))   # later chapters name ids
+                out["relations"] = [{"a": ident(a), "label": label, "b": ident(b), "p": 2 if i or not first else 4, "kind": kind}
+                                    for i, (a, label, b, kind) in enumerate(ch)]
+            return out
+    return Chain()
+
+
+def _current_labels(ix):
+    gone = {x for r in ix["relations"] for x in r.get("replaces", [])}
+    return [r["label"] for r in ix["relations"] if r["id"] not in gone]
+
+
+def test_cousins_who_marry_keep_both_ties(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "cousin of", "Ezra Pike", "family")], [("Alice Marlow", "wife of", "Ezra Pike", "family")]))
+    assert _current_labels(ix) == ["cousin of", "wife of"]
+    assert all("replaces" not in r for r in ix["relations"])
+
+
+def test_a_wife_tie_retires_the_engagement(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "engaged to", "Ezra Pike", "romance")], [("Alice Marlow", "wife of", "Ezra Pike", "family")]))
+    assert _current_labels(ix) == ["wife of"]
+
+
+def test_a_half_brother_tie_replaces_a_brother_tie(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "brother of", "Tom Marlow", "family")], [("Alice Marlow", "half-brother of", "Tom Marlow", "friendship")]))
+    assert _current_labels(ix) == ["half-brother of"]
+
+
+def test_one_passage_keeps_a_tie_per_role(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
+        [("Alice Marlow", "cousin of", "Ezra Pike", "family"), ("Alice Marlow", "wife of", "Ezra Pike", "family")], []))
+    assert sorted(_current_labels(ix)) == ["cousin of", "wife of"]

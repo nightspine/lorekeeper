@@ -196,3 +196,21 @@
   .g-legend-note { margin-left: 0; }
   .g-spacer { display: none; }
 }
+
+/* ---------- Family trees: the gated kinship ties as generations ----------
+   Flat dots in the type colour, hairlines, a heavier bar between spouses. No glow. */
+.g-trees { flex: 1; min-height: 560px; }
+.g-trees-chip .n { color: var(--text-3); font-weight: 600; }
+.g-trees .t-name { font: 700 var(--text-xl) var(--font-ui); fill: var(--text); letter-spacing: -.01em; }
+.g-trees .t-count { font: 500 var(--text-ui) var(--font-ui); fill: var(--text-3); }
+.g-trees .t-label { font: 500 var(--text-md) var(--font-ui); fill: var(--text-2); paint-order: stroke; stroke: var(--sea); stroke-width: 3px; stroke-linejoin: round; pointer-events: none; }
+.g-trees .t-node.sel .t-label, .g-trees .t-node:hover .t-label, .g-trees .t-node:focus-visible .t-label { fill: var(--text); font-weight: 700; }
+.g-trees .t-node .g-shape { stroke: none; }
+.g-trees .t-line { fill: none; stroke: color-mix(in srgb, var(--text) 38%, transparent); stroke-width: 1.4px; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.g-trees .t-link.spouse .t-line { stroke-width: 2.4px; }
+.g-trees .t-link.dashed .t-line { stroke-dasharray: 5 5; }
+.g-trees .t-link.old .t-line { stroke-dasharray: 2 5; }
+.g-trees .t-link.lit .t-line { stroke: var(--beacon); }
+.g-trees .t-link:hover .t-line { stroke: var(--text-2); }
+.g-trees .t-hit { fill: none; stroke: transparent; stroke-width: 14px; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
+.g-trees-stage .g-legend .l-rel { border-top: 2px solid color-mix(in srgb, var(--text) 38%, transparent); }

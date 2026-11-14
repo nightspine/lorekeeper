@@ -9,6 +9,8 @@
 // (SPEC.md §7.4).
 import { clear, describe, foldList, h, icon, TYPE_LABEL, TYPE_PLURAL } from "./dom.js";
 import { archipelago, fit as fitMap, loadLibs, shape, zoomBy } from "./islands.js";
+import { families } from "./kinship.js";
+import { fitTo as fitTrees, treesStage, zoomTrees } from "./trees.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 const NS = "http://www.w3.org/2000/svg";
@@ -169,6 +171,11 @@ function hops(root, edges, max) {
 export function renderConnections(panel, ctx) {
   const { view, types, gs } = ctx;
   const graph = buildGraph(view, ctx.chapterMentions);
+  // Family trees: a chip that exists only while the view holds a family (and the book is not self-help).
+  if (gs.trees === undefined) gs.trees = (() => { try { return localStorage.getItem("lk-map-trees") === "1"; } catch { return false; } })();
+  const fams = families(view, { history: Boolean(gs.history) });
+  const treesOn = Boolean(gs.trees) && fams.length > 0 && !gs.list && gs.mode !== "focus";
+  const treeIds = new Set(fams.flatMap((f) => f.members));
   gs.pos ||= new Map();
   const laid = new Set(layout(graph, gs.pos));
   if (gs.sel && !graph.ents.has(gs.sel)) gs.sel = null;   // moved back before it was revealed
@@ -207,7 +214,7 @@ export function renderConnections(panel, ctx) {
     edges = edges.filter(visibleEdge);
   }
   shown = new Set([...shown].filter((id) => degree(id) > 0 || id === gs.sel));
-  const sel = gs.sel && shown.has(gs.sel) ? gs.sel : null;
+  const sel = treesOn ? (gs.sel && treeIds.has(gs.sel) ? gs.sel : null) : (gs.sel && shown.has(gs.sel) ? gs.sel : null);
   const focus = gs.mode === "focus" && sel;
   const dist = sel ? hops(sel, edges, gs.hops) : null;
   const inHood = (id) => !dist || dist.has(id);
@@ -251,11 +258,11 @@ export function renderConnections(panel, ctx) {
     if (hi >= 0) search.setAttribute("aria-activedescendant", optId(hi)); else search.removeAttribute("aria-activedescendant");
   };
   const closeList = () => { found = []; hi = -1; matches.hidden = true; clear(matches); search.setAttribute("aria-expanded", "false"); search.removeAttribute("aria-activedescendant"); };
-  const pickMatch = (id) => { gs.q = ""; search.value = ""; closeList(); select(id); };
+  const pickMatch = (id) => { gs.q = ""; search.value = ""; closeList(); if (treesOn) gs.treeTo = id; select(id); };
   search.addEventListener("input", () => {
     gs.q = search.value;
     const q = gs.q.trim().toLowerCase();
-    found = q ? [...laid].map((id) => graph.ents.get(id)).filter((e) => [e.name, ...e.aliases].some((n) => n.toLowerCase().includes(q))).slice(0, 7) : [];
+    found = q ? [...laid].filter((id) => !treesOn || treeIds.has(id)).map((id) => graph.ents.get(id)).filter((e) => [e.name, ...e.aliases].some((n) => n.toLowerCase().includes(q))).slice(0, 7) : [];
     hi = -1;
     matches.hidden = !found.length;
     search.setAttribute("aria-expanded", String(found.length > 0));
@@ -296,7 +303,7 @@ export function renderConnections(panel, ctx) {
     h("input", { type: "checkbox", "data-k": k, checked: Boolean(gs[k]), on: { change: (ev) => { gs[k] = ev.target.checked; refocus(k); ctx.repaint(); } } }), h("span", label));
   const seg = (items, key) => h("div.seg", { role: "group", "aria-label": key === "hops" ? "Reach" : "View" }, items.map(([v, label, on, off]) => h("button", { type: "button", "data-k": `${key}-${v}`,
     "aria-pressed": String(key === "hops" ? gs.hops === v : on), disabled: off ? true : null, title: off ? "Select something first" : null,
-    on: { click: () => { if (key === "hops") gs.hops = v; else { gs.list = v === "list"; if (v !== "list") gs.mode = v; } refocus(`${key}-${v}`); ctx.repaint(); } } }, label)));
+    on: { click: () => { if (key === "hops") gs.hops = v; else { gs.list = v === "list"; if (v !== "list") gs.mode = v; if (v !== "map") gs.trees = false; } refocus(`${key}-${v}`); ctx.repaint(); } } }, label)));
   const row = (label, ...kids) => h("div.g-d-row", h("div.g-d-label", label), h("div.g-d-ctl", ...kids));
   const dispId = `g-display-${Math.random().toString(36).slice(2, 8)}`;
   const dispBtn = h("button.btn.g-display-btn", { type: "button", "aria-expanded": String(Boolean(gs.dispOpen)), "aria-controls": dispId, "aria-haspopup": "dialog",
@@ -334,7 +341,14 @@ export function renderConnections(panel, ctx) {
   const summary = [gs.hops === 2 ? "2 steps" : null, gs.together ? "together" : null, gs.history ? "history" : null, islands && gs.things ? "places & things" : null,
     !islands && gs.hideMinor ? "hide minor" : null, types.size && types.size < present.length ? `${types.size} of ${present.length} types` : null, gs.list ? "list" : null].filter(Boolean).join(", ");
   const toolbar = h("div.g-toolbar",
-    h("div.filters", h("div.search.g-search", icon("search"), search, matches)),
+    h("div.filters", h("div.search.g-search", icon("search"), search, matches),
+      fams.length ? h("button.chip.g-trees-chip", { type: "button", "aria-pressed": String(Boolean(gs.trees)), title: "Draw each family as a tree",
+        on: { click: () => {
+          gs.trees = !gs.trees;
+          if (gs.trees) { gs.mode = "map"; gs.list = false; }
+          try { localStorage.setItem("lk-map-trees", gs.trees ? "1" : "0"); } catch {}
+          ctx.repaint();
+        } } }, h("span", h("span.g-long", "Family "), "trees"), h("span.n", String(fams.length))) : null),
     h("div.g-display", h("span.g-summary", { "aria-live": "polite" }, summary), dispBtn, dispPanel));
 
   function select(id) { gs.sel = id; if (id && types.size && !types.has(graph.ents.get(id).type)) types.add(graph.ents.get(id).type); ctx.repaint(); }
@@ -393,7 +407,7 @@ export function renderConnections(panel, ctx) {
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
         h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
       h("div.g-actions",
-        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; ctx.repaint(); } } },
+        h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; if (gs.mode === "focus") gs.trees = false; ctx.repaint(); } } },
           icon(focus ? "layers" : "eye"), focus ? "Full map" : "Focus"),
         h("button.btn", { type: "button", on: { click: (ev) => ctx.openEntity(sel, ev.currentTarget) } }, icon("person"), "Open details")),
       desc, moreDesc,
@@ -416,6 +430,29 @@ export function renderConnections(panel, ctx) {
         const e = graph.ents.get(id);
         return h("li", h("button", { type: "button", on: { click: () => select(id) } }, h(`span.g-swatch.t-${e.type}`), h("span", e.name), h("span.hint", TYPE_LABEL[e.type])));
       }))) : null);
+  }
+
+  // ---- family trees ----------------------------------------------------------------------------
+  if (treesOn) {
+    const zb = (label, ic, fn) => h("button.icon-btn.small", { type: "button", "aria-label": label, title: label, on: { click: fn } }, ic);
+    let wrapEl = null;
+    const head = h("div.g-stage-head", h("h3", "Family trees"),
+      h("span.hint", "Only the ties you have read so far."),
+      h("span.g-zoom", zb("Zoom in", h("b", "+"), () => wrapEl && zoomTrees(wrapEl, 1.4)), zb("Zoom out", h("b", "−"), () => wrapEl && zoomTrees(wrapEl, 0.7)),
+        zb("Fit everything", icon("layers"), () => wrapEl && fitTrees(wrapEl))));
+    const legend = h("div.g-legend", { role: "note", "aria-label": "Legend" },
+      h("span", h("i.l-rel"), "Parent, child, spouse"),
+      h("span", h("i.l-old"), "In-law, step, foster or unclear"),
+      gs.history ? h("span", h("i.l-old"), "Earlier tie") : null,
+      h("span.g-legend-note", "Ctrl-scroll or pinch to zoom. Cousins and nephews are placed by the ties you have read."));
+    if (!window.d3) {
+      loadLibs().then(() => ctx.repaint(), (err) => clear(panel, h("div.notice.warn", icon("alert"), h("div", "The trees couldn't load: ", err.message))));
+      return clear(panel, toolbar, h("div.g-body", h("div.g-stage", head, h("div.empty", h("p", "Drawing the trees…")), legend), side));
+    }
+    const focusId = gs.treeTo || null;
+    gs.treeTo = null;
+    wrapEl = treesStage({ gs, fams, ents: graph.ents, sel, select: (id) => select(id), focusId });
+    return clear(panel, toolbar, h("div.g-body", h("div.g-stage.g-trees-stage", head, wrapEl, legend), side));
   }
 
   // ---- list view -------------------------------------------------------------------------
