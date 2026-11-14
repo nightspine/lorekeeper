@@ -60,7 +60,7 @@ def test_tag_and_ties_command(tmp_path, capsys):
     path = tmp_path / "x.json"
     path.write_text(json.dumps(doc))
     n = kinship.tag(json.loads(path.read_text()))
-    assert n["tagged"] >= 1 and n["left"] == 1 and n["normalised"] == 2
+    assert n["tagged"] >= 1 and n["left"] == 1 and n["normalised"] == 1
     assert cli.main(["ties", str(path)]) == 0
     assert json.loads(path.read_text()) == doc                      # dry run writes nothing
     assert cli.main(["ties", str(path), "--write"]) == 0
@@ -68,3 +68,12 @@ def test_tag_and_ties_command(tmp_path, capsys):
     assert (out["kx1"]["label"], out["kx1"]["kind"]) == ("wife of", "family")
     assert "kind" not in out["kx2"] and out["kx3"]["kind"] == "friendship"
     assert json.loads(path.with_name("x.json.bak").read_text()) == doc
+
+
+def test_tag_leaves_a_tie_of_another_kind_alone():
+    from lorekeeper import kinship
+    doc = {"relations": [{"label": "Half–brother of", "kind": "friendship"}, {"label": "half–sister of"}]}
+    n = kinship.tag(doc)
+    assert doc["relations"][0] == {"label": "Half–brother of", "kind": "friendship"}
+    assert doc["relations"][1] == {"label": "half sister of", "kind": "family"}
+    assert (n["left"], n["tagged"], n["normalised"]) == (1, 1, 1)

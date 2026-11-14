@@ -1222,6 +1222,13 @@ class Generator:
             canon = kinship.normalize(r.get("label"))
             if canon:
                 rels[i] = {**r, "label": canon, "kind": "family"}
+        # A spouse label and a romance tie for one pair in the same passage ("engaged to" + "wife of"): keep the spouse tie.
+        pair_of = lambda r: frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold()))
+        spouses = {pair_of(r) for r in rels if kinship.is_spouse(r.get("label"))}
+        n_rels = len(rels)
+        rels = [r for r in rels if not (r.get("kind") == "romance" and pair_of(r) in spouses
+                                        and not kinship.is_spouse(r.get("label")))]
+        self.stats["dropped: second tie for a pair"] += n_rels - len(rels)
         latest: dict[tuple, int] = {}
         for i, r in enumerate(rels):
             k = (frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold())), r.get("kind"))

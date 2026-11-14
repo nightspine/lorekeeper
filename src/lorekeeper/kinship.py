@@ -59,6 +59,7 @@ def parse(label) -> dict | None:
     if not isinstance(label, str):
         return None
     s = label.casefold().replace("’", "'").strip()
+    s = re.sub("[\u2010-\u2015]", "-", s)   # hyphen, en and em dashes all join like a hyphen
     s = re.sub(r"[-\s]+", " ", s)
     s = re.sub(r" in law\b", " in-law", s)
     if "," in s or ";" in s:
@@ -124,20 +125,19 @@ def tag(doc: dict) -> dict:
         if p is None:
             continue
         changed = False
+        kind = r.get("kind")
+        if kind not in (None, "family") and not (kind == "romance" and p["role"] == "spouse"):
+            n["left"] += 1   # another kind: the tie is left entirely alone, label included
+            continue
         canon = normalize(r["label"])
         if canon != r["label"]:
             r["label"] = canon
             n["normalised"] += 1
             changed = True
-        kind = r.get("kind")
-        if kind == "family":
-            pass
-        elif kind is None or (kind == "romance" and p["role"] == "spouse"):
+        if kind != "family":
             r["kind"] = "family"
             n["tagged"] += 1
             changed = True
-        else:
-            n["left"] += 1
-        if not changed and kind == "family":
+        if not changed:
             n["same"] += 1
     return n
