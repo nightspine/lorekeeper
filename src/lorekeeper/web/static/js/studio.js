@@ -428,7 +428,7 @@ export function mountStudio(root) {
   };
   // "15 min ago" within a day, then a short date: the column stays narrow.
   const when = (t) => (Date.now() / 1000 - t < 86400 ? relTime(t) : new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
-  const rowCells = (j) => [h("span.subtle", (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
+  const rowCells = (j) => [h("span.subtle", { title: j.config.model || "default model" }, (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
   let tableSig = "";
   /** The runs table. A poll that only changes a run's state or progress updates those cells in place, so focus and
    *  the open fold survive; a new or removed run rebuilds the rows. */
@@ -453,7 +453,7 @@ export function mountStudio(root) {
     const rows = ctx.jobs.map((j) => {
       const here = ctx.view === "job" && ctx.id === j.id;
       return h(`tr${here ? ".selected" : ""}`, { dataset: { id: j.id }, on: { click: (ev) => { if (!ev.target.closest("a")) location.hash = `#/studio/job/${j.id}`; } } },
-        h("td.c-book", h("a", { href: `#/studio/job/${j.id}`, "aria-current": here ? "true" : null }, j.book_title)),
+        h("td.c-book", h("a", { href: `#/studio/job/${j.id}`, title: j.book_title, "aria-current": here ? "true" : null }, j.book_title)),
         ...rowCells(j).map((c, i) => h(`td${["", ".c-state", ".c-part.num", ".c-when.subtle"][i]}`, c)));
     });
     const table = (trs) => h("div.table-wrap", h("table.data.runs",

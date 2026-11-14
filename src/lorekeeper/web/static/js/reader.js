@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { rememberReading } from "./reading.js";
-import { announce, clear, describe, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -199,9 +199,46 @@ export function mountReader(root) {
         try { s.prevIds = idsAt(last); prev = last; } catch {}
       }
     }
-    setP(p, first ? (prev != null ? { prev } : { quiet: true }) : {});
-    if (!first) announce("Position updated from Book Orbit");
-    writeLast(p);
+    const apply = () => {
+      setP(p, first ? (prev != null ? { prev } : { quiet: true }) : {});
+      if (!first) announce("Position updated from Book Orbit");
+      writeLast(p);
+    };
+    // An edit form with typed text keeps the entry as it is: the synced position waits until the form is
+    // saved, discarded or closed (applyPending), so the entry never shows what the position no longer reveals.
+    if (drawerDirty()) { pendingMove = apply; return; }
+    apply();
+  }
+
+  // ---- moves while an edit form holds typed text ---------------------------------------------
+  // A deliberate move asks "Discard what you wrote?" first and stays put on "Keep editing"; an automatic one
+  // (the Book Orbit sync) waits in pendingMove until the form is resolved.
+  let pendingMove = null, asking = null;
+  /** Resolves true when the move may go ahead (nothing typed, or the person discards it). */
+  function okToMove() {
+    if (!drawerDirty()) return Promise.resolve(true);
+    if (asking) return asking;
+    asking = confirmDialog({ title: "Discard what you wrote?", message: "Moving your position closes the form you were editing.",
+      confirmLabel: "Discard", cancelLabel: "Keep editing" }).then((ok) => {
+      asking = null;
+      if (ok && s.drawer) openDrawer(s.drawer, { refresh: true });   // drops the forms; the move then refreshes or closes the entry
+      return ok;
+    });
+    return asking;
+  }
+  /** After a click or key in the entry: once no form holds typed text, a waiting sync is applied. */
+  function applyPending() {
+    if (!pendingMove || drawerDirty()) return;
+    const run = pendingMove;
+    pendingMove = null;
+    run();
+  }
+  const checkPending = () => setTimeout(applyPending, 0);
+  /** Put the ruler back where the position is (a move that was refused). */
+  function rulerBack() {
+    el.range.value = String(Math.round(s.p * 1000));
+    el.pctInput.value = String(Math.round(s.p * 100));
+    el.chapSel.value = "";
   }
 
   let pollTimer;
@@ -226,6 +263,7 @@ export function mountReader(root) {
   }
   /** Every deliberate move goes through here. Past Book Orbit's line it asks first; "no" returns to the line. */
   async function moveTo(p) {
+    if (!(await okToMove())) { rulerBack(); return; }
     const line = aheadLine();
     if (line != null && p > line + 1e-9) {
       const t = s.sync.updatedAt ? Date.parse(s.sync.updatedAt) / 1000 : NaN;
@@ -240,8 +278,8 @@ export function mountReader(root) {
     markOverride();
     setP(p);
   }
-  function backToSynced() {
-    if (!s.sync.on) return;
+  async function backToSynced() {
+    if (!s.sync.on || !(await okToMove())) return;
     s.sync.override = false; s.sync.ahead = false; s.sync.wantAhead = null;
     setP(s.sync.p);
     writeLast(s.sync.p);
@@ -313,7 +351,7 @@ export function mountReader(root) {
     el.headFacts = h("span.rd-cover");
     const head = h("header.page-head.rd-head",
       h("div.rd-title", h("h1", s.doc.work.title), el.headLine),
-      h("div.reader-switch", editButton(), h("button.btn.quiet.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
+      el.headActions = h("div.reader-switch", editButton(), h("button.btn.quiet.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
     paintHead();
     wrap.classList.toggle("editing", s.edit);
 
@@ -337,6 +375,12 @@ export function mountReader(root) {
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
     el.range.addEventListener("input", () => {
       const want = +el.range.value / 1000;
+      // Typed text in an edit form: the ruler stays put until the person says to discard it.
+      if (drawerDirty()) {
+        rulerBack();
+        okToMove().then((ok) => { if (ok) moveTo(want); });
+        return;
+      }
       const line = aheadLine();
       if (line != null && want > line + 1e-9) {
         el.range.value = String(Math.round(line * 1000));
@@ -379,7 +423,8 @@ export function mountReader(root) {
     el.panel = h("div.rd-panel", { role: "tabpanel", id: "panel-view", tabindex: "0" });
     // The entry opens beside the list (1101px and up); below that it is the modal drawer.
     el.pane = h("aside.entry-pane.drawer", { role: "complementary", "aria-labelledby": "drawer-title", hidden: true,
-      on: { input: markDirty, change: markDirty, keydown: (ev) => { if (ev.key === "Escape" && !ev.defaultPrevented) { ev.preventDefault(); requestCloseDrawer(); } } } });
+      on: { input: markDirty, change: markDirty, click: checkPending, keyup: checkPending,
+        keydown: (ev) => { if (ev.key === "Escape" && !ev.defaultPrevented) { ev.preventDefault(); requestCloseDrawer(); } } } });
     // The Connections tab's side panel sits in the same right-hand place as the entry.
     el.mapSide = h("div.map-side");
     el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
@@ -406,6 +451,7 @@ export function mountReader(root) {
       const at = anchor ? s.map.anchorPos(anchor) : null;   // something new just ahead: read up to it so it shows
       if (Number.isFinite(at) && at > s.p) await moveTo(at);
       if (s.drawer) openDrawer(s.drawer, { refresh: true });   // the drawer shows the index as it is now
+      checkPending();
     },
   });
   function setEdit(on) {
@@ -472,7 +518,8 @@ export function mountReader(root) {
     saveUrl();
   }
 
-  function stepReveal(dir) {
+  async function stepReveal(dir) {
+    if (dir < 0 && !(await okToMove())) return;   // forward goes through moveTo, which asks
     const cur = s.map.frontier(s.p);
     const positions = [...new Set(s.map.eff.filter(Number.isFinite))].sort((a, b) => a - b);
     if (dir > 0) {
@@ -543,7 +590,7 @@ export function mountReader(root) {
   async function switchBook(k) {
     const target = s.lib.indexes.find((i) => i.series?.id === s.series.id && i.series.book === k
       && s.seriesDocs.get(k) && i.id === s.seriesDocs.get(k).id);
-    if (!target) return;
+    if (!target || !(await okToMove())) return;
     const was = s.finished;
     s.finished = null;
     if (await load(target.key, { book: k })) saveUrl(); else s.finished = was;
@@ -748,7 +795,7 @@ export function mountReader(root) {
       h("span.ent-fact", about || h("span.subtle", "Named, but nothing more is known yet.")),
       h("span.ent-meta",
         from ? h("span.book-label.ent-from", { title: sleeping ? "Met in an earlier book; not in this one yet" : "Met in an earlier book" }, `from ${bookShort(from)}`) : null,
-        h("span.num", String(e.facets.length)), e.facets.length === 1 ? " detail" : " details",
+        e.facets.length ? [h("span.num", String(e.facets.length)), e.facets.length === 1 ? " detail" : " details"] : null,
         e.history.length ? h("span.hist", { title: `${e.history.length} earlier impression${e.history.length === 1 ? "" : "s"}` }, icon("refresh")) : null));
     if (fresh) rowEl.addEventListener("animationend", () => rowEl.classList.remove("arrive"), { once: true });
     return rowEl;
@@ -767,12 +814,6 @@ export function mountReader(root) {
     return out;
   }
 
-  const MINOR = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to", "with"]);
-  /** "CHAPTER III. THE LAURISTON GARDENS MYSTERY" → "Chapter III. The Lauriston Gardens Mystery" (roman numerals kept). */
-  const tidyTitle = (t) => (t && t === t.toUpperCase() && /[A-Z]{4}/.test(t)
-    ? t.toLowerCase().replace(/[\p{L}']+/gu, (w, i, all) => (i && MINOR.has(w) && !/[.:]\s*$/.test(all.slice(0, i)) ? w : w[0].toUpperCase() + w.slice(1)))
-      .replace(/\b(Chapter|Part|Book) ([ivxlc]+)\b/gi, (_, a, n) => `${a} ${n.toUpperCase()}`).replace(/\.$/, "")
-    : t);
 
   /** Entities named in a piece of text: whole names and aliases, or a surname no other entity shares. */
   function mentions(text) {
@@ -1073,6 +1114,7 @@ export function mountReader(root) {
     if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); }
     if (el.pane && !el.pane.hidden) { el.pane.hidden = true; clear(el.pane); el.split.classList.remove("has-entry"); }
     markOpenRow();
+    checkPending();
     if (!focus) return;
     // The list repaints as the position moves, so the row it came from may be a new element by now.
     const row = lastFocus && document.contains(lastFocus) ? lastFocus : id ? el.panel?.querySelector(`[data-ent="${CSS.escape(id)}"]`) : null;
@@ -1107,8 +1149,12 @@ export function mountReader(root) {
   /** On a phone the ruler is one line; the chapter select and the percent field go to the line under it. */
   function placeJump() {
     if (!el.jump) return;
-    const target = matchMedia("(max-width: 640px)").matches ? el.sub : el.position;
+    const phone = matchMedia("(max-width: 640px)").matches;
+    const target = phone ? el.sub : el.position;
     if (el.jump.parentNode !== target) target.append(el.jump);
+    // On a phone the head row goes (the app bar has the title): Edit and Switch book end the jump row.
+    const actionsAt = phone ? el.jump : el.headActions?.parentNode === el.jump ? wrap.querySelector(".rd-head") : null;
+    if (actionsAt && el.headActions && el.headActions.parentNode !== actionsAt) actionsAt.append(el.headActions);
   }
   // The width can cross 1100px with an entry open: move it to the other form.
   let modeWas = paneMode();
@@ -1117,11 +1163,44 @@ export function mountReader(root) {
     const now = paneMode();
     if (now !== modeWas) {
       modeWas = now;
-      if (s.drawer && !drawerDirty()) { const id = s.drawer; closeDrawer({ focus: false }); openDrawer(id); }
+      if (s.drawer) moveEntry(now);
       if (s.tab === "links" && el.panel) paintTabs();
     }
   };
   window.addEventListener("resize", onResize);
+
+  /** Move the open entry between the pane and the modal drawer as it is: the same nodes, so typed text, open
+   *  folds and listeners come along. */
+  function moveEntry(toPane) {
+    const dlg = document.querySelector("dialog.drawer");
+    const from = toPane ? dlg : (!el.pane.hidden ? el.pane : null);
+    if (!from) return;
+    const nodes = [...from.childNodes];
+    const type = [...from.classList].find((c) => c.startsWith("t-"));
+    if (toPane) {
+      dlg.removeEventListener("close", onDialogClose);
+      if (dlg.open) dlg.close();
+      dlg.remove();
+      el.pane.className = `entry-pane drawer ${type || ""}`;
+      el.pane.hidden = false;
+      el.pane.append(...nodes);
+      el.pane.setAttribute("aria-label", el.pane.querySelector("#drawer-title")?.textContent || "");
+      el.split.classList.add("has-entry");
+      markOpenRow();
+    } else {
+      el.pane.hidden = true;
+      el.split.classList.remove("has-entry");
+      const d = h(`dialog.drawer${type ? `.${type}` : ""}`, { "aria-labelledby": "drawer-title",
+        on: { input: markDirty, change: markDirty, click: (ev) => { checkPending(); if (ev.target === d) requestCloseDrawer(); }, keyup: checkPending, close: onDialogClose,
+          cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } } } }, nodes);
+      document.body.append(d);
+      d.showModal();
+      markOpenRow();
+    }
+    // Keep focus inside the entry: the field being typed in, else the heading.
+    const target = (toPane ? el.pane : document.querySelector("dialog.drawer"));
+    (target.querySelector("[data-dirty='1'] textarea, [data-dirty='1'] input") || target.querySelector("#drawer-title"))?.focus({ preventScroll: true });
+  }
 
   function openDrawer(id, { from = null, refresh = false, discard = false, keepFocus = false } = {}) {
     // Opening another entry with unsaved text in the open one asks first.
@@ -1203,7 +1282,7 @@ export function mountReader(root) {
     }
     dlg?.remove();
     dlg = h(`dialog.drawer.t-${e.type}`, { "aria-labelledby": "drawer-title",
-      on: { input: markDirty, change: markDirty, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
+      on: { input: markDirty, change: markDirty, click: checkPending, keyup: checkPending, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
         click: (ev) => { if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
     dlg.showModal();

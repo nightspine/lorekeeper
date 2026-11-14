@@ -3,17 +3,19 @@
 main[data-route="studio"] { padding: 0; }
 .studio { min-width: 0; }
 .runs-count { margin: 0; color: var(--text-3); }
-.runs-split { display: grid; grid-template-columns: 500px minmax(0, 1fr); align-items: start; background: linear-gradient(to right, transparent 499px, var(--line) 499px 500px, var(--pane) 500px); min-height: calc(100vh - var(--topbar-h) - 61px); }
+.runs-split { display: grid; grid-template-columns: 640px minmax(0, 1fr); align-items: start; background: linear-gradient(to right, transparent 639px, var(--line) 639px 640px, var(--pane) 640px); min-height: calc(100vh - var(--topbar-h) - 61px); }
 .runs-split:has(> .studio-side:empty) { grid-template-columns: minmax(0, 1fr); background: none; }
 .studio-side { position: sticky; top: var(--topbar-h); max-height: calc(100vh - var(--topbar-h)); overflow: auto; min-width: 0; }
 .studio-side:empty { display: none; }
 .studio-main { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 28px 40px; }
 table.runs { table-layout: fixed; }
 .runs :is(th, td):first-child { padding-left: 28px; }
-.runs th:nth-child(2) { width: 92px; }
-.runs th:nth-child(3) { width: 98px; }
-.runs th:nth-child(4) { width: 92px; }
-.runs th:nth-child(5) { width: 84px; }
+/* Book takes the ellipsis (its full title is the link's tooltip); State and Progress never truncate. */
+.runs th:nth-child(2) { width: 150px; }
+.runs th:nth-child(3) { width: 100px; }
+.runs th:nth-child(4) { width: 112px; }
+.runs th:nth-child(5) { width: 98px; }
+.runs td:is(.c-state, .c-part) { overflow: visible; text-overflow: clip; }
 .runs td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
 .runs td.c-book a { color: var(--text); font-weight: 600; }
 .runs td.c-book a:hover { text-decoration: underline; }
@@ -129,10 +131,13 @@ details.advanced .advanced-body { display: grid; gap: var(--space-4); padding-bo
 .console .ln.warn { color: var(--console-warn); }
 .console .ln.dim { color: var(--console-dim); }
 
-@media (max-width: 1100px) {
+/* Below about 1320px the table and a readable monitor don't fit side by side: the monitor goes under the table. */
+@media (max-width: 1320px) {
   .runs-split { grid-template-columns: minmax(0, 1fr); background: none; }
   .studio-side { position: static; max-height: none; border-bottom: 1px solid var(--line); }
   .studio-main { background: none; }
+}
+@media (max-width: 1100px) {
   .split { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 640px) {

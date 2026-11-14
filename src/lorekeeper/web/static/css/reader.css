@@ -272,8 +272,10 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 /* ---------- small screens ---------- */
 @media (max-width: 640px) {
   /* The head is one line under the app bar (which already shows the title): the author line and two icon buttons. */
-  .rd-head { min-height: 0; padding: 6px 8px 6px 16px; }
-  .rd-title h1 { display: none; }
+  /* No head row on a phone: the app bar has the title, Edit and Switch book end the jump row (placeJump). */
+  .rd-head { display: none; }
+  .ruler-sub .reader-switch { margin-left: 0; flex: none; }
+  .ruler-sub .jump-group { flex: 1 1 0; min-width: 0; }
   .switch-book, .edit-toggle { width: 44px; min-height: 44px; padding: 0; justify-content: center; }
   .switch-book .btn-lbl, .edit-toggle .btn-lbl { display: none; }
   /* The ruler is one sticky line: percentage, chapter, the track and the step buttons. The chapter select and the
@@ -285,7 +287,6 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .track { min-width: 60px; }
   .ruler-sub { padding: 6px 16px; }
   .ruler-sub .chsel { flex: 1 1 140px; width: 0; min-width: 0; }   /* the long chapter names must not set the width */
-  .ruler-sub .jump-group { flex: 1 1 100%; }
   .pos-hint { display: none; }
   .pos-series { padding: 8px 16px; }
   .rd-list { padding: 0 16px 32px; }

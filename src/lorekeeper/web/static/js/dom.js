@@ -213,3 +213,20 @@ export function announce(message) {
 export function describe(e) {
   return e.profile?.text || e.facets[0]?.text || "";
 }
+
+const MINOR = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to", "with"]);
+const ROMAN = /^(?=[ivxlcdm]+$)m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/;
+/** "CHAPTER VIII MINA MURRAY'S JOURNAL" → "Chapter VIII Mina Murray's Journal". A title in capitals is title-cased:
+ *  a word starts after a space, a dash or an opening quote (never after an apostrophe), small words stay small
+ *  unless they open the title or follow a full stop or colon, roman numerals stay capitals, a trailing full stop
+ *  goes. Anything not in capitals is returned as it is. */
+export function tidyTitle(t) {
+  if (!t || t !== t.toUpperCase() || !/[A-Z]{4}/.test(t)) return t;
+  return t.toLowerCase().replace(/\p{L}[\p{L}'’]*/gu, (w, i, all) => {
+    const before = all.slice(0, i);
+    // A numeral after Chapter, Part, Book, Volume, Act or Scene, or one that opens the title ("IV. The Visit").
+    if (ROMAN.test(w) && (/\b(chapter|part|book|volume|act|scene)\s+$/.test(before) || (i === 0 && /^[.:\s]/.test(all.slice(w.length))))) return w.toUpperCase();
+    if (i && MINOR.has(w) && /\s$/.test(before) && !/[.:;!?]\s*$/.test(before)) return w;
+    return w[0].toUpperCase() + w.slice(1);
+  }).replace(/\.$/, "");
+}
