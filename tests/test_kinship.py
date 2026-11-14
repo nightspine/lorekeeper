@@ -41,3 +41,30 @@ def test_normalize():
         a, b = kinship.parse(n), kinship.parse(label)
         assert (a["role"], a["modifiers"]) == (b["role"], b["modifiers"]), label
         assert kinship.normalize(n) == n
+
+
+def test_tag_and_ties_command(tmp_path, capsys):
+    import json
+    import shutil
+    from pathlib import Path
+
+    from lorekeeper import cli
+    src = Path(__file__).parent.parent / "examples" / "sherlock-holmes" / "sign-of-four.json"
+    doc = json.loads(src.read_text())
+    ents = [e["id"] for e in doc["entities"]][:4]
+    doc["relations"] += [
+        {"id": "kx1", "src": ents[0], "dst": ents[1], "label": "Is Wife of", "from": doc["relations"][0]["from"], "basis": "stated", "kind": "romance"},
+        {"id": "kx2", "src": ents[1], "dst": ents[2], "label": "possible father of", "from": doc["relations"][0]["from"], "basis": "stated"},
+        {"id": "kx3", "src": ents[2], "dst": ents[3], "label": "half-brother of", "from": doc["relations"][0]["from"], "basis": "stated", "kind": "friendship"},
+    ]
+    path = tmp_path / "x.json"
+    path.write_text(json.dumps(doc))
+    n = kinship.tag(json.loads(path.read_text()))
+    assert n["tagged"] >= 1 and n["left"] == 1 and n["normalised"] == 2
+    assert cli.main(["ties", str(path)]) == 0
+    assert json.loads(path.read_text()) == doc                      # dry run writes nothing
+    assert cli.main(["ties", str(path), "--write"]) == 0
+    out = {r["id"]: r for r in json.loads(path.read_text())["relations"]}
+    assert (out["kx1"]["label"], out["kx1"]["kind"]) == ("wife of", "family")
+    assert "kind" not in out["kx2"] and out["kx3"]["kind"] == "friendship"
+    assert json.loads(path.with_name("x.json.bak").read_text()) == doc

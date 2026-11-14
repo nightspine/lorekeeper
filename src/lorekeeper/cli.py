@@ -344,6 +344,37 @@ def cmd_profiles(args) -> int:
     return 0
 
 
+def cmd_ties(args) -> int:
+    """Tag the kinship ties of existing indexes `family` and write their labels in the canonical form."""
+    import shutil
+    from datetime import datetime, timezone
+
+    from . import kinship
+    changed = 0
+    for name in args.index:
+        path = Path(name)
+        doc = json.loads(path.read_text())
+        before = {str(e) for e in validate.check_index(doc) if e.level == "error"}
+        n = kinship.tag(doc)
+        print(f"{path.name}: {n['tagged']} kinship ties tagged, {n['normalised']} labels normalised, "
+              f"{n['left']} left alone")
+        if not (n["tagged"] or n["normalised"]):
+            continue
+        doc.setdefault("provenance", {})["updated"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        errs = [e for e in validate.check_index(doc) if e.level == "error" and str(e) not in before]
+        if errs:
+            print(f"error: {path.name} would become invalid: {errs[0]}", file=sys.stderr)
+            return 1
+        if args.write:
+            shutil.copy2(path, path.with_name(path.name + ".bak"))
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            tmp.replace(path)
+            changed += 1
+    print(f"wrote {changed} file(s); originals beside them as .bak" if args.write else "dry run: nothing written (use --write)")
+    return 0
+
+
 def cmd_portraits(args) -> int:
     """Rewrite profiles from every passage that mentions each entity (series reading order), in place."""
     import shutil
@@ -541,6 +572,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_profiles)
+
+    s = sub.add_parser("ties", help="tag kinship ties family and normalise their labels in existing indexes")
+    s.add_argument("index", nargs="+")
+    s.add_argument("--write", action="store_true", help="save the changes (a .bak copy is kept beside each file)")
+    s.set_defaults(fn=cmd_ties)
 
     s = sub.add_parser("portraits", help="rewrite profiles from every passage that mentions each entity (a cloud model)")
     s.add_argument("index", nargs="+", help="index files, in series reading order")

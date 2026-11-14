@@ -112,3 +112,32 @@ def normalize(label) -> str | None:
 def is_spouse(label) -> bool:
     p = parse(label)
     return bool(p and p["role"] == "spouse")
+
+
+def tag(doc: dict) -> dict:
+    """Bring the kinship ties of one index to the canonical form, in place: a label that parses is written
+    canonically and tagged `family` when it has no kind or is a spouse tie filed as `romance`. A parsed tie of
+    any other kind is left as it is. Returns counts: tagged, normalised, left (kept another kind), same (already right)."""
+    n = {"tagged": 0, "normalised": 0, "left": 0, "same": 0}
+    for r in doc.get("relations", []):
+        p = parse(r.get("label"))
+        if p is None:
+            continue
+        changed = False
+        canon = normalize(r["label"])
+        if canon != r["label"]:
+            r["label"] = canon
+            n["normalised"] += 1
+            changed = True
+        kind = r.get("kind")
+        if kind == "family":
+            pass
+        elif kind is None or (kind == "romance" and p["role"] == "spouse"):
+            r["kind"] = "family"
+            n["tagged"] += 1
+            changed = True
+        else:
+            n["left"] += 1
+        if not changed and kind == "family":
+            n["same"] += 1
+    return n
