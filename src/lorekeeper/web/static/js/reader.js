@@ -1,6 +1,6 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
-import { rememberReading } from "./reading.js";
+import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
@@ -72,7 +72,9 @@ export function mountReader(root) {
   const s = {
     lib: null, key: params.get("i"), doc: null, map: null, series: null, seriesDocs: new Map(),
     book: params.get("book"), order: params.get("order"), finished: params.get("fin"),
-    p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : 0,
+    // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
+    // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
+    p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : (readingList().find((e) => e.key === params.get("i"))?.p ?? 0),
     tab: "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
@@ -99,22 +101,26 @@ export function mountReader(root) {
         h("a.btn.primary", { href: "#/library?show=ready" }, icon("layers"), "Books ready to read")));
       return;
     }
-    api.catalog().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+    api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
     await load(s.key, { keepPosition: true });
   }
 
   /** Open an index. Resolves true once it is on screen; on failure nothing about the current book changes. */
+  let loadSeq = 0;
   async function load(key, { keepPosition = false, book = null } = {}) {
     dropPending();
+    // Every continuation after an await checks that this page is still mounted and that no later load started.
+    const mine = ++loadSeq;
+    const stale = () => disposed || mine !== loadSeq;
     const meta = s.lib.indexes.find((i) => i.key === key);
     let doc;
     try { doc = await api.index(key); } catch (e) {
-      if (disposed) return false;
+      if (stale()) return false;
       if (!s.doc) { clear(wrap, loadError("open the index", e, retryStart)); return false; }
       toast(`Could not open index: ${e.message}`, "error");   // switching books: the current one stays open, key and all
       return false;
     }
-    if (disposed) return false;
+    if (stale()) return false;
     s.key = key;
     s.doc = doc;
     s.series = null; s.seriesDocs = new Map();
@@ -129,6 +135,7 @@ export function mountReader(root) {
           const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
           if (!choice) continue;
           s.seriesDocs.set(b.key, choice.key === key ? s.doc : await api.index(choice.key).catch(() => null));
+          if (stale()) return false;
         }
         if (!s.order || !man.orders[s.order]) s.order = man.defaultOrder;
       }
@@ -138,19 +145,21 @@ export function mountReader(root) {
     const hashes = (s.doc.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash);
     let edition = null;
     s.hash = null;
-    for (const hsh of hashes) { edition = await api.edition(hsh); if (edition) { s.hash = hsh; break; } }
+    for (const hsh of hashes) { edition = await api.edition(hsh); if (stale()) return false; if (edition) { s.hash = hsh; break; } }
     s.map = new PositionMap(s.doc, edition);
-    if (!keepPosition) s.p = 0;
+    // Another book of the series: the position last set for it, else its start.
+    if (!keepPosition) s.p = readingList().find((e) => e.key === key)?.p ?? 0;
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
     s.reveals = null; s.docOrds = null;
     s.sync = { on: false, override: false, ahead: false, wantAhead: null };
     s.dupes = await api.duplicates(key).catch(() => null);
+    if (stale()) return false;
     watchDupes(key);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list
     await syncPosition(key);
-    return true;
+    return !stale();
   }
 
   // ---- Book Orbit position sync ------------------------------------------------------------
@@ -382,6 +391,22 @@ export function mountReader(root) {
     prev.addEventListener("click", () => stepReveal(-1));
     next.addEventListener("click", () => stepReveal(1));
     let dragWant = null;
+    // The range input sits over the ticks, so their tooltips can't show: hovering the track names the chapter under
+    // the pointer in the ruler's chapter text instead (chapter titles come from the book file, not the index).
+    el.range.addEventListener("pointermove", (ev) => {
+      if (!s.map?.exact || ev.buttons) return;
+      const r = el.range.getBoundingClientRect();
+      const at = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
+      const c = s.map.chapterAt(at);
+      el.chap.textContent = c ? tidyTitle(c.title) : "Before the first chapter";
+      el.chap.classList.add("hovering");
+    });
+    el.range.addEventListener("pointerleave", () => {
+      if (!el.chap.classList.contains("hovering")) return;
+      el.chap.classList.remove("hovering");
+      const ch = s.map.chapterAt(s.p);
+      el.chap.textContent = ch ? tidyTitle(ch.title) : el.chap.title;
+    });
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
     el.range.addEventListener("input", () => {
       const want = +el.range.value / 1000;

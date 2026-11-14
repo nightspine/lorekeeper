@@ -105,22 +105,20 @@ function paintWho() {
 
 // The Library row's count: the books in the catalog. Refreshed at most once a minute, and after a run ends.
 const railCount = document.getElementById("rail-count");
-let countAt = 0, pruned = false;
+let countAt = 0;
 async function refreshCount(force = false) {
   if (!force && Date.now() - countAt < 60000) return;
   countAt = Date.now();
   try {
-    const d = await api.catalog();
+    const d = await (force ? api.catalog() : api.catalogShared());
     const n = (d.books || []).length;
     railCount.textContent = n ? fmtInt(n) : "";
     document.querySelector('.app-rail [data-route="library"]').title = n ? `Library, ${fmtInt(n)} books` : "Library";
   } catch { /* the rail works without it */ }
-  if (pruned) return;
   try {
-    // An index deleted or rebuilt since leaves the Reading list.
+    // Each time the library data is refreshed, an index deleted or rebuilt since leaves the Reading list.
     const lib = await api.library();
     keepReading(new Set((lib.indexes || []).map((i) => i.key)));
-    pruned = true;
   } catch {}
 }
 

@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { onOllama, parseHash, replaceHash, state as appState } from "./app.js";
 import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadError, loading, relTime, STATUS_LABEL, toast, typeTag } from "./dom.js";
-import { confirmDialog, cover } from "./build.js";
+import { confirmDialog, cover, partLine } from "./build.js";
 
 const PHASES = [
   { key: "extract", label: "Reading", icon: "book-open" },
@@ -332,7 +332,6 @@ function configure(target, book, ctx, fromJob = null) {
   // The book is a link when its page exists; the page you are on (Build) is plain text.
   const trail = crumbs([{ label: "Library", href: "#/library" },
     { label: book.title, href: catalogKey ? `#/book/${encodeURIComponent(catalogKey)}` : null }, { label: "Build" }]);
-  trail.classList.add("build-crumbs");
   clear(target,
     trail,
     h("header.build-head",
@@ -420,12 +419,7 @@ export function mountStudio(root) {
   }
 
   /** "part 3 of 12" while it runs, else what it covered when it stopped. */
-  const partText = (j) => {
-    const pr = j.progress || {};
-    if (!Number.isFinite(pr.chunks) || !pr.chunks) return "";
-    const done = Math.min(pr.done ?? 0, pr.chunks);
-    return j.status === "running" ? `part ${Math.min(done + 1, pr.chunks)} of ${pr.chunks}` : `${done} of ${pr.chunks} parts`;
-  };
+  const partText = (j) => partLine(j.progress, j.status);
   // "15 min ago" within a day, then a short date: the column stays narrow.
   const when = (t) => (Date.now() / 1000 - t < 86400 ? relTime(t) : new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
   const rowCells = (j) => [h("span.subtle", { title: j.config.model || "default model" }, (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
@@ -761,7 +755,8 @@ export function mountStudio(root) {
   };
   first();
   const poll = setInterval(async () => {
-    try { const jobs = await api.jobs(); if (JSON.stringify(jobs.map((j) => [j.id, j.status])) !== JSON.stringify(ctx.jobs.map((j) => [j.id, j.status]))) { ctx.jobs = jobs; renderSide(); } } catch {}
+    try { const jobs = await api.jobs(); const sig = (js) => JSON.stringify(js.map((j) => [j.id, j.status, partText(j)]));   // progress counts too
+      if (sig(jobs) !== sig(ctx.jobs)) { ctx.jobs = jobs; renderSide(); } } catch {}
   }, 5000);
   return () => { disposed = true; clearInterval(poll); ctx.cleanup.forEach((fn) => fn()); };
 }

@@ -4,7 +4,7 @@
 // only when their data changed, so search typing, focus, the selection and scroll positions survive it.
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
-import { bookNo, buildDialog, builtWith, cover, NO_EPUB, numWord, startBuild, statusChip } from "./build.js";
+import { bookNo, buildDialog, builtWith, cover, NO_EPUB, numWord, partLine, startBuild, statusChip } from "./build.js";
 import { clear, fmtInt, h, icon, loadError, loading, relTime, toast } from "./dom.js";
 
 // Column sorts: every sort the old select offered. Recently indexed runs newest first.
@@ -77,6 +77,10 @@ export function mountLibrary(root) {
   const sourceSel = h("select.select.lib-source", { id: "lib-source" });
   sourceSel.addEventListener("change", () => { s.source = sourceSel.value; paintFilters(); paintList(); persist(); });
   const boNote = h("span.lib-bo");
+  // The same sorts as the column headers, for where a header isn't shown (Covers, narrow windows, the pane open, a phone).
+  const sortSel = h("select.select", { id: "lib-sort", "aria-label": "Sort books" },
+    Object.entries(SORTS).map(([k, label]) => h("option", { value: k, selected: s.sort === k }, `${label}${k === "recent" ? ", newest first" : ""}`)));
+  sortSel.addEventListener("change", () => { s.sort = sortSel.value; paintList(); persist(); });
   const viewBtns = [["list", "List"], ["grid", "Covers"]].map(([v, label]) =>
     h("button", { type: "button", dataset: { v }, "aria-pressed": String(s.view === v), on: { click: () => {
       s.view = v; viewBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v))); listSig = ""; paintList(); persist();
@@ -91,9 +95,10 @@ export function mountLibrary(root) {
       h("div.lib-head-end",
         h("div.search.lib-search-wrap", icon("search"), search, h("kbd.kbd", { "aria-hidden": "true" }, "/")),
         h("label.btn.primary", { for: "lib-upload" }, icon("upload"), "Add an EPUB"), upload)),
-    toolbar = h("div.lib-toolbar",
+    toolbar = h("div.lib-toolbar", { hidden: true },   // shown once there are books to filter
       showGroup,
       h("label.lib-from", h("span", "From"), sourceSel),
+      h("label.lib-from.lib-sort", h("span", "Sort"), sortSel),
       boNote,
       h("div.seg.lib-view", { role: "group", "aria-label": "View" }, viewBtns)),
     split));
@@ -101,7 +106,7 @@ export function mountLibrary(root) {
 
   async function load() {
     let data;
-    try { data = await api.catalog(); } catch (e) {
+    try { data = await (s.data ? api.catalog() : api.catalogShared(5000)); } catch (e) {
       if (disposed) return;
       // A failed first load says so in the page; a failed background reload keeps what is shown.
       if (!s.data) clear(list, loadError("load the library", e, () => { clear(list, loading("Loading your library…")); load(); }));
@@ -192,6 +197,7 @@ export function mountLibrary(root) {
   }
 
   function paintFilters() {
+    if (!s.data) return;   // the frame exists before the catalog arrives (slow load, or the "Try again" state)
     const books = s.data.books;
     const n = (f) => books.filter(f).length;
     const showCount = { all: books.length, ready: n(isReady), missing: n((b) => b.status === "missing"), building: n((b) => b.status === "building") };
@@ -225,6 +231,9 @@ export function mountLibrary(root) {
   }
 
   function paintList() {
+    if (!s.data) return;
+    sortSel.value = s.sort;
+    root.querySelector(".library")?.classList.toggle("covers", s.view === "grid");
     const total = s.data.books.length;
     const books = matches();
     const ready = s.data.books.filter(isReady).length;
@@ -236,7 +245,9 @@ export function mountLibrary(root) {
     // With no books there is nothing to filter.
     toolbar.hidden = !total;
     // Skip the repaint when nothing on screen would change (the 5 s reload while building).
-    const sig = JSON.stringify([s.view, s.sort, s.show, s.source, s.q, total ? books : 0, s.data.series, Boolean(s.demo)]);
+    const sig = JSON.stringify([s.view, s.sort, s.show, s.source, s.q, total ? books : 0, s.data.series, Boolean(s.demo),
+      // a series group row counts the indexed books of the whole series, including books the filter hides
+      s.data.books.map((b) => [b.key, b.status, b.coverage, b.canBuild])]);
     if (sig === listSig) { paintSelection(); return; }
     listSig = sig;
     const mark = focusMark();
@@ -351,9 +362,11 @@ export function mountLibrary(root) {
     next.closest("tr")?.scrollIntoView({ block: "nearest" });
   }
   /** One book at a time is in the tab order: its title button and, in the table, its row action (Read, Progress, Build). */
+  let roveKey = null;   // the row in the tab order, kept across reloads when nothing is selected
   function rove(key) {
     const opens = [...list.querySelectorAll("[data-role=open]")];
     const target = opens.find((x) => x.closest("[data-key]").dataset.key === key) || opens[0];
+    roveKey = target?.closest("[data-key]").dataset.key ?? null;
     opens.forEach((x) => {
       const on = x === target ? "0" : "-1";
       x.setAttribute("tabindex", on);
@@ -424,7 +437,7 @@ export function mountLibrary(root) {
       const open = el.querySelector("[data-role=open]");
       if (open) { if (on) open.setAttribute("aria-current", "true"); else open.removeAttribute("aria-current"); }
     });
-    rove(s.selected);
+    rove(s.selected ?? roveKey);
   }
 
   function paintPane() {
@@ -490,7 +503,7 @@ export function mountLibrary(root) {
   /** The state in one sentence: "A complete index of the whole book.", "Building, part 3 of 12." */
   function stateSentence(b, d) {
     const prog = b.job?.progress;
-    if (b.status === "building") return prog?.chunks ? `Building now, part ${prog.index ?? 0} of ${prog.chunks}.` : "Building now.";
+    if (b.status === "building") return prog?.chunks ? `Building now, ${partLine(prog, "building")}.` : "Building now.";
     if (b.status === "complete") return `A complete index of the whole book${d?.model ? `, ${builtWith(d.model)}` : ""}.`;
     if (b.status === "partial") return `An index of ${b.coverage != null ? `${b.coverage}% of the book` : "part of the book"}${d?.model ? `, ${builtWith(d.model)}` : ""}.`;
     return b.canBuild ? "No index yet." : "No index yet, and no EPUB to build one from.";

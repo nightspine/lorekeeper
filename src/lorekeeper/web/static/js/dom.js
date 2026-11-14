@@ -221,11 +221,19 @@ const ROMAN = /^(?=[ivxlcdm]+$)m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{
  *  unless they open the title or follow a full stop or colon, roman numerals stay capitals, a trailing full stop
  *  goes. Anything not in capitals is returned as it is. */
 export function tidyTitle(t) {
-  if (!t || t !== t.toUpperCase() || !/[A-Z]{4}/.test(t)) return t;
-  return t.toLowerCase().replace(/\p{L}[\p{L}'’]*/gu, (w, i, all) => {
-    const before = all.slice(0, i);
-    // A numeral after Chapter, Part, Book, Volume, Act or Scene, or one that opens the title ("IV. The Visit").
-    if (ROMAN.test(w) && (/\b(chapter|part|book|volume|act|scene)\s+$/.test(before) || (i === 0 && /^[.:\s]/.test(all.slice(w.length))))) return w.toUpperCase();
+  if (!t || !/[A-Z]{4}/.test(t)) return t;
+  // Mostly capitals ("CHAPTER III JONATHAN HARKER’S JOURNAL—continued"): words in capitals are title-cased, words
+  // already in lower or mixed case are kept as written.
+  const letters = t.replace(/[^\p{L}]/gu, "");
+  if ([...letters].filter((c) => c === c.toUpperCase()).length < letters.length * 0.7) return t;
+  return t.replace(/\p{L}[\p{L}'’]*/gu, (orig, i, all) => {
+    if (orig !== orig.toUpperCase()) return orig;
+    const w = orig.toLowerCase();
+    const before = all.slice(0, i).toLowerCase();
+    // A numeral after Chapter, Part, Book, Volume, Act or Scene, one that opens the title ("IV. The Visit"), or a run of
+    // two or more of I, V and X anywhere ("World War II"); "Mix" or "Civil" are words, not numerals.
+    if (ROMAN.test(w) && (/\b(chapter|part|book|volume|act|scene)\s+$/.test(before) || (i === 0 && /^[.:\s]/.test(all.slice(orig.length)))
+      || /^[ivx]{2,}$/.test(w))) return orig;
     if (i && MINOR.has(w) && /\s$/.test(before) && !/[.:;!?]\s*$/.test(before)) return w;
     return w[0].toUpperCase() + w.slice(1);
   }).replace(/\.$/, "");

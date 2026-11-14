@@ -24,6 +24,7 @@ main[data-route="reader"] { padding: 0; }
 .ruler .pct { flex: none; min-width: 40px; font: 750 15px/1 var(--font-ui); font-variant-numeric: lining-nums tabular-nums; }
 .ruler .pct-unit { margin-left: 1px; font-size: var(--text-xs); font-weight: 600; color: var(--text-3); }
 .ruler .chap { flex: 0 1 auto; max-width: 26ch; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ruler .chap.hovering { color: var(--text-3); }
 .ruler .jump-group { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .ruler .chsel { width: 190px; min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
 .pct-group { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }

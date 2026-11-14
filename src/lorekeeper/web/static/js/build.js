@@ -84,7 +84,7 @@ export async function startBuild(entry) {
     ...missing.map((x) => h("li.series-row", h("span.subtle.num", `${x.index}.`), h("span", x.title),
       x.canBuild ? h("span.status-chip.missing", "No index") : h("span.chip", "No EPUB to index"))),
     ...absent.map((n) => h("li.series-row", h("span.subtle.num", `${n}.`), h("span.muted", "Not in your library"),
-      h("a", { href: "#/settings/cloud" }, "Add it"))),
+      h("a", { href: "#/settings/bookorbit" }, "Add it"))),
   ]);
   clear(m.body,
     h("p.muted", `You're building `, h("b", entry.title), `, ${bookNo(entry.series) || "a later book"} of ${entry.series.name}. These earlier books can't be built on yet:`),
@@ -225,12 +225,31 @@ export const STATUS = {
   building: { label: "Building", cls: "building" },
   complete: { label: "Complete", cls: "complete" },
 };
+/** A run's parts, 1-based, from its progress (web/jobs.py): `index` is the 0-based part of the latest `chunk` or
+ *  `chunk_done` event, `last` says which, `done` counts parts finished when the run (re)started. The catalog only
+ *  passes `index` and `chunks`. Running: "part 4 of 12" (the part being worked on). Done: "12 of 12 parts".
+ *  Stopped or failed: how many parts were finished. */
+export function partLine(pr, status) {
+  pr = pr || {};
+  const n = Number(pr.chunks);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (status === "done") return `${n} of ${n} parts`;
+  const idx = Number.isFinite(pr.index) ? pr.index : null;
+  const finished = pr.last === "chunk_done" && idx != null ? idx + 1 : pr.last === "chunk" && idx != null ? idx
+    : idx != null && !pr.last ? idx : Number(pr.done) || 0;
+  if (status === "running" || status === "building") {
+    const working = pr.last === "chunk_done" && idx != null ? idx + 2 : idx != null ? idx + 1 : finished + 1;
+    return `part ${Math.min(Math.max(1, working), n)} of ${n}`;
+  }
+  return `${Math.min(finished, n)} of ${n} parts`;
+}
+
 export const statusChip = (e) => {
   const partial = e.status === "partial" && e.coverage != null;
   // A Book Orbit book with no EPUB can never get an index here, so it says so instead of "No index".
   const noEpub = e.status === "missing" && e.canBuild === false;
   return h(`span.status-chip.${noEpub ? "no-epub" : STATUS[e.status].cls}`, partial ? { style: { "--pct": `${Math.max(0, Math.min(100, e.coverage))}%` } } : null,
-    e.status === "building" && e.job?.progress?.chunks ? `Building, part ${e.job.progress.index ?? 0} of ${e.job.progress.chunks}`
+    e.status === "building" && e.job?.progress?.chunks ? `Building, ${partLine(e.job.progress, "building")}`
       : partial ? `Partial, ${e.coverage}%` : noEpub ? "No EPUB" : STATUS[e.status].label);
 };
 

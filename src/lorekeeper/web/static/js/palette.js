@@ -120,7 +120,7 @@ async function loadBooks() {
   if (document.body.dataset.signedIn === "false" || document.body.dataset.mustChangePassword === "true") return;
   if (books && Date.now() - booksAt < 60000) return;
   try {
-    const d = await api.catalog();
+    const d = await api.catalogShared();
     books = d.books || [];
     booksAt = Date.now();
     if (dialog?.open) render();
