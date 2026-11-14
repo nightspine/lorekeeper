@@ -1,0 +1,365 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://lorekeeper.dev/schema/0.1/listing.schema.json",
+  "title": "Lorekeeper registry listing",
+  "description": "A registry's record of one book shared by one publisher, with every version of its index (SPEC.md \u00a78.7). The index documents themselves are unchanged SPEC 0.1 indexes; a listing only describes them.",
+  "type": "object",
+  "required": [
+    "lorekeeper",
+    "kind",
+    "id",
+    "publisher",
+    "slug",
+    "work",
+    "editions",
+    "version",
+    "digest",
+    "href",
+    "updated",
+    "complete",
+    "license",
+    "edited",
+    "attestations",
+    "versions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "lorekeeper": {
+      "const": "0.1"
+    },
+    "kind": {
+      "const": "listing"
+    },
+    "id": {
+      "$ref": "#/$defs/listingId"
+    },
+    "publisher": {
+      "$ref": "#/$defs/publisher"
+    },
+    "slug": {
+      "$ref": "#/$defs/listingSlug"
+    },
+    "bookKind": {
+      "description": "The latest version's bookKind, when it has one",
+      "$ref": "index.schema.json#/properties/bookKind"
+    },
+    "work": {
+      "description": "The latest version's work, without ids (those are merged into editions[].ids)",
+      "type": "object",
+      "required": [
+        "title",
+        "authors",
+        "language"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "authors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "language": {
+          "type": "string",
+          "description": "BCP 47 tag of the indexed text"
+        }
+      }
+    },
+    "editions": {
+      "description": "Editions the latest version was made for. Only textHash and ids: a listing never carries fileHash, label or builtFrom.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "textHash"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "textHash": {
+            "$ref": "index.schema.json#/$defs/sha256"
+          },
+          "ids": {
+            "$ref": "index.schema.json#/$defs/identifiers"
+          }
+        }
+      }
+    },
+    "version": {
+      "description": "The latest version number",
+      "type": "integer",
+      "minimum": 1
+    },
+    "digest": {
+      "description": "Digest of the latest version's index file",
+      "$ref": "#/$defs/digest"
+    },
+    "href": {
+      "description": "Where the latest version's index file is fetched",
+      "type": "string",
+      "minLength": 1
+    },
+    "updated": {
+      "description": "When the latest version was accepted",
+      "type": "string",
+      "format": "date-time"
+    },
+    "complete": {
+      "description": "coverage.complete of the latest version",
+      "type": "boolean"
+    },
+    "license": {
+      "description": "provenance.license of the latest version (SPDX identifier)",
+      "type": "string",
+      "minLength": 1
+    },
+    "generator": {
+      "description": "provenance.generator of the latest version, when it has one",
+      "$ref": "index.schema.json#/properties/provenance/properties/generator"
+    },
+    "edited": {
+      "description": "True when the latest version has a contributor with role editor or author",
+      "type": "boolean"
+    },
+    "series": {
+      "type": "object",
+      "required": [
+        "id",
+        "book",
+        "requires"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "index.schema.json#/$defs/slug"
+        },
+        "book": {
+          "$ref": "index.schema.json#/$defs/slug"
+        },
+        "requires": {
+          "description": "Listing ids, same publisher, of every earlier book in the series manifest's publication order",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/listingId"
+          }
+        }
+      }
+    },
+    "derivedFrom": {
+      "description": "Digest of the shared index the latest version improves",
+      "$ref": "#/$defs/digest"
+    },
+    "attestations": {
+      "description": "Claims about the latest version only",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/attestation"
+      }
+    },
+    "versions": {
+      "description": "Every version, oldest first, the latest included",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "version",
+          "digest",
+          "href",
+          "updated"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "digest": {
+            "$ref": "#/$defs/digest"
+          },
+          "href": {
+            "type": "string",
+            "minLength": 1
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "publisher": {
+      "description": "A GitHub login, stored lowercased: 1 to 39 of [a-z0-9-], not starting or ending with -",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?$"
+    },
+    "listingSlug": {
+      "description": "The index id lowercased, every character outside [a-z0-9-] replaced by -",
+      "type": "string",
+      "pattern": "^[a-z0-9-]+$",
+      "maxLength": 128
+    },
+    "listingId": {
+      "description": "publisher/slug",
+      "type": "string",
+      "pattern": "^[a-z0-9](?:[a-z0-9-]{0,37}[a-z0-9])?/[a-z0-9-]+$",
+      "maxLength": 168
+    },
+    "digest": {
+      "description": "sha256: plus the hex SHA-256 of the exact bytes of an index file",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "attestation": {
+      "description": "A claim about one index version, saying who makes it (SPEC.md \u00a78.7). builder and reader attestations are self-reported.",
+      "type": "object",
+      "required": [
+        "kind",
+        "by",
+        "at"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "validates",
+            "book-checks",
+            "spoiler-gate",
+            "audit"
+          ]
+        },
+        "by": {
+          "enum": [
+            "registry",
+            "builder",
+            "reader"
+          ]
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "book-checks"
+              }
+            }
+          },
+          "then": {
+            "description": "validate.check_against_book against one edition: anchors in the index, anchors that resolved, errors reported",
+            "required": [
+              "textHash",
+              "anchors",
+              "resolved",
+              "errors"
+            ],
+            "properties": {
+              "textHash": {
+                "$ref": "index.schema.json#/$defs/sha256"
+              },
+              "anchors": {
+                "$ref": "#/$defs/count"
+              },
+              "resolved": {
+                "$ref": "#/$defs/count"
+              },
+              "errors": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "spoiler-gate"
+              }
+            }
+          },
+          "then": {
+            "description": "Names checked against one edition: names in the index, names the text uses, names revealed before the text first uses them",
+            "required": [
+              "textHash",
+              "names",
+              "found",
+              "early"
+            ],
+            "properties": {
+              "textHash": {
+                "$ref": "index.schema.json#/$defs/sha256"
+              },
+              "names": {
+                "$ref": "#/$defs/count"
+              },
+              "found": {
+                "$ref": "#/$defs/count"
+              },
+              "early": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "audit"
+              }
+            }
+          },
+          "then": {
+            "description": "A sample of claims fact-checked against one edition by a model",
+            "required": [
+              "textHash",
+              "sampled",
+              "supported",
+              "model"
+            ],
+            "properties": {
+              "textHash": {
+                "$ref": "index.schema.json#/$defs/sha256"
+              },
+              "sampled": {
+                "$ref": "#/$defs/count"
+              },
+              "supported": {
+                "$ref": "#/$defs/count"
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

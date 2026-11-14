@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Share an index - Lorekeeper docs</title>
+<meta name="description" content="Turn an index into a share bundle, file it in a registry and build the static lookup files.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="share.html" aria-current="page">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Share an index</h1>
+<p class="lede">An index is one JSON file, so sharing it needs no server. Three commands turn it into a bundle, file it in a registry and publish static lookup files that any reader app can query with one GET.</p>
+
+<p>This page is the tooling side of <a href="spec.html#87-registries-capability-listings">section 8.7 of the specification</a>. Nothing in the index changes for sharing: a shared index is a plain index document.</p>
+
+<h2 id="share">Make a bundle</h2>
+<pre><code>uv run lorekeeper share examples/dracula/dracula.json -o dracula.share.json
+uv run lorekeeper share INDEX --epub book.epub -o bundle.json
+uv run lorekeeper share book2.json --series series.json --derived-from sha256:... -o bundle2.json</code></pre>
+<p><code>share</code> copies the index and removes <code>label</code> and <code>fileHash</code> from every edition. A label is often a local file name, and a file hash describes one person's copy. <code>builtFrom</code> stays, because it says which edition the anchors were written for.</p>
+<p>It refuses an index that fails the schema or the validator, and one whose licence is not <code>CC0-1.0</code> or <code>CC-BY-4.0</code>. A book in a series needs <code>--series</code> with the manifest.</p>
+<p>With <code>--epub</code> it also runs the checks that need the book, and records them as attestations marked <code>by: "builder"</code>:</p>
+<div class="table-wrap"><table><thead><tr><th>Attestation</th><th>What it says</th></tr></thead><tbody>
+<tr><td><code>book-checks</code></td><td>How many anchors the index has, how many resolve in your EPUB, and how many errors the validator found. The bundle is not written if there are errors.</td></tr>
+<tr><td><code>spoiler-gate</code></td><td>For each name, the first paragraph where the book uses it. <code>early</code> counts names the index would show before the book does.</td></tr>
+</tbody></table></div>
+<p>The EPUB's text hash must be one of the index's editions. The report lists up to five early names so you can look at them. They are not stored in the bundle. An <code>early</code> above 0 does not stop you from sharing; it is recorded.</p>
+
+<h2 id="bundle">What is in a bundle</h2>
+<pre><code>{ "lorekeeper": "0.1", "kind": "share",
+  "index": { ... },
+  "series": { ... },
+  "derivedFrom": "sha256:...",
+  "attestations": [ { "kind": "book-checks", "by": "builder", ... } ] }</code></pre>
+<p><code>series</code> is required when the index belongs to a series. <code>derivedFrom</code> is the digest of a shared index this one improves. The schema is <code>schema/share.schema.json</code>.</p>
+
+<h2 id="check">Check and add</h2>
+<pre><code>uv run lorekeeper registry check bundle.json --publisher mina-m --source registry/
+uv run lorekeeper registry add   bundle.json --publisher mina-m --source registry/</code></pre>
+<p><code>check</code> writes nothing. <code>add</code> runs the same checks, then files the bundle. A registry treats a bundle as input from a stranger, so the checks are strict. They refuse a bundle when:</p>
+<ul>
+<li>the file is over 5 MB (checked before it is parsed), or it fails <code>share.schema.json</code>;</li>
+<li>the index fails the schema or the validator;</li>
+<li>the licence is not <code>CC0-1.0</code> or <code>CC-BY-4.0</code>;</li>
+<li>an edition still has a <code>label</code> or <code>fileHash</code>;</li>
+<li>an attestation is not by <code>builder</code>;</li>
+<li>the same bytes are already a version of that listing;</li>
+<li>the listing was removed;</li>
+<li>the publisher name is not valid;</li>
+<li>a book in a series needs an earlier book the publisher has not shared. Share the books in publication order.</li>
+</ul>
+<p>Paths are built only from the validated publisher and the slug, which is the index <code>id</code> lowercased with every character outside <code>a-z0-9-</code> turned into <code>-</code>. Sharing the same book again adds a version. Old versions never change.</p>
+<p><code>add</code> writes this tree in the registry source folder:</p>
+<pre><code>indexes/mina-m/dracula/listing.json
+indexes/mina-m/dracula/v1.lore.json
+indexes/mina-m/dracula/series.json      (books in a series)
+removed.json</code></pre>
+<p>The listing records the digest, the versions, the licence, whether people edited the index, and the attestations of the latest version. The registry adds its own <code>validates</code> attestation. To take a listing down:</p>
+<pre><code>uv run lorekeeper registry remove mina-m/dracula --source registry/ --reason "Requested by the rights holder"</code></pre>
+<p>That deletes the listing and appends it to <code>removed.json</code>. The same id cannot be added again.</p>
+<p>A listing that later books of the series require is not removed unless you pass <code>--with-dependents</code>, which removes those books too. <code>add</code> likewise refuses a new version of an earlier book that would break the later ones the publisher has already shared.</p>
+
+<h2 id="build">Build the static site</h2>
+<pre><code>uv run lorekeeper registry build registry/ -o build/registry/ \
+  --base-path /lorekeeper-registry --name "Lorekeeper community registry"</code></pre>
+<p>This writes a folder for any static host. The build is deterministic and clears <code>v0</code> first. It checks every listing against its schema and every index against its digest, and fails if one does not match.</p>
+<pre><code>.well-known/lorekeeper
+v0/lookup/text/{textHash}.json
+v0/lookup/gutenberg/{id}.json   (also isbn, openlibrary, wikidata)
+v0/listings/{publisher}/{slug}.json
+v0/indexes/{publisher}/{slug}/v{N}.lore.json
+v0/series/{publisher}/{slug}.json
+v0/removed.json</code></pre>
+<p>Every <code>href</code> carries the base path. Look a book up with one request:</p>
+<pre><code>curl https://nightspine.github.io/lorekeeper-registry/v0/lookup/text/6211b79150ee12207b34736872d807d9074170062dbc03fee71075ef8a38f00d.json</code></pre>
+<p>A static host cannot send the digest as an <code>ETag</code>. A client must hash the index bytes it fetched and compare them with the <code>digest</code> in the result before using them. A mismatch is a failed fetch. The <a href="protocol.html#registries">protocol reference</a> has the details.</p>
+
+<h2 id="who-vouches">Who vouches</h2>
+<p>A registry that cannot hold a book cannot check it. So <code>book-checks</code> and <code>spoiler-gate</code> are the publisher's word, and only <code>validates</code> is the registry's. Nothing verifies the builder's numbers. A client shows who vouches for each one and does not blend them into a single score. Signatures are not part of this yet.</p>
+
+</main>
+</div>
+</body>
+</html>

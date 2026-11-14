@@ -283,6 +283,8 @@ who corrects a generated index has role `editor`, and the tool SHOULD bump
 `updated`. Such edits need no other field: an edited index is an ordinary
 index document, and how a tool remembers edits across regeneration (for
 example a sidecar keyed by the edition's `textHash`) is outside this spec.
+Sharing an index with other readers changes nothing in it either: a registry
+describes the shared file in a separate listing (§8.7).
 
 ## 5. Series
 
@@ -442,7 +444,8 @@ readers can call them. Response schemas: [`schema/api.schema.json`](schema/api.s
 ```
 
 `auth.type` is `none` or `bearer`. Self-hosted servers SHOULD support bearer
-tokens.
+tokens. A registry (§8.7) adds the capability `listings`, and one served as
+static files also sets `"static": true`.
 
 ### 8.2 Lookup — `GET /v0/lookup`
 
@@ -458,10 +461,14 @@ present when the index has one.
                 "complete": false, "digest": "sha256:…", "href": "/v0/indexes/sherlock-holmes.study-in-scarlet" }] }
 ```
 
+A server that keeps listings (§8.7) adds `listing`, the whole listing record,
+to each result.
+
 ### 8.3 Fetch — `GET /v0/indexes/{id}` and `GET /v0/series/{id}`
 
 They return the index and series documents. `ETag` MUST be the `digest` from
-lookup, and servers MUST honour `If-None-Match`. Clients SHOULD cache indexes
+lookup, and servers MUST honour `If-None-Match` (a static registry cannot, and
+§8.7 says what a client does instead). Clients SHOULD cache indexes
 and gate locally (§7). This keeps reading position on the device and works
 offline. `GET /v0/indexes/{id}` and the view endpoint (§8.4) MUST send
 `Access-Control-Allow-Origin`, so browser-based readers can call them.
@@ -537,6 +544,197 @@ the response also carries the `locator` object of §8.4, absent when `anchor`
 was given.
 The result MUST equal what filtering the view for the same position gives.
 
+### 8.7 Registries (capability `listings`)
+
+A registry is a server where people share indexes with each other. It speaks
+this section's protocol plus the capability `listings`, and it may be a
+dynamic server or plain files on a static host (the static profile, below). A
+shared index is an ordinary index document (§4): nothing in it changes for
+sharing, and its `"lorekeeper"` version is the spec version it was written to.
+
+**Digest.** A registry writes each index it accepts to a file once and never
+rewrites it. The file's digest is `sha256:` followed by the lowercase hex
+SHA-256 of its exact bytes. That is the `digest` of lookup (§8.2) and of the
+listing.
+
+**Listings.** A listing ([`schema/listing.schema.json`](schema/listing.schema.json))
+is the registry's record of one book shared by one publisher:
+
+```json
+{ "lorekeeper": "0.1", "kind": "listing",
+  "id": "mina-m/dracula", "publisher": "mina-m", "slug": "dracula",
+  "work": { "title": "Dracula", "authors": ["Bram Stoker"], "language": "en" },
+  "editions": [{ "textHash": "6211b791…", "ids": { "gutenberg": "345" } }],
+  "version": 3, "digest": "sha256:…", "href": "/v0/indexes/mina-m/dracula/v3.lore.json",
+  "updated": "2026-11-13T20:00:00Z", "complete": true, "license": "CC0-1.0",
+  "generator": { "name": "lorekeeper-generate", "version": "0.7.1", "model": "…", "promptSet": "…" },
+  "edited": true,
+  "attestations": [{ "kind": "validates", "by": "registry", "at": "2026-11-13T20:00:00Z" }],
+  "versions": [{ "version": 1, "digest": "sha256:…", "href": "/v0/indexes/mina-m/dracula/v1.lore.json",
+                 "updated": "2026-10-02T08:30:00Z" }, …] }
+```
+
+- `publisher` names the account that shared the index: 1 to 39 characters of
+  `[A-Za-z0-9-]`, not starting or ending with `-`, compared case-insensitively
+  and stored lowercased. `slug` is the index `id` lowercased, with every
+  character outside `[a-z0-9-]` replaced by `-`
+  (`sherlock-holmes.study-in-scarlet` becomes
+  `sherlock-holmes-study-in-scarlet`). `id` is `publisher/slug` and stays the
+  same across versions.
+- Each share of the book by the same publisher is a new **version**, numbered
+  from 1. Versions are immutable. `versions` lists every one, oldest first,
+  the latest included, and the top-level `version`, `digest`, `href` and
+  `updated` repeat the latest.
+- `work`, `complete` (from `coverage`), `license` and `generator` (from
+  `provenance`) are copied from the latest version. Identifiers from `work.ids`
+  and from each edition's `ids` are merged into `editions[].ids` per scheme
+  (a scheme both carry becomes a de-duplicated list, unless they share one
+  single value), and `work` itself carries none. `bookKind` (§4) is copied when
+  the index has one.
+- `editions` holds only `textHash` and `ids`. A listing MUST NOT carry
+  `fileHash`, `label` or `builtFrom`: they describe one person's copy of the
+  book, and a label is often a local file name.
+- `edited` is true when the latest version has a contributor with role
+  `editor` or `author` (§4.8).
+- `series` is present for a book in a series: `id` and `book` from the index,
+  and `requires`, the listing ids of every earlier book in the manifest's
+  `publication` order (the `defaultOrder` when the manifest has none), all by the same publisher. Entity ids are series-scoped
+  and `replaces` may point into earlier books (§5), so a series is shared as a
+  set: one publisher's third book cannot sit on another publisher's first. A
+  client that installs a book SHOULD also install the books it requires.
+- `derivedFrom` is the digest of a shared index the latest version improves,
+  for instance one the publisher installed and then edited. The recommended
+  licences (§4.8) permit this.
+- `generator`, `bookKind`, `series` and `derivedFrom` are omitted when absent.
+- Every `at`, `updated` and `removed` value is a UTC timestamp,
+  `YYYY-MM-DDTHH:MM:SSZ` with optional fractional seconds; a registry MUST
+  refuse any other form.
+
+**Attestations.** `attestations` holds claims about the latest version only.
+Each says what was checked (`kind`), who vouches for it (`by`) and when
+(`at`):
+
+```json
+{ "kind": "validates", "by": "registry", "at": "2026-11-13T20:00:00Z" }
+{ "kind": "book-checks", "by": "builder", "at": "…", "textHash": "…", "anchors": 412, "resolved": 412, "errors": 0 }
+{ "kind": "spoiler-gate", "by": "builder", "at": "…", "textHash": "…", "names": 96, "found": 91, "early": 0 }
+{ "kind": "audit", "by": "builder", "at": "…", "textHash": "…", "sampled": 50, "supported": 48, "model": "…" }
+```
+
+| `kind` | What was checked | Members |
+|---|---|---|
+| `validates` | The schema and every §6.4 check that needs no book; for a book in a series, also the series checks against the latest versions of the books it requires. | none |
+| `book-checks` | The §6.4 checks that need the book, run on the edition `textHash`. | `anchors` in the index, `resolved` of them, `errors` reported |
+| `spoiler-gate` | For every name of every entity, the first block of `textHash` whose words (§3.2) contain the name's words as a contiguous run. | `names` checked, `found` (names the text uses), `early` (names whose `from` anchor resolves to a block before that first use) |
+| `audit` | A sample of the index's claims, fact-checked by `model` against the passages they cite in `textHash`. | `sampled`, `supported`, `model` |
+
+`by` is `registry` (the registry ran the check), `builder` (the publisher's
+tool, at share time) or `reader` (another reader's app, against its own copy).
+A registry need not hold the book, and for a book still in copyright it will
+not, so checks that need the text are usually the builder's. Builder and
+reader attestations are self-reported and nothing verifies them. A client MUST
+show who vouches for each measure it displays and SHOULD NOT merge
+attestations by different parties into one number. A client that holds the
+book MAY repeat a check against its own copy. An `early` above 0 does not bar
+a listing by itself; it is a fact for the client to show.
+
+**Share bundles.** A builder hands a registry one bundle
+([`schema/share.schema.json`](schema/share.schema.json)):
+
+```json
+{ "lorekeeper": "0.1", "kind": "share",
+  "index": { … },
+  "series": { … },
+  "derivedFrom": "sha256:…",
+  "attestations": [{ "kind": "book-checks", "by": "builder", … }] }
+```
+
+- `index` is a complete index document with `label` and `fileHash` removed
+  from every edition. `builtFrom` stays: it says which edition the anchors'
+  `seq` hints are exact for (§3.5).
+- `series` is the series manifest. It is required when the index has `series`
+  and not allowed otherwise.
+- `attestations` are all `by: "builder"` and of kind `book-checks`, `spoiler-gate` or `audit`, never `validates`, which only the registry adds; absent means none.
+
+A bundle comes from a stranger. Before accepting one, a registry MUST:
+
+1. refuse a bundle larger than its size limit before parsing it (the
+   reference tooling's limit is 5 MB);
+2. refuse a bundle that fails its schema, or an index that fails a §6.4 check
+   that needs no book; for a book in a series, the earlier books are the
+   latest versions of the publisher's listings in `requires`, a missing one is
+   an error, and the manifest MUST pass the series checks with them;
+3. refuse a licence it does not accept (the community registry accepts
+   `CC0-1.0` and `CC-BY-4.0`);
+4. refuse a digest that is already a version of the same listing;
+5. refuse a bundle whose stored index or listing would exceed the size limit
+   once written;
+6. build every storage path only from the validated `publisher` and the
+   computed `slug`, and never from anything else in the bundle.
+
+On acceptance the registry writes the new version, replaces the series
+manifest when one came with it, and replaces the listing's attestations with
+the bundle's plus its own `validates`. A new version of a book that later
+books of the series require MUST leave the series checks passing with their
+latest versions, or be refused. A registry that removes a listing MUST also
+remove (or refuse to remove) the later books that require it. A registry keeps a public log of
+removed listings, `[{ "id", "removed", "reason" }]`, newest last
+(`api.schema.json#/$defs/removed`), and SHOULD refuse new versions under a
+removed id.
+
+**Static profile.** A registry made only of files sets `"static": true` in
+discovery:
+
+```json
+{ "lorekeeper": "0.1", "name": "Lorekeeper community registry", "api": "/lorekeeper-registry/v0",
+  "capabilities": ["lookup", "index", "series", "listings"], "auth": { "type": "none" }, "static": true }
+```
+
+A static host cannot answer query strings, so lookup takes a path:
+
+```
+GET {api}/lookup/{scheme}/{value}.json
+```
+
+`scheme` is `text` (a `textHash`; results match `text`), or `isbn` (ISBN-13),
+`gutenberg`, `openlibrary` or `wikidata` (results match `identifier`; the value
+keeps its case, `Q41542`). There is
+no `fileHash` scheme, since listings hold no file hashes. The body is a lookup
+response (§8.2) in which every result carries `listing`; `404` means no
+results. Results are ordered complete before partial, then most recently
+`updated` first, then by `id`. Ranking by attestations is left to the client.
+The other paths are:
+
+| Path | Body |
+|---|---|
+| `{api}/listings/{publisher}/{slug}.json` | the listing |
+| `{api}/indexes/{publisher}/{slug}/v{N}.lore.json` | the stored bytes of version N |
+| `{api}/series/{publisher}/{slug}.json` | the series manifest of that listing, when it has one |
+| `{api}/removed.json` | the removal log |
+
+Every `href` is a path on the registry's host, like `api`, or an absolute URL.
+A static host cannot make `ETag` the digest (§8.3), and caches in between may
+serve stale bytes. So on a registry with `"static": true` a client MUST compute
+the digest of the index bytes it fetched and compare it with the `digest` of
+the lookup result or listing before using the index, and MUST treat a
+mismatch as a failed fetch. Clients SHOULD do the same on any registry. A
+static registry offers neither `view` nor `entities`: clients gate locally
+(§7). The query-string lookup of §8.2 stays as it is for dynamic servers.
+
+A lookup tells the registry that someone holds that book. Clients SHOULD look
+up only the book the reader opens, unless the reader asks for more.
+
+**Source layout (informative).** The reference tooling (`lorekeeper share`,
+`lorekeeper registry check|add|remove|build`) keeps a registry as a directory,
+and `registry build` writes the static profile from it:
+
+```
+indexes/<publisher>/<slug>/listing.json
+indexes/<publisher>/<slug>/v<N>.lore.json     immutable, N from 1
+indexes/<publisher>/<slug>/series.json        the series manifest, replaced by the newest submission
+removed.json                                  [{ "id", "removed", "reason" }], newest last
+```
+
 ## 9. Embedding in EPUB
 
 An index MAY be shipped inside the EPUB it describes, at
@@ -550,6 +748,7 @@ Embedding changes `fileHash` but not `textHash`.
 - **Index documents** conform if they pass every check in §6.4.
 - **Clients** conform if, for every case in [`conformance/`](conformance/), their view equals the expected view (JSON equality, array order significant).
 - **Servers** conform if their responses match `schema/api.schema.json`, and their views (if offered) pass the client cases.
+- **Registries** conform if their listings match `schema/listing.schema.json`, every `digest` equals the digest of the bytes served at its `href`, and, when `static`, they serve the paths of §8.7.
 - **Locators.** [`conformance/locators/`](conformance/locators/) holds locator cases: an edition, an index, a locator, and the expected seq, whether it is approximate, and the expected `finished` and `inclusive` anchors. A client MUST pass every case for each locator form it supports. A server that accepts a locator form MUST pass the cases for that form.
 
 ## 11. Open questions
@@ -559,5 +758,5 @@ Embedding changes `fileHash` but not `textHash`.
 3. **Mentions.** KOAssistant-style "appearances by chapter" would need per-entity mention anchors. Should they be in the index, or computed on device from names and aliases?
 4. **Chapter structure.** Should indexes carry a gated table of contents so clients can label positions ("as of Chapter 7")?
 5. **Translations.** A translation is a different text; should it be a different work with linked entity ids?
-6. **Signatures.** Registries will need signed indexes and maintainer keys; out of scope for v0.
+6. **Signatures.** Registries exist (§8.7) and record who vouches for each check, but nothing proves it: a listing, an attestation or a publisher name can be verified only by trusting the registry that serves it, and builder attestations only by repeating them. Signed indexes, signed attestations and publisher keys remain open.
 7. **Non-EPUB formats** (PDF, MOBI/KF8, CBZ): text models for these are undefined.

@@ -36,7 +36,8 @@
               "view",
               "view-cfi",
               "entities",
-              "requests"
+              "requests",
+              "listings"
             ]
           }
         },
@@ -54,11 +55,15 @@
               ]
             }
           }
+        },
+        "static": {
+          "type": "boolean",
+          "description": "True for a registry served as static files (SPEC.md \u00a78.7): lookup only by path, no ETag, clients verify digests"
         }
       }
     },
     "lookup": {
-      "description": "GET /v0/lookup",
+      "description": "GET /v0/lookup, and GET /v0/lookup/{scheme}/{value}.json on a registry (SPEC.md \u00a78.7)",
       "type": "object",
       "required": [
         "results"
@@ -126,8 +131,38 @@
               },
               "href": {
                 "type": "string"
+              },
+              "listing": {
+                "description": "The registry listing this result comes from (SPEC.md \u00a78.7), when the server keeps listings",
+                "$ref": "listing.schema.json"
               }
             }
+          }
+        }
+      }
+    },
+    "removed": {
+      "description": "GET /v0/removed.json on a registry (SPEC.md \u00a78.7): listings taken down, newest last",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "removed",
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "$ref": "listing.schema.json#/$defs/listingId"
+          },
+          "removed": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
