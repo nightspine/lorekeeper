@@ -216,6 +216,9 @@ export function cover(entry, size = "md") {
   return el;
 }
 
+/** "built with Claude Haiku 5.5", or "written by hand" for an index someone wrote in the Reader. */
+export const builtWith = (model) => (!model ? "" : /^hand-?written$/i.test(model.trim()) ? "written by hand" : `built with ${model}`);
+
 export const STATUS = {
   missing: { label: "No index", cls: "missing" },
   partial: { label: "Partial", cls: "partial" },
@@ -224,9 +227,11 @@ export const STATUS = {
 };
 export const statusChip = (e) => {
   const partial = e.status === "partial" && e.coverage != null;
-  return h(`span.status-chip.${STATUS[e.status].cls}`, partial ? { style: { "--pct": `${Math.max(0, Math.min(100, e.coverage))}%` } } : null,
-    e.status === "building" && e.job?.progress?.chunks ? `Building, ${e.job.progress.index ?? 0} of ${e.job.progress.chunks}`
-      : partial ? `Partial, ${e.coverage}%` : STATUS[e.status].label);
+  // A Book Orbit book with no EPUB can never get an index here, so it says so instead of "No index".
+  const noEpub = e.status === "missing" && e.canBuild === false;
+  return h(`span.status-chip.${noEpub ? "no-epub" : STATUS[e.status].cls}`, partial ? { style: { "--pct": `${Math.max(0, Math.min(100, e.coverage))}%` } } : null,
+    e.status === "building" && e.job?.progress?.chunks ? `Building, part ${e.job.progress.index ?? 0} of ${e.job.progress.chunks}`
+      : partial ? `Partial, ${e.coverage}%` : noEpub ? "No EPUB" : STATUS[e.status].label);
 };
 
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];

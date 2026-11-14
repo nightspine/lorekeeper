@@ -77,8 +77,7 @@ function configure(target, book, ctx, fromJob = null) {
   const modelSel = h("select.select", { id: "cfg-model" });
   const checkSel = h("select.select", { id: "cfg-check" });
   checkSel.addEventListener("change", () => { cfg.check_model = checkSel.value || null; update(); });
-  const checkField = h("div.field", { hidden: true }, h("label", { for: "cfg-check" }, "Fact-check with"), checkSel,
-    h("p.hint", "Accuracy depends most on the fact-check. A stronger model here keeps more true facts and catches more errors."));
+  const checkField = h("div.field", { hidden: true }, h("label", { for: "cfg-check" }, "Fact-check with"), checkSel);
   const modelHint = h("p.hint");
   // Cloud providers the user has set up, from /api/providers; each one looks like a model source:
   // { id, label, ok, error, models: [{ name, label, price_in, price_out, tier }], default, strong, throughput }.
@@ -122,11 +121,13 @@ function configure(target, book, ctx, fromJob = null) {
     update();
   };
   modelSel.addEventListener("change", () => { cfg.model = modelSel.value; fillModels(); });
-  // One row of the "where should it run" list: a real radio, a bold label, one sentence under it.
+  // One row of the "where should it run" list: a real radio, the name with one quiet line under it, and the
+  // time or cost at the right edge.
   const prow = (pv, title) => {
     const radio = h("input", { type: "radio", name: "cfg-provider", value: pv, checked: cfg.provider === pv });
     const body = h("span.pr-line");
-    const card = h("label.prow", { dataset: { pv } }, radio, h("span.pr-text", h("span.pr-title", title), body));
+    const meta = h("span.pr-meta.num");
+    const card = h("label.prow", { dataset: { pv } }, radio, h("span.pr-text", h("span.pr-title", title), body), meta);
     radio.addEventListener("change", () => {
       if (!radio.checked) return;
       cfg.provider = pv; cfg.model = null; cfg.check_model = null;
@@ -134,7 +135,7 @@ function configure(target, book, ctx, fromJob = null) {
       ctxField.hidden = pv !== "ollama";
       fillModels(); update();
     });
-    return { pv, radio, body, card };
+    return { pv, radio, body, meta, card };
   };
   const cardOllama = prow("ollama", "On this computer");
   const cloudRows = {};   // provider id → row, rebuilt when the provider list arrives
@@ -227,18 +228,18 @@ function configure(target, book, ctx, fromJob = null) {
     cardOllama.radio.disabled = !ol?.ok;
     cardOllama.card.classList.toggle("off", !ol?.ok);
     clear(cardOllama.body, ol?.ok
-      ? `Free and private. Uses Ollama with ${olName || "a local model"}. ${words ? `About ${fmtDuration(olEst.secs)}.` : "Select at least one section."}`
+      ? `Free and private, with ${olName || "a local model"}.`
       : "Ollama isn't running. Start it with: brew services start ollama");
+    cardOllama.meta.textContent = ol?.ok && words ? `About ${fmtDuration(olEst.secs)}` : "";
     for (const [pv, row] of Object.entries(cloudRows)) {
       const c = clouds[pv], e = estimate(pv, selName(pv)), ok = Boolean(c?.ok);
       row.radio.disabled = !ok;
       row.card.classList.toggle("off", !ok);
       clear(row.body, ok
-        ? (pv === "custom"
-          ? `Your own server. Price unknown. Book text is sent to ${c.base_url || "that server"}.`
-          : `Much faster. ${e.cost != null && words ? `About ${money(e.cost)}` : e.cost == null && words ? "Price unknown" : "Costs a little"}, billed to your ${c.label} account. Book text is sent to ${c.label}.`)
+        ? `Book text is sent to ${pv === "custom" ? c.base_url || "that server" : c.label}.`
         : c?.configured ? (c.error || `${c.label} isn't working.`)
           : [`${c?.label || pv} isn't set up yet. `, h("a", { href: "#/settings/cloud" }, "Add a key in Settings")]);
+      row.meta.textContent = !ok || !words ? "" : e.cost != null ? `About ${money(e.cost)}` : "Price unknown";
     }
     cardOllama.radio.checked = !cloudNow;
     cardOllama.card.classList.toggle("on", !cloudNow);
@@ -357,30 +358,34 @@ function configure(target, book, ctx, fromJob = null) {
           h("div.field", h("label", { for: "cfg-model" }, "Model"), modelSel, modelHint),
           h("div.field", h("div.field-split",
             h("label", { for: "cfg-chunk" }, "Part size"), chunkVal), chunk,
-            h("p.hint#chunk-hint", "How much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows.")),
+            h("p.hint#chunk-hint", "Words the model reads per call.")),
           h("div.field", h("span.label", "Depth"), h("div.seg", { role: "group", "aria-label": "Depth" }, depthBtns), depthHint),
           h("label.switch", { for: "cfg-events" }, events,
-            h("span", h("span.label.label-block", "Timeline of key events"),
-              h("span.hint", "A few key moments per chapter for the Reader's timeline. Turn off for a little more speed."))),
+            h("span", h("span.label.label-block", "Timeline of key events"))),
           h("label.switch", { for: "cfg-verify" }, verify,
-            h("span", h("span.label.label-block", "Fact-check every claim"),
-              h("span.hint", "A second pass over each passage rejects unsupported claims and moves early ones later. Recommended; about a third slower."))),
+            h("span", h("span.label.label-block", "Fact-check every claim"), h("span.hint", "Recommended."))),
           checkField,
-          h("div.field", h("span.label", "Series and licence"),
-            h("p.hint", "Only needed when this book is part of a series you are indexing by hand.")),
-          text("cfg-series", "Series id", "Shared by every book in a series, e.g. sherlock-holmes.", "series_id", "optional"),
-          text("cfg-key", "Book key", "This book's key within the series, e.g. study-in-scarlet.", "book_key", "optional"),
+          text("cfg-series", "Series id, for a series indexed by hand", null, "series_id", "e.g. sherlock-holmes"),
+          text("cfg-key", "Book key within that series", null, "book_key", "e.g. study-in-scarlet"),
           h("div.field", h("label", { for: "cfg-license" }, "Licence for the index"), license),
           ctxField)),
       h("details.sections",
         h("summary", icon("chevron"), summary),
         h("div.sections-body",
-          h("p.hint.sections-hint", "Front and back matter (contents, acknowledgements, about the author, licences) is unchecked for you."),
           h("div.toolbar",
             h("button.btn.ghost", { type: "button", on: { click: setAll((c) => c.story) } }, "Story only"),
             h("button.btn.ghost", { type: "button", on: { click: setAll(() => true) } }, "All"),
             h("button.btn.ghost", { type: "button", on: { click: setAll(() => false) } }, "None")),
-          h("div.chapter-list", { role: "group", "aria-label": "Sections to index" }, rows.map((r) => r.row))))),
+          h("div.chapter-list", { role: "group", "aria-label": "Sections to index" }, rows.map((r) => r.row)))),
+      // Everything the form used to explain in place, said once and closed by default.
+      h("details.how",
+        h("summary", icon("chevron"), "How this works"),
+        h("div.how-body",
+          h("p", "On this computer, Ollama reads the book: free and private, and slow. A cloud model is much faster and costs a little per book, billed to your own account with that provider; book text is sent to it only when you build."),
+          h("p", "Part size is how much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows."),
+          h("p", "The timeline gives the Reader a few key moments per chapter; turning it off saves a little time. The fact-check is a second pass over each passage that rejects unsupported claims and moves early ones later; it makes a build about a third slower. Accuracy depends most on it, so a stronger model there keeps more true facts and catches more errors."),
+          h("p", "Front and back matter (contents, acknowledgements, about the author, licences) is unchecked in Sections for you."),
+          h("p", "Series id and book key are only needed when this book is part of a series you are indexing by hand. Books built from the Library get their series from it.")))),
     del);
 
   ctx.cleanup.push(onOllama(() => { if (cfg.provider === "ollama") fillModels(); }));
