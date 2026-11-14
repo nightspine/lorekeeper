@@ -1,6 +1,6 @@
 import { api } from "./api.js";
-import { onOllama, parseHash, state as appState } from "./app.js";
-import { announce, clear, fmtDuration, fmtInt, h, icon, relTime, STATUS_LABEL, toast, typeTag } from "./dom.js";
+import { onOllama, parseHash, replaceHash, state as appState } from "./app.js";
+import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadError, loading, relTime, STATUS_LABEL, toast, typeTag } from "./dom.js";
 import { confirmDialog, cover } from "./build.js";
 
 const PHASES = [
@@ -27,9 +27,12 @@ export function mountBuild(root) {
   const page = h("div.build");
   root.append(h("div.build-page", page));
   let gone = false;
-  (async () => {
+  const retry = () => { clear(page, loading("Loading the build form…")); start(); };
+  clear(page, loading("Loading the build form…"));
+  start();
+  async function start() {
     let books;
-    try { books = await api.books(); } catch (e) { return toast(`Could not reach the Lorekeeper server: ${e.message}`, "error"); }
+    try { books = await api.books(); } catch (e) { if (!gone) clear(page, loadError("load the build form", e, retry)); return; }
     const from = params.get("from") ? await api.job(params.get("from")).catch(() => null) : null;
     if (gone) return;
     const book = books.find((b) => b.id === parts[0]);
@@ -37,7 +40,7 @@ export function mountBuild(root) {
       return clear(page, h("p.muted", "That book is no longer in your uploads. Find it in the ", h("a", { href: "#/library" }, "Library"), "."));
     }
     configure(page, book, ctx, from && from.book_id === book.id ? from : null);
-  })();
+  }
   return () => { gone = true; ctx.cleanup.forEach((fn) => fn()); };
 }
 
@@ -196,7 +199,7 @@ function configure(target, book, ctx, fromJob = null) {
     const words = chosen.reduce((a, c) => a + c.words, 0);
     const whole = chosen.length === storySet.size && chosen.every((c) => storySet.has(c.n));
     summary.textContent = `Sections: ${whole ? "the whole story, " : ""}${chosen.length} of ${book.chapters.length} (${fmtInt(words)} words)`;
-    optHint.textContent = [cfg.model, `${cfg.depth} depth`, `${fmtInt(cfg.chunk_words)}-word chunks`].filter(Boolean).join(", ");
+    optHint.textContent = [cfg.model, `${cfg.depth} depth`, `${fmtInt(cfg.chunk_words)}-word parts`].filter(Boolean).join(", ");
     chunk.style.setProperty("--fill", `${((cfg.chunk_words - 1000) / 7000) * 100}%`);
     chunkVal.textContent = `${fmtInt(cfg.chunk_words)} words`;
     const cloudNow = isCloud(cfg.provider);
@@ -325,10 +328,11 @@ function configure(target, book, ctx, fromJob = null) {
   }
 
   const storyCount = storySet.size;
-  const sep = () => h("span.sep", { "aria-hidden": "true" }, "/");
+  const trail = crumbs([{ label: "Library", href: "#/library" },
+    { label: book.title, href: catalogKey ? `#/book/${encodeURIComponent(catalogKey)}` : null }]);
+  trail.classList.add("build-crumbs");
   clear(target,
-    h("nav.crumbs.build-crumbs", { "aria-label": "Breadcrumb" }, h("a", { href: "#/library" }, "Library"), sep(),
-      catalogKey ? h("a", { href: `#/book/${encodeURIComponent(catalogKey)}` }, book.title) : h("span", book.title)),
+    trail,
     h("header.build-head",
       h("div.build-id",
         cover({ title: book.title, authors: book.authors, cover: book.cover ? `/api/catalog/cover/up:${book.id}` : null }, "sm"),
@@ -352,7 +356,7 @@ function configure(target, book, ctx, fromJob = null) {
         h("div.advanced-body",
           h("div.field", h("label", { for: "cfg-model" }, "Model"), modelSel, modelHint),
           h("div.field", h("div.field-split",
-            h("label", { for: "cfg-chunk" }, "Chunk size"), chunkVal), chunk,
+            h("label", { for: "cfg-chunk" }, "Part size"), chunkVal), chunk,
             h("p.hint#chunk-hint", "How much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows.")),
           h("div.field", h("span.label", "Depth"), h("div.seg", { role: "group", "aria-label": "Depth" }, depthBtns), depthHint),
           h("label.switch", { for: "cfg-events" }, events,
@@ -392,10 +396,12 @@ export function mountStudio(root) {
   const mainCol = h("section.studio-main", { "aria-live": "off" });
   root.append(h("div.studio", side, mainCol));
 
-  async function refresh() {
+  /** Re-read the runs. The first read throws so the page can say it failed; later ones only toast. */
+  async function refresh({ first = false } = {}) {
     try {
       ctx.jobs = await api.jobs();
     } catch (e) {
+      if (first) throw e;
       toast(`Could not reach the Lorekeeper server: ${e.message}`, "error");
     }
     renderSide();
@@ -406,7 +412,7 @@ export function mountStudio(root) {
   }
 
   function runsCard() {
-    const items = ctx.jobs.slice(0, 12).map((j) => h("li", h("button.job-item", {
+    const items = ctx.jobs.map((j) => h("li", h("button.job-item", {
       type: "button", "aria-current": ctx.view === "job" && ctx.id === j.id ? "true" : "false",
       on: { click: () => { location.hash = `#/studio/job/${j.id}`; } },
     }, statusBadge(j.status),
@@ -415,7 +421,7 @@ export function mountStudio(root) {
     icon("chevron"))));
     return h("div.card.card-pad",
       h("div.section-title", h("h2", "Runs"), h("span.eyebrow", `${ctx.jobs.length}`)),
-      items.length ? h("ul.list", items) : h("p.muted", "Runs you start appear here with live progress."));
+      items.length ? foldList(items, (nodes) => h("ul.list", nodes), { show: 12, noun: "runs" }) : h("p.muted", "Runs you start appear here with live progress."));
   }
 
   function renderMain() {
@@ -428,7 +434,11 @@ export function mountStudio(root) {
 
   async function monitor(jobId) {
     let job;
-    try { job = await api.job(jobId); } catch { return clear(mainCol, h("div.card.empty", h("h3", "Run not found"))); }
+    clear(mainCol, loading("Opening the run…"));
+    try { job = await api.job(jobId); } catch (e) {
+      if (e.status === 404) return clear(mainCol, h("div.card.empty", h("h3", "Run not found")));
+      return clear(mainCol, loadError("open the run", e, () => monitor(jobId)));
+    }
 
     const m = { status: job.status, chunks: 0, wordsTotal: 0, wordsDone: 0, current: null, phase: null, stats: {},
       chunkTimes: [], feed: [], recap: null, summary: null, logs: [], runStart: null, runWords: 0, runSeconds: 0, usage: null,
@@ -450,7 +460,7 @@ export function mountStudio(root) {
     el.shield = h("div.spoiler-shield",
       icon("shield"),
       h("h3", "Hidden to avoid spoilers"),
-      h("p.muted", "The model reads ahead of you, so the names, facts and story it finds stay hidden here. "
+      h("p.muted", "The model reads ahead of you, so the names, details and story it finds stay hidden here. "
         + "The Reader shows them only up to where you are."),
       h("button.btn", { type: "button", on: { click: () => setRevealed(true) } }, icon("eye"), "I've read this book, show them"));
     function setRevealed(on) {
@@ -469,7 +479,7 @@ export function mountStudio(root) {
     const filter = h("input.input", { placeholder: "Filter log", "aria-label": "Filter log" });
     const followBtn = h("button.btn", { type: "button", "aria-pressed": "true" }, "Follow");
     followBtn.addEventListener("click", () => { follow = !follow; followBtn.setAttribute("aria-pressed", String(follow)); if (follow) el.log.scrollTop = el.log.scrollHeight; });
-    const copyBtn = h("button.btn", { type: "button", "aria-label": "Copy log" }, icon("copy"));
+    const copyBtn = h("button.btn", { type: "button", "aria-label": "Copy log", title: "Copy log" }, icon("copy"));
     copyBtn.addEventListener("click", async () => { try { await navigator.clipboard.writeText(m.logs.map((l) => l.line).join("\n")); toast("Log copied"); } catch { toast("Copy failed", "error"); } });
     filter.addEventListener("input", () => paintLog(true));
     el.log.addEventListener("scroll", () => {
@@ -483,7 +493,7 @@ export function mountStudio(root) {
           h("div", h("span.eyebrow", "Run"), h("h1", job.book_title),
             h("p.muted.run-meta",
               el.badge, el.model = h("span.chip", icon((job.config.provider || "ollama") === "ollama" ? "cpu" : "sparkle"), job.config.model || "default model"),
-              h("span.chip", `${fmtInt(job.config.chunk_words || 1200)}-word chunks`),
+              h("span.chip", `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
               h("span.chip", icon("shield"), job.config.verify === false ? "No fact-check" : "Fact-checked"))),
           el.actions),
         el.error,
@@ -495,7 +505,7 @@ export function mountStudio(root) {
         h("div.monitor-right",
           el.recapCard,
           h("div.card.card-pad", h("div.section-title", h("h2", "Quality gate"), h("span.eyebrow", "Dropped claims")), el.drops),
-          h("div.card.card-pad", h("div.section-title", h("h2", "Chunks"), h("span.eyebrow", "Seconds each")), el.chart))),
+          h("div.card.card-pad", h("div.section-title", h("h2", "Parts"), h("span.eyebrow", "Seconds each")), el.chart))),
       h("div.console",
         h("div.console-bar", h("span.title", icon("terminal"), "Log"), h("div.ctrls", filter, followBtn, copyBtn)),
         el.log));
@@ -530,14 +540,14 @@ export function mountStudio(root) {
     function paintActions() {
       const a = [];
       if (["running", "queued"].includes(m.status)) a.push(h("button.btn.danger", { type: "button", on: { click: async () => {
-        try { await api.stopJob(jobId); toast(m.status === "queued" ? "Run cancelled" : "Stopping. Resume picks up from the last finished chunk."); } catch (e) { toast(e.message, "error"); }
+        try { await api.stopJob(jobId); toast(m.status === "queued" ? "Run cancelled" : "Stopping. Resume picks up from the last finished part."); } catch (e) { toast(e.message, "error"); }
       } } }, icon("stop"), m.status === "queued" ? "Cancel" : "Stop"));
       if (m.status === "stopping") a.push(h("button.btn", { type: "button", disabled: true }, icon("clock"), "Stopping…"));
       if (["stopped", "interrupted", "failed"].includes(m.status)) a.push(h("button.btn.primary", { type: "button", on: { click: async () => {
         try { await api.resumeJob(jobId); toast("Resuming"); } catch (e) { toast(e.message, "error"); }
       } } }, icon("refresh"), "Resume"));
       if (m.wordsDone > 0 || m.status === "done") {
-        a.push(h("a.btn", { "aria-label": `Read ${job.book_title}`, href: `#/reader?i=${encodeURIComponent(libraryKey(job))}` }, icon("book-open"), "Read"));
+        a.push(h(`a.btn${m.status === "done" ? ".primary" : ""}`, { "aria-label": `Read ${job.book_title}`, href: `#/reader?i=${encodeURIComponent(libraryKey(job))}` }, icon("book-open"), "Read"));
         a.push(h("a.btn", { href: `/api/jobs/${jobId}/download`, download: "" }, icon("download"), "Download index"));
       }
       if (["done", "stopped", "interrupted", "failed"].includes(m.status)) {
@@ -564,7 +574,7 @@ export function mountStudio(root) {
       const cur = m.current;
       const describing = m.status === "running" && m.phase === "portraits" && m.portraits;
       clear(el.where,
-        h("span", "Chunk ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
+        h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
         describing && h("span", "Describing the cast ", h("b.num", `${m.portraits[0]} / ${m.portraits[1]}`), " chapters"),
         cur && m.status === "running" && !describing && h("span", "Reading ", h("b", cur.chapter)),
         h("span", "Elapsed ", h("b.num", fmtDuration(elapsed))),
@@ -584,10 +594,10 @@ export function mountStudio(root) {
       const dropped = Object.entries(s).filter(([k]) => k.startsWith("dropped")).reduce((a, [, v]) => a + v, 0);
       const droppedDelta = Object.entries(d).filter(([k]) => k.startsWith("dropped")).reduce((a, [, v]) => a + v, 0);
       const tile = (k, ic, v, dv, warn) => h(`div.stat${warn ? ".warn" : ""}`, h("span.k", icon(ic), k), h("span.v", fmtInt(v)),
-        h("span.d", dv ? `+${dv} last chunk` : ""));
+        h("span.d", dv ? `+${dv} last part` : ""));
       clear(el.stats,
-        tile("Entities", "person", s.entities, d.entities), tile("Facts", "scroll", s.facets, d.facets),
-        tile("Relations", "link", s.relations, d.relations), tile("Events", "timeline", s.events, d.events),
+        tile("Entries", "person", s.entities, d.entities), tile("Details", "scroll", s.facets, d.facets),
+        tile("Connections", "link", s.relations, d.relations), tile("Events", "timeline", s.events, d.events),
         tile("Recaps", "feather", s.recaps, d.recaps), tile("Dropped", "scissors", dropped, droppedDelta, true));
 
       const reasons = Object.entries(s).filter(([k, v]) => k.startsWith("dropped") && v).sort((a, b) => b[1] - a[1]);
@@ -599,11 +609,11 @@ export function mountStudio(root) {
         : h("p.muted", "Nothing dropped yet. Rejected claims and the reason appear here."));
 
       const maxT = Math.max(1, ...m.chunkTimes);
-      const bars = m.chunkTimes.map((t, i) => h("span", { style: { height: `${Math.max(6, (t / maxT) * 100)}%` }, title: `Chunk ${i + 1}: ${fmtDuration(t)}` }));
+      const bars = m.chunkTimes.map((t, i) => h("span", { style: { height: `${Math.max(6, (t / maxT) * 100)}%` }, title: `Part ${i + 1}: ${fmtDuration(t)}` }));
       for (let i = m.chunkTimes.length; i < m.chunks; i++) bars.push(h(`span.${i === m.chunkTimes.length && m.status === "running" ? "current" : "pending"}`, { style: { height: "12%" } }));
-      clear(el.chart, bars.length ? bars : h("p.muted", "Timings appear as chunks finish."));
+      clear(el.chart, bars.length ? bars : h("p.muted", "Timings appear as parts finish."));
 
-      if (!m.feed.length) clear(el.feed, h("li", h("span.what", "New characters, places and facts will stream in here as the model reads.")));
+      if (!m.feed.length) clear(el.feed, h("li", h("span.what", "New characters, places and details will stream in here as the model reads.")));
       if (m.recap) el.recap.textContent = m.recap; else el.recap.textContent = "The first recap is written when the model finishes a chapter.";
       clear(el.summary, m.summary && h("div.last-chapter", h("span.eyebrow", `Latest chapter: ${m.summary.chapter}`), h("p", m.summary.text)));
       clear(el.error, m.dupes ? h("div.notice.info.notice-gap", icon("layers"),
@@ -644,7 +654,7 @@ export function mountStudio(root) {
             while (el.feed.children.length > 120) el.feed.lastChild.remove();
             m.feed.push(...e.added);
           }
-          if (live) announce(`Chunk ${e.index + 1} of ${e.chunks} done: ${e.delta?.entities || 0} entities and ${e.delta?.facets || 0} facts added.`);
+          if (live) announce(`Part ${e.index + 1} of ${e.chunks} done: ${e.delta?.entities || 0} entries and ${e.delta?.facets || 0} details added.`);
           break;
         case "recap": m.recap = e.text; if (e.summary) m.summary = { chapter: e.chapter, text: e.summary }; break;
         case "log": m.logs.push({ t: e.t, line: e.line }); break;
@@ -682,7 +692,23 @@ export function mountStudio(root) {
     paint();
   }
 
-  refresh().then(renderMain);
+  // Open on a run: the one that is running, else the first queued, else the newest. The address is
+  // rewritten, not pushed, so Back leaves the page.
+  const pickRun = () => {
+    if (ctx.view === "job" && ctx.id) return;
+    const jobs = ctx.jobs;
+    const run = jobs.find((j) => j.status === "running") || jobs.filter((j) => j.status === "queued").sort((a, b) => a.created - b.created)[0]
+      || [...jobs].sort((a, b) => b.created - a.created)[0];
+    if (!run) return;
+    ctx.view = "job"; ctx.id = run.id;
+    replaceHash(`#/studio/job/${run.id}`);
+  };
+  const first = () => {
+    clear(mainCol, loading("Loading your runs…"));
+    refresh({ first: true }).then(() => { pickRun(); renderSide(); renderMain(); },
+      (e) => clear(mainCol, loadError("load your runs", e, first)));
+  };
+  first();
   const poll = setInterval(async () => {
     try { const jobs = await api.jobs(); if (JSON.stringify(jobs.map((j) => [j.id, j.status])) !== JSON.stringify(ctx.jobs.map((j) => [j.id, j.status]))) { ctx.jobs = jobs; renderSide(); } } catch {}
   }, 5000);

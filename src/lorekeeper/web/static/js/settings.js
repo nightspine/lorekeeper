@@ -24,7 +24,7 @@ export function mountSettings(root) {
         h("div.account-form", passwordForm({ username: user.name })))));
 
   root.append(h("div.settings-page",
-    h("div", h("span.eyebrow", "Settings"), h("h1", "Library and models"),
+    h("div", h("h1", "Settings"),
       h("p.muted.settings-lede",
         "Lorekeeper can read books with a local model through Ollama, or with a cloud model on your own key: Claude, OpenAI, Gemini and more, or any OpenAI-compatible server. Local is free and private; cloud models are much faster and cost a little per book.")),
     accountCard,
@@ -70,8 +70,8 @@ export function mountSettings(root) {
     const urlInput = custom && h("input.input", { id: "key-custom-url", type: "url", value: p.base_url || "", placeholder: "http://localhost:1234/v1" });
     const modelInput = custom && h("input.input", { id: "key-custom-model", value: p.model || "", placeholder: "The model name the server uses" });
     const err = h("p.hint.field-error", { role: "alert", id: `err-${p.id}` });
-    const reveal = h("button.icon-btn", { type: "button", "aria-label": "Show key", "aria-pressed": "false",
-      on: { click: () => { showing = !showing; input.type = showing ? "text" : "password"; reveal.setAttribute("aria-pressed", String(showing)); reveal.setAttribute("aria-label", showing ? "Hide key" : "Show key"); } } }, icon("eye"));
+    const reveal = h("button.icon-btn", { type: "button", "aria-label": "Show key", title: "Show key", "aria-pressed": "false",
+      on: { click: () => { showing = !showing; input.type = showing ? "text" : "password"; reveal.setAttribute("aria-pressed", String(showing)); reveal.setAttribute("aria-label", showing ? "Hide key" : "Show key"); reveal.title = showing ? "Hide key" : "Show key"; } } }, icon("eye"));
     const save = h("button.btn.primary", { type: "submit" }, icon("check"), "Save and test");
     const form = h("form.stack-8", { on: { submit: async (e) => {
       e.preventDefault();

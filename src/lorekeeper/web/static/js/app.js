@@ -131,7 +131,10 @@ export function setParams(params, { replace = true } = {}) {
   else location.hash = url;
 }
 let ownHash = null;
-let shownHash = null;   // the hash of the page on screen, so a stray "#main" can put it back
+let shownHash = null;
+/** Change the address without adding history or re-rendering (a view that picked what to show for the person). */
+export function replaceHash(url) { ownHash = shownHash = url; history.replaceState(null, "", url); }
+let shownHash2 = null;   // the hash of the page on screen, so a stray "#main" can put it back
 let firstRender = true;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
 
 function render() {

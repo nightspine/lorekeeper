@@ -9,12 +9,13 @@ const MIN = 12, MAX = 128;
 function passwordField({ id, label, autocomplete, hint }) {
   let showing = false;
   const input = h("input.input", { id, type: "password", autocomplete, spellcheck: "false", autocapitalize: "off", required: true });
-  const reveal = h("button.icon-btn", { type: "button", "aria-label": "Show password", "aria-pressed": "false", "aria-controls": id,
+  const reveal = h("button.icon-btn", { type: "button", "aria-label": "Show password", title: "Show password", "aria-pressed": "false", "aria-controls": id,
     on: { click: () => {
       showing = !showing;
       input.type = showing ? "text" : "password";
       reveal.setAttribute("aria-pressed", String(showing));
       reveal.setAttribute("aria-label", showing ? "Hide password" : "Show password");
+      reveal.title = showing ? "Hide password" : "Show password";
     } } }, icon("eye"));
   const field = h("div.field", h("label", { for: id }, label), h("div.key-row", input, reveal), hint ? h("p.hint", hint) : null);
   return { input, field };
@@ -120,7 +121,8 @@ export function mountLogin(root) {
           setup ? h("div.notice.info", h("div", "First time here? Sign in with the password the server printed when it started (",
             h("span.mono", "docker compose logs lorekeeper"), "), then choose your own.")) : null,
           form)),
-      h("p.hint.auth-foot", h("a", { href: "docs/self-hosting.html#sign-in" }, "Docs")))));
+      h("p.hint.auth-foot", "Forgot the password? Run ", h("span.mono", "lorekeeper reset-password"), " on the server. ",
+        h("a", { href: "docs/self-hosting.html#sign-in" }, "How sign-in works")))));
   (user.value ? pass.input : user).focus();
 }
 
