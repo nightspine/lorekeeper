@@ -435,7 +435,7 @@ export function mountStudio(root) {
   function renderSide() {
     const active = ctx.jobs.filter((j) => ["running", "queued", "stopping"].includes(j.status)).length;
     count.textContent = ctx.jobs.length ? `${ctx.jobs.length} run${ctx.jobs.length === 1 ? "" : "s"}${active ? `, ${active} building` : ""}.` : "";
-    const sig = ctx.jobs.map((j) => j.id).join(",");
+    const sig = `${ctx.jobs.map((j) => j.id).join(",")}|${ctx.view === "job" ? ctx.id : ""}`;   // the open run is part of it
     if (sig === tableSig && side.querySelector("tbody")) {
       for (const j of ctx.jobs) {
         const tr = side.querySelector(`tr[data-id="${CSS.escape(j.id)}"]`);
