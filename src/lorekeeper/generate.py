@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import merge, text, validate
+from . import bookkind, merge, text, validate
 from .epub import Book
 from .llm import LLM, Cancelled
 
@@ -414,6 +414,7 @@ class Options:
     check_llm: object = None    # model for the fact-check; None = the extraction model
     whole_story: bool = False   # the chosen chapters are all of the story (only front/back matter skipped)
     distinct: set = field(default_factory=set)   # frozenset({id, id}) pairs a person ruled "not the same"
+    book_kind: str | None = None   # fiction | non-fiction | self-help; None = infer (bookkind.infer)
 
 
 @dataclass
@@ -457,6 +458,9 @@ class Generator:
         self.book, self.llm, self.opts, self.log = book, llm, opts, log
         self.epub_path = Path(epub_path)
         self.key = opts.book_key or slug(book.title) or "book"
+        # Run() may replace this with a model-assisted inference; direct users get the model-free one.
+        self.kind = (bookkind.Inference(opts.book_kind, "chosen", "chosen by the person building the index")
+                     if opts.book_kind else bookkind.infer(book))
         self.book_shingles = text.shingles([w for b in book.blocks for w in b.words], MAX_COPY)
         self._eligible = self._eligible_blocks()
 
@@ -1557,6 +1561,7 @@ class Generator:
         doc = {
             "lorekeeper": "0.1",
             "kind": "index",
+            "bookKind": self.kind.kind,
             "id": self.opts.index_id or (f"{self.opts.series_id}.{self.key}" if self.opts.series_id else self.key),
             "work": {"title": self.book.title or self.key, "authors": self.book.authors or ["Unknown"],
                      "language": self.book.language or "und"},
@@ -1617,6 +1622,26 @@ class Generator:
         self.item_seq, self.item_kind = state["item_seq"], state["item_kind"]
 
 
+NON_STORY_NOTICE = "building a story index for a {kind} book; {kind} extraction comes in a later phase"
+
+
+def _settle_kind(gen: "Generator", book: Book, llm: LLM, opts: Options, out: Path, resume: bool, log) -> None:
+    """Decide the book kind once per run: chosen, kept from the run being resumed, or inferred (model last)."""
+    prev = json.loads(out.read_text()).get("bookKind") if resume and not opts.book_kind and out.exists() else None
+    if opts.book_kind:
+        pass
+    elif prev:
+        gen.kind = bookkind.Inference(prev, "resumed", "kept from the run being resumed")
+    else:
+        gen.kind = bookkind.infer(book, llm)
+    # A model's reason may know the book, and the Runs monitor shows the log while discoveries are hidden:
+    # the reason stays in the .report for that basis.
+    why = "" if gen.kind.basis == "model" else f": {gen.kind.why}"
+    log(f"book kind: {gen.kind.kind} ({gen.kind.basis}{why})")
+    if gen.kind.kind != "fiction":
+        log(NON_STORY_NOTICE.format(kind=gen.kind.kind))
+
+
 def run(book: Book, llm: LLM, opts: Options, epub_path: str | Path, out: str | Path,
         resume: bool = False, log: Callable[[str], None] = print,
         on_event: Callable[[dict], None] | None = None,
@@ -1647,6 +1672,7 @@ def run(book: Book, llm: LLM, opts: Options, epub_path: str | Path, out: str | P
     usage = getattr(llm, "usage", None)
     emit({"type": "start", "chunks": len(chunks), "done": sum(c.key in gen.done for c in chunks),
           "words": sum(words(c) for c in chunks), "words_done": sum(words(c) for c in chunks if c.key in gen.done)})
+    _settle_kind(gen, book, llm, opts, out, resume, log)
     stopped = False
     for i, chunk in enumerate(chunks):
         if chunk.key in gen.done:
@@ -1688,7 +1714,7 @@ def run(book: Book, llm: LLM, opts: Options, epub_path: str | Path, out: str | P
     errors = [str(e) for e in validate.check_index(doc) + validate.check_against_book(doc, book.blocks)
               if e.level == "error"]
     usage = getattr(llm, "usage", None)
-    report = {"model": llm.name, "chunks": len(chunks), "stopped": stopped,
+    report = {"model": llm.name, "chunks": len(chunks), "stopped": stopped, "bookKind": gen.kind.as_dict(),
               "seconds": round(time.time() - total_t),
               "stats": dict(gen.stats), "validation_errors": errors, "rejected": gen.rejected, "unsure": gen.unsure,
               "usage": usage.__dict__ if usage else None}

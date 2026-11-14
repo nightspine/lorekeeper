@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -77,6 +78,7 @@ class Library:
                 "key": item["key"], "source": item["source"], "id": doc.get("id"),
                 "title": doc.get("work", {}).get("title"), "authors": doc.get("work", {}).get("authors", []),
                 "series": doc.get("series"), "complete": doc.get("coverage", {}).get("complete"),
+                "bookKind": doc.get("bookKind"),
                 "entities": len(doc.get("entities", [])), "anchors": len(doc.get("anchors", [])),
                 "model": (prov.get("generator") or {}).get("model"), "updated": prov.get("updated") or prov.get("created"),
                 "textHashes": [e.get("textHash") for e in doc.get("editions", [])],
@@ -227,6 +229,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         catalog.update_state(lambda st: st["links"].__setitem__(key, meta["id"]))
         return meta["id"]
 
+    def write_manifest(series_id: str) -> None:
+        manifest = catalog.series_manifest(series_id)
+        if manifest:
+            (data_dir / "indexes").mkdir(parents=True, exist_ok=True)
+            (data_dir / "indexes" / f"{series_id}.series.json").write_text(json.dumps(manifest, indent=2))
+
     def submit_for(key: str, config: dict):
         """Queue a build for a catalog book, with series ids filled in from the catalog."""
         local = prepare(key)
@@ -235,10 +243,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if e["series"] and not config.get("series_id"):
             config["series_id"] = e["series"]["id"]
             config["book_key"] = slug(e["title"])
-            manifest = catalog.series_manifest(e["series"]["id"])
-            if manifest:
-                (data_dir / "indexes").mkdir(parents=True, exist_ok=True)
-                (data_dir / "indexes" / f"{e['series']['id']}.series.json").write_text(json.dumps(manifest, indent=2))
+            write_manifest(e["series"]["id"])
         story = story_chapters(books.get(local))
         if not config.get("chapters"):
             config["chapters"] = story or None
@@ -548,12 +553,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def list_jobs():
         return sorted((job_json(j) for j in jobs.jobs.values()), key=lambda j: -j["created"])
 
+    def check_config(config) -> None:
+        """Job config is accepted on two routes; both check it here before anything is queued."""
+        if not isinstance(config, dict):
+            raise HTTPException(400, "config must be an object")
+        if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
+            raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
+        bk = config.get("book_kind")
+        if bk is not None and (not isinstance(bk, str) or not bk.strip()):
+            raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")
+        if bk is not None:
+            config["book_kind"] = bk.strip()
+
     @app.post("/api/jobs")
     async def create_job(request: Request):
         body = await request.json()
         config = body.get("config", {})
-        if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
-            raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
+        check_config(config)
         try:
             job = (submit_for(config["catalog_key"], config) if config.get("catalog_key")
                    else jobs.submit(body["book_id"], config))
@@ -621,9 +637,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def build_many(request: Request):
         """Queue several books in the given order (e.g. a series' missing books, earliest first)."""
         body = await request.json()
+        config = body.get("config", {})
+        check_config(config)
         out = []
         for key in body.get("keys", []):
-            out.append(job_json(submit_for(key, dict(body.get("config", {})))))
+            out.append(job_json(submit_for(key, dict(config))))
         return {"jobs": out}
 
     @app.get("/api/catalog/cover/{key}")
@@ -779,7 +797,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return parsed_books[k]
 
     editor = Editor(identity, library, data_dir, reader=parsed)
-    jobs.after_run = lambda job: editor.reapply(Path(job.output))   # a rebuild keeps the person's edits
+    def after_run(job):
+        got = editor.reapply(Path(job.output))   # a rebuild keeps the person's edits
+        if job.config.get("series_id"):
+            try:
+                write_manifest(job.config["series_id"])   # the new index may settle the series' bookKind
+            except Exception as ex:  # noqa: BLE001 - never turns into "your edits could not be applied"
+                line = f"series manifest: not refreshed ({type(ex).__name__}: {ex})"
+                try:
+                    jobs._emit(job, {"type": "log", "line": line})
+                except Exception:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(line)
+        return got
+    jobs.after_run = after_run
 
     def who(request: Request) -> str:
         return getattr(request.state, "user", None) or "admin"
@@ -905,10 +935,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         except EditError as ex:
             raise HTTPException(409, str(ex)) from ex
         if series_id:
-            manifest = catalog.series_manifest(series_id)
-            if manifest:
-                (data_dir / "indexes").mkdir(parents=True, exist_ok=True)
-                (data_dir / "indexes" / f"{series_id}.series.json").write_text(json.dumps(manifest, indent=2))
+            write_manifest(series_id)
         stem = f"{slug(e['title']) or 'book'}-{uuid.uuid4().hex[:12]}"
         out = data_dir / "indexes" / f"{stem}.lore.json"
         out.parent.mkdir(parents=True, exist_ok=True)

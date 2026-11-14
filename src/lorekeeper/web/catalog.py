@@ -211,7 +211,8 @@ class Catalog:
                        "num": series_num(series.get("index"))} if series else None,
             "cover": cover, "canBuild": can_build, "localId": meta["id"] if meta else None,
             "words": meta.get("words") if meta else None, "blocks": meta.get("blocks") if meta else None,
-            "textHash": meta.get("textHash") if meta else None, **extra,
+            "textHash": meta.get("textHash") if meta else None,
+            "bookKind": meta.get("bookKind") if meta else None, **extra,
             "_storyStart": _last_story_start(meta) if meta else None,
         }
 
@@ -232,6 +233,7 @@ class Catalog:
                  "model": (CLAUDE_MODELS.get(model, {}).get("label") or model) if model
                  else ("Hand-written" if not gen else gen.get("name")),
                  "complete": bool(doc.get("coverage", {}).get("complete")),
+                 "bookKind": doc.get("bookKind"),
                  "throughSeq": seqs.get(doc.get("coverage", {}).get("through")),
                  "updated": prov.get("updated") or prov.get("created"), **stats,
                  "review": ((prov.get("review") or [{}])[-1] or {}).get("status")}
@@ -310,5 +312,13 @@ class Catalog:
             if bk not in seen:
                 seen.add(bk)
                 books.append({"key": bk, "title": by_key[k]["title"]})
-        return {"lorekeeper": "0.1", "kind": "series", "id": series_id, "title": g["name"], "books": books,
-                "orders": {"publication": [b["key"] for b in books]}, "defaultOrder": "publication"}
+        manifest = {"lorekeeper": "0.1", "kind": "series", "id": series_id, "title": g["name"], "books": books,
+                    "orders": {"publication": [b["key"] for b in books]}, "defaultOrder": "publication"}
+        # bookKind only when every book's default index carries the same one
+        kinds = set()
+        for k in g["books"]:
+            d = next((v for v in by_key[k]["versions"] if v["isDefault"]), None)
+            kinds.add(d.get("bookKind") if d else None)
+        if len(kinds) == 1 and None not in kinds:
+            manifest["bookKind"] = kinds.pop()
+        return manifest

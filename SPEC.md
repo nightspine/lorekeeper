@@ -167,6 +167,7 @@ Normative schema: [`schema/index.schema.json`](schema/index.schema.json).
   "lorekeeper": "0.1",
   "kind": "index",
   "id": "sherlock-holmes.study-in-scarlet",      // registry-unique slug
+  "bookKind": "fiction",                         // optional, see below
   "work": { "title": "...", "authors": ["..."], "language": "en",
             "ids": { "openlibrary": "...", "wikidata": "Q...", "isbn13": ["..."], "gutenberg": "244" } },
   "series": { "id": "sherlock-holmes", "book": "study-in-scarlet" },   // optional
@@ -178,6 +179,13 @@ Normative schema: [`schema/index.schema.json`](schema/index.schema.json).
   "carried": [ ... ]                                                    // optional, §5.4
 }
 ```
+
+`bookKind` (optional) says what kind of book the index describes. The known
+values are `fiction`, `non-fiction` and `self-help`; any other non-empty string
+is valid, so later kinds need no schema change. Absent means `fiction`, so
+existing indexes stay valid. It is not `kind`, which is the document kind
+(`index`, `series`, `view`). A client that does not know a value treats it as
+`fiction`.
 
 ### 4.1 Gated items
 
@@ -288,6 +296,9 @@ Media type `application/vnd.lorekeeper.series+json`. Normative schema:
   "defaultOrder": "publication" }
 ```
 
+A manifest MAY carry `bookKind` (§4) when every book's index in the series has
+the same value; it is omitted otherwise.
+
 ### 5.1 Reading orders
 
 A series MAY declare several orders (e.g. `publication` and `chronological`).
@@ -397,6 +408,8 @@ ordinal, file order). Then:
 7. **Chapters**: every visible chapter recap, in reading order, as `{ id, title, text, book }`.
 8. **Coverage**: `exhausted` is true when the index is partial and ordinal(`A`) ≥ ordinal(`coverage.through`).
 
+9. **Book kind**: if the index of the current book `B` has `bookKind`, the view carries the same `bookKind`; otherwise the view has none. It is a property of the book, not a gated item, so it is never withheld.
+
 ### 7.4 Safety requirements
 
 A client MUST NOT:
@@ -436,11 +449,12 @@ tokens.
 Query parameters (at least one): `fileHash`, `textHash`, `isbn`, `openlibrary`,
 `wikidata`, `gutenberg`. Results are ordered best first. `match` says how the
 result matched: `file` (same file), `text` (same text), or `identifier`
-(different edition, so anchors resolve by fingerprint only).
+(different edition, so anchors resolve by fingerprint only). `bookKind` is
+present when the index has one.
 
 ```json
 { "results": [{ "id": "sherlock-holmes.study-in-scarlet", "title": "A Study in Scarlet",
-                "match": "text", "series": { "id": "sherlock-holmes", "book": "study-in-scarlet" },
+                "bookKind": "fiction", "match": "text", "series": { "id": "sherlock-holmes", "book": "study-in-scarlet" },
                 "complete": false, "digest": "sha256:…", "href": "/v0/indexes/sherlock-holmes.study-in-scarlet" }] }
 ```
 

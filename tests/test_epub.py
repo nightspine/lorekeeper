@@ -29,3 +29,37 @@ def test_div_paragraph_documents_fall_back_to_div_blocks(tmp_path):
     assert len(by_spine[0]) == 2 and not any("stray" in t for t in by_spine[0])   # p-doc: wrapper text ignored, no re-parse
     assert len(by_spine[1]) == 6 and by_spine[1][0].startswith("chapter one")       # div-doc: fallback kicked in
     assert 2 not in by_spine                                                        # under 20 words: still nothing
+
+
+def _minimal_epub(path, metadata: str):
+    import zipfile
+    opf = ('<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">'
+           '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="u">x</dc:identifier><dc:title>T</dc:title>'
+           + metadata + '</metadata><manifest><item id="a" href="a.xhtml" media-type="application/xhtml+xml"/></manifest>'
+           '<spine><itemref idref="a"/></spine></package>')
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("mimetype", "application/epub+zip")
+        z.writestr("META-INF/container.xml", '<?xml version="1.0"?><container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+                   '<rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>')
+        z.writestr("content.opf", opf)
+        z.writestr("a.xhtml", '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>Alpha beta gamma delta epsilon zeta eta theta.</p></body></html>')
+
+
+def test_subjects_are_read_in_order_and_whitespace_normalized(tmp_path):
+    from lorekeeper import epub
+    _minimal_epub(tmp_path / "s.epub", "<dc:subject>  History \n -- Fiction</dc:subject><dc:subject></dc:subject><dc:subject>Self-help</dc:subject>")
+    assert epub.read(tmp_path / "s.epub").subjects == ["History -- Fiction", "Self-help"]
+
+
+def test_no_subjects_gives_an_empty_list(tmp_path):
+    from lorekeeper import epub
+    _minimal_epub(tmp_path / "n.epub", "")
+    assert epub.read(tmp_path / "n.epub").subjects == []
+
+
+def test_subjects_on_a_corpus_epub():
+    from lorekeeper import epub
+    from .conftest import corpus_epub
+    subjects = epub.read(corpus_epub("pg345/pg345.epub")).subjects
+    assert subjects and all(s == " ".join(s.split()) for s in subjects)
+    assert any("fiction" in s.lower() or "horror" in s.lower() or "vampire" in s.lower() for s in subjects)
