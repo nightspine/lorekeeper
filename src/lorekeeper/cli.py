@@ -109,6 +109,65 @@ def cmd_validate(args) -> int:
     return 1 if errors else 0
 
 
+def _report(args, ok: bool, issues=(), **extra) -> int:
+    """Print a registry command's findings: a JSON report with --json, a sentence each otherwise."""
+    issues = list(issues)
+    if args.json:
+        body = {"ok": ok, "errors": [{"where": i.where, "message": i.message} for i in issues if i.level == "error"],
+                "warnings": [{"where": i.where, "message": i.message} for i in issues if i.level != "error"], **extra}
+        print(json.dumps(body, indent=1, ensure_ascii=False))
+    else:
+        for i in issues:
+            print(i, file=sys.stderr)
+        for k, v in extra.items():
+            print(f"{k}: {v}")
+    return 0 if ok else 1
+
+
+def cmd_share(args) -> int:
+    from . import registry
+    try:
+        index = _load(args.index)
+        series = _load(args.series) if args.series else None
+        blocks = epub.blocks(args.epub) if args.epub else None
+    except (OSError, ValueError) as e:
+        return _report(args, False, [validate.Issue("error", "input", str(e))])
+    if args.now is not None and not registry.valid_timestamp(args.now):
+        return _report(args, False, [validate.Issue("error", "now", f"{args.now!r} is not a UTC timestamp like 2026-11-13T20:00:00Z")])
+    bundle, rep = registry.make_bundle(index, series=series, derived_from=args.derived_from, blocks=blocks, now=args.now)
+    issues = rep["issues"]
+    extra: dict = {}
+    gate = rep.get("spoilerGate")
+    if gate:
+        extra["spoilerGate"] = gate
+    if bundle is None:
+        return _report(args, False, issues, **extra)
+    Path(args.output).write_text(registry.dumps(bundle), encoding="utf-8")
+    extra["bundle"] = args.output
+    extra["attestations"] = [a["kind"] for a in bundle.get("attestations", [])]
+    return _report(args, True, issues, **extra)
+
+
+def cmd_registry(args) -> int:
+    from . import registry
+    try:
+        if args.registry_cmd == "check":
+            ctx, issues = registry.check(args.bundle, args.publisher, args.source)
+            return _report(args, ctx is not None, issues, **({"id": ctx["id"], "digest": ctx["digest"]} if ctx else {}))
+        if args.registry_cmd == "add":
+            listing, issues = registry.add(args.bundle, args.publisher, args.source, args.now)
+            return _report(args, listing is not None, issues,
+                           **({"id": listing["id"], "version": listing["version"], "digest": listing["digest"]} if listing else {}))
+        if args.registry_cmd == "remove":
+            notes: list[str] = []
+            gone = registry.remove(args.id, args.source, args.reason, args.now, args.with_dependents, notes)
+            return _report(args, True, [validate.Issue("warning", "remove", m) for m in notes], id=args.id, removed=gone)
+        stats = registry.build(args.src, args.output, args.base_path, args.name)
+        return _report(args, True, **stats)
+    except registry.RegistryError as e:
+        return _report(args, False, [validate.Issue("error", args.registry_cmd, m) for m in str(e).splitlines()])
+
+
 def cmd_view(args) -> int:
     indexes = [_load(p) for p in args.index]
     series = _load(args.series) if args.series else None
@@ -344,6 +403,37 @@ def cmd_profiles(args) -> int:
     return 0
 
 
+def cmd_ties(args) -> int:
+    """Tag the kinship ties of existing indexes `family` and write their labels in the canonical form."""
+    import shutil
+    from datetime import datetime, timezone
+
+    from . import kinship
+    changed = 0
+    for name in args.index:
+        path = Path(name)
+        doc = json.loads(path.read_text())
+        before = {str(e) for e in validate.check_index(doc) if e.level == "error"}
+        n = kinship.tag(doc)
+        print(f"{path.name}: {n['tagged']} kinship ties tagged, {n['normalised']} labels normalised, "
+              f"{n['left']} not kinship, left alone")
+        if not (n["tagged"] or n["normalised"]):
+            continue
+        doc.setdefault("provenance", {})["updated"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        errs = [e for e in validate.check_index(doc) if e.level == "error" and str(e) not in before]
+        if errs:
+            print(f"error: {path.name} would become invalid: {errs[0]}", file=sys.stderr)
+            return 1
+        if args.write:
+            shutil.copy2(path, path.with_name(path.name + ".bak"))
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+            tmp.replace(path)
+            changed += 1
+    print(f"wrote {changed} file(s); originals beside them as .bak" if args.write else "dry run: nothing written (use --write)")
+    return 0
+
+
 def cmd_portraits(args) -> int:
     """Rewrite profiles from every passage that mentions each entity (series reading order), in place."""
     import shutil
@@ -445,6 +535,43 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--epub", help="also check anchors and quotes against this book")
     s.set_defaults(fn=cmd_validate)
 
+    s = sub.add_parser("share", help="turn an index into one share bundle for a registry (scrubbed, with book checks)")
+    s.add_argument("index")
+    s.add_argument("--epub", help="the book: adds the book-checks and spoiler-gate attestations")
+    s.add_argument("--series", help="the series manifest (required when the index has `series`)")
+    s.add_argument("--derived-from", metavar="DIGEST", help="digest of the shared index this one improves")
+    s.add_argument("-o", "--output", required=True)
+    s.add_argument("--now", help="ISO time for the attestations (tests)")
+    s.add_argument("--json", action="store_true", help="print a JSON report")
+    s.set_defaults(fn=cmd_share)
+
+    s = sub.add_parser("registry", help="run a file-only registry: check, add, remove, build")
+    rsub = s.add_subparsers(dest="registry_cmd", required=True)
+    for name, helptext in (("check", "verify a bundle as `add` would, writing nothing"),
+                           ("add", "check a bundle and file it in the source tree")):
+        r = rsub.add_parser(name, help=helptext)
+        r.add_argument("bundle")
+        r.add_argument("--publisher", required=True)
+        r.add_argument("--source", required=True, metavar="DIR")
+        r.add_argument("--now", help="ISO time (tests)")
+        r.add_argument("--json", action="store_true")
+        r.set_defaults(fn=cmd_registry)
+    r = rsub.add_parser("remove", help="delete a listing and record it in removed.json")
+    r.add_argument("id")
+    r.add_argument("--source", required=True, metavar="DIR")
+    r.add_argument("--reason", required=True)
+    r.add_argument("--with-dependents", action="store_true", help="also remove later books of the series that require it")
+    r.add_argument("--now", help="ISO time (tests)")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_registry)
+    r = rsub.add_parser("build", help="write the static registry (lookup files, listings, indexes) to a directory")
+    r.add_argument("src", metavar="SRC")
+    r.add_argument("-o", "--output", required=True)
+    r.add_argument("--base-path", default="", help="path the site is served under, e.g. /lorekeeper-registry")
+    r.add_argument("--name", default="Lorekeeper registry")
+    r.add_argument("--json", action="store_true")
+    r.set_defaults(fn=cmd_registry)
+
     s = sub.add_parser("view", help="print the gated view at a position")
     s.add_argument("index", nargs="+")
     s.add_argument("--series")
@@ -541,6 +668,11 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.add_argument("--dry-run", action="store_true")
     s.set_defaults(fn=cmd_profiles)
+
+    s = sub.add_parser("ties", help="tag kinship ties family and normalise their labels in existing indexes")
+    s.add_argument("index", nargs="+")
+    s.add_argument("--write", action="store_true", help="save the changes (a .bak copy is kept beside each file)")
+    s.set_defaults(fn=cmd_ties)
 
     s = sub.add_parser("portraits", help="rewrite profiles from every passage that mentions each entity (a cloud model)")
     s.add_argument("index", nargs="+", help="index files, in series reading order")

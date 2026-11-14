@@ -39,5 +39,6 @@ This is a large change across SPEC §4 and §7, the schemas and the conformance 
 
 ## 5. Sharing
 
-- A community registry of indexes with signed files and maintainer keys (SPEC §11.6).
+- Landed: the registry format (SPEC §8.7): listings, attestations, share bundles and a static profile, with `lorekeeper share` and `lorekeeper registry check|add|remove|build`. Any static host can serve a registry, and a client finds an index by text hash with one GET.
+- Still to do: the in-app flow to browse, preview, install and share an index; ratings on a small service; signed indexes and publisher keys (SPEC §11.6).
 - Index embedding in EPUB (SPEC §9) end to end.

@@ -14,7 +14,7 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html" aria-current="page">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html" aria-current="page">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Self-hosting</h1>
@@ -123,6 +123,14 @@ uv run --extra web --extra claude lorekeeper web</code></pre>
 <p>Every change is saved at once and can be undone from the message that confirms it (the same undo journal the duplicate merges use, so only the latest change can be reverted). The index keeps the spec's content rules: text that reads with hindsight, a description that says "now", a family tie the cited paragraph never states, or nine or more words copied from the book are refused with a reason under the field, and nothing past the reader's position is shown while you edit.</p>
 <p>To write an index with no model at all, open a book's build page from the Library and choose <strong>Write it myself</strong>. The Reader opens an empty index in edit mode, and you add entries as you read. Hand-written indexes show as such in the book's versions.</p>
 <p>Edits outlive a rebuild. Each one is recorded under <code>edits/</code>, keyed by the book edition, and a new build of the same book applies them again at the end of the run: by the entry or item id when it survived, otherwise by the entry and the original text. The run's log says how many applied and how many no longer fit.</p>
+
+<h2 id="family-trees">Family trees</h2>
+<p>When the book states family ties, the Connections tab shows a <strong>Family trees</strong> chip next to the search. Turn it on and each family the reader has met is drawn as a tree: spouses side by side, children beneath their parents, siblings in a row, grandparents above. Click a person to see their ties, as on the map. An entry's panel has a <strong>See the family tree</strong> link that opens the tab on that person's family.</p>
+<p>The chip only appears when there is a family to draw. A book with no kinship ties shows no chip, and an index marked <code>self-help</code> never does. Trees are built from the ties visible at the reader's position, so a marriage, a birth or a parentage shows up only once the book has stated it, and dragging back removes it again. Cousins and in-laws are placed by their nearest stated link. The index never gains a tie the book did not state.</p>
+<p>Trees read kinship from the connection's label (<code>daughter of</code>, <code>husband of</code>, <code>married to</code>, <code>half-sister of</code>). New builds write these labels in a fixed form and tag them <code>family</code>. To give an older index the same treatment without a rebuild, run:</p>
+<pre><code>uv run lorekeeper ties lorekeeper-data/indexes/dracula.lore.json
+uv run lorekeeper ties lorekeeper-data/indexes/dracula.lore.json --write</code></pre>
+<p>The first command only reports, for example "12 kinship ties tagged, 3 labels normalised, 2 left alone". With <code>--write</code> the command saves a <code>.bak</code> copy beside each file first, then tags the kinship ties, tidies their labels and refreshes <code>provenance.updated</code>. Labels it cannot read as kinship, such as "brother-in-arms of" or "possible father of", are left as they are.</p>
 
 <h2 id="building">Models and keys</h2>
 <p>Building reads a book chapter by chapter, proposes facts for each chunk, checks every claim against the text and writes the index after each chunk.</p>
