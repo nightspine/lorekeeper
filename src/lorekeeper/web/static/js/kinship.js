@@ -99,9 +99,11 @@ export function normalize(label) {
   const inlaw = p.modifiers.includes("in-law");
   const rest = p.modifiers.filter((m) => m !== "in-law" && m !== implicit);
   // English spelling: step joins the word, half/ex/great take a hyphen, the rest stay separate words before it.
-  const attach = rest.filter((m) => JOINED.has(m)), words = rest.filter((m) => !JOINED.has(m));
+  // "step" binds to the kin word first, then half/ex/great hyphenate in front of it, in the order the label gave them.
+  const words = rest.filter((m) => !JOINED.has(m)), hyph = rest.filter((m) => JOINED.has(m) && m !== "step");
   let word = (CANON[p.word] || p.word) + (inlaw ? "-in-law" : "");
-  for (let i = attach.length - 1; i >= 0; i--) word = attach[i] + (attach[i] === "step" ? "" : "-") + word;
+  if (rest.includes("step")) word = "step" + word;
+  for (let i = hyph.length - 1; i >= 0; i--) word = hyph[i] + "-" + word;
   return `${[...words, word].join(" ")} of`;
 }
 

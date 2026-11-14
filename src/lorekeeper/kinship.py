@@ -101,26 +101,24 @@ SEPARATE = ("younger", "older", "elder", "eldest", "youngest", "twin", "identica
 
 def normalize(label) -> str | None:
     """The canonical form of a kinship label, or None when it is not one: compounds are written the way English
-    does ("step mother of" → "stepmother of", "grand mother" → "grandmother", "half sister of" → "half-sister of",
+    does ("step mother of" → "stepmother of", "half sister of" → "half-sister of",
     "ex wife of" → "ex-wife of", "great grandmother of" → "great-grandmother of", "mother in law of" →
     "mother-in-law of"); "younger", "older", "elder", "eldest", "youngest", "twin", "identical", "adoptive",
-    "adopted", "foster", "late", "former", "blood", "first" and "second" stay separate words, in the order the label gave them."""
+    "adopted", "foster", "late", "former", "blood", "first" and "second" stay separate words, in the order the label gave them; "step" joins the kin word and "half", "ex" and "great" hyphenate in front of it ("step half brother of" → "half-stepbrother of"); "late" is dropped before widow and widower."""
     p = parse(label)
     if p is None:
         return None
     if p["word"] == "married to":
         return "married to"
     mods = [m for m in p["modifiers"] if m != "in-law"]
-    if p["word"] in ("widow", "widower") and mods[:1] == ["late"]:
-        mods = mods[1:]   # implied by the word
+    if p["word"] in ("widow", "widower"):
+        mods = [m for m in mods if m != "late"]   # implied by the word
     head = [m for m in mods if m in SEPARATE]   # in the order the label gave them
-    word = p["word"]
+    word = p["word"] + ("-in-law" if "in-law" in p["modifiers"] else "")
     if "step" in mods:
-        word = "step" + word
-    for m in [*(["great"] * mods.count("great")), *(m for m in ("half", "ex") if m in mods)]:
+        word = "step" + word   # step binds to the kin word first
+    for m in reversed([m for m in mods if m in ("half", "ex", "great")]):   # then these, hyphenated, in label order
         word = f"{m}-{word}"
-    if "in-law" in p["modifiers"]:
-        word += "-in-law"
     return " ".join([*head, word, "of"])
 
 

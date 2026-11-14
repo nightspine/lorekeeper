@@ -237,7 +237,7 @@ says so. Canonical spelling: `step`, `grand` and `god` join the kin word
 `identical`, `adoptive`, `adopted`, `foster`, `late`, `former`, `blood`, `first`
 and `second` are separate words before it (`younger brother of`). So `half-sister
 of`, `stepmother of`, `ex-husband of` and `mother-in-law of` are the written
-forms; readers of labels SHOULD accept other spacings and dashes. Direction is the usual one: `src` "daughter of" `dst` means
+forms. Modifiers are written in the order the book gives them; `step` joins the kin word first and `half`, `ex` and `great` hyphenate in front of it (`half-stepbrother of`, `ex-stepmother of`); `late` is left out before `widow` and `widower`. Readers of labels SHOULD accept other spacings and dashes. Direction is the usual one: `src` "daughter of" `dst` means
 `src` is the child. A spouse tie is `family`, not `romance`; `romance` is for
 courtship and affairs. A label that is not plainly kinship (`killed mother of`,
 `brother-in-arms of`, `possible father of`) is not read as such. Clients MAY read

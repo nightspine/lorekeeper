@@ -29,7 +29,9 @@ great-grandfather of|great grandfather of|great-grandson of|great-granddaughter 
 great aunt of|great-uncle of|great-niece of|great-nephew of|great great grandmother of|older half sister of
 younger sister of|elder sister of|eldest brother of|youngest son of|adopted son of|late wife of|former husband of
 blood sister of|first cousin of|second cousin of|twin sister of|identical twin brother of|foster mother of
-older stepbrother of|eldest step son of|half-sister-in-law of""".replace("\n", "|").split("|")
+older stepbrother of|eldest step son of|half-sister-in-law of
+late elder brother of|step half brother of|half step sister of|younger late widow of|late widow of|ex step mother of
+great step grandmother of""".replace("\n", "|").split("|")
 
 NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guardian and friend of", "possible father of",
          "sibling of, fights", "calls cousin, rebuffed by", "grandson of the cast-out daughter of", "remembers late wife",
@@ -39,11 +41,16 @@ NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guard
          "mother father of", "friend and brother of", "brother in arms of", "half", "step of"]
 
 
+KIN_WORDS = ["mother", "son", "wife", "widow", "widower", "brother", "grandson", "aunt", "cousin", "ward"]
+
+
 def _labels():
     words = ["mother", "son", "wife", "widow", "brother", "grandson", "aunt", "nephew", "cousin", "guardian", "ward", "twin"]
     mods = ["", "half ", "step-", "younger ", "ex-", "great ", "adoptive ", "late ", "blood-", "half-step ", "foster "]
     combos = [f"{m}{w}{s}" for m, w, s in itertools.product(mods, words, ["", " of", "-in-law of", " of Harry"])]
-    return [label for label in dict.fromkeys(GOOD + NOISE + combos)]
+    # every pair of modifiers before every kin word, so the two orderings cannot drift apart
+    pairs = [f"{a} {b} {w} of" for a, b, w in itertools.product(kinship.MODIFIERS, kinship.MODIFIERS, KIN_WORDS)]
+    return [label for label in dict.fromkeys(GOOD + NOISE + combos + pairs)]
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
@@ -80,3 +87,11 @@ def test_role_reverse_table_agrees():
     r = subprocess.run(["node", "-e", script, mod, *kinship.ROLES], capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 0, r.stderr
     assert json.loads(r.stdout) == kinship.ROLES
+
+
+def test_normalize_modifier_order():
+    for label, want in [("late elder brother of", "late elder brother of"), ("step half brother of", "half-stepbrother of"),
+                        ("half step sister of", "half-stepsister of"), ("great step grandmother of", "great-stepgrandmother of"),
+                        ("ex step mother of", "ex-stepmother of"), ("younger late widow of", "younger widow of"),
+                        ("late widow of", "widow of"), ("identical twin brother of", "identical twin brother of")]:
+        assert kinship.normalize(label) == want, label
