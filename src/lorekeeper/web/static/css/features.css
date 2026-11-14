@@ -174,3 +174,15 @@
   .crumbs a { display: inline-flex; align-items: center; min-height: 40px; }
 }
 .demo-panel.compact .btn.primary { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08); }
+
+/* Family trees: the entry drawer's link, and the chip on a phone (one row with the search and Display). */
+.d-kin { margin: var(--space-3) 0 0; }
+.d-kin .linkish { font-weight: 600; }
+@media (max-width: 640px) {
+  .g-toolbar .filters { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 0; min-width: 0; }
+  .g-toolbar .filters .search.g-search { flex: 1 1 0; min-width: 0; }
+  .g-trees-chip { flex: none; padding-inline: 4px; min-height: 44px; }
+  .g-trees-chip .g-long { display: none; }
+  .d-kin .linkish { display: inline-flex; align-items: center; min-height: 44px; }
+  .g-trees, .g-trees-wrap { min-height: 360px; height: 55vh; max-height: 460px; }
+}

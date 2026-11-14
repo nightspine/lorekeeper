@@ -23,12 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import bookkind, merge, text, validate
+from . import bookkind, kinship, merge, text, validate
 from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v8"
+PROMPT_VERSION = "extract-v9"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -1027,7 +1027,10 @@ class Generator:
                        "A tie is a standing state (sister of, employer of, guest of, enemy of, lives at), never one action "
                        "(stakes, seals the tomb against, gives a transfusion to): actions are events. Only ties this passage "
                        "states or plainly shows between those two. \"kind\" = family, romance, friendship, alliance, "
-                       "service, hostility, acquaintance or place. \"p\" = paragraph that shows it. At most one tie of each "
+                       "service, hostility, acquaintance or place. For family use mother of, father of, son of, daughter of, "
+                       "brother of, sister of, husband of, wife of, married to, grandmother of, aunt of, nephew of, cousin of, "
+                       "guardian of, with younger/elder/half/step/adoptive/late before the word when the book says so. "
+                       "\"p\" = paragraph that shows it. At most one tie of each "
                        "kind per pair, as the passage leaves it. Only ties the companion does not have yet: a tie already listed under an entity's ties above "
                        "is reported again only if this passage changes it (a prisoner is freed, an ally turns, a fiancée "
                        "becomes a wife)."
@@ -1214,9 +1217,22 @@ class Generator:
         # One tie per pair and kind in a passage, the one shown latest: a chapter can turn a guest into a prisoner
         # (two kinds, both kept), and a second "keeps prisoner" after "holds captive" says nothing new.
         rels = [r for r in (raw.get("relations", []) if depth["relations"] else []) if isinstance(r, dict)]
+        for i, r in enumerate(rels):
+            # Kinship labels come in one canonical form and are always `family` (a family tree reads them).
+            canon = kinship.normalize(r.get("label"))
+            if canon:
+                rels[i] = {**r, "label": canon, "kind": "family"}
+        # A spouse label and a romance tie for one pair in the same passage ("engaged to" + "wife of"): keep the spouse tie.
+        pair_of = lambda r: frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold()))
+        spouses = {pair_of(r) for r in rels if kinship.is_spouse(r.get("label"))}
+        n_rels = len(rels)
+        rels = [r for r in rels if not (r.get("kind") == "romance" and pair_of(r) in spouses
+                                        and not kinship.is_spouse(r.get("label")))]
+        self.stats["dropped: second tie for a pair"] += n_rels - len(rels)
         latest: dict[tuple, int] = {}
         for i, r in enumerate(rels):
-            k = (frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold())), r.get("kind"))
+            k = (frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold())), r.get("kind"),
+                 self._family_role(r.get("kind"), r.get("label"), str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold()))
             if k not in latest or (isinstance(r.get("p"), int) and r["p"] >= (rels[latest[k]].get("p") or 0)):
                 latest[k] = i
         keep_rel = set(latest.values())
@@ -1234,16 +1250,19 @@ class Generator:
                 self.stats["dropped: not a tie"] += 1   # "Un-Dead, calls Arthur her husband" is a sentence
                 continue
             kind = r.get("kind") if r.get("kind") in RELATION_KINDS else None
-            if a and b and (frozenset((a, b)), kind) in paired:   # two names for one entity said the same tie twice
+            role = self._family_role(kind, r.get("label"), a, b)
+            if a and b and (frozenset((a, b)), kind, role) in paired:   # two names for one entity said the same tie twice
                 self.stats["dropped: second tie for a pair"] += 1
                 continue
             c = self._candidate("relation", f"r{i}", r.get("label", ""), at, [],
                                 [a, b] if a and b and a != b else None, 80)
             if c:
-                paired.add((frozenset((a, b)), kind))
+                paired.add((frozenset((a, b)), kind, role))
                 # A newer tie of the same kind between the same two replaces the current one: "fiancée of"
                 # becomes history once "wife of" is revealed, and "holds captive" doesn't sit beside "keeps prisoner".
-                prev = self._current_tie(a, b, kind) if kind else None
+                prev = self._current_tie(a, b, kind, c.text) if kind else None
+                if not prev and kinship.is_spouse(c.text):   # "wife of" ends a courtship tie
+                    prev = self._current_tie(a, b, "romance")
                 c.data = {"src": a, "dst": b, "basis": "stated", **({"kind": kind} if kind else {}),
                           **({"replaces": prev["id"]} if prev else {})}
                 cands.append(c)
@@ -1312,10 +1331,22 @@ class Generator:
         from_seq = max([*cited, *(self.entity_from[e] for e in entities)])
         return Candidate(kind, cid, claim, from_seq, sorted(set(cited)))
 
-    def _current_tie(self, a: str, b: str, kind: str) -> dict | None:
-        """The newest relation of this kind between a and b (either direction) that nothing replaces yet."""
+    @staticmethod
+    def _family_role(kind, label, a, b):
+        """The role a `family` tie states between a and b (None for other kinds and for labels that are not
+        kinship). Two family ties are the same tie only when their roles match: cousins who marry keep both."""
+        return kinship.role_key(label, a, b) if kind == "family" else None
+
+    def _current_tie(self, a: str, b: str, kind: str, label: str = "") -> dict | None:
+        """The newest relation of this kind between a and b (either direction) that nothing replaces yet. For a
+        `family` tie it must also have the same role after modifiers ("brother of" → "half-brother of"; not
+        "cousin of" → "wife of"); a label that is not kinship ("related to") matches any."""
         replaced = {x for r in self.relations for x in r.get("replaces", [])}
         same = [r for r in self.relations if {r["src"], r["dst"]} == {a, b} and r.get("kind") == kind and r["id"] not in replaced]
+        if kind == "family":
+            new = self._family_role(kind, label, a, b)
+            same = [r for r in same if new is None or (old := self._family_role(kind, r["label"], r["src"], r["dst"])) is None
+                    or old == new]
         return same[-1] if same else None
 
     def _dedupe(self, cands: list[Candidate]) -> list[Candidate]:
