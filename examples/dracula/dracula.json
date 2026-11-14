@@ -9172,11 +9172,7 @@
       "basis": "stated",
       "evidence": [
         "toc23.para05"
-      ],
-      "replaces": [
-        "dracula.rel.22"
-      ],
-      "kind": "family"
+      ]
     },
     {
       "id": "dracula.rel.25",
