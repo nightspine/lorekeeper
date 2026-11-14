@@ -23,12 +23,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
-from . import bookkind, merge, text, validate
+from . import bookkind, kinship, merge, text, validate
 from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v8"
+PROMPT_VERSION = "extract-v9"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -1027,7 +1027,10 @@ class Generator:
                        "A tie is a standing state (sister of, employer of, guest of, enemy of, lives at), never one action "
                        "(stakes, seals the tomb against, gives a transfusion to): actions are events. Only ties this passage "
                        "states or plainly shows between those two. \"kind\" = family, romance, friendship, alliance, "
-                       "service, hostility, acquaintance or place. \"p\" = paragraph that shows it. At most one tie of each "
+                       "service, hostility, acquaintance or place. For family use mother of, father of, son of, daughter of, "
+                       "brother of, sister of, husband of, wife of, married to, grandmother of, aunt of, nephew of, cousin of, "
+                       "guardian of, with younger/elder/half/step/adoptive/late before the word when the book says so. "
+                       "\"p\" = paragraph that shows it. At most one tie of each "
                        "kind per pair, as the passage leaves it. Only ties the companion does not have yet: a tie already listed under an entity's ties above "
                        "is reported again only if this passage changes it (a prisoner is freed, an ally turns, a fiancée "
                        "becomes a wife)."
@@ -1214,6 +1217,11 @@ class Generator:
         # One tie per pair and kind in a passage, the one shown latest: a chapter can turn a guest into a prisoner
         # (two kinds, both kept), and a second "keeps prisoner" after "holds captive" says nothing new.
         rels = [r for r in (raw.get("relations", []) if depth["relations"] else []) if isinstance(r, dict)]
+        for i, r in enumerate(rels):
+            # Kinship labels come in one canonical form and are always `family` (a family tree reads them).
+            canon = kinship.normalize(r.get("label"))
+            if canon:
+                rels[i] = {**r, "label": canon, "kind": "family"}
         latest: dict[tuple, int] = {}
         for i, r in enumerate(rels):
             k = (frozenset((str(r.get("a", "")).casefold(), str(r.get("b", "")).casefold())), r.get("kind"))
@@ -1244,6 +1252,8 @@ class Generator:
                 # A newer tie of the same kind between the same two replaces the current one: "fiancée of"
                 # becomes history once "wife of" is revealed, and "holds captive" doesn't sit beside "keeps prisoner".
                 prev = self._current_tie(a, b, kind) if kind else None
+                if not prev and kinship.is_spouse(c.text):   # "wife of" ends a courtship tie
+                    prev = self._current_tie(a, b, "romance")
                 c.data = {"src": a, "dst": b, "basis": "stated", **({"kind": kind} if kind else {}),
                           **({"replaces": prev["id"]} if prev else {})}
                 cands.append(c)
