@@ -14,7 +14,7 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html" aria-current="page">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html" aria-current="page">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Protocol reference</h1>
@@ -31,6 +31,7 @@
 <tr><td><a href="#series"><code>GET /v0/series/{id}</code></a></td><td>Fetch a series manifest.</td><td><code>series</code></td></tr>
 <tr><td><a href="#view"><code>GET /v0/indexes/{id}/view</code></a></td><td>The gated view at a position.</td><td><code>view</code>, <code>view-cfi</code></td></tr>
 <tr><td><a href="#entities"><code>GET /v0/indexes/{id}/entities</code></a></td><td>Who is this name?</td><td><code>entities</code></td></tr>
+<tr><td><a href="#path-lookup"><code>GET {api}/lookup/{scheme}/{value}.json</code></a></td><td>Find indexes on a static registry.</td><td><code>listings</code></td></tr>
 </tbody></table></div>
 
 <h2 id="discovery">Discovery</h2>
@@ -41,7 +42,7 @@
 {&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;name&quot;:&quot;Lorekeeper&quot;,&quot;api&quot;:&quot;/v0&quot;,
  &quot;capabilities&quot;:[&quot;lookup&quot;,&quot;index&quot;,&quot;series&quot;,&quot;view&quot;,&quot;view-cfi&quot;,&quot;entities&quot;],
  &quot;auth&quot;:{&quot;type&quot;:&quot;none&quot;}}</code></pre>
-<div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>lorekeeper</code></td><td>The protocol and format version.</td></tr><tr><td><code>name</code></td><td>A display name for the server. Set it with the <code>LOREKEEPER_SERVER_NAME</code> environment variable.</td></tr><tr><td><code>api</code></td><td>The path prefix of the other routes.</td></tr><tr><td><code>capabilities</code></td><td>Routes and features on offer. <code>view-cfi</code> means <code>cfi</code> and <code>xpointer</code> locators are accepted, because this server holds editions.</td></tr><tr><td><code>auth.type</code></td><td><code>none</code> or <code>bearer</code>.</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>lorekeeper</code></td><td>The protocol and format version.</td></tr><tr><td><code>name</code></td><td>A display name for the server. Set it with the <code>LOREKEEPER_SERVER_NAME</code> environment variable.</td></tr><tr><td><code>api</code></td><td>The path prefix of the other routes.</td></tr><tr><td><code>capabilities</code></td><td>Routes and features on offer. <code>view-cfi</code> means <code>cfi</code> and <code>xpointer</code> locators are accepted, because this server holds editions.</td></tr><tr><td><code>auth.type</code></td><td><code>none</code> or <code>bearer</code>.</td></tr><tr><td><code>static</code></td><td>Optional. True for a <a href="#registries">registry</a> that is only files.</td></tr></tbody></table></div>
 
 <h2 id="lookup">Lookup</h2>
 <div class="route"><span class="method">GET</span><code>/v0/lookup</code></div>
@@ -98,6 +99,36 @@ HTTP/1.1 304 Not Modified</code></pre>
    &quot;history&quot;:[],&quot;relations&quot;:[],&quot;events&quot;:[]}],
  &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para14&quot;,&quot;seq&quot;:44,&quot;basis&quot;:&quot;cfi&quot;,&quot;exact&quot;:true}}</code></pre>
 <p>Each element of <code>entities</code> has the members of a view entity, plus <code>relations</code> and <code>events</code> listing the visible ones that involve it. The array is empty when nothing matches. Errors are those of the view route, plus <code>400</code> when <code>name</code> is missing.</p>
+
+<h2 id="registries">Registries</h2>
+<p>A registry is a server where people share indexes. It adds the capability <code>listings</code>. A registry that is only files on a static host also sets <code>"static": true</code> in discovery. Section 8.7 of the specification is the authority, and <a href="share.html">Share an index</a> covers the commands that produce one.</p>
+<pre><code>curl https://nightspine.github.io/lorekeeper-registry/.well-known/lorekeeper
+
+{&quot;lorekeeper&quot;:&quot;0.1&quot;,&quot;name&quot;:&quot;Lorekeeper community registry&quot;,&quot;api&quot;:&quot;/lorekeeper-registry/v0&quot;,
+ &quot;capabilities&quot;:[&quot;lookup&quot;,&quot;index&quot;,&quot;series&quot;,&quot;listings&quot;],
+ &quot;auth&quot;:{&quot;type&quot;:&quot;none&quot;},&quot;static&quot;:true}</code></pre>
+<h3 id="path-lookup">Lookup by path</h3>
+<div class="route"><span class="method">GET</span><code>{api}/lookup/{scheme}/{value}.json</code></div>
+<p>A static host cannot read a query string, so lookup takes a path. <code>scheme</code> is <code>text</code> (a text hash, results match <code>text</code>), or <code>isbn</code> (ISBN-13), <code>gutenberg</code>, <code>openlibrary</code> or <code>wikidata</code> (results match <code>identifier</code>; the value keeps its case, <code>Q41542</code>). There is no <code>fileHash</code> scheme. A <code>404</code> means no results. The query form above still works on dynamic servers.</p>
+<p>The body is the usual <code>{"results": [...]}</code>. Each result also carries <code>listing</code>, the whole listing record. Results are ordered complete before partial, then newest first, then by id. Ranking by attestations is up to the client.</p>
+<p>A result carries <code>bookKind</code> when the listing has one. Every <code>at</code>, <code>updated</code> and <code>removed</code> value is a UTC timestamp like <code>2026-11-13T20:00:00Z</code>, with optional fractional seconds. A registry refuses an index or listing that would be stored over its size limit (5 MB in the reference tooling).</p>
+<h3 id="listing">The listing</h3>
+<div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody>
+<tr><td><code>id</code>, <code>publisher</code>, <code>slug</code></td><td><code>id</code> is <code>publisher/slug</code> and stays the same across versions.</td></tr>
+<tr><td><code>work</code>, <code>complete</code>, <code>license</code>, <code>generator</code></td><td>Copied from the latest version.</td></tr>
+<tr><td><code>editions</code></td><td>Only <code>textHash</code> and <code>ids</code>. Never <code>fileHash</code>, <code>label</code> or <code>builtFrom</code>.</td></tr>
+<tr><td><code>version</code>, <code>digest</code>, <code>href</code>, <code>updated</code></td><td>The latest version. <code>versions</code> lists all of them, oldest first.</td></tr>
+<tr><td><code>edited</code></td><td>True when a person edited or wrote the index.</td></tr>
+<tr><td><code>series</code></td><td>Optional: <code>id</code>, <code>book</code> and <code>requires</code>, the listing ids of the earlier books. A series is shared as a set by one publisher.</td></tr>
+<tr><td><code>derivedFrom</code></td><td>Optional digest of the index this one improves.</td></tr>
+<tr><td><code>attestations</code></td><td>Checks on the latest version. Each has <code>kind</code>, <code>by</code> (<code>registry</code>, <code>builder</code> or <code>reader</code>) and <code>at</code>.</td></tr>
+</tbody></table></div>
+<p>Builder and reader attestations are self-reported. Show who vouches for each, and do not merge them into one number.</p>
+<h3 id="verify">Verify what you fetch</h3>
+<p>Other paths: <code>{api}/listings/{publisher}/{slug}.json</code>, <code>{api}/indexes/{publisher}/{slug}/v{N}.lore.json</code>, <code>{api}/series/{publisher}/{slug}.json</code> and <code>{api}/removed.json</code>. A static registry has no <code>view</code> or <code>entities</code>, so gate locally.</p>
+<p>A static host cannot set <code>ETag</code> to the digest. On a registry with <code>"static": true</code> a client must hash the index bytes and compare them with the <code>digest</code> from lookup or the listing before using the index. A mismatch is a failed fetch. Doing the same on any registry is a good idea.</p>
+<pre><code>curl -s https://nightspine.github.io/lorekeeper-registry/v0/indexes/mina-m/dracula/v1.lore.json | shasum -a 256</code></pre>
+<p>A lookup tells the registry that someone has that book, so look up only the book the reader opens.</p>
 
 <h2 id="errors">Errors</h2>
 <p>Every error is a problem document with <code>type</code>, <code>title</code>, <code>status</code> and usually <code>detail</code>.</p>

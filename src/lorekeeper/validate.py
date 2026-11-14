@@ -14,6 +14,7 @@ from importlib import resources
 from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 from . import anchors as anchor_mod
 from . import text
@@ -44,8 +45,22 @@ def schema(name: str) -> dict:
     return json.loads((_schema_dir() / f"{name}.schema.json").read_text())
 
 
-def check_schema(doc: dict, name: str) -> list[Issue]:
-    v = Draft202012Validator(schema(name), format_checker=Draft202012Validator.FORMAT_CHECKER)
+@cache
+def _registry() -> Registry:
+    """Every schema under its $id, so one schema can $ref another ("index.schema.json#/$defs/sha256")."""
+    reg = Registry()
+    for p in sorted(_schema_dir().glob("*.schema.json")):
+        doc = json.loads(p.read_text())
+        reg = reg.with_resource(doc["$id"], Resource.from_contents(doc))
+    return reg
+
+
+def check_schema(doc, name: str, definition: str | None = None) -> list[Issue]:
+    """Validate doc against schema/<name>.schema.json, or against one of its $defs."""
+    root = schema(name)
+    target = {"$ref": f"{root['$id']}#/$defs/{definition}"} if definition else root
+    v = Draft202012Validator(target, registry=_registry(),
+                             format_checker=Draft202012Validator.FORMAT_CHECKER)
     return [Issue("error", "/" + "/".join(str(p) for p in e.absolute_path), e.message)
             for e in sorted(v.iter_errors(doc), key=lambda e: list(e.absolute_path))]
 
