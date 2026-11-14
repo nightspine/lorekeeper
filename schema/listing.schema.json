@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lorekeeper.dev/schema/0.1/listing.schema.json",
   "title": "Lorekeeper registry listing",
-  "description": "A registry's record of one book shared by one publisher, with every version of its index (SPEC.md §8.7). The index documents themselves are unchanged SPEC 0.1 indexes; a listing only describes them.",
+  "description": "A registry's record of one book shared by one publisher, with every version of its index (SPEC.md \u00a78.7). The index documents themselves are unchanged SPEC 0.1 indexes; a listing only describes them.",
   "type": "object",
   "required": [
     "lorekeeper",
@@ -38,6 +38,10 @@
     },
     "slug": {
       "$ref": "#/$defs/listingSlug"
+    },
+    "bookKind": {
+      "description": "The latest version's bookKind, when it has one",
+      "$ref": "index.schema.json#/properties/bookKind"
     },
     "work": {
       "description": "The latest version's work, without ids (those are merged into editions[].ids)",
@@ -219,7 +223,7 @@
       "minimum": 0
     },
     "attestation": {
-      "description": "A claim about one index version, saying who makes it (SPEC.md §8.7). builder and reader attestations are self-reported.",
+      "description": "A claim about one index version, saying who makes it (SPEC.md \u00a78.7). builder and reader attestations are self-reported.",
       "type": "object",
       "required": [
         "kind",

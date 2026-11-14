@@ -49,6 +49,20 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+
+
+def valid_timestamp(value) -> bool:
+    """YYYY-MM-DDTHH:MM:SSZ, optional fractional seconds, UTC `Z` only, and a real date and time."""
+    if not isinstance(value, str) or not TIMESTAMP_RE.fullmatch(value):
+        return False
+    try:
+        datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return False
+    return True
+
+
 def dumps(doc) -> str:
     """How every stored index is written, once: its bytes are what the digest covers."""
     return json.dumps(doc, ensure_ascii=False, indent=1, allow_nan=False) + "\n"
@@ -193,6 +207,8 @@ def spoiler_gate(index: dict, blocks: list[Block]) -> dict:
 def make_bundle(index: dict, *, series: dict | None = None, derived_from: str | None = None,
                 blocks: list[Block] | None = None, now: str | None = None) -> tuple[dict | None, dict]:
     """Build a share bundle. Returns (bundle or None, report); the report always lists the findings."""
+    if now is not None and not valid_timestamp(now):
+        return None, {"issues": [_err("now", f"{now!r} is not a UTC timestamp like 2026-11-13T20:00:00Z")]}
     now = now or now_iso()
     issues: list[Issue] = validate.check_schema(index, "index")
     report: dict = {"issues": issues}
@@ -274,14 +290,36 @@ def _removed(source: Path) -> list[dict]:
     return data
 
 
+def listing_problems(data, expected_id: str | None = None) -> list[str]:
+    """Why a stored listing is not sound: its schema, its timestamps, and (when given) its directory."""
+    bad = validate.check_schema(data, "listing")
+    if bad:
+        return [f"listing{i.where}: {i.message}" for i in bad]
+    out = []
+    if expected_id is not None and (data["id"] != expected_id or f"{data['publisher']}/{data['slug']}" != expected_id):
+        out.append(f"listing id {data['id']!r} does not match its directory")
+    stamps = [("updated", data["updated"])] + [(f"versions[{n}].updated", v["updated"]) for n, v in enumerate(data["versions"])] \
+        + [(f"attestations[{n}].at", a["at"]) for n, a in enumerate(data["attestations"])]
+    out += [f"{w}: {v!r} is not a UTC timestamp like 2026-11-13T20:00:00Z" for w, v in stamps if not valid_timestamp(v)]
+    return out
+
+
+def _read_listing_file(source: Path, p: Path, expected_id: str) -> dict:
+    rel = _rel(source, p)
+    data, issues = _read_json_capped(p, rel)
+    if issues:
+        raise RegistryError("; ".join(f"{i.where}: {i.message}" for i in issues))
+    problems = listing_problems(data, expected_id)
+    if problems:
+        raise RegistryError("\n".join(f"{rel}: {m}" for m in problems))
+    return data
+
+
 def read_listing(source: Path, publisher: str, slug: str) -> dict | None:
     p = _listing_dir(source, publisher, slug) / "listing.json"
     if not p.is_file():
         return None
-    data, issues = _read_json_capped(p, _rel(source, p))
-    if issues or not isinstance(data, dict):
-        raise RegistryError(f"{_rel(source, p)} is not readable")
-    return data
+    return _read_listing_file(source, p, f"{publisher}/{slug}")
 
 
 def _publisher_listings(source: Path, publisher: str) -> list[dict]:
@@ -291,9 +329,7 @@ def _publisher_listings(source: Path, publisher: str) -> list[dict]:
         for d in sorted(root.iterdir()):
             p = d / "listing.json"
             if d.is_dir() and p.is_file():
-                data, issues = _read_json_capped(p, _rel(source, p))
-                if not issues and isinstance(data, dict):
-                    out.append(data)
+                out.append(_read_listing_file(source, p, f"{publisher}/{d.name}"))
     return out
 
 
@@ -334,6 +370,36 @@ def requires_for(index: dict, series: dict, source: Path, publisher: str) -> tup
 
 def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[dict | None, list[Issue]]:
     """Everything `add` verifies, writing nothing. Returns (context for add or None, issues)."""
+    try:
+        return _check(bundle_path, publisher, source)
+    except RegistryError as e:  # an unreadable or unsound source tree is a finding, not a crash
+        return None, [_err("source", m) for m in str(e).splitlines()]
+
+
+def _preflight(bundle: dict) -> list[Issue]:
+    """The checks with the clearest messages, run before the schema so these are what the person reads."""
+    out: list[Issue] = []
+    index = bundle.get("index")
+    editions = index.get("editions") if isinstance(index, dict) else None
+    for i, ed in enumerate(editions if isinstance(editions, list) else []):
+        if isinstance(ed, dict) and ("label" in ed or "fileHash" in ed):
+            out.append(_err(f"index.editions[{i}]", "still carries label or fileHash: scrub the bundle (lorekeeper share)"))
+    atts = bundle.get("attestations")
+    for i, a in enumerate(atts if isinstance(atts, list) else []):
+        if not isinstance(a, dict):
+            continue
+        if a.get("by") != "builder":
+            out.append(_err(f"attestations[{i}]", "bundle attestations must be by builder"))
+        elif a.get("kind") == "validates":
+            out.append(_err(f"attestations[{i}]", "a bundle cannot carry a validates attestation: only the registry adds that one"))
+        if "at" in a and not valid_timestamp(a["at"]):
+            out.append(_err(f"attestations[{i}].at", f"{a['at']!r} is not a UTC timestamp like 2026-11-13T20:00:00Z"))
+    if bundle.get("series") is not None and isinstance(index, dict) and not index.get("series"):
+        out.append(_err("series", "a series manifest came with an index that has no `series`"))
+    return out
+
+
+def _check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[dict | None, list[Issue]]:
     source = Path(source)
     try:
         publisher = normalize_publisher(publisher)
@@ -344,20 +410,15 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
         return None, issues
     if not isinstance(bundle, dict):
         return None, [_err("bundle", "not a JSON object")]
+    pre = _preflight(bundle)
+    if pre:
+        return None, pre
     shape = validate.check_schema(bundle, "share")
     if shape:
         return None, [Issue("error", f"bundle{i.where}", i.message) for i in shape]
     index = bundle["index"]
     series = bundle.get("series")
 
-    for i, ed in enumerate(index["editions"]):  # also caught by the schema; kept as the clear message
-        if "label" in ed or "fileHash" in ed:
-            issues.append(_err(f"index.editions[{i}]", "still carries label or fileHash: scrub the bundle (lorekeeper share)"))
-    for i, a in enumerate(bundle.get("attestations", [])):
-        if a.get("by") != "builder":
-            issues.append(_err(f"attestations[{i}]", "bundle attestations must be by builder"))
-        elif a.get("kind") == "validates":
-            issues.append(_err(f"attestations[{i}]", "a bundle cannot carry a validates attestation: only the registry adds that one"))
 
     lic = index.get("provenance", {}).get("license")
     if lic not in LICENSES:
@@ -389,6 +450,9 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
     else:
         issues += validate.check_index(index, [])
     data = dumps(index).encode("utf-8")
+    if len(data) > MAX_BUNDLE_BYTES:
+        issues.append(_err("index", f"the index would be stored as {len(data)} bytes, over the "
+                                    f"{MAX_BUNDLE_BYTES // (1024 * 1024)} MB limit"))
     digest = digest_of(data)
     existing = read_listing(source, publisher, slug)
     if existing is not None:
@@ -407,6 +471,8 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
                                              f"{ls.get('book')!r} of series {ls.get('id')!r}"))
     if existing is not None and any(v.get("digest") == digest for v in existing.get("versions", [])):
         issues.append(_err("digest", f"already shared as {listing_id} ({digest})"))
+    if existing is not None and index.get("series"):
+        issues += _dependents_still_hold(index, series, existing, source, publisher)
     for i in bundle.get("attestations", []):
         if "textHash" in i and i["textHash"] not in {e["textHash"] for e in index["editions"]}:
             issues.append(_err("attestations", "an attestation names a text hash that is not one of the index's editions"))
@@ -419,15 +485,66 @@ def check(bundle_path: str | Path, publisher: str, source: str | Path) -> tuple[
 
     if errors_of(issues):
         return None, issues
-    return {"publisher": publisher, "slug": slug, "id": listing_id, "dir": dir_, "bundle": bundle,
-            "data": data, "digest": digest, "requires": requires, "existing": existing}, issues
+    ctx = {"publisher": publisher, "slug": slug, "id": listing_id, "dir": dir_, "bundle": bundle,
+           "data": data, "digest": digest, "requires": requires, "existing": existing}
+    try:  # the listing `add` would store: schema and size are checked here, so `check` and `add` agree
+        listing = make_listing(ctx, now_iso())
+        bad = validate.check_schema(listing, "listing")
+        if bad:
+            issues += [Issue("error", f"listing{i.where}", i.message) for i in bad]
+        elif len(dumps(listing).encode("utf-8")) > MAX_BUNDLE_BYTES:
+            issues.append(_err("listing", f"the listing would be stored over the {MAX_BUNDLE_BYTES // (1024 * 1024)} MB limit"))
+    except (ValueError, RecursionError) as e:
+        issues.append(_err("listing", f"cannot be serialised: {e}"))
+    if errors_of(issues):
+        return None, issues
+    return ctx, issues
+
+
+def _dependents_still_hold(index: dict, series: dict, existing: dict, source: Path, publisher: str) -> list[Issue]:
+    """A new version of a book other listings require must leave their series checks passing."""
+    mine = [l for l in _publisher_listings(source, publisher)
+            if (l.get("series") or {}).get("id") == index["series"]["id"] and l["id"] != existing["id"]]
+    dependents = [l for l in mine if existing["id"] in (l["series"].get("requires") or [])]
+    if not dependents:
+        return []
+    order = series.get("orders", {}).get("publication") or series.get("orders", {}).get(series.get("defaultOrder"), [])
+    rank = {k: n for n, k in enumerate(order)}
+    out: list[Issue] = []
+    docs: list[tuple[int, dict]] = [(rank.get(index["series"]["book"], -1), index)]
+    for l in mine:
+        try:
+            docs.append((rank.get(l["series"]["book"], len(order)), _latest_index(source, l)))
+        except RegistryError as e:
+            out.append(_err("series", f"latest version of {l['id']} is unreadable: {e}"))
+    if out:
+        return out
+    names = ", ".join(sorted(l["id"] for l in dependents))
+    return [Issue(i.level, f"series: {i.where}", f"a new version would break {names}: {i.message}")
+            for i in validate.check_series(series, [d for _, d in sorted(docs, key=lambda t: t[0])]) if i.level == "error"]
+
+
+def _merge_ids(work_ids: dict, ed_ids: dict) -> dict:
+    """Join identifiers per scheme: both carrying one gives a de-duplicated list (a single shared value stays a string)."""
+    out = {}
+    for scheme in [*work_ids, *(k for k in ed_ids if k not in work_ids)]:
+        a, b = work_ids.get(scheme), ed_ids.get(scheme)
+        if a is None or b is None:
+            out[scheme] = a if b is None else b
+            continue
+        vals: list = []
+        for v in [*(a if isinstance(a, list) else [a]), *(b if isinstance(b, list) else [b])]:
+            if v not in vals:
+                vals.append(v)
+        out[scheme] = vals[0] if len(vals) == 1 and not isinstance(a, list) and not isinstance(b, list) else vals
+    return out
 
 
 def _listing_editions(index: dict) -> list[dict]:
     work_ids = index["work"].get("ids") or {}
     out = []
     for ed in index["editions"]:
-        ids = {**work_ids, **(ed.get("ids") or {})}
+        ids = _merge_ids(work_ids, ed.get("ids") or {})
         item = {"textHash": ed["textHash"]}
         if ids:
             item["ids"] = ids
@@ -451,6 +568,8 @@ def make_listing(ctx: dict, now: str) -> dict:
         "license": prov["license"],
         "edited": any(c.get("role") in ("editor", "author") for c in contributors),
     }
+    if index.get("bookKind"):
+        listing["bookKind"] = index["bookKind"]
     if prov.get("generator"):
         listing["generator"] = prov["generator"]
     if index.get("series"):
@@ -470,6 +589,8 @@ def add(bundle_path: str | Path, publisher: str, source: str | Path, now: str | 
     ctx, issues = check(bundle_path, publisher, source)
     if ctx is None:
         return None, issues
+    if now is not None and not valid_timestamp(now):
+        return None, [_err("now", f"{now!r} is not a UTC timestamp like 2026-11-13T20:00:00Z")]
     now = now or now_iso()
     listing = make_listing(ctx, now)
     bad = validate.check_schema(listing, "listing")
@@ -481,6 +602,8 @@ def add(bundle_path: str | Path, publisher: str, source: str | Path, now: str | 
         series_text = dumps(ctx["bundle"]["series"]) if ctx["bundle"].get("series") is not None else None
     except (ValueError, RecursionError) as e:
         return None, issues + [_err("listing", f"cannot be serialised: {e}")]
+    if len(listing_text.encode("utf-8")) > MAX_BUNDLE_BYTES:
+        return None, issues + [_err("listing", f"the listing would be stored over the {MAX_BUNDLE_BYTES // (1024 * 1024)} MB limit")]
     d.mkdir(parents=True, exist_ok=True)
     (d / f"v{listing['version']}.lore.json").write_bytes(ctx["data"])
     if series_text is not None:
@@ -489,23 +612,37 @@ def add(bundle_path: str | Path, publisher: str, source: str | Path, now: str | 
     return listing, issues
 
 
-def remove(listing_id: str, source: str | Path, reason: str, now: str | None = None) -> None:
-    """Delete a listing's directory and append it to removed.json."""
+def remove(listing_id: str, source: str | Path, reason: str, now: str | None = None,
+           with_dependents: bool = False) -> list[str]:
+    """Delete a listing's directory and append it to removed.json. Later books of the same publisher
+    that require it are refused unless `with_dependents`, which removes them too. Returns the ids removed."""
     source = Path(source)
     m = re.fullmatch(r"([A-Za-z0-9-]+)/([a-z0-9-]+)", listing_id or "")
     if not m or not reason or not reason.strip():
         raise RegistryError("give a listing id like publisher/slug and a reason")
-    pub, slug = m.group(1), m.group(2)
+    if now is not None and not valid_timestamp(now):
+        raise RegistryError(f"--now {now!r} is not a UTC timestamp like 2026-11-13T20:00:00Z")
+    pub, slug = m.group(1).lower(), m.group(2)
     d = _listing_dir(source, pub, slug)
     if not (d / "listing.json").is_file():
         raise RegistryError(f"no listing {listing_id}")
+    target = f"{pub}/{slug}"
+    dependents = sorted(l["id"] for l in _publisher_listings(source, pub)
+                        if target in ((l.get("series") or {}).get("requires") or []))
+    if dependents and not with_dependents:
+        raise RegistryError(f"{target} is required by {', '.join(dependents)}: remove those too with --with-dependents")
     log = _removed(source)
-    shutil.rmtree(d)
-    parent = d.parent
-    if parent.is_dir() and not any(parent.iterdir()):
-        parent.rmdir()
-    log.append({"id": f"{pub}/{slug}", "removed": now or now_iso(), "reason": reason.strip()})
+    stamp = now or now_iso()
+    gone = [*dependents, target]
+    for lid in gone:
+        pb, sl = lid.split("/")
+        dd = _listing_dir(source, pb, sl)
+        shutil.rmtree(dd)
+        if dd.parent.is_dir() and not any(dd.parent.iterdir()):
+            dd.parent.rmdir()
+        log.append({"id": lid, "removed": stamp, "reason": reason.strip()})
     (source / "removed.json").write_text(dumps(log), encoding="utf-8")
+    return gone
 
 
 # ---- build ----------------------------------------------------------------------------------
@@ -540,11 +677,11 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
                 problems += [f"{i.where}: {i.message}" for i in issues]
                 if issues:
                     continue
-                bad = validate.check_schema(data, "listing")
+                bad = listing_problems(data, where)
                 if bad:
-                    problems += [f"{where}: listing{i.where}: {i.message}" for i in bad]
+                    problems += [f"{where}: {m}" for m in bad]
                     continue
-                if data["id"] != where or data["publisher"] != pdir.name or data["slug"] != d.name:
+                if data["publisher"] != pdir.name or data["slug"] != d.name:
                     problems.append(f"{where}: listing id {data['id']!r} does not match its directory")
                     continue
                 for v in data["versions"]:
@@ -568,6 +705,14 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
             removed_raw = (source / "removed.json").read_bytes()
             bad = validate.check_schema(removed, "api", "removed")
             problems += [f"removed.json{i.where}: {i.message}" for i in bad]
+            if not bad:
+                problems += [f"removed.json[{n}].removed: {r['removed']!r} is not a UTC timestamp like 2026-11-13T20:00:00Z"
+                             for n, r in enumerate(removed) if not valid_timestamp(r.get("removed"))]
+    known = {l["id"] for l, _ in listings}
+    for l, _ in listings:
+        for req in (l.get("series") or {}).get("requires", []):
+            if req not in known:
+                problems.append(f"{l['id']}: requires {req}, which has no listing")
     if problems:
         raise RegistryError("\n".join(problems))
 
@@ -589,6 +734,8 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
         result = {"id": listing["id"], "title": listing["work"]["title"], "match": "text",
                   "complete": listing["complete"], "updated": listing["updated"],
                   "digest": listing["digest"], "href": served["href"], "listing": served}
+        if listing.get("bookKind"):
+            result["bookKind"] = listing["bookKind"]
         if listing.get("series"):
             result["series"] = {"id": listing["series"]["id"], "book": listing["series"]["book"]}
         keys: dict[str, str] = {}
@@ -600,7 +747,7 @@ def build(source: str | Path, out: str | Path, base_path: str = "", name: str = 
                     continue
                 for val in (v if isinstance(v, list) else [v]):
                     if isinstance(val, str) and LOOKUP_VALUE_RE.fullmatch(val):
-                        keys.setdefault(f"{folder}/{val.lower() if folder == 'wikidata' else val}", "identifier")
+                        keys.setdefault(f"{folder}/{val}", "identifier")
         for key, match in keys.items():
             lookups[key].append({**result, "match": match})
     for key, results in lookups.items():

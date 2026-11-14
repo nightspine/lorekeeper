@@ -622,3 +622,129 @@ def test_findings_never_name_absolute_paths(tmp_path, src, dracula):
     with pytest.raises(registry.RegistryError) as e:
         registry.read_listing(src, "someone", "dracula")
     assert str(tmp_path) not in str(e.value)
+
+
+# ---- round 5: lead's second review ----------------------------------------------------------
+
+def test_stored_size_cap_after_reserialising(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["index"]["editions"][0]["ids"] = {"x": [1] * 1_000_000}
+    p = tmp_path / "big.json"
+    p.write_text(json.dumps(bundle, separators=(",", ":")), encoding="utf-8")
+    assert p.stat().st_size < registry.MAX_BUNDLE_BYTES
+    ctx, issues = registry.check(p, "someone", src)
+    assert ctx is None and any("would be stored" in i for i in errs(issues))
+
+
+def test_new_version_must_not_break_later_books(tmp_path, src, scarlet, four, series):
+    add(tmp_path, src, make(scarlet, series=series), name="one.json")
+    add(tmp_path, src, make(four, series=series), name="two.json")
+    v2 = copy.deepcopy(scarlet)
+    holmes = next(e for e in v2["entities"] if e["id"] == "holmes")
+    holmes["facets"] = [f for f in holmes["facets"] if f["id"] != "sis.holmes.p2"]
+    v2["provenance"]["updated"] = "2026-11-14"
+    ctx, issues = registry.check(write(tmp_path / "v2.json", make(v2, series=series)), "someone", src)
+    assert ctx is None and any("someone/sherlock-holmes-sign-of-four" in i for i in errs(issues))
+    # an unchanged-shape new version is fine
+    ok = copy.deepcopy(scarlet)
+    ok["provenance"]["updated"] = "2026-11-14"
+    ctx, issues = registry.check(write(tmp_path / "ok.json", make(ok, series=series)), "someone", src)
+    assert ctx is not None, errs(issues)
+
+
+def test_remove_refuses_dependents(tmp_path, src, scarlet, four, series):
+    add(tmp_path, src, make(scarlet, series=series), name="one.json")
+    add(tmp_path, src, make(four, series=series), name="two.json")
+    with pytest.raises(registry.RegistryError, match="sign-of-four"):
+        registry.remove("someone/sherlock-holmes-study-in-scarlet", src, "gone", NOW)
+    assert (src / "indexes/someone/sherlock-holmes-study-in-scarlet/listing.json").is_file()
+    gone = registry.remove("someone/sherlock-holmes-study-in-scarlet", src, "gone", NOW, with_dependents=True)
+    assert len(gone) == 2
+    log = json.loads((src / "removed.json").read_text())
+    assert [r["reason"] for r in log] == ["gone", "gone"]
+    assert not (src / "indexes/someone").exists() or not any((src / "indexes/someone").iterdir())
+
+
+def test_build_reports_dangling_requires(tmp_path, src, scarlet, four, series):
+    add(tmp_path, src, make(scarlet, series=series), name="one.json")
+    add(tmp_path, src, make(four, series=series), name="two.json")
+    import shutil
+    shutil.rmtree(src / "indexes/someone/sherlock-holmes-study-in-scarlet")
+    with pytest.raises(registry.RegistryError, match="requires someone/sherlock-holmes-study-in-scarlet"):
+        registry.build(src, tmp_path / "out")
+
+
+def test_book_kind_in_listing_and_lookup(tmp_path, src, dracula):
+    dracula["bookKind"] = "fiction"
+    add(tmp_path, src, make(dracula))
+    listing = json.loads((src / "indexes/someone/dracula/listing.json").read_text())
+    assert listing["bookKind"] == "fiction"
+    registry.build(src, tmp_path / "out")
+    body = json.loads((tmp_path / "out/v0/lookup/text" / f"{DRACULA_HASH}.json").read_text())
+    assert body["results"][0]["bookKind"] == "fiction"
+
+
+def test_wikidata_lookup_keeps_case(tmp_path, src, dracula):
+    dracula["work"]["ids"] = {"wikidata": "Q41542"}
+    add(tmp_path, src, make(dracula))
+    registry.build(src, tmp_path / "out")
+    assert (tmp_path / "out/v0/lookup/wikidata/Q41542.json").is_file()
+
+
+def test_series_manifest_without_index_series_is_refused(tmp_path, src, dracula, series):
+    bundle = make(dracula)
+    bundle["series"] = series
+    check_error(tmp_path, src, bundle, "no `series`")
+    assert validate.check_schema(bundle, "share")
+
+
+@pytest.mark.parametrize("bad", ["2026-11-13", "2026-11-13T20:00:00+01:00", "2026-13-40T20:00:00Z", "yesterday"])
+def test_timestamps_are_checked(tmp_path, src, dracula, bad):
+    bundle = make(dracula)
+    bundle["attestations"] = [{"kind": "audit", "by": "builder", "at": bad, "textHash": DRACULA_HASH,
+                               "sampled": 1, "supported": 1, "model": "m"}]
+    check_error(tmp_path, src, bundle, "UTC timestamp")
+    assert not registry.valid_timestamp(bad)
+    bundle["attestations"] = []
+    listing, issues = registry.add(write(tmp_path / "n.json", make(dracula)), "someone", src, bad)
+    assert listing is None and errs(issues)
+    with pytest.raises(registry.RegistryError):
+        registry.remove("a/b", src, "r", bad)
+    assert registry.make_bundle(dracula, now=bad)[0] is None
+    assert registry.valid_timestamp("2026-11-13T20:00:00.5Z")
+
+
+def test_bad_stored_listing_is_a_finding(tmp_path, src, dracula):
+    add(tmp_path, src, make(dracula))
+    lp = src / "indexes/someone/dracula/listing.json"
+    listing = json.loads(lp.read_text())
+    del listing["publisher"]
+    lp.write_text(json.dumps(listing), encoding="utf-8")
+    again = copy.deepcopy(dracula)
+    again["work"]["title"] = "Again"
+    ctx, issues = registry.check(write(tmp_path / "n.json", make(again)), "someone", src)
+    assert ctx is None and any("listing.json" in i and "publisher" in i for i in errs(issues))
+    # a bad neighbour is reported, not skipped
+    with pytest.raises(registry.RegistryError, match="dracula/listing.json"):
+        registry._publisher_listings(src, "someone")
+
+
+def test_identifiers_are_joined_per_scheme():
+    out = registry._merge_ids({"isbn13": "9780000000001", "gutenberg": "1"},
+                              {"isbn13": ["9780000000002", "9780000000001"], "gutenberg": "1", "openlibrary": "OL1"})
+    assert out["isbn13"] == ["9780000000001", "9780000000002"]
+    assert out["gutenberg"] == "1" and out["openlibrary"] == "OL1"
+
+
+def test_clear_messages_come_before_schema(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["index"]["editions"][0]["label"] = "mine.epub"
+    ctx, issues = registry.check(write(tmp_path / "c.json", bundle), "someone", src)
+    assert ctx is None and [i.message for i in issues] == [
+        "still carries label or fileHash: scrub the bundle (lorekeeper share)"]
+
+
+def test_share_schema_forbids_validates(dracula):
+    bundle = make(dracula)
+    bundle["attestations"] = [{"kind": "validates", "by": "builder", "at": NOW}]
+    assert validate.check_schema(bundle, "share")

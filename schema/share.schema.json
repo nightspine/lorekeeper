@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lorekeeper.dev/schema/0.1/share.schema.json",
   "title": "Lorekeeper share bundle",
-  "description": "What a builder hands to a registry: one index, its series manifest when it belongs to a series, and the builder's own attestations (SPEC.md §8.7).",
+  "description": "What a builder hands to a registry: one index, its series manifest when it belongs to a series, and the builder's own attestations (SPEC.md \u00a78.7).",
   "type": "object",
   "required": [
     "lorekeeper",
@@ -48,7 +48,7 @@
       ]
     },
     "series": {
-      "description": "The series manifest; required when index.series is set",
+      "description": "The series manifest; required when index.series is set, and not allowed otherwise",
       "$ref": "series.schema.json"
     },
     "derivedFrom": {
@@ -69,26 +69,62 @@
                 "const": "builder"
               }
             }
+          },
+          {
+            "properties": {
+              "kind": {
+                "not": {
+                  "const": "validates"
+                }
+              }
+            }
           }
         ]
       }
     }
   },
-  "if": {
-    "required": [
-      "index"
-    ],
-    "properties": {
-      "index": {
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "required": [
+              "series"
+            ]
+          }
+        }
+      },
+      "then": {
         "required": [
           "series"
         ]
       }
+    },
+    {
+      "if": {
+        "required": [
+          "index"
+        ],
+        "properties": {
+          "index": {
+            "not": {
+              "required": [
+                "series"
+              ]
+            }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "required": [
+            "series"
+          ]
+        }
+      }
     }
-  },
-  "then": {
-    "required": [
-      "series"
-    ]
-  }
+  ]
 }

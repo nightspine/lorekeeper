@@ -83,7 +83,7 @@ uv run lorekeeper view examples/sherlock-holmes/study-in-scarlet.json \
 # Share an index: one bundle file, filed in a registry, built into static lookup files.
 uv run lorekeeper share examples/dracula/dracula.json -o dracula.share.json
 uv run lorekeeper registry add dracula.share.json --publisher mina-m --source registry/
-uv run lorekeeper registry build registry/ -o site/ --base-path /lorekeeper-registry
+uv run lorekeeper registry build registry/ -o build/registry/ --base-path /lorekeeper-registry
 ```
 
 The [share guide](https://nightspine.github.io/lorekeeper/docs/share.html) covers the bundle, the checks a registry runs and the files `registry build` writes.

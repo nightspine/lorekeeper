@@ -67,9 +67,10 @@ removed.json</code></pre>
 <p>The listing records the digest, the versions, the licence, whether people edited the index, and the attestations of the latest version. The registry adds its own <code>validates</code> attestation. To take a listing down:</p>
 <pre><code>uv run lorekeeper registry remove mina-m/dracula --source registry/ --reason "Requested by the rights holder"</code></pre>
 <p>That deletes the listing and appends it to <code>removed.json</code>. The same id cannot be added again.</p>
+<p>A listing that later books of the series require is not removed unless you pass <code>--with-dependents</code>, which removes those books too. <code>add</code> likewise refuses a new version of an earlier book that would break the later ones the publisher has already shared.</p>
 
 <h2 id="build">Build the static site</h2>
-<pre><code>uv run lorekeeper registry build registry/ -o site/ \
+<pre><code>uv run lorekeeper registry build registry/ -o build/registry/ \
   --base-path /lorekeeper-registry --name "Lorekeeper community registry"</code></pre>
 <p>This writes a folder for any static host. The build is deterministic and clears <code>v0</code> first. It checks every listing against its schema and every index against its digest, and fails if one does not match.</p>
 <pre><code>.well-known/lorekeeper

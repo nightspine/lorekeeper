@@ -587,8 +587,10 @@ is the registry's record of one book shared by one publisher:
   `updated` repeat the latest.
 - `work`, `complete` (from `coverage`), `license` and `generator` (from
   `provenance`) are copied from the latest version. Identifiers from `work.ids`
-  and from each edition's `ids` are merged into `editions[].ids`, and `work`
-  itself carries none.
+  and from each edition's `ids` are merged into `editions[].ids` per scheme
+  (a scheme both carry becomes a de-duplicated list, unless they share one
+  single value), and `work` itself carries none. `bookKind` (§4) is copied when
+  the index has one.
 - `editions` holds only `textHash` and `ids`. A listing MUST NOT carry
   `fileHash`, `label` or `builtFrom`: they describe one person's copy of the
   book, and a label is often a local file name.
@@ -603,7 +605,10 @@ is the registry's record of one book shared by one publisher:
 - `derivedFrom` is the digest of a shared index the latest version improves,
   for instance one the publisher installed and then edited. The recommended
   licences (§4.8) permit this.
-- `generator`, `series` and `derivedFrom` are omitted when absent.
+- `generator`, `bookKind`, `series` and `derivedFrom` are omitted when absent.
+- Every `at`, `updated` and `removed` value is a UTC timestamp,
+  `YYYY-MM-DDTHH:MM:SSZ` with optional fractional seconds; a registry MUST
+  refuse any other form.
 
 **Attestations.** `attestations` holds claims about the latest version only.
 Each says what was checked (`kind`), who vouches for it (`by`) and when
@@ -647,7 +652,8 @@ a listing by itself; it is a fact for the client to show.
 - `index` is a complete index document with `label` and `fileHash` removed
   from every edition. `builtFrom` stays: it says which edition the anchors'
   `seq` hints are exact for (§3.5).
-- `series` is the series manifest. It is required when the index has `series`.
+- `series` is the series manifest. It is required when the index has `series`
+  and not allowed otherwise.
 - `attestations` are all `by: "builder"` and of kind `book-checks`, `spoiler-gate` or `audit`, never `validates`, which only the registry adds; absent means none.
 
 A bundle comes from a stranger. Before accepting one, a registry MUST:
@@ -661,12 +667,17 @@ A bundle comes from a stranger. Before accepting one, a registry MUST:
 3. refuse a licence it does not accept (the community registry accepts
    `CC0-1.0` and `CC-BY-4.0`);
 4. refuse a digest that is already a version of the same listing;
-5. build every storage path only from the validated `publisher` and the
+5. refuse a bundle whose stored index or listing would exceed the size limit
+   once written;
+6. build every storage path only from the validated `publisher` and the
    computed `slug`, and never from anything else in the bundle.
 
 On acceptance the registry writes the new version, replaces the series
 manifest when one came with it, and replaces the listing's attestations with
-the bundle's plus its own `validates`. A registry keeps a public log of
+the bundle's plus its own `validates`. A new version of a book that later
+books of the series require MUST leave the series checks passing with their
+latest versions, or be refused. A registry that removes a listing MUST also
+remove (or refuse to remove) the later books that require it. A registry keeps a public log of
 removed listings, `[{ "id", "removed", "reason" }]`, newest last
 (`api.schema.json#/$defs/removed`), and SHOULD refuse new versions under a
 removed id.
@@ -686,7 +697,8 @@ GET {api}/lookup/{scheme}/{value}.json
 ```
 
 `scheme` is `text` (a `textHash`; results match `text`), or `isbn` (ISBN-13),
-`gutenberg`, `openlibrary` or `wikidata` (results match `identifier`). There is
+`gutenberg`, `openlibrary` or `wikidata` (results match `identifier`; the value
+keeps its case, `Q41542`). There is
 no `fileHash` scheme, since listings hold no file hashes. The body is a lookup
 response (§8.2) in which every result carries `listing`; `404` means no
 results. Results are ordered complete before partial, then most recently

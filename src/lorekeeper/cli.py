@@ -132,6 +132,8 @@ def cmd_share(args) -> int:
         blocks = epub.blocks(args.epub) if args.epub else None
     except (OSError, ValueError) as e:
         return _report(args, False, [validate.Issue("error", "input", str(e))])
+    if args.now is not None and not registry.valid_timestamp(args.now):
+        return _report(args, False, [validate.Issue("error", "now", f"{args.now!r} is not a UTC timestamp like 2026-11-13T20:00:00Z")])
     bundle, rep = registry.make_bundle(index, series=series, derived_from=args.derived_from, blocks=blocks, now=args.now)
     issues = rep["issues"]
     extra: dict = {}
@@ -157,8 +159,8 @@ def cmd_registry(args) -> int:
             return _report(args, listing is not None, issues,
                            **({"id": listing["id"], "version": listing["version"], "digest": listing["digest"]} if listing else {}))
         if args.registry_cmd == "remove":
-            registry.remove(args.id, args.source, args.reason, args.now)
-            return _report(args, True, id=args.id)
+            gone = registry.remove(args.id, args.source, args.reason, args.now, args.with_dependents)
+            return _report(args, True, id=args.id, removed=gone)
         stats = registry.build(args.src, args.output, args.base_path, args.name)
         return _report(args, True, **stats)
     except registry.RegistryError as e:
@@ -526,6 +528,7 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("id")
     r.add_argument("--source", required=True, metavar="DIR")
     r.add_argument("--reason", required=True)
+    r.add_argument("--with-dependents", action="store_true", help="also remove later books of the series that require it")
     r.add_argument("--now", help="ISO time (tests)")
     r.add_argument("--json", action="store_true")
     r.set_defaults(fn=cmd_registry)
