@@ -127,15 +127,15 @@ export function setParams(params, { replace = true } = {}) {
   const q = new URLSearchParams(params).toString();
   const url = `#/${[route, ...parts].join("/")}${q ? "?" + q : ""}`;
   ownHash = url;
+  shownHash = url;
   if (replace) history.replaceState(null, "", url);
   else location.hash = url;
 }
-let ownHash = null;
-let shownHash = null;
+let ownHash = null;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
+let shownHash = null;   // the hash of the page on screen, so a stray "#main" can put it back
 /** Change the address without adding history or re-rendering (a view that picked what to show for the person). */
 export function replaceHash(url) { ownHash = shownHash = url; history.replaceState(null, "", url); }
-let shownHash2 = null;   // the hash of the page on screen, so a stray "#main" can put it back
-let firstRender = true;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
+let firstRender = true;
 
 function render() {
   const { route, parts, params } = parseHash();

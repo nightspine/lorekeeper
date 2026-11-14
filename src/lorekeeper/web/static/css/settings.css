@@ -38,7 +38,7 @@
 .bo-libs legend { font-weight: 700; padding: 0 6px; }
 .bo-libs > .hint { margin: 0; }
 .bo-lib-list { display: grid; gap: var(--space-1); }
-.bo-lib { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; padding: 0 var(--space-2); border-radius: var(--radius); cursor: pointer; }
+.bo-lib { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 44px; padding: 0 var(--space-2); border-radius: 10px; cursor: pointer; }
 .bo-lib:hover { background: var(--glass-2); }
 .bo-lib input { width: 18px; height: 18px; accent-color: var(--beacon); }
 .bo-lib-name { font-weight: 600; overflow-wrap: anywhere; }

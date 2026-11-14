@@ -1063,7 +1063,7 @@ export function mountReader(root) {
   let lastFocus = null;
   /** True while an edit form in the open drawer holds text that was typed and not saved. */
   function drawerDirty() {
-    return [...document.querySelectorAll("dialog.drawer .edit-form")].some((f) =>
+    return [...document.querySelectorAll("dialog.drawer .edit-form, dialog.drawer .editing-title")].some((f) =>
       [...f.querySelectorAll("textarea, input")].some((i) => i.value !== i.defaultValue));
   }
   /** Every way a person dismisses the drawer (×, Escape, the backdrop) asks first when it would lose typed text. */

@@ -21,7 +21,7 @@
 .g-search { position: relative; }
 .g-matches { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; right: 0; padding: var(--space-1); border-radius: var(--radius-m); background: linear-gradient(180deg, var(--glass-2), var(--glass)), var(--bg); border: 1px solid var(--edge); box-shadow: var(--shadow), inset 0 1px 0 var(--edge-lit); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); display: grid; }
 .g-matches[hidden] { display: none; }
-.g-matches button, .g-matches [role="option"] { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: var(--radius); background: transparent; color: var(--text); text-align: left; cursor: pointer; font-size: var(--text-sm); font-weight: 500; }
+.g-matches button, .g-matches [role="option"] { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 6px 10px; border: 0; border-radius: 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; font-size: var(--text-sm); font-weight: 500; }
 .g-matches button:hover, .g-matches button:focus-visible, .g-matches [role="option"]:hover, .g-matches [role="option"][aria-selected="true"] { background: var(--glass-hover); }
 .g-matches [role="option"][aria-selected="true"] { box-shadow: inset 3px 0 0 var(--beacon); }
 .g-matches button:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; }
