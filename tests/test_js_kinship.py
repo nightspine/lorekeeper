@@ -20,7 +20,8 @@ mother-in-law of|brother-in-law of|step-son of|greatgrandmother of|great-grandmo
 twin brother of|second cousin of|godfather of|godson of|widower of|Her sister|foster-daughter of|dad of|a mum of
 Wife Of|  wife   of |consort of|spouse of|goddaughter of|granny of|grandpa of|papa of|mama of|parent of|child of
 older sister of|elder brother of|eldest son of|youngest daughter of|former wife of|identical twin of|first cousin of
-half brother of|ex wife of|their daughter|an aunt of|godmother of|sister-in-law of|father-in-law of""".replace("\n", "|").split("|")
+half brother of|ex wife of|their daughter|an aunt of|godmother of|sister-in-law of|father-in-law of
+mother in law of|brother in law of|sister in-law of|half–sister of|half—brother of""".replace("\n", "|").split("|")
 
 NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guardian and friend of", "possible father of",
          "sibling of, fights", "calls cousin, rebuffed by", "grandson of the cast-out daughter of", "remembers late wife",

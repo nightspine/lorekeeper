@@ -647,3 +647,18 @@ def test_a_wife_tie_ends_a_courtship_tie(book_path, tmp_path):
     ix, _, _ = _run(book_path, tmp_path, llm=Wed())
     first, second = ix["relations"][0], ix["relations"][-1]
     assert (second["label"], second["kind"]) == ("wife of", "family") and second["replaces"] == [first["id"]]
+
+
+def test_a_courtship_and_a_wife_tie_in_one_passage_keep_the_wife(book_path, tmp_path):
+    class Both(FakeLLM):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "new" in schema.get("properties", {}):
+                out = json.loads(json.dumps(out))
+                out["relations"] = [
+                    {"a": "Alice Marlow", "label": "engaged to", "b": "Ezra Pike", "p": 4, "kind": "romance"},
+                    {"a": "Alice Marlow", "label": "wife of", "b": "Ezra Pike", "p": 2, "kind": "family"}]
+            return out
+    ix, _, report = _run(book_path, tmp_path, llm=Both())
+    labels = [r["label"] for r in ix["relations"]]
+    assert "wife of" in labels and "engaged to" not in labels
