@@ -24,6 +24,7 @@ main[data-route="library"] { padding: 0; }
 .lib-bo { color: var(--text-3); font-size: var(--text-xs); white-space: nowrap; }
 .lib-bo a { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
 .lib-view { margin-left: auto; }
+.lib-toolbar[hidden] { display: none; }
 
 /* ---------- Library: the table and the pane ---------- */
 .lib-split { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
@@ -212,5 +213,9 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
   .lib-grid { padding: 16px; }
   .shelf { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 14px; }
   .bk-head .cover-sm { width: 72px; }
+  .lib-list > .demo-panel.compact { flex-direction: row; align-items: center; padding: 10px 12px; }
+  .series-page .books tr.book { grid-template-columns: 24px minmax(0, 1fr) auto; }
+  .series-page .books tr.book > td.c-num { text-align: left; }
+  .series-page .books tr.book > .c-act { display: none; }
   .page .books tr.book { padding: 6px 0; }
 }

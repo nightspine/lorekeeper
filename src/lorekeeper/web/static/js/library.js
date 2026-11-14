@@ -79,6 +79,7 @@ export function mountLibrary(root) {
     h("button", { type: "button", dataset: { v }, "aria-pressed": String(s.view === v), on: { click: () => {
       s.view = v; viewBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v))); listSig = ""; paintList(); persist();
     } } }, label));
+  let toolbar;
   const list = h("div.lib-list");
   const pane = h("aside.lib-pane", { "aria-label": "Book details", hidden: true });
   const split = h("div.lib-split", list, pane);
@@ -88,7 +89,7 @@ export function mountLibrary(root) {
       h("div.lib-head-end",
         h("div.search.lib-search-wrap", icon("search"), search, h("kbd.kbd", { "aria-hidden": "true" }, "/")),
         h("label.btn.primary", { for: "lib-upload" }, icon("upload"), "Add an EPUB"), upload)),
-    h("div.lib-toolbar",
+    toolbar = h("div.lib-toolbar",
       showGroup,
       h("label.lib-from", h("span", "From"), sourceSel),
       boNote,
@@ -226,9 +227,12 @@ export function mountLibrary(root) {
     const books = matches();
     const ready = s.data.books.filter(isReady).length;
     const buildingN = s.data.books.filter((b) => b.status === "building").length;
-    count.textContent = books.length === total
-      ? `${plural(total, "book")} in ${plural(s.data.series.length, "series", "series")}.${ready ? ` ${fmtInt(ready)} ready to read` : ""}${buildingN ? `, ${fmtInt(buildingN)} building` : ""}${ready || buildingN ? "." : ""}`
-      : `${fmtInt(books.length)} of ${plural(total, "book")}.`;
+    const extra = [ready ? `${fmtInt(ready)} ready to read` : null, buildingN ? `${fmtInt(buildingN)} building` : null].filter(Boolean).join(", ");
+    count.textContent = !total ? "No books yet."
+      : books.length === total ? `${plural(total, "book")} in ${plural(s.data.series.length, "series", "series")}.${extra ? ` ${cap(extra)}.` : ""}`
+        : `${fmtInt(books.length)} of ${plural(total, "book")}.`;
+    // With no books there is nothing to filter.
+    toolbar.hidden = !total;
     // Skip the repaint when nothing on screen would change (the 5 s reload while building).
     const sig = JSON.stringify([s.view, s.sort, s.show, s.source, s.q, total ? books : 0, s.data.series, Boolean(s.demo)]);
     if (sig === listSig) { paintSelection(); return; }
