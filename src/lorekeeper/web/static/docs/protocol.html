@@ -109,8 +109,9 @@ HTTP/1.1 304 Not Modified</code></pre>
  &quot;auth&quot;:{&quot;type&quot;:&quot;none&quot;},&quot;static&quot;:true}</code></pre>
 <h3 id="path-lookup">Lookup by path</h3>
 <div class="route"><span class="method">GET</span><code>{api}/lookup/{scheme}/{value}.json</code></div>
-<p>A static host cannot read a query string, so lookup takes a path. <code>scheme</code> is <code>text</code> (a text hash, results match <code>text</code>), or <code>isbn</code> (ISBN-13), <code>gutenberg</code>, <code>openlibrary</code> or <code>wikidata</code> (results match <code>identifier</code>). There is no <code>fileHash</code> scheme. A <code>404</code> means no results. The query form above still works on dynamic servers.</p>
+<p>A static host cannot read a query string, so lookup takes a path. <code>scheme</code> is <code>text</code> (a text hash, results match <code>text</code>), or <code>isbn</code> (ISBN-13), <code>gutenberg</code>, <code>openlibrary</code> or <code>wikidata</code> (results match <code>identifier</code>; the value keeps its case, <code>Q41542</code>). There is no <code>fileHash</code> scheme. A <code>404</code> means no results. The query form above still works on dynamic servers.</p>
 <p>The body is the usual <code>{"results": [...]}</code>. Each result also carries <code>listing</code>, the whole listing record. Results are ordered complete before partial, then newest first, then by id. Ranking by attestations is up to the client.</p>
+<p>A result carries <code>bookKind</code> when the listing has one. Every <code>at</code>, <code>updated</code> and <code>removed</code> value is a UTC timestamp like <code>2026-11-13T20:00:00Z</code>, with optional fractional seconds. A registry refuses an index or listing that would be stored over its size limit (5 MB in the reference tooling).</p>
 <h3 id="listing">The listing</h3>
 <div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody>
 <tr><td><code>id</code>, <code>publisher</code>, <code>slug</code></td><td><code>id</code> is <code>publisher/slug</code> and stays the same across versions.</td></tr>

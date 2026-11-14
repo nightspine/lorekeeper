@@ -159,8 +159,9 @@ def cmd_registry(args) -> int:
             return _report(args, listing is not None, issues,
                            **({"id": listing["id"], "version": listing["version"], "digest": listing["digest"]} if listing else {}))
         if args.registry_cmd == "remove":
-            gone = registry.remove(args.id, args.source, args.reason, args.now, args.with_dependents)
-            return _report(args, True, id=args.id, removed=gone)
+            notes: list[str] = []
+            gone = registry.remove(args.id, args.source, args.reason, args.now, args.with_dependents, notes)
+            return _report(args, True, [validate.Issue("warning", "remove", m) for m in notes], id=args.id, removed=gone)
         stats = registry.build(args.src, args.output, args.base_path, args.name)
         return _report(args, True, **stats)
     except registry.RegistryError as e:

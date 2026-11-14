@@ -49,7 +49,7 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$")
+TIMESTAMP_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$")
 
 
 def valid_timestamp(value) -> bool:
@@ -322,14 +322,21 @@ def read_listing(source: Path, publisher: str, slug: str) -> dict | None:
     return _read_listing_file(source, p, f"{publisher}/{slug}")
 
 
-def _publisher_listings(source: Path, publisher: str) -> list[dict]:
+def _publisher_listings(source: Path, publisher: str, skipped: list[str] | None = None) -> list[dict]:
+    """Every sound listing of a publisher. An unsound one raises, unless `skipped` is given: then it is
+    left out and its problem is appended there (takedown must work on a damaged tree)."""
     root = source / "indexes" / publisher
     out = []
     if root.is_dir():
         for d in sorted(root.iterdir()):
             p = d / "listing.json"
             if d.is_dir() and p.is_file():
-                out.append(_read_listing_file(source, p, f"{publisher}/{d.name}"))
+                try:
+                    out.append(_read_listing_file(source, p, f"{publisher}/{d.name}"))
+                except RegistryError as e:
+                    if skipped is None:
+                        raise
+                    skipped.append(str(e))
     return out
 
 
@@ -613,7 +620,7 @@ def add(bundle_path: str | Path, publisher: str, source: str | Path, now: str | 
 
 
 def remove(listing_id: str, source: str | Path, reason: str, now: str | None = None,
-           with_dependents: bool = False) -> list[str]:
+           with_dependents: bool = False, notes: list[str] | None = None) -> list[str]:
     """Delete a listing's directory and append it to removed.json. Later books of the same publisher
     that require it are refused unless `with_dependents`, which removes them too. Returns the ids removed."""
     source = Path(source)
@@ -627,8 +634,11 @@ def remove(listing_id: str, source: str | Path, reason: str, now: str | None = N
     if not (d / "listing.json").is_file():
         raise RegistryError(f"no listing {listing_id}")
     target = f"{pub}/{slug}"
-    dependents = sorted(l["id"] for l in _publisher_listings(source, pub)
+    skipped: list[str] = []
+    dependents = sorted(l["id"] for l in _publisher_listings(source, pub, skipped)
                         if target in ((l.get("series") or {}).get("requires") or []))
+    if notes is not None:
+        notes += [f"skipped an unsound listing while looking for dependents: {m}" for m in skipped]
     if dependents and not with_dependents:
         raise RegistryError(f"{target} is required by {', '.join(dependents)}: remove those too with --with-dependents")
     log = _removed(source)

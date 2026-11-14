@@ -698,7 +698,7 @@ def test_series_manifest_without_index_series_is_refused(tmp_path, src, dracula,
     assert validate.check_schema(bundle, "share")
 
 
-@pytest.mark.parametrize("bad", ["2026-11-13", "2026-11-13T20:00:00+01:00", "2026-13-40T20:00:00Z", "yesterday"])
+@pytest.mark.parametrize("bad", ["2026-11-13", "２０２６-11-13T20:00:00Z", "2026-11-13T20:00:00+01:00", "2026-13-40T20:00:00Z", "yesterday"])
 def test_timestamps_are_checked(tmp_path, src, dracula, bad):
     bundle = make(dracula)
     bundle["attestations"] = [{"kind": "audit", "by": "builder", "at": bad, "textHash": DRACULA_HASH,
@@ -748,3 +748,21 @@ def test_share_schema_forbids_validates(dracula):
     bundle = make(dracula)
     bundle["attestations"] = [{"kind": "validates", "by": "builder", "at": NOW}]
     assert validate.check_schema(bundle, "share")
+
+
+def test_remove_works_on_a_damaged_tree(tmp_path, src, dracula, scarlet, series):
+    add(tmp_path, src, make(dracula))
+    add(tmp_path, src, make(scarlet, series=series), name="s.json")
+    bad = src / "indexes/someone/dracula/listing.json"
+    listing = json.loads(bad.read_text())
+    del listing["license"]
+    bad.write_text(json.dumps(listing), encoding="utf-8")
+    notes: list[str] = []
+    # a sound listing beside an unsound one: skipped and mentioned
+    assert registry.remove("someone/sherlock-holmes-study-in-scarlet", src, "r", NOW, notes=notes) == \
+        ["someone/sherlock-holmes-study-in-scarlet"]
+    assert any("dracula/listing.json" in n for n in notes)
+    # the unsound listing itself can be removed
+    assert registry.remove("someone/dracula", src, "r", NOW) == ["someone/dracula"]
+    assert [r["id"] for r in json.loads((src / "removed.json").read_text())] == [
+        "someone/sherlock-holmes-study-in-scarlet", "someone/dracula"]
