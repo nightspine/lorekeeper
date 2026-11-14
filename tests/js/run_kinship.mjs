@@ -29,6 +29,8 @@ const GOOD = {
   "great-grandmother of": ["grandparent", ["great"], "great grandmother of"], "adoptive mother of": ["parent", ["adoptive"], "adoptive mother of"],
   "twin of": ["sibling", [], "twin of"], "twin brother of": ["sibling", ["twin"], "twin brother of"], "second cousin of": ["cousin", ["second"], "second cousin of"],
   "godfather of": ["guardian", [], "godfather of"], "godson of": ["ward", [], "godson of"], "widower of": ["spouse", ["late"], "widower of"],
+  "mother in law of": ["parent", ["in-law"], "mother-in-law of"], "brother in law of": ["sibling", ["in-law"], "brother-in-law of"],
+  "sister in-law of": ["sibling", ["in-law"], "sister-in-law of"], "half–sister of": ["sibling", ["half"], "half sister of"],
   "Her sister": ["sibling", [], "sister of"], "foster-daughter of": ["child", ["foster"], "foster daughter of"], "dad of": ["parent", [], "father of"],
 };
 const NOISE = ["killed mother of", "barracks brother of", "brother-in-arms of", "guardian and friend of", "possible father of", "sibling of, fights",
@@ -124,5 +126,17 @@ test("families: grandparents above, cousins level, largest family first", () => 
   assert.equal(f[0].layer.get("g") + 2, f[0].layer.get("c"));
   assert.equal(f[0].layer.get("p") + 1, f[0].layer.get("c"));
   assert.equal(f[0].layer.get("d"), f[0].layer.get("c"));
+});
+test("families: only persons and creatures join a family", () => {
+  const e = (id, type) => ({ ...ent(id, id), type });
+  const objs = { entities: [e("argent", "object"), e("titan", "object")], relations: [rel("1", "argent", "son of", "titan")], relationHistory: [] };
+  assert.deepEqual(families(objs), []);
+  const place = { entities: [e("pat", "person"), e("leon", "place")], relations: [rel("1", "pat", "daughter of", "leon")], relationHistory: [] };
+  assert.deepEqual(families(place), []);
+  const mixed = { entities: [e("a", "person"), e("b", "creature"), e("t", "term"), e("g", "group")],
+    relations: [rel("1", "a", "owner of", "b"), rel("2", "b", "son of", "a"), rel("3", "t", "brother of", "a"), rel("4", "g", "sister of", "b")], relationHistory: [] };
+  const f = families(mixed);
+  assert.equal(f.length, 1);
+  assert.deepEqual([...f[0].members].sort(), ["a", "b"]);
 });
 process.exit(failed);

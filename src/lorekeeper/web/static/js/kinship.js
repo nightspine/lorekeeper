@@ -64,7 +64,7 @@ export function parse(label) {
   if (!toks.length || toks.includes("of")) return null;      // anything after "of", a second "of"
   t = toks.join(" ");
   let inlaw = false;
-  if (/-in-law$/.test(t)) { inlaw = true; t = t.slice(0, -"-in-law".length); }
+  if (/[ -]in[ -]law$/.test(t)) { inlaw = true; t = t.replace(/[ -]in[ -]law$/, ""); }
   // Hyphens join modifiers to the word ("half-sister", "ex-husband"); any other suffix ("-in-arms") ends up a stray token.
   toks = t.split(/[ -]/).filter(Boolean);
   if (!toks.length) return null;
@@ -137,6 +137,7 @@ export function surname(name) {
 // How a tie constrains generations: level(src) - level(dst), and how firmly it says so.
 const DY = { parent: [-1, 3], child: [1, 3], grandparent: [-2, 2], grandchild: [2, 2], pibling: [-1, 2], nibling: [1, 2], guardian: [-1, 2], ward: [1, 2],
   spouse: [0, 2], sibling: [0, 2], cousin: [0, 2], related: [0, 1] };
+const KINDRED = new Set(["person", "creature"]);
 const DASHED = new Set(["in-law", "step", "foster"]);
 
 /** The family trees of a gated view. `opts.history` also draws relationHistory ties (marked old). Self-help books have none. */
@@ -150,6 +151,7 @@ export function families(view, opts = {}) {
   const take = (list, old) => {
     for (const r of list || []) {
       if (!ents.has(r.src) || !ents.has(r.dst) || r.src === r.dst) continue;
+      if (!KINDRED.has(ents.get(r.src).type) || !KINDRED.has(ents.get(r.dst).type)) continue;   // objects, places, groups and terms never join a family
       const t = tie(r);
       if (!t) continue;
       const key = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
