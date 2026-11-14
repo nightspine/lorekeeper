@@ -33,6 +33,7 @@ export const MODIFIERS = ["younger", "older", "elder", "eldest", "youngest", "tw
   "blood", "first", "second", "great", "identical"];
 const LEAD = new Set(["is", "the", "a", "an", "her", "his", "their"]);
 const MOD = new Set(MODIFIERS);
+const JOINED = new Set(["step", "half", "ex", "great"]);
 const KIN_KEYS = Object.keys(KIN);
 
 /** Split a joined token ("stepson", "greatgrandmother") into modifiers and a kin word, or null. */
@@ -96,9 +97,12 @@ export function normalize(label) {
   if (p.word === "married to") return "married to";
   const implicit = p.word === "widow" || p.word === "widower" ? "late" : null;
   const inlaw = p.modifiers.includes("in-law");
-  const mods = p.modifiers.filter((m) => m !== "in-law" && m !== implicit);
-  const word = (CANON[p.word] || p.word) + (inlaw ? "-in-law" : "");
-  return `${[...mods, word].join(" ")} of`;
+  const rest = p.modifiers.filter((m) => m !== "in-law" && m !== implicit);
+  // English spelling: step joins the word, half/ex/great take a hyphen, the rest stay separate words before it.
+  const attach = rest.filter((m) => JOINED.has(m)), words = rest.filter((m) => !JOINED.has(m));
+  let word = (CANON[p.word] || p.word) + (inlaw ? "-in-law" : "");
+  for (let i = attach.length - 1; i >= 0; i--) word = attach[i] + (attach[i] === "step" ? "" : "-") + word;
+  return `${[...words, word].join(" ")} of`;
 }
 
 /**
@@ -113,15 +117,14 @@ export function tie(rel) {
 
 // ---- family names ------------------------------------------------------------------------------
 
-const TITLES = new Set(["mr", "mrs", "ms", "miss", "mister", "madam", "madame", "dr", "doctor", "prof", "professor", "sir", "lady", "lord", "dame", "captain", "capt",
-  "colonel", "major", "general", "lieutenant", "sergeant", "reverend", "rev", "father", "mother", "sister", "brother", "uncle", "aunt", "king", "queen", "prince",
-  "princess", "count", "countess", "baron", "baroness", "duke", "duchess", "master", "mistress", "saint", "st"]);
+const TITLES = new Set(["mr", "mrs", "ms", "miss", "dr", "sir", "lady", "lord", "professor", "captain", "madame", "monsieur", "señor", "señora"]);
 const PARTICLES = new Set(["van", "von", "de", "del", "della", "di", "du", "la", "le", "der", "den", "ter", "ten", "da", "dos", "al", "el", "bin", "ibn"]);
 
 /** The family name in a person's name ("Mr. Dursley" → "Dursley", "Abraham Van Helsing" → "Van Helsing"), or null. */
 export function surname(name) {
   const clean = String(name || "").replace(/\([^)]*\)/g, " ").replace(/,.*$/, " ").replace(/['’]s\b/g, "");
   const toks = clean.split(/\s+/).map((x) => x.replace(/^[^\p{L}]+|[^\p{L}.]+$/gu, "")).filter(Boolean);
+  if (toks.length && KIN[toks[0].toLowerCase().replace(/\.$/, "")]) return null;   // "Uncle Vernon", "Father Brown": a kin word is no family name
   let titled = false;
   while (toks.length && TITLES.has(toks[0].toLowerCase().replace(/\.$/, ""))) { toks.shift(); titled = true; }
   if (!toks.length || (toks.length === 1 && !titled)) return null;

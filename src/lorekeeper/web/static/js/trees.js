@@ -66,7 +66,6 @@ export function treesStage(ctx) {
     g.append(s("text", { class: "t-name", x: Math.min(f.width * COL / 2, COL * 1.5), y: y + 22, "text-anchor": "middle" }, f.name), s("text", { class: "t-count", x: Math.min(f.width * COL / 2, COL * 1.5), y: y + 42, "text-anchor": "middle" }, `${f.members.length} people`));
     const linkLayer = s("g", { class: "t-links" }), nodeLayer = s("g", { class: "t-nodes" });
     g.append(linkLayer, nodeLayer);
-    const bus = new Map();     // one horizontal bus per parent unit, halfway to the next generation
     for (const l of f.links) {
       const a = l.a, b = l.b;
       const lit = sel && (a === sel || b === sel);
@@ -80,7 +79,6 @@ export function treesStage(ctx) {
         const x0 = u.members.length > 1 ? mid(u) : px(a);
         const y0 = u.members.length > 1 ? py(a) : py(a) + R + 3;
         const by = py(a) + (py(b) - py(a)) * 0.5;
-        bus.set(u, true);
         d = `M${x0},${y0} V${by} H${px(b)} V${py(b) - R - 4}`;
       } else if (l.kind === "sibling") {
         const su = unit.get(a), sv = unit.get(b);
@@ -123,6 +121,7 @@ export function treesStage(ctx) {
   const t0 = gs.tt;
   if (t0 && !ctx.focusId) root.setAttribute("transform", `translate(${t0.x},${t0.y}) scale(${t0.k})`);
   const start = () => {
+    if (!svg.isConnected) return;     // a stale frame must not write gs.tt from a detached stage
     const zoom = d3.zoom().scaleExtent([0.15, 4])
       .filter((ev) => (ev.type === "wheel" ? ev.ctrlKey || ev.metaKey : !ev.button))
       .on("zoom", (ev) => { root.setAttribute("transform", ev.transform); gs.tt = { x: ev.transform.x, y: ev.transform.y, k: ev.transform.k, user: performance.now() > (wrap._trees.autoUntil || 0) }; });
