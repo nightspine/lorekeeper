@@ -365,3 +365,13 @@ dialog.modal::backdrop { background: var(--backdrop); backdrop-filter: blur(6px)
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- loading and failed loads ---------- */
+/* Shown only after 300 ms, so a fast load never flashes it. */
+.loading { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-7) var(--space-5); color: var(--text-2); opacity: 0; animation: loading-in .2s var(--ease) .3s forwards; }
+@keyframes loading-in { to { opacity: 1; } }
+.loading .spinner { margin-top: 0; }
+.load-error { display: grid; justify-items: center; gap: var(--space-3); text-align: center; padding: var(--space-7) var(--space-5); }
+.load-error h2 { font-size: var(--text-xl); }
+.load-error p { max-width: 52ch; overflow-wrap: anywhere; }
+.crumbs a[aria-current="page"] { text-decoration: none; }

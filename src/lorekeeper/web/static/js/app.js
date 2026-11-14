@@ -1,5 +1,5 @@
 import { api, hooks, safeNext } from "./api.js";
-import { hydrateIcons, icon } from "./dom.js";
+import { announce, hydrateIcons, icon } from "./dom.js";
 import { mountStudio, mountBuild } from "./studio.js";
 import { mountReader } from "./reader.js";
 import { mountSettings } from "./settings.js";
@@ -19,7 +19,9 @@ function currentTheme() {
 function paintToggle() {
   const dark = currentTheme() === "dark";
   toggle.replaceChildren(icon(dark ? "sun" : "moon"));
-  toggle.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+  const label = dark ? "Switch to light theme" : "Switch to dark theme";
+  toggle.setAttribute("aria-label", label);
+  toggle.title = label;
 }
 toggle.addEventListener("click", () => {
   const next = currentTheme() === "dark" ? "light" : "dark";
@@ -128,10 +130,14 @@ export function setParams(params, { replace = true } = {}) {
   if (replace) history.replaceState(null, "", url);
   else location.hash = url;
 }
-let ownHash = null;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
+let ownHash = null;
+let shownHash = null;   // the hash of the page on screen, so a stray "#main" can put it back
+let firstRender = true;   // the last hash a view wrote itself; anything else (links, pasted URLs) re-renders
 
 function render() {
   const { route, parts, params } = parseHash();
+  // "#main" is the skip link's target, not a page: leave the page alone and put the address back.
+  if (route === "main") { if (shownHash != null) history.replaceState(null, "", shownHash); main.focus(); return; }
   // Gate the routes on the session: signed out, only the sign-in page renders; before the first password, only that page.
   if (!signedIn() && route !== "login") {
     const next = safeNext(location.hash);
@@ -163,11 +169,21 @@ function render() {
   const [mount, title] = views[route] || views.library;
   unmount = mount(main) || null;
   document.title = `${title} · Lorekeeper`;
+  shownHash = location.hash;
+  // After the first load a navigation moves focus to the new page and says where we are. A page that
+  // already put focus somewhere (a dialog, the sign-in field) keeps it.
+  if (!firstRender && !main.contains(document.activeElement) && !document.querySelector("dialog[open]")) {
+    main.focus({ preventScroll: true });
+    announce(title);
+  }
+  firstRender = false;
   document.getElementById("settings-link").toggleAttribute("aria-current", route === "settings");
   for (const x of [runsLink, queuePill]) { if (route === "studio") x.setAttribute("aria-current", "page"); else x.removeAttribute("aria-current"); }
   if (ollamaTimer) pollQueue();
 }
 
+// The skip link moves focus to <main> and leaves the address and the page alone.
+document.querySelector(".skip-link")?.addEventListener("click", (e) => { e.preventDefault(); main.focus(); });
 window.addEventListener("hashchange", () => {
   if (location.hash !== ownHash) render();
 });

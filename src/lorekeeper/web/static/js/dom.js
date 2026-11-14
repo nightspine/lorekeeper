@@ -132,16 +132,54 @@ export function fmtDuration(seconds) {
 
 export const fmtInt = (n) => (n ?? 0).toLocaleString();
 
-/** Show a notice. kind "busy" stays until dismissed or the returned function is called. */
-export function toast(message, kind = "ok") {
-  const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss" }, icon("x"));
+const MAX_TOASTS = 4;
+
+/** Show a notice. kind "busy" stays until dismissed or the returned function is called; so does an
+ *  error (a person may be reading something else when it arrives). `host` is the element the toast
+ *  goes into (the page's stack by default; the entry drawer passes its own, since a modal dialog
+ *  makes the rest of the page inert). At most four toasts are held: the oldest non-busy one goes first. */
+export function toast(message, kind = "ok", { host = null } = {}) {
+  const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss", title: "Dismiss" }, icon("x"));
   const el = h(`div.toast.${kind}`, { role: kind === "error" ? "alert" : "status" },
     kind === "busy" ? h("span.spinner", { "aria-hidden": "true" }) : icon(kind === "error" ? "alert" : "check-circle"),
     h("div.toast-msg", message), dismiss);
   dismiss.addEventListener("click", () => el.remove());
-  document.getElementById("toasts").append(el);
-  if (kind !== "busy") setTimeout(() => el.remove(), kind === "error" ? 7000 : 3800);
+  const stack = host || document.getElementById("toasts");
+  stack.append(el);
+  const old = [...stack.children].filter((t) => t !== el && !t.classList.contains("busy"));
+  for (const t of old.slice(0, Math.max(0, stack.children.length - MAX_TOASTS))) t.remove();
+  if (kind === "ok") setTimeout(() => el.remove(), 3800);
   return () => el.remove();
+}
+
+/** A failed first load, in the page where the content would have been: what failed, the server's
+ *  words, and a way to try again. `retry` is called when the person asks; the caller re-renders. */
+export function loadError(what, error, retry) {
+  const detail = typeof error === "string" ? error : error?.message || "";
+  const again = h("button.btn.primary", { type: "button", on: { click: () => retry() } }, "Try again");
+  return h("div.load-error", { role: "alert" },
+    h("h2", `Couldn't ${what}`),
+    detail ? h("p.muted", detail) : null,
+    again);
+}
+
+/** A first-load placeholder: the spinner and one line, announced as a status. It only becomes
+ *  visible after about 300 ms (see .loading in base.css), so a fast load never flashes it. */
+export function loading(text) {
+  return h("div.loading", { role: "status" }, h("span.spinner", { "aria-hidden": "true" }), h("span", text));
+}
+
+/** Breadcrumb trail: `nav.crumbs` with "/" between items and the last one marked as the current
+ *  page. Items are `{ label, href? }`; an item without `href` is plain text. Pass an existing `nav`
+ *  to repaint it in place (the Reader does, once the catalog has arrived). */
+export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb" })) {
+  nav.replaceChildren();
+  items.forEach((it, i) => {
+    const current = i === items.length - 1 ? "page" : null;
+    if (i) nav.append(h("span.sep", { "aria-hidden": "true" }, "/"));
+    nav.append(it.href ? h("a", { href: it.href, "aria-current": current }, it.label) : h("span", { "aria-current": current }, it.label));
+  });
+  return nav;
 }
 
 export const STATUS_LABEL = { queued: "Queued", running: "Running", stopping: "Stopping", stopped: "Stopped", done: "Done", failed: "Failed", interrupted: "Interrupted" };
