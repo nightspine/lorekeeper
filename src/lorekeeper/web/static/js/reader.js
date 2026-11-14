@@ -558,7 +558,7 @@ export function mountReader(root) {
     el.range.value = String(Math.round(s.p * 1000));
     el.range.style.setProperty("--fill", `${s.p * 100}%`);
     el.position.style.setProperty("--f", String(s.p));
-    el.range.setAttribute("aria-valuetext", `${(s.p * 100).toFixed(1)} percent${s.map.chapterAt(s.p) ? ", " + s.map.chapterAt(s.p).title : ""}`);
+    el.range.setAttribute("aria-valuetext", `${(s.p * 100).toFixed(1)} percent${s.map.chapterAt(s.p) ? ", " + tidyTitle(s.map.chapterAt(s.p).title) : ""}`);
     el.pctNum.textContent = (s.p * 100).toFixed(s.p < 0.1 ? 1 : 0);
     el.pctInput.value = String(Math.round(s.p * 100));
     el.hint.hidden = !(s.p === 0 && !v.entities.length && !v.events.length && !v.chapters.length);

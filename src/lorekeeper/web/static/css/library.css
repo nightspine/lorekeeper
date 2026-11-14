@@ -152,8 +152,6 @@ table.books { table-layout: fixed; }
 .cell-actions .linkish { text-decoration: none; }
 .block { display: block; }
 .w-90 { width: 90px; }
-.chip-link { text-decoration: none; color: var(--text-2); }
-.chip-link:hover { color: var(--text); border-color: var(--beacon); text-decoration: none; }
 .switch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); max-height: 55vh; overflow: auto; }
 .switch-list a { display: flex; align-items: center; gap: var(--space-3); min-height: 48px; padding: 6px 10px; border-radius: var(--radius); color: var(--text); text-decoration: none; }
 .switch-list a:hover, .switch-list a:focus-visible { background: var(--glass-hover); text-decoration: none; }

@@ -105,11 +105,12 @@ h2.cast-group-head { display: flex; align-items: center; gap: 10px; margin: 0 0 
 .cast-group-head .n { font: 500 var(--text-sm)/1.3 var(--font-ui); color: var(--text-3); }
 .cast-rows { list-style: none; margin: 0; padding: 0; display: grid; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .cast-rows li + li { border-top: 1px solid var(--edge); }
-.ent-row { width: 100%; min-height: 44px; display: grid; grid-template-columns: 14px minmax(150px, 15rem) minmax(0, 1fr) auto; gap: 0 16px; align-items: center; padding: 8px 14px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background var(--dur-fast); }
+.ent-row { position: relative; width: 100%; min-height: 44px; display: grid; grid-template-columns: minmax(150px, 15rem) minmax(0, 1fr) auto; gap: 0 16px; align-items: center; padding: 8px 14px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background var(--dur-fast); }
 .ent-row:hover { background: var(--hover); }
 .ent-row.sel { background: var(--sel); }
 .ent-row:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; }
-.ent-dot { width: 9px; height: 9px; justify-self: center; border-radius: 50%; }
+/* the "new" mark sits in the row's left margin, so names line up whether or not it shows */
+.ent-dot { position: absolute; left: -2px; top: 50%; width: 7px; height: 7px; margin-top: -3.5px; border-radius: 50%; }
 .ent-dot.fresh { background: var(--ember); }
 .ent-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .ent-name .nm { display: inline-flex; align-items: center; gap: 10px; flex: none; max-width: 100%; font: 600 var(--text-ui)/1.3 var(--font-ui); letter-spacing: -.005em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -130,10 +131,10 @@ h2.cast-group-head { display: flex; align-items: center; gap: 10px; margin: 0 0 
 .filter-chip.earlier { margin-left: auto; }
 .d-from { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
 @media (max-width: 720px) {
-  .ent-row { grid-template-columns: 14px minmax(0, 1fr) auto; gap: 0 var(--space-3); padding: 8px 14px; }
-  .ent-name { grid-column: 2; }
-  .ent-meta { grid-column: 3; grid-row: 1; }
-  .ent-fact { grid-column: 2 / -1; }
+  .ent-row { grid-template-columns: minmax(0, 1fr) auto; gap: 0 var(--space-3); padding: 8px 4px 8px 10px; }
+  .ent-name { grid-column: 1; }
+  .ent-meta { grid-column: 2; grid-row: 1; }
+  .ent-fact { grid-column: 1 / -1; }
   .sort-select { margin-left: 0; }
 }
 
@@ -239,24 +240,19 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .eyebrow .n { margin-left: 8px; font-weight: 500; color: var(--text-3); }
 
 /* ---------- Duplicate review ---------- */
-.dup-notice { align-items: center; flex-wrap: wrap; }
-.dup-notice > div:nth-child(2) { flex: 1 1 260px; }
-.dup-notice-actions { display: flex; gap: var(--space-2); }
 .dup-checking { align-items: center; }
 .dup-sections { display: grid; gap: var(--space-4); }
-.dup-section, .dup-diff-wrap { display: grid; gap: var(--space-3); }
-.dup-section h3, .dup-diff-wrap summary { margin: 0; display: flex; align-items: center; gap: var(--space-2); font: 600 var(--text-sm)/1.3 var(--font-ui); letter-spacing: 0; color: var(--text-3); }
+.dup-section { display: grid; gap: var(--space-3); }
+.dup-section h3 { margin: 0; display: flex; align-items: center; gap: var(--space-2); font: 600 var(--text-sm)/1.3 var(--font-ui); letter-spacing: 0; color: var(--text-3); }
 .dup-section h3 .n { font-weight: 500; }
-.dup-diff-wrap summary { cursor: pointer; min-height: 36px; }
 .dup-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3); }
 .dup-row { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--edge); border-radius: var(--radius-m); background: var(--pane); box-shadow: none; }
 .dup-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) 12px; font-size: var(--text-md); }
 .dup-arrow { color: var(--text-3); }
-.dup-sure, .dup-check, .dup-diff { gap: 8px; padding: 0; min-height: 0; border: 0; background: transparent; color: var(--text-2); font-size: var(--text-sm); }
-.dup-sure::before, .dup-check::before, .dup-diff::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; }
+.dup-sure, .dup-check { gap: 8px; padding: 0; min-height: 0; border: 0; background: transparent; color: var(--text-2); font-size: var(--text-sm); }
+.dup-sure::before, .dup-check::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; }
 .dup-sure::before { background: var(--beacon); }
 .dup-check::before { background: var(--ember); }
-.dup-diff::before { background: var(--text-3); }
 .dup-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); }
 .dup-side { display: grid; gap: 6px; align-content: start; padding: 0; border: 0; border-radius: 0; background: none; }
 .dup-side .type-tag { justify-self: start; }
@@ -309,7 +305,7 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .ch-part p { margin: 0; font-size: var(--text-md); line-height: 1.65; color: var(--text); }
 .ch-part .row-actions, .timeline li .row-actions { justify-self: end; float: none; }
 .edit-help { margin: 0; }
-.edit-form { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: var(--radius-m); background: var(--glass); box-shadow: none; }
+.edit-form { display: grid; gap: 10px; padding: 10px 0 10px 14px; border-left: 2px solid var(--beacon); }
 .edit-form .label { font-size: var(--text-s); }
 .edit-form textarea.input { min-height: 0; resize: vertical; line-height: 1.5; font-size: var(--text-ui); }
 .edit-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }

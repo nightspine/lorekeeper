@@ -3,7 +3,7 @@
 /* ================= demo ================= */
 /* _demo: scratch stylesheet for one work stream; folded into the area files afterwards. */
 .demo-first { display: grid; gap: var(--space-4); padding: var(--space-6) 0; }
-.demo-panel { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-6); border-radius: 0; background: var(--pane); border: 1px solid var(--edge); }
+.demo-panel { display: flex; align-items: center; gap: var(--space-6); padding: var(--space-5) 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .demo-panel .cover { flex: none; }
 .demo-text { display: grid; gap: var(--space-3); justify-items: start; min-width: 0; }
 .demo-text h2 { margin: 0; color: var(--text); text-wrap: balance; }
@@ -12,7 +12,7 @@
 .demo-then a, .demo-link { color: var(--text-2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 .demo-then a:hover, .demo-link:hover { color: var(--text); }
 .library:has(#lib-upload:focus-visible) .demo-link, .demo-then a:focus-visible { outline: 3px solid var(--beacon); outline-offset: 2px; border-radius: 4px; }
-.demo-panel.compact, section.demo-panel.compact { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-4); margin-bottom: var(--space-4); border-radius: var(--radius); background: var(--glass); border: 1px solid var(--edge); }
+.demo-panel.compact, section.demo-panel.compact { display: flex; align-items: center; gap: var(--space-4); padding: 10px 0; margin-bottom: var(--space-4); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .demo-line { flex: 1; margin: 0; color: var(--text-2); min-width: 0; }
 @media (max-width: 640px) { .demo-panel { flex-direction: column; align-items: flex-start; } }
 
@@ -143,8 +143,6 @@
 }
 
 /* Reader header: the one quiet line about a partial index. */
-.head-facts:empty { display: none; }
-.cover-line { margin: 6px 0 0; font-size: var(--text-sm); color: var(--text-3); }
 
 /* Notices above the cast list: one line each, links inline. */
 .notice.notice-line { gap: 10px; padding: 2px 2px; border: 0; background: none; border-radius: 0; font-size: var(--text-sm); line-height: 1.4; flex-wrap: nowrap; color: var(--text-2); }
@@ -195,7 +193,7 @@
 @media (max-width: 640px) {
   .link-chip { position: relative; min-height: 34px; }
   .link-chip::after { content: ""; position: absolute; inset: -5px -3px; }
-  .filter-chip, .g-toggle, .seg button, button.chip, .chip[aria-pressed] { min-height: 40px; }
+  .filter-chip, .seg button, button.chip, .chip[aria-pressed] { min-height: 40px; }
   .icon-btn.small { width: 40px; height: 40px; }
   .crumbs a { display: inline-flex; align-items: center; min-height: 40px; }
 }
