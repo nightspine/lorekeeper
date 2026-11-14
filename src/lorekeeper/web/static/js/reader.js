@@ -1140,10 +1140,15 @@ export function mountReader(root) {
   /** Everything the open entry shows, as ids: names, profile, details, earlier impressions, connections, events. */
   function entryIds(e) {
     const v = s.view;
+    const rels = v.relations.filter((r) => r.src === e.id || r.dst === e.id);
+    const evs = v.events.filter((ev) => ev.entities.includes(e.id));
+    // The other entries the entry names (connection and event chips), by the name they show now: names grow with the
+    // position ("Van Helsing" becomes "Abraham Van Helsing"), so a later name must not stay on screen either.
+    const others = [...new Set([...rels.flatMap((r) => [r.src, r.dst]), ...evs.flatMap((ev) => ev.entities)])].filter((x) => x !== e.id);
     return [`name:${e.name}`, ...e.aliases.map((a) => `name:${a}`), e.profile ? `p:${e.profile.id}` : null,
       ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`),
-      ...v.relations.filter((r) => r.src === e.id || r.dst === e.id).map((r) => `r:${r.id}`),
-      ...v.events.filter((ev) => ev.entities.includes(e.id)).map((ev) => `e:${ev.id}`)].filter(Boolean);
+      ...rels.map((r) => `r:${r.id}`), ...evs.map((ev) => `e:${ev.id}`),
+      ...others.map((x) => `other:${x}:${nameOf(x)?.name ?? ""}`)].filter(Boolean);
   }
   // From 1101px the entry opens in a pane on the right (not modal: the list stays usable, another row swaps it,
   // arrow keys in the list move it, Escape or Close returns focus to the row). Narrower, it is the modal drawer.

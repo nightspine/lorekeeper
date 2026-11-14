@@ -235,8 +235,9 @@ export function partLine(pr, status) {
   if (!Number.isFinite(n) || n <= 0) return "";
   if (status === "done") return `${n} of ${n} parts`;
   const idx = Number.isFinite(pr.index) ? pr.index : null;
-  const finished = pr.last === "chunk_done" && idx != null ? idx + 1 : pr.last === "chunk" && idx != null ? idx
-    : idx != null && !pr.last ? idx : Number(pr.done) || 0;
+  // Finished parts: after `chunk_done` the part at `index` is done; after anything else that part (and its phase
+  // events: a run failing or stopping mid-part) was still being worked on. Only with no index does `done` count.
+  const finished = idx == null ? Number(pr.done) || 0 : pr.last === "chunk_done" ? idx + 1 : idx;
   if (status === "running" || status === "building") {
     const working = pr.last === "chunk_done" && idx != null ? idx + 2 : idx != null ? idx + 1 : finished + 1;
     return `part ${Math.min(Math.max(1, working), n)} of ${n}`;
