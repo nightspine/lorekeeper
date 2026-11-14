@@ -4,13 +4,16 @@ import { api } from "./api.js";
 import { state as appState } from "./app.js";
 import { clear, fmtDuration, fmtInt, h, icon, toast } from "./dom.js";
 
+/** Shown wherever a Book Orbit book without an EPUB cannot be built. */
+export const NO_EPUB = "Book Orbit has no EPUB for this book, so there's no text to index.";
+
 /** A modal dialog on a native <dialog> (focus trap, Esc, inert page and scroll lock come from the
  *  browser). Returns { close, body, dialog }. Esc and the backdrop close it; focus returns afterwards.
  *  Callers may override the returned `close`: every dismissal path goes through it. */
 export function modal(title, { width = 600 } = {}) {
   const prev = document.activeElement;
   const body = h("div", { style: { display: "grid", gap: "16px" } });
-  const closeBtn = h("button.icon-btn.small", { type: "button", "aria-label": "Close" }, icon("x"));
+  const closeBtn = h("button.icon-btn.small", { type: "button", "aria-label": "Close", title: "Close" }, icon("x"));
   const dlg = h("dialog.modal", { "aria-labelledby": "modal-title", style: { maxWidth: `${width}px` } },
     h("div", { style: { display: "flex", justifyContent: "space-between", gap: "12px", alignItems: "flex-start" } },
       h("h2#modal-title", title), closeBtn), body);

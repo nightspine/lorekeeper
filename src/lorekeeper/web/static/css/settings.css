@@ -25,7 +25,7 @@
 .pricing { margin-top: var(--space-2); }
 .pricing .table-wrap { border: 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); border-radius: 0; background: none; box-shadow: none; overflow-x: auto; }
 .pricing table.data { min-width: 0; width: 100%; border-collapse: collapse; }
-.pricing table.data th { padding: 11px var(--space-3); font-size: 13px; font-weight: 600; color: var(--text-3); text-align: left; }
+.pricing table.data th { padding: 11px var(--space-3); font-size: var(--text-sm); font-weight: 600; color: var(--text-3); text-align: left; }
 .pricing table.data td { padding: 10px var(--space-3); border-top: 1px solid var(--edge); }
 .pricing table.data th:not(:first-child), .pricing table.data td.num { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
 .pricing table.data tbody tr { cursor: default; }

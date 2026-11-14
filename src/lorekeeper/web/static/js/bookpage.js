@@ -1,23 +1,30 @@
 import { api } from "./api.js";
 import { parseHash } from "./app.js";
-import { bookNo, buildDialog, cover, numWord, startBuild, STATUS, statusChip } from "./build.js";
-import { clear, fmtInt, h, icon, STATUS_LABEL, toast } from "./dom.js";
+import { bookNo, buildDialog, cover, NO_EPUB, numWord, startBuild, STATUS, statusChip } from "./build.js";
+import { clear, crumbs, fmtInt, h, icon, loadError, loading, STATUS_LABEL, toast } from "./dom.js";
 
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "—");
-
-const sep = () => h("span.sep", { "aria-hidden": "true" }, "/");
 
 export function mountBook(root) {
   const key = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer;
+  let timer, painted = false, building = false, disposed = false;
+  clear(wrap, loading("Opening the book…"));
 
   async function load() {
     let b;
     try { b = await api.book(key); } catch (e) {
-      return clear(wrap, h("div.card.empty", h("h3", "Book not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
+      if (disposed) return;
+      if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
+        if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
+        return;
+      }
+      if (e.status === 404) return clear(wrap, h("div.card.empty", h("h3", "Book not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
+      return clear(wrap, loadError("open the book", e, () => { clear(wrap, loading("Opening the book…")); load(); }));
     }
+    if (disposed) return;
+    painted = true; building = b.status === "building";
     paint(b);
     clearTimeout(timer);
     if (b.status === "building") timer = setTimeout(load, 5000);
@@ -44,8 +51,9 @@ export function mountBook(root) {
     })() : null;
 
     clear(wrap,
-      h("nav.crumbs", { "aria-label": "Breadcrumb" }, h("a", { href: "#/library" }, "Library"),
-        b.seriesInfo ? [sep(), h("a", { href: `#/series/${encodeURIComponent(b.seriesInfo.id)}` }, b.seriesInfo.name)] : null, sep(), h("span", { "aria-current": "page" }, b.title)),
+      crumbs([{ label: "Library", href: "#/library" },
+        ...(b.seriesInfo ? [{ label: b.seriesInfo.name, href: `#/series/${encodeURIComponent(b.seriesInfo.id)}` }] : []),
+        { label: b.title }]),
       h("div.book-hero",
         cover(b, "lg"),
         h("div.book-hero-main",
@@ -67,6 +75,7 @@ export function mountBook(root) {
               : h("button.btn", { type: "button", disabled: !b.canBuild, on: { click: () => startBuild(b) } }, icon("play"),
                 b.versions.length ? "Rebuild index" : "Build index"),
             d ? h("a.btn.ghost", { href: `/api/library/${encodeURIComponent(d.key)}`, download: "" }, icon("download"), "Download index") : null),
+          !b.canBuild ? h("div.notice.info", icon("info"), h("div", NO_EPUB)) : null,
           seriesForm),
         b.seriesInfo ? h("div.card.card-pad.series-mini", h("span.eyebrow", "In this series"),
           b.seriesInfo.books.map((x) => h(`a.series-row${x.key === b.key ? ".here" : ""}`, { href: `#/book/${encodeURIComponent(x.key)}` },
@@ -84,7 +93,7 @@ export function mountBook(root) {
       h("section.card.card-pad", { "aria-label": "Versions" },
         h("div.section-title", h("h2", "Versions"), h("span.hint", "The default version is what the Reader and connected apps receive.")),
         b.versions.length ? h("div.table-wrap", h("table.data",
-          h("thead", h("tr", ["Version", "Covers", "Entities", "Facts", "Updated", ""].map((t) => h("th", t)))),
+          h("thead", h("tr", ["Version", "Covers", "Entries", "Details", "Updated", ""].map((t) => h("th", t)))),
           h("tbody", b.versions.map((v) => h(`tr${v.isDefault ? ".selected" : ""}`,
             h("td", h("b", v.model || "Unknown"), h("span.hint.block",
               v.isDefault ? "Default" : v.source === "generated" ? "Built here" : `From ${v.source}`)),
@@ -105,18 +114,28 @@ export function mountBook(root) {
   }
 
   load();
-  return () => clearTimeout(timer);
+  return () => { disposed = true; clearTimeout(timer); };
 }
 
 export function mountSeries(root) {
   const id = decodeURIComponent(parseHash().parts[0] || "");
   const wrap = h("div.page");
   root.append(wrap);
-  let timer;
+  let timer, painted = false, building = false, disposed = false;
+  clear(wrap, loading("Loading the series…"));
 
   async function load() {
     let data;
-    try { data = await api.catalog(); } catch (e) { return toast(e.message, "error"); }
+    try { data = await api.catalog(); } catch (e) {
+      if (disposed) return;
+      if (painted) {   // a failed background reload keeps what is shown, silently, and tries again while it is building
+        if (building) { clearTimeout(timer); timer = setTimeout(load, 5000); }
+        return;
+      }
+      return clear(wrap, loadError("load the series", e, () => { clear(wrap, loading("Loading the series…")); load(); }));
+    }
+    if (disposed) return;
+    painted = true;
     const g = data.series.find((x) => x.id === id);
     if (!g) return clear(wrap, h("div.card.empty", h("h3", "Series not found"), h("a.btn", { href: "#/library" }, "Back to the library")));
     const byKey = Object.fromEntries(data.books.map((b) => [b.key, b]));
@@ -127,7 +146,7 @@ export function mountSeries(root) {
     const sources = new Set(books.map((b) => b.source));
 
     clear(wrap,
-      h("nav.crumbs", { "aria-label": "Breadcrumb" }, h("a", { href: "#/library" }, "Library"), sep(), h("span", { "aria-current": "page" }, "Series")),
+      crumbs([{ label: "Library", href: "#/library" }, { label: g.name }]),
       h("div.series-hero",
         h("div", h("span.eyebrow", `Series of ${numWord(books.length)} book${books.length === 1 ? "" : "s"}`), h("h1", g.name), g.authors.length ? h("p.by", `${g.authors.join(", ")}.`) : null),
         h("span.chip", sources.has("bookorbit") ? "Order from Book Orbit" : "Order set here")),
@@ -147,8 +166,9 @@ export function mountSeries(root) {
           h("button.btn.primary", { type: "button", on: { click: () => buildDialog(todo.map((b) => ({ key: b.key, title: b.title, words: b.words })),
             { title: `Build ${g.name} in order` }) } }, icon("play"), todo.length === 1 ? "Build 1 book" : `Build ${todo.length} in order`)) : null));
     clearTimeout(timer);
-    if (books.some((b) => b.status === "building")) timer = setTimeout(load, 5000);
+    building = books.some((b) => b.status === "building");
+    if (building) timer = setTimeout(load, 5000);
   }
   load();
-  return () => clearTimeout(timer);
+  return () => { disposed = true; clearTimeout(timer); };
 }

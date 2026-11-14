@@ -3,12 +3,11 @@
 // 500-book library is a jump away instead of a long scroll. Books are opened in the Reader from here.
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
-import { bookNo, buildDialog, cover, numWord, startBuild, STATUS, statusChip } from "./build.js";
-import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
+import { bookNo, buildDialog, cover, NO_EPUB, numWord, startBuild, STATUS, statusChip } from "./build.js";
+import { clear, fmtInt, h, icon, loadError, loading, relTime, toast } from "./dom.js";
 
 const SORTS = [["title", "Title"], ["author", "Author"], ["series", "Series"], ["recent", "Recently indexed"]];
 const SHOWS = [["all", "All books"], ["ready", "Ready to read"], ["missing", "No index"], ["building", "Building"]];
-const NO_EPUB = "Book Orbit has no EPUB for this book, so there's no text to index.";
 const LETTERS = [..."ABCDEFGHIJKLMNOPQRSTUVWXYZ", "#"];
 const ARTICLE = /^(the|a|an)\s+/i;
 
@@ -45,10 +44,20 @@ export function mountLibrary(root) {
   const rail = h("nav.az-rail", { "aria-label": "Jump to letter" });
   const panel = h("aside.lib-panel", { "aria-label": "Book details", hidden: true });
   root.append(h("div.library", side, h("section.lib-main", bar, h("div.lib-content", h("div.lib-list", body), rail, panel))));
-  let timer, observer, searchTimer;
+  let timer, observer, searchTimer, disposed = false;
+  clear(body, loading("Loading your library…"));
 
   async function load() {
-    try { s.data = await api.catalog(); } catch (e) { return toast(`Could not load the library: ${e.message}`, "error"); }
+    let data;
+    try { data = await api.catalog(); } catch (e) {
+      if (disposed) return;
+      // A failed first load says so in the page; a failed background reload keeps what is shown.
+      if (!s.data) clear(body, loadError("load the library", e, () => { clear(body, loading("Loading your library…")); load(); }));
+      else if (s.data.books.some((b) => b.status === "building")) { clearTimeout(timer); timer = setTimeout(load, 5000); }   // stay silent, try again
+      return;
+    }
+    if (disposed) return;
+    s.data = data;
     // Screenshot flags: ?demo=empty pretends there are no books, ?demo=none-ready that no book has an index yet.
     if (params.get("demo") === "empty") s.data = { ...s.data, books: [], series: [] };
     else if (params.get("demo") === "none-ready") s.data = { ...s.data, books: s.data.books.map((b) => (isReady(b) ? { ...b, status: "missing", versions: [] } : b)) };
@@ -60,6 +69,7 @@ export function mountLibrary(root) {
         s.demo = ex.find((i) => i.key.includes("dracula")) || ex.find((i) => i.key.includes("study-in-scarlet")) || ex[0] || null;
       } catch { s.demo = null; }
     }
+    if (disposed) return;   // left while the example was being looked up: no paint, no address rewrite, no timer
     paint();
     clearTimeout(timer);
     if (s.data.books.some((b) => b.status === "building")) timer = setTimeout(load, 5000);
@@ -380,6 +390,15 @@ export function mountLibrary(root) {
     buildDialog(todo.map((b) => ({ key: b.key, title: b.title, words: b.words })), { title: `Build ${g.name} in order` });
   }
 
+  /** Clear the selection; with `refocus`, hand focus back to the row or tile it came from. */
+  function deselect(refocus) {
+    const key = s.selected;
+    s.selected = null; paintPanel(); paintSelection(); persist();
+    if (!refocus || !key) return;
+    const el = [...root.querySelectorAll("[data-key]")].find((x) => x.dataset.key === key);
+    (el?.matches("button") ? el : el?.querySelector("button, a"))?.focus();
+  }
+
   function paintSelection() {
     root.querySelectorAll("[data-key]").forEach((el) => el.classList.toggle("selected", el.dataset.key === s.selected));
   }
@@ -400,7 +419,7 @@ export function mountLibrary(root) {
         b.status === "missing" ? "Build index" : "Rebuild index");
     clear(panel,
       h("div.panel-close", h("button.icon-btn.small", { type: "button", "aria-label": "Close details",
-        on: { click: () => { s.selected = null; paintPanel(); paintSelection(); persist(); } } }, icon("x"))),
+        on: { click: () => deselect(false) } }, icon("x"))),
       h("div.panel-top", cover(b, "md"),
         h("div", h("span.eyebrow", b.series ? [b.series.name, bookNo(b.series) ? `, ${bookNo(b.series)}` : ""].join("") : "Standalone"),
           h("h2", b.title), h("p.by", b.authors.join(", ") || "Unknown author"),
@@ -413,7 +432,7 @@ export function mountLibrary(root) {
       warn ? h("div.notice.warn", icon("alert"), h("div", `${warn}. `, /library/.test(warn)
         ? ["Add it (", h("a", { href: "#/settings" }, "connect Book Orbit"), " or add the EPUB) and build it first so characters and relationships carry over, or build this book on its own."]
         : "Build it first so characters and relationships carry over, or build this book on its own.")) : null,
-      !b.canBuild ? h("div.notice.info", icon("info"), h("div", "Book Orbit has no EPUB for this book, so there's no text to index.")) : null,
+      !b.canBuild ? h("div.notice.info", icon("info"), h("div", NO_EPUB)) : null,
       d ? h("p.hint", `Index built with ${d.model}.${d.coverage != null ? ` Covers ${d.complete ? "the whole book" : `${d.coverage}% of it`}.` : ""}`) : null,
       series ? h("div.panel-series", h("span.eyebrow", "In this series"),
         series.books.map((k) => byKey[k]).map((x) => h(`a.series-row${x.key === b.key ? ".here" : ""}`, { href: `#/book/${encodeURIComponent(x.key)}` },
@@ -422,6 +441,8 @@ export function mountLibrary(root) {
 
   // "/" anywhere on the page focuses search (unless typing somewhere else).
   const onKey = (e) => {
+    if (e.key === "Escape" && s.selected && !e.defaultPrevented && !/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)
+        && !document.querySelector("dialog[open], .modal-backdrop")) { deselect(true); return; }
     if (e.key !== "/" || e.metaKey || e.ctrlKey || /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName)) return;
     e.preventDefault();
     bar.querySelector(".lib-search")?.focus();
@@ -429,5 +450,5 @@ export function mountLibrary(root) {
   document.addEventListener("keydown", onKey);
 
   load();
-  return () => { clearTimeout(timer); observer?.disconnect(); document.removeEventListener("keydown", onKey); };
+  return () => { disposed = true; clearTimeout(timer); observer?.disconnect(); document.removeEventListener("keydown", onKey); };
 }
