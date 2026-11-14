@@ -230,8 +230,14 @@ Kinship ties (informative). A family tie is best written `<modifiers> <kin word>
 of`: `mother of`, `father of`, `son of`, `daughter of`, `brother of`, `sister of`,
 `husband of`, `wife of`, `grandmother of`, `aunt of`, `nephew of`, `cousin of`,
 `guardian of`, or `married to`, with a modifier before the word when the book
-says so (`younger`, `elder`, `half`, `step`, `adoptive`, `foster`, `late`, `ex`,
-`in-law` after it). Direction is the usual one: `src` "daughter of" `dst` means
+says so. Canonical spelling: `step`, `grand` and `god` join the kin word
+(`stepmother`, `grandfather`, `godson`); `half`, `ex` and `great` take a hyphen
+(`half-sister`, `ex-husband`, `great-aunt`), as does `in-law` after the word
+(`mother-in-law`); `younger`, `older`, `elder`, `eldest`, `youngest`, `twin`,
+`identical`, `adoptive`, `adopted`, `foster`, `late`, `former`, `blood`, `first`
+and `second` are separate words before it (`younger brother of`). So `half-sister
+of`, `stepmother of`, `ex-husband of` and `mother-in-law of` are the written
+forms; readers of labels SHOULD accept other spacings and dashes. Direction is the usual one: `src` "daughter of" `dst` means
 `src` is the child. A spouse tie is `family`, not `romance`; `romance` is for
 courtship and affairs. A label that is not plainly kinship (`killed mother of`,
 `brother-in-arms of`, `possible father of`) is not read as such. Clients MAY read
