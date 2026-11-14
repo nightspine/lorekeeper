@@ -23,7 +23,7 @@ function entitySummary(e) {
   return h(`div.dup-side.t-${e.type}`,
     typeTag(e.type),
     h("div.dup-name", e.name),
-    e.aliases.length ? h("div.hint", `also ${e.aliases.slice(0, 4).join(" · ")}`) : null,
+    e.aliases.length ? h("div.hint", `also ${e.aliases.slice(0, 4).join(", ")}`) : null,
     e.profile ? h("p.dup-profile", e.profile.text) : null,
     facts.length ? h("ul.dup-facts", facts.map((f) => h("li", f.text))) : h("p.hint", "Nothing known beyond the name yet."));
 }
@@ -149,7 +149,7 @@ export function reviewDuplicates(ctx) {
     run(likely.map((p) => ({ ...p, name: null })), `Merged ${likely.length} pair${likely.length === 1 ? "" : "s"}.`);   // names chosen by ranking
   });
   clear(m.body,
-    h("p.muted", "These entries look like the same person or thing. Merging combines their names and facts across the whole series. Each fact still appears only from where the book reveals it."),
+    h("p.muted", "These entries look like the same person or thing. Merging combines their names and details across the whole series. Each detail still appears only from where the book reveals it."),
     checking,
     h("div.toolbar", bulk, status),
     sections,
@@ -184,7 +184,7 @@ export function mergeWith(ctx) {
     clear(m.body,
       h("div.dup-sides", entitySummary(keep), entitySummary(drop)),
       h("div.notice.warn", icon("alert"), h("div", h("b", "Only merge if the book has already made clear these are the same. "),
-        "If it's a twist that comes later, merging would show one's facts under the other's name before the reveal.")),
+        "If it's a twist that comes later, merging would show one's details under the other's name before the reveal.")),
       h("div.dup-actions", choose.el, h("span.g-spacer"),
         h("button.btn", { type: "button", on: { click: () => { clear(m.body, search, results); list(); search.focus(); } } }, "Back"),
         h("button.btn.primary", { type: "button", on: { click: async () => {

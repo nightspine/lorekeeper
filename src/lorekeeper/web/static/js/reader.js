@@ -1,8 +1,8 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
-import { announce, clear, describe, foldList, h, icon, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, crumbs, describe, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
-import { confirmDialog, cover, modal } from "./build.js";
+import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
 import { renderConnections } from "./graph.js";
 import { createEditor } from "./editor.js";
@@ -86,8 +86,12 @@ export function mountReader(root) {
   root.append(wrap);
   let disposed = false;
 
-  (async () => {
-    try { s.lib = await api.library(); } catch (e) { toast(`Could not load the library: ${e.message}`, "error"); return; }
+  // The first load: a spinner after a moment, and a page that says what failed with a way to try again.
+  const retryStart = () => { clear(wrap, loading("Opening the book…")); start(); };
+  clear(wrap, loading("Opening the book…"));
+  start();
+  async function start() {
+    try { s.lib = await api.library(); } catch (e) { if (!disposed) clear(wrap, loadError("open the book", e, retryStart)); return; }
     if (!s.lib.indexes.some((i) => i.key === s.key)) {
       clear(wrap, h("div.card.empty", h("div.art", icon("book-open")), h("h3", "This index isn't in the library any more"),
         h("p", "It may have been deleted or rebuilt. Pick a book to read from the Library."),
@@ -96,13 +100,19 @@ export function mountReader(root) {
     }
     api.catalog().then((c) => { s.catalog = c; if (el.crumbs) paintHead(); }).catch(() => {});
     await load(s.key, { keepPosition: true });
-  })();
+  }
 
   async function load(key, { keepPosition = false, book = null } = {}) {
     s.key = key;
     const meta = s.lib.indexes.find((i) => i.key === key);
-    try { s.doc = await api.index(key); } catch (e) { return toast(`Could not open index: ${e.message}`, "error"); }
+    let doc;
+    try { doc = await api.index(key); } catch (e) {
+      if (disposed) return;
+      if (!s.doc) return clear(wrap, loadError("open the index", e, retryStart));
+      return toast(`Could not open index: ${e.message}`, "error");   // switching books: the current one stays open
+    }
     if (disposed) return;
+    s.doc = doc;
     s.series = null; s.seriesDocs = new Map();
     const sid = s.doc.series?.id;
     if (sid) {
@@ -217,7 +227,7 @@ export function mountReader(root) {
       const ok = await confirmDialog({
         title: "Go past where you're reading?",
         message: `Book Orbit last saw you at ${Math.round(line * 100)}%${Number.isFinite(t) ? `, ${relTime(t)}` : ""}. `
-          + `Moving to ${Math.round(p * 100)}% shows characters, facts and events from pages you haven't read yet.`,
+          + `Moving to ${Math.round(p * 100)}% shows characters, details and events from pages you haven't read yet.`,
         confirmLabel: "Show me anyway", cancelLabel: `Stay at ${Math.round(line * 100)}%`, danger: true });
       if (!ok) { s.sync.override = false; setP(line); paintSource(); return; }
       s.sync.ahead = true;
@@ -405,9 +415,9 @@ export function mountReader(root) {
   function paintHead() {
     const book = catalogBook();
     const series = book?.series ? s.catalog.series.find((g) => g.id === book.series.id) : null;
-    clear(el.crumbs, h("a", { href: "#/library" }, "Library"),
-      series ? [" › ", h("a", { href: `#/series/${encodeURIComponent(series.id)}` }, series.name)] : null,
-      book ? [" › ", h("a", { href: `#/book/${encodeURIComponent(book.key)}` }, book.title)] : null);
+    crumbs([{ label: "Library", href: "#/library" },
+      ...(series ? [{ label: series.name, href: `#/series/${encodeURIComponent(series.id)}` }] : []),
+      book ? { label: book.title, href: `#/book/${encodeURIComponent(book.key)}` } : { label: s.doc.work.title }], el.crumbs);
     // Provenance (who built the index, review state, versions) lives on the book page.
     const cov = s.doc.coverage || {};
     const through = !cov.complete && cov.through ? s.map.anchorPos(cov.through) : null;
@@ -431,7 +441,7 @@ export function mountReader(root) {
         const d = b.versions.find((v) => v.isDefault) || b.versions[0];
         return h(`li${here && here.key === b.key ? ".here" : ""}`, h("a", { href: `#/reader?i=${encodeURIComponent(d.key)}`, on: { click: () => m.close() } },
           cover(b, "xs"), h("span.switch-text", h("b", b.title),
-            h("span.hint", [b.authors[0], b.series ? `${b.series.name} #${b.series.index ?? "?"}` : null].filter(Boolean).join(" · "))),
+            h("span.hint", [b.authors[0], b.series ? b.series.name : null, b.series ? bookNo(b.series) : null].filter(Boolean).join(", "))),
           here && here.key === b.key ? h("span.chip", "Reading") : null));
       }) : h("li.hint", "No book with an index matches. Build one from the Library."));
     };
@@ -593,7 +603,7 @@ export function mountReader(root) {
 
     const notices = [];
     if (!s.map.exact) notices.push(h("div.notice.info", icon("info"),
-      h("div", h("b", "Approximate positions. "), "The book file for this index isn't in the library, so percentages are estimated from the index itself. Upload the EPUB in the Studio for exact positions and chapter marks.")));
+      h("div", h("b", "Approximate positions. "), "The book file for this index isn't in the library, so percentages are estimated from the index itself. Add the EPUB in the Library for exact positions and chapter marks.")));
     if (v.coverage.exhausted) notices.push(h("div.notice.warn", { role: "status" }, icon("alert"),
       h("div", h("b", "You've reached the end of this index. "), "It doesn't cover the rest of the book yet, so nothing beyond this point is shown.")));
     clear(el.notice, notices);
@@ -615,7 +625,8 @@ export function mountReader(root) {
     const repaint = () => {
       frame = 0;
       paintTabs();
-      if (s.drawer) openDrawer(s.drawer, { refresh: true });
+      // A position change must not wipe what someone is typing into an edit form in the drawer.
+      if (s.drawer && !drawerDirty()) openDrawer(s.drawer, { refresh: true });
     };
     if (defer) { if (!frame) frame = requestAnimationFrame(repaint); }
     else { if (frame) cancelAnimationFrame(frame); repaint(); }
@@ -763,11 +774,11 @@ export function mountReader(root) {
       on: { click: (ev) => openDrawer(e.id, { from: ev.currentTarget }) } },
       h(`span.ent-dot${fresh ? ".fresh" : ""}`, { "aria-hidden": "true", title: fresh ? "New" : null }),
       h("span.ent-name", h("span.nm", e.name),
-        e.aliases.length ? h("span.aka", e.aliases.slice(0, 3).join(" · ")) : null),
+        e.aliases.length ? h("span.aka", e.aliases.slice(0, 3).join(", ")) : null),
       h("span.ent-fact", about || h("span.subtle", "Named, but nothing more is known yet.")),
       h("span.ent-meta",
         from ? h("span.book-label.ent-from", { title: sleeping ? "Met in an earlier book; not in this one yet" : "Met in an earlier book" }, `from ${bookShort(from)}`) : null,
-        h("span.num", String(e.facets.length)), e.facets.length === 1 ? " fact" : " facts",
+        h("span.num", String(e.facets.length)), e.facets.length === 1 ? " detail" : " details",
         e.history.length ? h("span.hist", { title: `${e.history.length} earlier impression${e.history.length === 1 ? "" : "s"}` }, icon("refresh")) : null));
     if (fresh) rowEl.addEventListener("animationend", () => rowEl.classList.remove("arrive"), { once: true });
     return rowEl;
@@ -837,6 +848,18 @@ export function mountReader(root) {
     }));
   }
 
+  /** Two buttons, each with its own pressed state, instead of one that relabels itself. The repaint
+   *  replaces the panel, so focus goes back to the button that was used. */
+  function orderToggle(newest, set) {
+    const btn = (label, value) => h("button", { type: "button", "aria-pressed": String(newest === value), dataset: { order: value ? "newest" : "oldest" },
+      on: { click: () => {
+        if (newest === value) return;
+        set(value);
+        el.panel.querySelector(`.order-seg [data-order="${value ? "newest" : "oldest"}"]`)?.focus();
+      } } }, label);
+    return h("div.seg.order-seg", { role: "group", "aria-label": "Order" }, btn("Newest first", true), btn("Oldest first", false));
+  }
+
   function paintChapterRecaps() {
     const v = s.view;
     const groups = chapterGroups();
@@ -855,8 +878,7 @@ export function mountReader(root) {
         h("h3", hasAny ? "No chapters finished yet" : "No chapter recaps in this index"),
         h("p", hasAny ? "Each chapter's summary appears once you've read past it." : s.edit ? "Add a recap for each chapter as you finish it." : "This index was built before chapter recaps existed. Build a new version to get a summary of every chapter.")));
     }
-    const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.chaptersNewest),
-      on: { click: () => { s.chaptersNewest = !s.chaptersNewest; paintChapterRecaps(); } } }, icon("refresh"), s.chaptersNewest ? "Newest first" : "In order");
+    const toggle = orderToggle(s.chaptersNewest, (v) => { s.chaptersNewest = v; paintChapterRecaps(); });
     const seriesChip = earlierBooks.length ? h("button.filter-chip.ch-series", { type: "button", "aria-pressed": String(s.chSeries),
       title: s.chSeries ? "Show this book's chapters only" : "Show the earlier books' chapters too",
       on: { click: () => { s.chSeries = !s.chSeries; try { localStorage.setItem("lk-ch-series", s.chSeries ? "1" : "0"); } catch {} paintChapterRecaps(); } } },
@@ -916,8 +938,7 @@ export function mountReader(root) {
     const shown = all.filter((ev) => (!s.tlTurns || ev.kind === "turn") && (s.tlMinor || !hasKinds || ev.kind !== "minor"));
     const evs = s.newestFirst ? [...shown].reverse() : shown;
     const remember = (k, v) => { try { localStorage.setItem(k, v ? "1" : "0"); } catch {} };
-    const toggle = h("button.btn.ghost", { type: "button", "aria-pressed": String(s.newestFirst),
-      on: { click: () => { s.newestFirst = !s.newestFirst; paintTimeline(); } } }, icon("refresh"), s.newestFirst ? "Newest first" : "Oldest first");
+    const toggle = orderToggle(s.newestFirst, (v) => { s.newestFirst = v; paintTimeline(); });
     const turnChip = hasKinds ? h("button.filter-chip.tl-turns", { type: "button", "aria-pressed": String(s.tlTurns),
       title: "Only the revelations, twists and decisions that change the course of the story",
       on: { click: () => { s.tlTurns = !s.tlTurns; remember("lk-tl-turns", s.tlTurns); paintTimeline(); } } },
@@ -948,7 +969,7 @@ export function mountReader(root) {
       `Show ${groups.length - KEEP} earlier chapter${groups.length - KEEP === 1 ? "" : "s"} (${hiddenEvents} event${hiddenEvents === 1 ? "" : "s"})`) : null;
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
       evs.length ? [s.newestFirst ? null : earlier, h("ol.timeline", near.map((g) => [
-        g.label ? h("li.tl-chapter", { "aria-hidden": "true" }, g.label) : null,
+        g.label ? h("li.tl-chapter", g.label) : null,
         g.events.map((ev) => eventRow(ev)),
       ])), s.newestFirst ? earlier : null]
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
@@ -1040,6 +1061,15 @@ export function mountReader(root) {
   // ---- drawer ----------------------------------------------------------------------------
 
   let lastFocus = null;
+  /** True while an edit form in the open drawer holds text that was typed and not saved. */
+  function drawerDirty() {
+    return [...document.querySelectorAll("dialog.drawer .edit-form")].some((f) =>
+      [...f.querySelectorAll("textarea, input")].some((i) => i.value !== i.defaultValue));
+  }
+  /** Every way a person dismisses the drawer (×, Escape, the backdrop) asks first when it would lose typed text. */
+  async function requestCloseDrawer() {
+    if (!drawerDirty() || await confirmDialog({ title: "Discard what you wrote?", confirmLabel: "Discard", cancelLabel: "Keep editing" })) closeDrawer();
+  }
   function closeDrawer() {
     const d = document.querySelector("dialog.drawer");
     s.drawer = null;
@@ -1057,7 +1087,7 @@ export function mountReader(root) {
     const v = s.view;
     const rels = v.relations.filter((r) => r.src === id || r.dst === id);
     const evs = v.events.filter((ev) => ev.entities.includes(id));
-    const closeBtn = h("button.icon-btn", { type: "button", "aria-label": "Close", on: { click: closeDrawer } }, icon("x"));
+    const closeBtn = h("button.icon-btn", { type: "button", "aria-label": "Close", title: "Close", on: { click: requestCloseDrawer } }, icon("x"));
     // The panel answers "who is this?" first; the long lists behind it are shown short and open on request.
     const factNode = (f) => h("li", f.text,
       f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null,
@@ -1099,7 +1129,8 @@ export function mountReader(root) {
     }
     dlg?.remove();
     dlg = h(`dialog.drawer.t-${e.type}`, { "aria-labelledby": "drawer-title",
-      on: { close: onDialogClose, click: (ev) => { if (ev.target === dlg) closeDrawer(); } } }, content);
+      on: { close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
+        click: (ev) => { if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
     dlg.showModal();
     if (!refresh) closeBtn.focus();

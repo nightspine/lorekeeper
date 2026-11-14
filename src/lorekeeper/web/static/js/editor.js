@@ -4,7 +4,7 @@
 // merges). Index content and book text are untrusted, so all text is rendered through h().
 import { api } from "./api.js";
 import { confirmDialog, modal } from "./build.js";
-import { clear, foldList, h, icon, TYPE_LABEL } from "./dom.js";
+import { clear, foldList, h, icon, toast, TYPE_LABEL } from "./dom.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 const NAME_KINDS = ["primary", "alias", "title", "nickname", "descriptive"];
@@ -38,7 +38,7 @@ export function createEditor(ctx) {
    *  an earlier toast's Undo is stale and goes away. */
   function savedToast(what, undoId) {
     for (const old of document.querySelectorAll(".toast .toast-undo")) old.closest(".toast")?.remove();
-    const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss" }, icon("x"));
+    const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss", title: "Dismiss" }, icon("x"));
     const undo = h("button.linkish.toast-undo", { type: "button" }, "Undo");
     const el = h("div.toast.ok", { role: "status" }, icon("check-circle"), h("div.toast-msg", h("span", what), " ", undo), dismiss);
     dismiss.addEventListener("click", () => el.remove());
@@ -50,13 +50,8 @@ export function createEditor(ctx) {
     toastHost().append(el);
     setTimeout(() => el.remove(), 9000);
   }
-  function plainToast(message, kind = "ok") {
-    const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss" }, icon("x"));
-    const el = h(`div.toast.${kind}`, { role: kind === "error" ? "alert" : "status" }, icon(kind === "error" ? "alert" : "check-circle"), h("div.toast-msg", message), dismiss);
-    dismiss.addEventListener("click", () => el.remove());
-    toastHost().append(el);
-    setTimeout(() => el.remove(), kind === "error" ? 7000 : 3800);
-  }
+  /** The page's toast, placed where it can be reached (see toastHost); errors stay until dismissed. */
+  const plainToast = (message, kind = "ok") => toast(message, kind, { host: toastHost() });
 
   /** Send one change. A wording refusal (422) lands in `errorEl` and keeps the form open; anything else is a toast. */
   async function apply(op, errorEl = null) {

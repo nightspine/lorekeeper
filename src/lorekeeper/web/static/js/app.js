@@ -67,7 +67,7 @@ async function pollQueue() {
   const left = Number.isFinite(pr.chunks) && Number.isFinite(pr.done) ? Math.max(0, pr.chunks - pr.done) : null;
   const hint = queuePill.querySelector(".hint");
   hint.textContent = left ? `${left} left` : "";
-  queuePill.title = `${active.map((j) => j.book_title).filter(Boolean).join(", ")}${left ? ` · ${left} parts left in the current run` : ""}`;
+  queuePill.title = `${active.map((j) => j.book_title).filter(Boolean).join(", ")}${left ? `. ${left} parts left in the current run` : ""}`;
 }
 
 // ---- session and polling -----------------------------------------------------------------------
