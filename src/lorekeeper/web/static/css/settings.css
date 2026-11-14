@@ -64,6 +64,7 @@
 .set-table:has(> .provs) { max-width: 1180px; }
 .set-table table.data th[scope="row"] { font-weight: 600; color: var(--text); font-size: var(--text-base); }
 .model-name { overflow-wrap: anywhere; }
+.set-table td.r { white-space: nowrap; }
 
 /* Cloud models: one table, a row per provider */
 .provs { min-width: 860px; }
@@ -139,7 +140,7 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
   table.data.subt { min-width: 0; width: 100%; }
   .keyfield { flex-wrap: nowrap; }
   .keyfield .input { min-width: 0; }
-  .set-table { overflow: visible; }
+  .set-table:has(> .provs) { overflow: visible; }
 }
 
 /* Phone: the list is a page and a section is the next page with a back link. */
@@ -159,4 +160,6 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
   .how-body { padding-left: 0; }
   .subt :is(th, td):nth-child(2), .subt :is(th, td):nth-child(3) { display: none; }
   .bo-lib { min-height: 44px; }
+  /* the local models table drops Parameters */
+  .set-table:not(:has(> .provs)) :is(th, td):nth-child(2) { display: none; }
 }
