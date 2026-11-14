@@ -44,6 +44,10 @@ const ICONS = {
   copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
   arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  library: '<path d="M4 19V5M8 19V5M12 19l3-14 5 1-3 14z"/>',
+  pulse: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
+  user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   feather: '<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
 };
 
@@ -208,4 +212,29 @@ export function announce(message) {
  *  (closer to "who" than the latest one, which is usually a plot beat). */
 export function describe(e) {
   return e.profile?.text || e.facets[0]?.text || "";
+}
+
+const MINOR = new Set(["a", "an", "and", "as", "at", "but", "by", "for", "in", "of", "on", "or", "the", "to", "with"]);
+const ROMAN = /^(?=[ivxlcdm]+$)m{0,3}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})$/;
+/** "CHAPTER VIII MINA MURRAY'S JOURNAL" → "Chapter VIII Mina Murray's Journal". A title in capitals is title-cased:
+ *  a word starts after a space, a dash or an opening quote (never after an apostrophe), small words stay small
+ *  unless they open the title or follow a full stop or colon, roman numerals stay capitals, a trailing full stop
+ *  goes. Anything not in capitals is returned as it is. */
+export function tidyTitle(t) {
+  if (!t || !/[A-Z]{4}/.test(t)) return t;
+  // Mostly capitals ("CHAPTER III JONATHAN HARKER’S JOURNAL—continued"): words in capitals are title-cased, words
+  // already in lower or mixed case are kept as written.
+  const letters = t.replace(/[^\p{L}]/gu, "");
+  if ([...letters].filter((c) => c === c.toUpperCase()).length < letters.length * 0.7) return t;
+  return t.replace(/\p{L}[\p{L}'’]*/gu, (orig, i, all) => {
+    if (orig !== orig.toUpperCase()) return orig;
+    const w = orig.toLowerCase();
+    const before = all.slice(0, i).toLowerCase();
+    // A numeral after Chapter, Part, Book, Volume, Act or Scene, one that opens the title ("IV. The Visit"), or a run of
+    // two or more of I, V and X anywhere ("World War II"); "Mix" or "Civil" are words, not numerals.
+    if (ROMAN.test(w) && (/\b(chapter|part|book|volume|act|scene)\s+$/.test(before) || (i === 0 && /^[.:\s]/.test(all.slice(orig.length)))
+      || /^[ivx]{2,}$/.test(w))) return orig;
+    if (i && MINOR.has(w) && /\s$/.test(before) && !/[.:;!?]\s*$/.test(before)) return w;
+    return w[0].toUpperCase() + w.slice(1);
+  }).replace(/\.$/, "");
 }

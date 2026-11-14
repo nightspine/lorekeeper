@@ -104,8 +104,8 @@ registerProvider("theme", () => {
   return [{
     id: "theme-toggle", label: dark ? "Switch to light theme" : "Switch to dark theme", group: "Theme", keywords: "dark light appearance mode", _rank: 95,
     run: () => {
-      const btn = document.getElementById("theme-toggle");
-      if (btn) btn.click();   // app.js owns the toggle: it sets the theme, persists it and repaints the button
+      const btn = document.querySelector("[data-theme-toggle]");
+      if (btn) btn.click();   // app.js owns the toggle: it sets the theme, persists it and repaints every toggle
       else {
         const next = dark ? "light" : "dark";
         document.documentElement.dataset.theme = next;
@@ -120,7 +120,7 @@ async function loadBooks() {
   if (document.body.dataset.signedIn === "false" || document.body.dataset.mustChangePassword === "true") return;
   if (books && Date.now() - booksAt < 60000) return;
   try {
-    const d = await api.catalog();
+    const d = await api.catalogShared();
     books = d.books || [];
     booksAt = Date.now();
     if (dialog?.open) render();
@@ -222,6 +222,7 @@ document.addEventListener("keydown", (e) => {
   if (dialog?.open) closePalette(); else openPalette();
 });
 window.addEventListener("hashchange", closePalette);
-document.getElementById("palette-btn")?.addEventListener("click", () => openPalette());
+// The rail's Search row and the phone app bar's search button.
+document.querySelectorAll("[data-palette]").forEach((b) => b.addEventListener("click", () => openPalette()));
 // Warm the book list so the first open is instant; the palette works without it.
 setTimeout(loadBooks, 300);

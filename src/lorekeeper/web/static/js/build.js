@@ -84,7 +84,7 @@ export async function startBuild(entry) {
     ...missing.map((x) => h("li.series-row", h("span.subtle.num", `${x.index}.`), h("span", x.title),
       x.canBuild ? h("span.status-chip.missing", "No index") : h("span.chip", "No EPUB to index"))),
     ...absent.map((n) => h("li.series-row", h("span.subtle.num", `${n}.`), h("span.muted", "Not in your library"),
-      h("a", { href: "#/settings" }, "Add it"))),
+      h("a", { href: "#/settings/bookorbit" }, "Add it"))),
   ]);
   clear(m.body,
     h("p.muted", `You're building `, h("b", entry.title), `, ${bookNo(entry.series) || "a later book"} of ${entry.series.name}. These earlier books can't be built on yet:`),
@@ -172,7 +172,7 @@ export async function buildDialog(books, { title } = {}) {
   clear(m.body,
     h("ol.list.ordered", books.map((b, i) => h("li.series-row", h("span.subtle.num", `${i + 1}.`), h("span", b.title)))),
     h("div.field", h("span.label", "Runs on"), seg([["ollama", "Ollama (local)"], ...Object.values(clouds).map((c) => [c.id, c.label])], "provider"),
-      Object.keys(clouds).length ? null : h("p.hint", "For a cloud model, ", h("a", { href: "#/settings" }, "add a key in Settings"), ".")),
+      Object.keys(clouds).length ? null : h("p.hint", "For a cloud model, ", h("a", { href: "#/settings/cloud" }, "add a key in Settings"), ".")),
     h("div.field", h("label", { for: "bd-model" }, "Model"), modelSel),
     h("div.field", h("span.label", "Depth"), seg([["light", "Light"], ["standard", "Standard"], ["deep", "Deep"]], "depth")),
     h("label.switch", { for: "bd-verify" }, verify, h("span", h("span.label", { style: { display: "block" } }, "Fact-check every claim"),
@@ -216,17 +216,42 @@ export function cover(entry, size = "md") {
   return el;
 }
 
+/** "built with Claude Haiku 5.5", or "written by hand" for an index someone wrote in the Reader. */
+export const builtWith = (model) => (!model ? "" : /^hand-?written$/i.test(model.trim()) ? "written by hand" : `built with ${model}`);
+
 export const STATUS = {
   missing: { label: "No index", cls: "missing" },
   partial: { label: "Partial", cls: "partial" },
   building: { label: "Building", cls: "building" },
   complete: { label: "Complete", cls: "complete" },
 };
+/** A run's parts, 1-based, from its progress (web/jobs.py): `index` is the 0-based part of the latest `chunk` or
+ *  `chunk_done` event, `last` says which, `done` counts parts finished when the run (re)started. The catalog only
+ *  passes `index` and `chunks`. Running: "part 4 of 12" (the part being worked on). Done: "12 of 12 parts".
+ *  Stopped or failed: how many parts were finished. */
+export function partLine(pr, status) {
+  pr = pr || {};
+  const n = Number(pr.chunks);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (status === "done") return `${n} of ${n} parts`;
+  const idx = Number.isFinite(pr.index) ? pr.index : null;
+  // Finished parts: after `chunk_done` the part at `index` is done; after anything else that part (and its phase
+  // events: a run failing or stopping mid-part) was still being worked on. Only with no index does `done` count.
+  const finished = idx == null ? Number(pr.done) || 0 : pr.last === "chunk_done" ? idx + 1 : idx;
+  if (status === "running" || status === "building") {
+    const working = pr.last === "chunk_done" && idx != null ? idx + 2 : idx != null ? idx + 1 : finished + 1;
+    return `part ${Math.min(Math.max(1, working), n)} of ${n}`;
+  }
+  return `${Math.min(finished, n)} of ${n} parts`;
+}
+
 export const statusChip = (e) => {
   const partial = e.status === "partial" && e.coverage != null;
-  return h(`span.status-chip.${STATUS[e.status].cls}`, partial ? { style: { "--pct": `${Math.max(0, Math.min(100, e.coverage))}%` } } : null,
-    e.status === "building" && e.job?.progress?.chunks ? `Building, ${e.job.progress.index ?? 0} of ${e.job.progress.chunks}`
-      : partial ? `Partial, ${e.coverage}%` : STATUS[e.status].label);
+  // A Book Orbit book with no EPUB can never get an index here, so it says so instead of "No index".
+  const noEpub = e.status === "missing" && e.canBuild === false;
+  return h(`span.status-chip.${noEpub ? "no-epub" : STATUS[e.status].cls}`, partial ? { style: { "--pct": `${Math.max(0, Math.min(100, e.coverage))}%` } } : null,
+    e.status === "building" && e.job?.progress?.chunks ? `Building, ${partLine(e.job.progress, "building")}`
+      : partial ? `Partial, ${e.coverage}%` : noEpub ? "No EPUB" : STATUS[e.status].label);
 };
 
 const WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];

@@ -39,6 +39,7 @@ function redirectToLogin() {
   redirectTo("#/login" + (next ? "?next=" + encodeURIComponent(next) : ""));
 }
 
+let catalogCache = null;
 export const api = {
   /** Who is signed in. Plain fetch, never redirects; a 404 or a failed request means an older server with no sign-in. */
   session: async () => {
@@ -66,7 +67,16 @@ export const api = {
   resumeJob: (id) => request("POST", `/api/jobs/${id}/resume`),
   deleteJob: (id) => request("DELETE", `/api/jobs/${id}`),
   library: () => request("GET", "/api/library"),
-  catalog: () => request("GET", "/api/catalog"),
+  /** The catalog, fresh. Its answer also fills the shared copy below. */
+  catalog: () => {
+    const promise = request("GET", "/api/catalog");
+    catalogCache = { at: Date.now(), promise };
+    promise.catch(() => { if (catalogCache?.promise === promise) catalogCache = null; });
+    return promise;
+  },
+  /** The catalog no older than `maxAge` ms: one request shared by the rail's count, the palette and a page opening
+   *  at the same moment (an answer still on its way counts). */
+  catalogShared: (maxAge = 60000) => (catalogCache && Date.now() - catalogCache.at < maxAge ? catalogCache.promise : api.catalog()),
   book: (key) => request("GET", `/api/catalog/books/${encodeURIComponent(key)}`),
   preflight: (key) => request("GET", `/api/catalog/books/${encodeURIComponent(key)}/preflight`),
   prepare: (key) => request("POST", `/api/catalog/books/${encodeURIComponent(key)}/prepare`),
