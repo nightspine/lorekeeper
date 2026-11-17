@@ -1,5 +1,7 @@
 """Spoiler properties asserted directly, independent of the generated conformance views."""
 
+import json
+
 import pytest
 
 from lorekeeper.gating import Position, view
