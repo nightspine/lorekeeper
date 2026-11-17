@@ -180,6 +180,8 @@ def _with_settings(scarlet):
     import copy
     ix = copy.deepcopy(scarlet)
     for ev in ix["events"]:
+        ev.pop("setting", None)  # independent of the example's own settings
+    for ev in ix["events"]:
         if ev["id"] == "sis.ev.meeting":
             ev["setting"] = {"text": "a laboratory", "place": "baker-street"}
         if ev["id"] == "sis.ev.maiwand":
