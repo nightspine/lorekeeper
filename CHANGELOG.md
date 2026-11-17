@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.8.0](https://github.com/nightspine/lorekeeper/compare/v0.7.1...v0.8.0) (2026-11-17)
+
+
+### Features
+
+* a book kind on every index, inferred from the EPUB or chosen in the build form ([#47](https://github.com/nightspine/lorekeeper/issues/47)) ([a8e1f9f](https://github.com/nightspine/lorekeeper/commit/a8e1f9fa7d765798f30ac55441c22d3bb75f7474))
+* community indexes in the app: find, preview, add and share ([#56](https://github.com/nightspine/lorekeeper/issues/56)) ([46957ab](https://github.com/nightspine/lorekeeper/commit/46957abfd93cd92dcb85097ae05ef0ecb72d6c27))
+* family trees in the Reader from the kinship ties read so far ([#52](https://github.com/nightspine/lorekeeper/issues/52)) ([6777725](https://github.com/nightspine/lorekeeper/commit/677772518a2726a6dbf93f4cfe0ed37d3bbfca04))
+* registry format and tooling for sharing indexes ([#54](https://github.com/nightspine/lorekeeper/issues/54)) ([d8bb499](https://github.com/nightspine/lorekeeper/commit/d8bb4997eb26cd069ef0905e4d448b44225b08cb))
+* workbench layout for the web app: a left rail, flat surfaces, tables and side panes on every page ([#55](https://github.com/nightspine/lorekeeper/issues/55)) ([6c7d1a0](https://github.com/nightspine/lorekeeper/commit/6c7d1a0dc14329cab12d76a4962230c5abe42d07))
+
+
+### Bug Fixes
+
+* usability audit, 22 findings across the web app ([#50](https://github.com/nightspine/lorekeeper/issues/50)) ([c28fe3e](https://github.com/nightspine/lorekeeper/commit/c28fe3e95a4e5ffda9dde55454431c164e08d016))
+
 ## [0.7.1](https://github.com/nightspine/lorekeeper/compare/v0.7.0...v0.7.1) (2026-11-08)
 
 
