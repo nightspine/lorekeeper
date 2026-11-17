@@ -99,11 +99,12 @@ Merging is the one outward action; ask the person first unless they said to ship
 
 ## Herdr conventions
 
-- Space `lorekeeper` is the lead's home. Its tabs: `lead` (this session), `server` (when `lorekeeper web` runs), `shell`.
+- Space `lorekeeper` is the lead's home. Its tabs: one per lead session, `server` (when `lorekeeper web` runs), `shell`.
+- A lead names its own tab after its work as soon as it starts (the person asked on 2026-11-17): `lead: <slug or a few plain words>`, always with the `lead: ` prefix so the person can tell leads from workers and see what each one is on. Find your tab with `$HC_TERMINAL_ID` and `herdr-app ls`, then `herdr-app do tab.rename --id <tab> --name "lead: <work>"`. Rename again when the work changes, and to `lead: <work> (shipped)` or `lead: idle` when it is done.
 - Feature spaces are `lorekeeper: <slug>`, one worktree each, nested under the repo space.
 - Tabs in a feature space: `shell`, `work: <role>`, `review: round <n>`, `fix: <role> round <n>`. The tab name says the role; the crew robot's name is Herdr's, not ours.
 - A worker that needs the person shows as blocked; tell the person the space and tab name.
-- The lead dismisses its agents on its own judgment (the person said so on 2026-11-13): close a worker or review tab once its branch is merged and its handoff or verdict is on disk, and close the feature space when the PR has merged. The lasting record is `.claude/work/<slug>/`, not the terminal. While a tab stays open, rename it `done: <role>` (a review tab `done: review round <n>`) so the space reads at a glance.
+- The lead dismisses its agents on its own judgment, without asking (the person said so on 2026-11-13 and again on 2026-11-17): close a worker or review tab once its branch is merged and its handoff or verdict is on disk, and close the feature space when the PR has merged. The lasting record is `.claude/work/<slug>/`, not the terminal. While a tab stays open, rename it `done: <role>` (a review tab `done: review round <n>`) so the space reads at a glance.
 - One Ollama run at a time across all spaces. Prefer a cloud provider for worker generation runs and say what it cost.
 - Never restart `lorekeeper web` or kill a generate process while `/api/jobs` shows a run.
 
