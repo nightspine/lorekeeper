@@ -159,6 +159,19 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                 elif t not in prior_entities:
                     issues.append(Issue("warning" if unknown_prior else "error", where,
                                         f"unknown entity {t!r}"))
+        if kind == "event" and "place" in item.get("setting", {}):
+            pid = item["setting"]["place"]
+            types = {**{e["id"]: e["type"] for p in prior for e in p.get("entities", [])},
+                     **{e["id"]: e["type"] for e in index["entities"]}}
+            if pid not in types:
+                issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
+                                    f"unknown entity {pid!r}"))
+            elif types[pid] != "place":
+                issues.append(Issue("error", f"{where}.setting.place", f"{pid!r} is not a place"))
+            elif pid in entity_from and entity_from[pid] is not None and entity_from[pid] > f \
+                    and pid not in prior_entities:
+                issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
+                                    f"references {pid!r} before it is revealed"))
         for r in item.get("replaces", []):
             if kind == "facet" and (r in profiles) != (item.get("kind") == "profile") and (r in item_kind or r in prior_items):
                 issues.append(Issue("warning", where, "a profile should replace only profiles, and details only details"))
