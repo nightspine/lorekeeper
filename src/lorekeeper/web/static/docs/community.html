@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community indexes - Lorekeeper docs</title>
+<meta name="description" content="Find a ready-made index for a book, preview it without spoilers, add it to your library and share your own.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html" aria-current="page">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Community indexes</h1>
+<p class="lede">Someone may already have built an index for your book. The app can check, let you try it in the real Reader without spoiling yourself, and add it to your library with one click. You can also share the ones you build.</p>
+
+<p>This page is the app side. The file formats and the commands behind it are on <a href="share.html">Share an index</a>, and section 8.7 of the <a href="spec.html#87-registries-capability-listings">specification</a> is the authority.</p>
+
+<h2 id="turn-on">Turn it on</h2>
+<p>Looking a book up tells the registry that you have it, so the app asks first. The first time you open a book's build page, a card where the ready-made index would be says what is sent and offers <strong>Turn on</strong> and <strong>Not now</strong>. Nothing is requested until you turn it on.</p>
+<p>You can change your mind under <strong>Settings</strong>, in the Community indexes card. It has the same switch and the address of the registry. The default is <code>https://nightspine.github.io/lorekeeper-registry</code>. Any registry built with <code>lorekeeper registry build</code> works. Changing the address clears what the app has kept from the old one.</p>
+
+<h2 id="find">Find an index</h2>
+<p>Open a book's build page. With the feature on, a Ready-made block sits above the build options. It shows the best match as a sentence, such as "Whole book", then who shared it and, when it was audited, how many claims held up. If there is more than one, <strong>See all</strong> opens a sheet that lists them with the same facts in the same place on every row, sorted by best match or by newest.</p>
+<p>A match means the shared index was made for exactly the text of your copy. Other editions of the same book are not offered yet. A book whose file is not on this server yet, such as a Book Orbit book you have not prepared, has nothing to look up, so the block is absent. So are the block for an unreachable registry and the one for a book nobody has shared. Series sets are not offered yet either.</p>
+
+<h2 id="measures">What the facts mean</h2>
+<p>There are no star ratings. Each fact says who vouches for it, and the app never merges them into one score.</p>
+<div class="table-wrap"><table><thead><tr><th>Fact</th><th>What it says</th></tr></thead><tbody>
+<tr><td>Whole book or Partial</td><td>Whether the index covers the whole story.</td></tr>
+<tr><td>Fit</td><td>"Matches your copy exactly" in the list. After you open a preview, "N of N anchors found in your copy", counted by your own server.</td></tr>
+<tr><td>Checked</td><td>An audit reads "48 of 50 claims held up", and when some claims could not be judged from the passage cited, it says how many. Under it: checked by its builder, by the registry, by a reader, or by you. With no audit, a passing anchor and quote check reads "Anchors and quoting checked". Otherwise "Not checked yet".</td></tr>
+<tr><td>Early names</td><td>One line when a check found names shown before the book uses them. It gives a count and never the names. The listing carries its builder's count. Your server repeats the check on your own copy when you preview.</td></tr>
+<tr><td>How it was made</td><td>The model, or "Hand-written", and "edited by hand" when a person changed it. Also the licence, the version and the date.</td></tr>
+</tbody></table></div>
+<p>The builder's numbers are the builder's word. A registry that holds no books cannot check them. That is why the app shows who checked, and why it checks again itself where it can.</p>
+<p>Results are ordered by a fixed rule: whole books before partial ones, then those with no early names, then those with an audit (a higher lower bound on the share of claims that held up first), then newer ones.</p>
+
+<h2 id="preview">Preview</h2>
+<p><strong>Preview</strong> downloads the index, checks it and opens it in the Reader. Nothing is added to your library yet. A strip above the position panel says whose index it is and has <strong>Add to library</strong> and <strong>Back</strong>.</p>
+<p>The checks run on your server before you see anything. The bytes must match the digest the registry published. The file must pass the schema and the validator, name your copy among its editions, and resolve its anchors against your EPUB. A file that fails the first ones is refused with the reason. Problems found only against your copy are counted and shown, not hidden.</p>
+<p>The preview starts at the end of chapter 3, or at your Book Orbit position if that is further along. It is the real spoiler gate: nothing beyond the position is shown, and moving past it asks first, as it does for a synced position. Editing and merging are not available in a preview.</p>
+<p><strong>Check it yourself</strong> samples claims from the index and asks a model whether the book supports them. It appears only when a cloud provider key is saved, because a small local model judges too cautiously to give a fair number. It sends passages of the book to that provider, as a build does. The result is yours: it is kept on your server and sent nowhere else.</p>
+
+<h2 id="add">Add it to your library</h2>
+<p><strong>Add to library</strong> (or <strong>Use this index</strong> on the build page) files the previewed index as a version of the book and opens the Reader on it. The message that confirms it has Undo. The index shows in the Library and in the book's versions as "Community, shared by" the publisher.</p>
+<ul>
+<li>It becomes the book's default only if the book has no other version. It never replaces an index you built or edited, and when two are equally complete yours wins.</li>
+<li>A community index is read-only here. Edit mode, merges and name tidying are refused for it with a clear message.</li>
+<li>When a newer version of an index you use is shared, the build page says so and offers <strong>Update</strong>. The old file is kept. If it was the default, the new one takes its place.</li>
+<li>Removing an installed index deletes the file and its record. The default falls back the way it does when you delete any version.</li>
+</ul>
+
+<h2 id="share">Share an index you built</h2>
+<p>On a book's <strong>Versions and runs</strong> page, each version built here has <strong>Share with the community</strong>. A finished run also offers it in the Runs monitor. The dialog runs your index through the same checks a registry would and lists what it found. Each item is marked pass, warning, fail or to do, in words and not only by colour.</p>
+<ul>
+<li>It must validate, and the book's EPUB must be on this server.</li>
+<li>A partial index is listed as partial.</li>
+<li>The licence must be CC0-1.0 or CC-BY-4.0. If it is not, the dialog offers the two choices.</li>
+<li>Early names are counted and shown as a warning. They do not block sharing.</li>
+<li>The audit is optional and needs a cloud key. It checks 50 claims against the text and shows its estimated cost first.</li>
+</ul>
+<p>Sharing is then two steps. <strong>Save the bundle</strong> downloads a file. <strong>Open the submission form</strong> opens an issue form in the registry's repository; drag the file into it. The submission is filed under your GitHub name, and a workflow runs the registry's checks and adds the listing. A book in a series cannot be shared from the app yet.</p>
+
+<h2 id="sent">What is sent</h2>
+<div class="table-wrap"><table><thead><tr><th>When</th><th>What leaves your server</th></tr></thead><tbody>
+<tr><td>You open a book's page, feature on</td><td>One request to the registry for the book's text fingerprint (a SHA-256 of its words). The answer is kept for 10 minutes. The request carries no account, key or book text. The registry host can see your IP address, as any web host can.</td></tr>
+<tr><td>You preview or add</td><td>One request for the index file.</td></tr>
+<tr><td>You run an audit</td><td>Passages of the book go to your chosen cloud provider. Not to the registry.</td></tr>
+<tr><td>You share</td><td>Nothing, until you drag the saved file into the form yourself. The bundle holds the index and its check results, never the book. Edition labels and file hashes are removed from it.</td></tr>
+<tr><td>Feature off</td><td>Nothing at all.</td></tr>
+</tbody></table></div>
+<p>Your browser never talks to the registry. Only your server does.</p>
+
+<h2 id="safety">How an index from outside is handled</h2>
+<p>Everything a registry returns is treated as input from a stranger. Requests time out after 10 seconds and stop reading at 6 MB. Redirects to another origin are not followed. A file link must point to the registry's own address and its index folder. JSON is parsed with limits on size and nesting. The downloaded bytes must match the published digest, and a mismatch is refused. The index then passes the schema and the validator before it is stored. The app shows its text as plain text and never as markup.</p>
+
+<h2 id="off">Turning it off</h2>
+<p>Switch it off in Settings. The app stops asking the registry at once. Indexes you already added stay in your library. To remove one, use its version list. The files live under <code>community/</code> in the data folder, as described in <a href="self-hosting.html#community">Self-hosting</a>.</p>
+
+</main>
+</div>
+</body>
+</html>

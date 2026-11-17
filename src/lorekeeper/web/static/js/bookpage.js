@@ -2,6 +2,7 @@
 import { api } from "./api.js";
 import { parseHash } from "./app.js";
 import { bookNo, buildDialog, builtWith, cover, NO_EPUB, numWord, startBuild, statusChip } from "./build.js";
+import { openShare } from "./community.js";
 import { clear, crumbs, fmtInt, h, icon, loadError, loading, STATUS_LABEL, toast } from "./dom.js";
 import { rowAction } from "./library.js";
 
@@ -114,14 +115,18 @@ export function mountBook(root) {
           h("thead", h("tr", ["Version", "Covers", "Entries", "Details", "Updated"].map((t) => h("th", { scope: "col" }, t)),
             h("th", { scope: "col" }, h("span.sr-only", "Actions")))),
           h("tbody", b.versions.map((v) => h(`tr${v.isDefault ? ".selected" : ""}`,
-            h("td", h("b", v.model || "Unknown"), h("span.subtle", v.isDefault ? ", used for reading" : v.source === "generated" ? ", built here" : `, from ${v.source}`)),
+            h("td", h("b", v.model || "Unknown"), h("span.subtle", `${v.source === "community" ? `, shared by ${v.sharedBy || "someone"}` : v.source === "generated" ? ", built here" : `, from ${v.source}`}${v.isDefault ? ", used for reading" : ""}`)),
             h("td", v.complete ? "Whole book" : v.coverage != null ? `${v.coverage}%` : "Partial"),
             h("td.num", fmtInt(v.entities)), h("td.num", fmtInt(v.facts)), h("td", when(v.updated)),
             h("td.cell-actions",
               h("a", { href: `#/reader?i=${encodeURIComponent(v.key)}` }, "Read"),
               v.isDefault ? null : h("button.linkish", { type: "button", on: { click: async () => {
                 try { await api.setDefault(b.key, v.key); toast("Default version changed"); sig = ""; load({ force: true }); } catch (e) { toast(e.message, "error"); }
-              } } }, "Make default"))))))) : h("p.muted", "No index yet."),
+              } } }, "Make default"),
+              v.source === "generated" ? h("button.linkish", { type: "button", on: { click: () => openShare(v.key, b.title) } }, "Share") : null,
+              v.source === "community" ? h("button.linkish", { type: "button", on: { click: async () => {
+                try { await api.communityUninstall(v.key); toast("Removed"); sig = ""; load({ force: true }); } catch (e) { toast(e.message, "error"); }
+              } } }, "Remove") : null)))))) : h("p.muted", "No index yet."),
         b.versions.length > 1 ? h("p.hint", "The default version is what the Reader and connected apps receive.") : null),
 
       b.runs.length ? h("section.page-sec", { "aria-labelledby": "runs-h" },

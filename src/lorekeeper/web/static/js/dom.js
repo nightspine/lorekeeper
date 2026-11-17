@@ -12,6 +12,7 @@ const ICONS = {
   stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   refresh: '<path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
+  store: '<path d="M3 9 5 4h14l2 5"/><path d="M4 9v11h16V9"/><path d="M3 9h18M9 20v-6h6v6"/>',
   eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
@@ -144,17 +145,19 @@ const MAX_TOASTS = 4;
  *  error (a person may be reading something else when it arrives). `host` is the element the toast
  *  goes into (the page's stack by default; the entry drawer passes its own, since a modal dialog
  *  makes the rest of the page inert). At most four toasts are held: the oldest non-busy one goes first. */
-export function toast(message, kind = "ok", { host = null } = {}) {
+export function toast(message, kind = "ok", { host = null, action = null } = {}) {
   const dismiss = h("button.icon-btn.small.toast-dismiss", { type: "button", "aria-label": "Dismiss", title: "Dismiss" }, icon("x"));
   const el = h(`div.toast.${kind}`, { role: kind === "error" ? "alert" : "status" },
     kind === "busy" ? h("span.spinner", { "aria-hidden": "true" }) : icon(kind === "error" ? "alert" : "check-circle"),
-    h("div.toast-msg", message), dismiss);
+    h("div.toast-msg", message),
+    action ? h("button.linkish", { type: "button", on: { click: async () => { el.remove(); await action.run(); } } }, action.label) : null,
+    dismiss);
   dismiss.addEventListener("click", () => el.remove());
   const stack = host || document.getElementById("toasts");
   stack.append(el);
   const old = [...stack.children].filter((t) => t !== el && !t.classList.contains("busy"));
   for (const t of old.slice(0, Math.max(0, stack.children.length - MAX_TOASTS))) t.remove();
-  if (kind === "ok") setTimeout(() => el.remove(), 3800);
+  if (kind === "ok") setTimeout(() => el.remove(), action ? 9000 : 3800);
   return () => el.remove();
 }
 

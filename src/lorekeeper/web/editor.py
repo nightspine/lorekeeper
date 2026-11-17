@@ -298,10 +298,14 @@ class Editor:
             ctx = _Ctx(items, docs, i, book, self.eligible(book) if book else [])
             what, target = self._apply(ctx, op)
             for j in ctx.changed:
-                self._touch(docs[j], user)
+                if op["op"] == "set-license":       # a licence is not a hand edit: no editor, nothing to replay
+                    docs[j].setdefault("provenance", {})["updated"] = _now()
+                else:
+                    self._touch(docs[j], user)
             entry = self.identity._commit(gid, items, docs, ctx.changed,
                                           {"kind": "edit", "what": what, "keepNames": [], "dropNames": []})
-            self._record(docs[i], op, target, entry["id"])
+            if op["op"] != "set-license":
+                self._record(docs[i], op, target, entry["id"])
             return {"undo": entry["id"], "what": what, **ctx.extra}
 
     def undo(self, key: str, entry_id: str) -> dict:
@@ -721,6 +725,14 @@ class Editor:
 
     # coverage
 
+    def _op_set_license(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
+        lic = op.get("license")
+        if lic not in ("CC0-1.0", "CC-BY-4.0"):
+            raise EditError("the licence must be CC0-1.0 or CC-BY-4.0")
+        ctx.doc.setdefault("provenance", {})["license"] = lic
+        ctx.changed.add(ctx.i)
+        return f"Set the licence to {lic}", {}
+
     def _op_set_complete(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
         complete = bool(op.get("complete"))
         cov = ctx.doc["coverage"]
@@ -805,7 +817,7 @@ class Editor:
         name = op.get("op", "")
         norm = lambda s: " ".join(str(s or "").split()).casefold()  # noqa: E731
         ents = {e["id"]: e for e in ctx.doc.get("entities", [])}
-        if name in ("add-entity", "set-complete"):
+        if name in ("add-entity", "set-complete", "set-license"):
             return op
         if name in ("set-type", "delete-entity", "add-name", "add-facet"):
             return op if op.get("entity") in ents else None

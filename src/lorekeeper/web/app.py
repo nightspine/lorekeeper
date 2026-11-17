@@ -21,7 +21,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from .. import epub, llm, text
@@ -29,6 +29,7 @@ from ..generate import slug
 from . import auth as authmod
 from . import bookorbit, position, protocol
 from .catalog import Catalog, series_num, story_chapters
+from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
 from .jobs import BookStore, JobManager, describe
@@ -138,7 +139,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                       keys=keys.get, provider_config=keys.config,
                       prior_for=lambda job: catalog.prior_indexes(job.config.get("catalog_key", "")),
                       distinct_for=lambda job: distinct_for(job))
-    library = Library([("generated", data_dir / "indexes"), *index_dirs], [data_dir / "books", *epub_dirs])
+    library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
+                       *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
 
     def distinct_for(job) -> set:
@@ -848,6 +850,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     # ---- duplicate entities ----------------------------------------------------------------------
 
+    def not_community(key: str) -> None:
+        """A community index is read-only: it is somebody else's work, replaced as a whole by a newer version."""
+        item = library.scan().get(key)
+        if item is not None and item["source"] == "community":
+            raise HTTPException(409, "A community index can't be changed here. It is read-only.")
+
     @app.get("/api/library/{key}/duplicates")
     def duplicates(key: str):
         try:
@@ -857,6 +865,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.post("/api/library/{key}/duplicates/check")
     def check_duplicates(key: str):
+        not_community(key)
         try:
             return identity.check(key)
         except KeyError as e:
@@ -866,6 +875,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.post("/api/library/{key}/merge")
     async def merge_entities(key: str, request: Request):
+        not_community(key)
         body = await request.json()
         pairs = [(str(x["keep"]), str(x["drop"]), str(x["name"]) if x.get("name") else None)
                  for x in body.get("pairs", []) if isinstance(x, dict) and x.get("keep") and x.get("drop")]
@@ -882,6 +892,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.post("/api/library/{key}/tidy-names")
     def tidy_names(key: str):
+        not_community(key)
         try:
             return identity.tidy_names(key)
         except KeyError as e:
@@ -895,6 +906,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.post("/api/library/{key}/undo/{merge_id}")
     def undo_change(key: str, merge_id: str):
         """Undo the latest journal entry, a merge or a hand edit (both routes do the same)."""
+        not_community(key)
         try:
             return editor.undo(key, merge_id)
         except KeyError as e:
@@ -907,6 +919,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.post("/api/library/{key}/edits")
     async def edit_index(key: str, request: Request):
         """Apply one edit (see editor.py for the operations) as one undoable step."""
+        not_community(key)
         op = await request.json()
         try:
             return editor.apply(key, op, user=who(request))
@@ -944,6 +957,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.post("/api/library/{key}/distinct")
     async def mark_distinct(key: str, request: Request):
+        not_community(key)
         body = await request.json()
         a, b = str(body.get("a", "")), str(body.get("b", ""))
         if not a or not b or a == b:
@@ -971,6 +985,86 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(404, "book file for this edition not found")
         doc = library.scan().get(i, {}).get("doc") if i else None
         return editor.passage(parsed(p), seq, before, after, doc=doc)
+
+    # ---- community indexes ------------------------------------------------------------------------
+
+    def audit_plan():
+        """The model that checks claims: the first configured cloud provider's strong model (Claude first),
+        with its price. None without a cloud key: a small local judge gives numbers that aren't comparable."""
+        for p in jobs.configured():
+            spec = llm.PROVIDERS[p]
+            name = keys.config(p).get("model") if p == "custom" else spec["strong"]
+            if name:
+                known = next((m for m in spec["models"] if m["id"] == name), None)
+                return {"provider": p, "name": name, "label": known["label"] if known else name,
+                        "price": known["price"] if known else None}
+        return None
+
+    def audit_model():
+        plan = audit_plan()
+        return jobs.cloud_model(plan["provider"], plan["name"]) if plan else None
+
+    community = Community(data_dir, catalog, library, reader=parsed, model=audit_model, plan=audit_plan)
+    app.state.community = community
+
+    @app.exception_handler(CommunityError)
+    async def community_error(request: Request, exc: CommunityError):
+        body = {"detail": exc.detail}
+        if exc.code:
+            body["code"] = exc.code
+        return JSONResponse(body, status_code=exc.status)
+
+    @app.get("/api/community")
+    def community_config():
+        return community.config()
+
+    @app.put("/api/community")
+    async def community_set(request: Request):
+        body = await json_body(request)
+        return community.configure(body["enabled"] if "enabled" in body else KEEP, body.get("url"))
+
+    @app.get("/api/community/books/{key}")
+    def community_books(key: str):
+        return community.books(key)
+
+    @app.post("/api/community/fetch")
+    async def community_fetch(request: Request):
+        body = await json_body(request)
+        return await asyncio.to_thread(community.fetch_index, str(body.get("catalogKey") or ""),
+                                       str(body.get("id") or ""), body.get("digest"))
+
+    @app.get("/api/community/preview/{digest_hex}")
+    def community_preview(digest_hex: str):
+        return community.preview(digest_hex)
+
+    @app.post("/api/community/install")
+    async def community_install(request: Request):
+        body = await json_body(request)
+        return await asyncio.to_thread(community.install, str(body.get("catalogKey") or ""),
+                                       str(body.get("id") or ""), body.get("digest"))
+
+    @app.delete("/api/community/installed/{key}")
+    def community_uninstall(key: str):
+        return community.uninstall(key)
+
+    @app.post("/api/community/audit")
+    async def community_audit(request: Request):
+        body = await json_body(request)
+        return await asyncio.to_thread(community.audit_preview, body.get("digest"))
+
+    @app.post("/api/community/share/{key}/check")
+    def community_share_check(key: str):
+        return community.share_check(key)
+
+    @app.post("/api/community/share/{key}/audit")
+    async def community_share_audit(key: str):
+        return await asyncio.to_thread(community.share_audit, key)
+
+    @app.get("/api/community/share/{key}/bundle")
+    def community_share_bundle(key: str):
+        data, name = community.share_bundle(key)
+        return Response(data, media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
     protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
     return app

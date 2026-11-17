@@ -351,6 +351,12 @@
               "supported": {
                 "$ref": "#/$defs/count"
               },
+              "unsupported": {
+                "$ref": "#/$defs/count"
+              },
+              "unsure": {
+                "$ref": "#/$defs/count"
+              },
               "model": {
                 "type": "string",
                 "minLength": 1

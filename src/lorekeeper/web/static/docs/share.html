@@ -14,13 +14,15 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="share.html" aria-current="page">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html" aria-current="page">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Share an index</h1>
 <p class="lede">An index is one JSON file, so sharing it needs no server. Three commands turn it into a bundle, file it in a registry and publish static lookup files that any reader app can query with one GET.</p>
 
 <p>This page is the tooling side of <a href="spec.html#87-registries-capability-listings">section 8.7 of the specification</a>. Nothing in the index changes for sharing: a shared index is a plain index document.</p>
+
+<p>The web app does the same from a book's page, and also finds and adds indexes others shared: see <a href="community.html">Community indexes</a>.</p>
 
 <h2 id="share">Make a bundle</h2>
 <pre><code>uv run lorekeeper share examples/dracula/dracula.json -o dracula.share.json

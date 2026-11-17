@@ -152,6 +152,11 @@ def test_audit_attestation(listing):
              "model": "claude-haiku-5-5"}
     listing["attestations"].append(audit)
     assert _errors(listing, "listing") == []
+    audit.update(sampled=50, supported=44, unsupported=2, unsure=4)
+    assert _errors(listing, "listing") == []
+    audit["unsure"] = -1
+    assert _errors(listing, "listing") != []
+    audit["unsure"] = 4
     del audit["model"]
     assert any("model" in e.message for e in _errors(listing, "listing"))
 

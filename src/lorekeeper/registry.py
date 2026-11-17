@@ -120,6 +120,24 @@ def _no_constant(name: str):
     raise ValueError(f"{name} is not JSON")
 
 
+def parse_json_capped(raw: bytes, what: str) -> tuple[object | None, list[Issue]]:
+    """Parse JSON bytes the way registry files are read: the size cap before parsing, no NaN/Infinity,
+    nesting limited, no lone surrogates. Never raises."""
+    if len(raw) > MAX_BUNDLE_BYTES:
+        return None, [_err(what, f"file is over the {MAX_BUNDLE_BYTES // (1024 * 1024)} MB limit")]
+    try:
+        doc = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
+        deep = _too_deep(doc)
+        if deep:
+            return None, [_err(what, f"not valid JSON for a registry: nested deeper than {MAX_DEPTH} levels at {deep}")]
+        json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")  # a lone surrogate fails here
+        return doc, []
+    except ValueError as e:
+        return None, [_err(what, f"not valid JSON for a registry: {e}")]
+    except RecursionError:
+        return None, [_err(what, "not valid JSON for a registry: nested too deeply")]
+
+
 def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]]:
     """Read a JSON file, refusing one over the size cap before it is parsed."""
     try:
@@ -131,20 +149,9 @@ def _read_json_capped(path: Path, what: str) -> tuple[object | None, list[Issue]
     try:
         with path.open("rb") as f:
             raw = f.read(MAX_BUNDLE_BYTES + 1)
-        if len(raw) > MAX_BUNDLE_BYTES:
-            return None, [_err(what, "file is over the 5 MB limit")]
-        doc = json.loads(raw.decode("utf-8"), parse_constant=_no_constant)
-        deep = _too_deep(doc)
-        if deep:
-            return None, [_err(what, f"not valid JSON for a registry: nested deeper than {MAX_DEPTH} levels at {deep}")]
-        json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")  # a lone surrogate fails here
-        return doc, []
     except OSError as e:
         return None, [_err(what, f"cannot read: {e.strerror or 'error'}")]
-    except ValueError as e:
-        return None, [_err(what, f"not valid JSON for a registry: {e}")]
-    except RecursionError:
-        return None, [_err(what, "not valid JSON for a registry: nested too deeply")]
+    return parse_json_capped(raw, what)
 
 
 def scrub(index: dict) -> dict:
@@ -290,6 +297,30 @@ def _removed(source: Path) -> list[dict]:
     return data
 
 
+def _n(a: dict, key: str) -> int:
+    v = a.get(key)
+    return v if isinstance(v, int) and not isinstance(v, bool) else 0
+
+
+def attestation_problems(a) -> list[str]:
+    """Counts that cannot be true: an audit whose parts exceed its sample, checks that resolved more anchors
+    than exist, a spoiler gate that found more names than it counted. Schema-valid, but never honest."""
+    if not isinstance(a, dict):
+        return []
+    kind = a.get("kind")
+    if kind == "audit":
+        parts = _n(a, "supported") + _n(a, "unsupported") + _n(a, "unsure")
+        if _n(a, "sampled") == 0 or parts > _n(a, "sampled"):
+            return ["audit counts do not add up: supported + unsupported + unsure must be within a non-empty sample"]
+    elif kind == "book-checks":
+        if _n(a, "resolved") > _n(a, "anchors"):
+            return ["book-checks counts do not add up: resolved is more than anchors"]
+    elif kind == "spoiler-gate":
+        if _n(a, "found") > _n(a, "names") or _n(a, "early") > _n(a, "found"):
+            return ["spoiler-gate counts do not add up: early must be within found, found within names"]
+    return []
+
+
 def listing_problems(data, expected_id: str | None = None) -> list[str]:
     """Why a stored listing is not sound: its schema, its timestamps, and (when given) its directory."""
     bad = validate.check_schema(data, "listing")
@@ -301,6 +332,8 @@ def listing_problems(data, expected_id: str | None = None) -> list[str]:
     stamps = [("updated", data["updated"])] + [(f"versions[{n}].updated", v["updated"]) for n, v in enumerate(data["versions"])] \
         + [(f"attestations[{n}].at", a["at"]) for n, a in enumerate(data["attestations"])]
     out += [f"{w}: {v!r} is not a UTC timestamp like 2026-11-13T20:00:00Z" for w, v in stamps if not valid_timestamp(v)]
+    for n, a in enumerate(data["attestations"]):
+        out += [f"attestations[{n}]: {m}" for m in attestation_problems(a)]
     return out
 
 
@@ -401,6 +434,7 @@ def _preflight(bundle: dict) -> list[Issue]:
             out.append(_err(f"attestations[{i}]", "a bundle cannot carry a validates attestation: only the registry adds that one"))
         if "at" in a and not valid_timestamp(a["at"]):
             out.append(_err(f"attestations[{i}].at", f"{a['at']!r} is not a UTC timestamp like 2026-11-13T20:00:00Z"))
+        out += [_err(f"attestations[{i}]", m) for m in attestation_problems(a)]
     if bundle.get("series") is not None and isinstance(index, dict) and not index.get("series"):
         out.append(_err("series", "a series manifest came with an index that has no `series`"))
     return out

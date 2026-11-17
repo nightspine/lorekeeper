@@ -112,6 +112,18 @@ export const api = {
       return await res.json();
     } catch { return { synced: false, reason: "unreachable" }; }
   },
+  // ---- community indexes (the server talks to the registry; the browser never does) ----
+  communityConfig: () => request("GET", "/api/community"),
+  setCommunity: (enabled, url) => request("PUT", "/api/community", url ? { enabled, url } : { enabled }),
+  communityBook: (catalogKey) => request("GET", `/api/community/books/${encodeURIComponent(catalogKey)}`),
+  communityFetch: (catalogKey, id, digest) => request("POST", "/api/community/fetch", { catalogKey, id, digest }),
+  communityPreview: (hex) => request("GET", `/api/community/preview/${encodeURIComponent(hex)}`),
+  communityInstall: (catalogKey, id, digest) => request("POST", "/api/community/install", { catalogKey, id, digest }),
+  communityUninstall: (libraryKey) => request("DELETE", `/api/community/installed/${encodeURIComponent(libraryKey)}`),
+  communityAudit: (digest) => request("POST", "/api/community/audit", { digest }),
+  shareCheck: (libraryKey) => request("POST", `/api/community/share/${encodeURIComponent(libraryKey)}/check`),
+  shareAudit: (libraryKey) => request("POST", `/api/community/share/${encodeURIComponent(libraryKey)}/audit`),
+  shareBundleUrl: (libraryKey) => `/api/community/share/${encodeURIComponent(libraryKey)}/bundle`,
   edition: async (hash) => {
     const res = await fetch(`/api/editions/${hash}`);
     return res.ok ? res.json() : null;

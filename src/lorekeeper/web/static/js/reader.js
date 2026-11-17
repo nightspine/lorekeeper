@@ -8,6 +8,7 @@ import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js
 import { renderConnections } from "./graph.js";
 import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
+import { fetchPreview, previewError, previewStrip } from "./community.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -69,9 +70,12 @@ class PositionMap {
 }
 
 export function mountReader(root) {
-  const { params } = parseHash();
+  const { route, parts, params } = parseHash();
+  // A community index being tried before it is added: #/preview/<digest>?catalog=<book>&listing=<id>.
+  // Its position is held at the end of chapter 3 until the person deliberately goes past it.
+  const preview = route === "preview" ? { hex: parts[0] || "", catalog: params.get("catalog") || "", listing: params.get("listing") || "", info: null, horizon: 0, what: "the end of chapter 3" } : null;
   const s = {
-    lib: null, key: params.get("i"), doc: null, map: null, series: null, seriesDocs: new Map(),
+    lib: null, key: preview ? `preview:${preview.hex}` : params.get("i"), preview, doc: null, map: null, series: null, seriesDocs: new Map(),
     book: params.get("book"), order: params.get("order"), finished: params.get("fin"),
     // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
     // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
@@ -91,10 +95,19 @@ export function mountReader(root) {
   let disposed = false;
 
   // The first load: a spinner after a moment, and a page that says what failed with a way to try again.
-  const retryStart = () => { clear(wrap, loading("Opening the book…")); start(); };
-  clear(wrap, loading("Opening the book…"));
+  const openingText = preview ? "Downloading the index and checking it against your copy…" : "Opening the book…";
+  const retryStart = () => { clear(wrap, loading(openingText)); start(); };
+  clear(wrap, loading(openingText));
   start();
   async function start() {
+    if (preview) {
+      try { preview.info = { catalog: preview.catalog, ...await fetchPreview(preview.catalog, preview.listing, preview.hex) }; }
+      catch (e) { if (!disposed) clear(wrap, previewError(e, preview.catalog)); return; }
+      s.lib = { indexes: [], series: [] };
+      api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+      await load(s.key, { keepPosition: true });
+      return;
+    }
     try { s.lib = await api.library(); } catch (e) { if (!disposed) clear(wrap, loadError("open the book", e, retryStart)); return; }
     if (!s.lib.indexes.some((i) => i.key === s.key)) {
       clear(wrap, h("div.card.empty", h("div.art", icon("book-open")), h("h3", "This index isn't in the library any more"),
@@ -115,7 +128,7 @@ export function mountReader(root) {
     const stale = () => disposed || mine !== loadSeq;
     const meta = s.lib.indexes.find((i) => i.key === key);
     let doc;
-    try { doc = await api.index(key); } catch (e) {
+    try { doc = preview ? await api.communityPreview(preview.hex) : await api.index(key); } catch (e) {
       if (stale()) return false;
       if (!s.doc) { clear(wrap, loadError("open the index", e, retryStart)); return false; }
       toast(`Could not open index: ${e.message}`, "error");   // switching books: the current one stays open, key and all
@@ -125,7 +138,7 @@ export function mountReader(root) {
     s.key = key;
     s.doc = doc;
     s.series = null; s.seriesDocs = new Map();
-    const sid = s.doc.series?.id;
+    const sid = preview ? null : s.doc.series?.id;
     if (sid) {
       const man = s.lib.series.find((x) => x.id === sid);
       if (man) {
@@ -153,13 +166,24 @@ export function mountReader(root) {
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
     s.reveals = null; s.docOrds = null;
     s.sync = { on: false, override: false, ahead: false, wantAhead: null };
-    s.dupes = await api.duplicates(key).catch(() => null);
+    if (preview) {
+      // The horizon the preview starts at: the end of the third story chapter. Past it needs a deliberate "Show me anyway".
+      const story = (s.map.chapters || []).filter((c) => c.story !== false);
+      preview.horizon = Math.min(1, story.length > 3 ? s.map.blockStart(story[3].start) : 0.2);
+      // What the line is, in words: chapter 3's end, the first fifth when the book has too few chapters, or the end of a partial index.
+      preview.what = story.length > 3 ? "the end of chapter 3" : "the first fifth of the book";
+      const cov = !s.doc.coverage?.complete ? s.map.anchorPos(s.doc.coverage?.through) : null;
+      if (Number.isFinite(cov) && cov < preview.horizon) { preview.horizon = cov; preview.what = "where this index ends"; }
+      s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
+      s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
+    }
+    s.dupes = preview ? null : await api.duplicates(key).catch(() => null);
     if (stale()) return false;
     watchDupes(key);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     render();
-    saveUrl();   // also puts the book at the top of the rail's Reading list
-    await syncPosition(key);
+    saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
+    if (!preview) await syncPosition(key);
     return !stale();
   }
 
@@ -188,6 +212,7 @@ export function mountReader(root) {
   }
 
   async function syncPosition(key, { poll = false } = {}) {
+    if (preview) return;
     let r;
     try { r = await api.position(key); } catch { r = { synced: false, reason: "unreachable" }; }
     if (disposed || s.key !== key) return;
@@ -282,7 +307,15 @@ export function mountReader(root) {
   async function moveTo(p) {
     if (!(await okToMove())) { rulerBack(); return; }
     const line = aheadLine();
-    if (line != null && p > line + 1e-9) {
+    if (line != null && p > line + 1e-9 && preview) {
+      const ok = await confirmDialog({
+        title: "Go past the preview line?",
+        message: `The preview stops at ${preview.what} so you can try the index without spoilers. `
+          + `Moving to ${Math.round(p * 100)}% shows characters, details and events from pages you haven't read yet.`,
+        confirmLabel: "Show me anyway", cancelLabel: `Stay at ${Math.round(line * 100)}%`, danger: true });
+      if (!ok) { s.sync.override = false; setP(line); paintSource(); return; }
+      s.sync.ahead = true;
+    } else if (line != null && p > line + 1e-9) {
       const t = s.sync.updatedAt ? Date.parse(s.sync.updatedAt) / 1000 : NaN;
       const ok = await confirmDialog({
         title: "Go past where you're reading?",
@@ -299,6 +332,7 @@ export function mountReader(root) {
     if (!s.sync.on || !(await okToMove())) return;
     s.sync.override = false; s.sync.ahead = false; s.sync.wantAhead = null;
     setP(s.sync.p);
+    if (preview) return;
     writeLast(s.sync.p);
     syncPosition(s.key, { poll: true });
   }
@@ -306,6 +340,11 @@ export function mountReader(root) {
   function paintSource() {
     if (!el.source) return;
     const y = s.sync;
+    if (preview) {
+      const past = s.p > y.p + 1e-9;
+      return clear(el.source, past ? "Past the preview line" : `Preview held to ${preview.what}`,
+        past ? h("button.linkish", { type: "button", on: { click: backToSynced } }, `Back to the preview line (${Math.round(y.p * 100)}%)`) : null);
+    }
     const back = () => h("button.linkish", { type: "button", on: { click: backToSynced } },
       `Back to Book Orbit's position (${Math.round(y.p * 100)}%)`);
     if (y.on && y.override) clear(el.source, y.ahead && s.p > y.p + 1e-9 ? "Ahead of where Book Orbit says you are" : "Moved by hand", back());
@@ -349,6 +388,10 @@ export function mountReader(root) {
     if (disposed) return;   // a page that is gone never writes the address or the Reading list
     urlTimer = setTimeout(() => {
       if (disposed) return;
+      if (preview) {   // a preview keeps its own address and never joins the Reading list
+        setParams({ catalog: preview.catalog, listing: preview.listing, p: String(Math.round(s.p * 1000)) });
+        return;
+      }
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
@@ -370,7 +413,7 @@ export function mountReader(root) {
     el.headFacts = h("span.rd-cover");
     const head = h("header.page-head.rd-head",
       h("div.rd-title", h("h1", s.doc.work.title), el.headLine),
-      el.headActions = h("div.reader-switch", editButton(), h("button.btn.quiet.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
+      el.headActions = h("div.reader-switch", editButton(), preview ? null : h("button.btn.quiet.switch-book", { type: "button", "aria-label": "Switch book", title: "Switch book", on: { click: pickBook } }, icon("layers"), h("span.btn-lbl", "Switch book"))));
     paintHead();
     wrap.classList.toggle("editing", s.edit);
 
@@ -468,14 +511,15 @@ export function mountReader(root) {
     el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
     el.panel.addEventListener("keydown", onListKey);
 
-    clear(wrap, head, el.position, el.sub, el.series, el.split);
+    clear(wrap, head, preview ? previewStrip(preview.info) : null, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
     paint();
   }
 
   /** The catalog book this index belongs to (via its versions), once the catalog has loaded. */
-  const catalogBook = () => s.catalog?.books.find((b) => b.versions.some((v) => v.key === s.key)) || null;
+  const catalogBook = () => (preview ? s.catalog?.books.find((b) => b.key === preview.catalog)
+    : s.catalog?.books.find((b) => b.versions.some((v) => v.key === s.key))) || null;
 
   // ---- edit mode ---------------------------------------------------------------------------
   // Only an index built here can be changed, and only with its book file on disk (reveal points are
@@ -587,6 +631,9 @@ export function mountReader(root) {
     if (!s.doc.coverage.complete) {
       const at = s.map.anchorPos(s.doc.coverage.through);
       if (Number.isFinite(at) && at < 0.995) ticks.push(h("span.end-mark", { style: { left: `${at * 100}%` }, title: "The index ends here" }));
+    }
+    if (preview && preview.horizon > 0 && preview.horizon < 0.995) {
+      ticks.push(h("span.end-mark", { style: { left: `${preview.horizon * 100}%` }, title: "Preview line" }));
     }
     clear(el.ticks, ticks);
   }
