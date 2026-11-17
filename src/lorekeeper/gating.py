@@ -176,7 +176,11 @@ def view(
         "relations": [_relation(r, b) for r, b in rel_sorted if r["id"] not in replaced],
         "relationHistory": [_relation(r, b) for r, b in rel_sorted if r["id"] in replaced],
         "events": [{"id": ev["id"], "summary": ev["summary"], "entities": ev["entities"], "book": b,
-                    **({"kind": ev["kind"]} if "kind" in ev else {})}
+                    **({"kind": ev["kind"]} if "kind" in ev else {}),
+                    **({"setting": {"text": ev["setting"]["text"],
+                                    **({"place": ev["setting"]["place"]}
+                                       if ev["setting"].get("place") in visible_ids else {})}}
+                       if "setting" in ev else {})}
                    for _, ev, b in sorted(events, key=lambda t: t[0])],
         "recap": ({"id": latest_recap[1]["id"], "text": latest_recap[1]["text"],
                    "book": latest_recap[2]} if latest_recap else None),

@@ -98,7 +98,11 @@
           "murray",
           "maiwand"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "setting": {
+          "text": "the battle of Maiwand",
+          "place": "maiwand"
+        }
       }
     ],
     "recap": null,

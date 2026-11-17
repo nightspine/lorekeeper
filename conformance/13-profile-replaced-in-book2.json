@@ -586,7 +586,11 @@
           "murray",
           "maiwand"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "setting": {
+          "text": "the battle of Maiwand",
+          "place": "maiwand"
+        }
       },
       {
         "id": "sis.ev.criterion",
@@ -596,7 +600,11 @@
           "stamford",
           "criterion-bar"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "setting": {
+          "text": "the Criterion Bar",
+          "place": "criterion-bar"
+        }
       },
       {
         "id": "sis.ev.meeting",
@@ -608,7 +616,11 @@
           "barts"
         ],
         "book": "study-in-scarlet",
-        "kind": "turn"
+        "kind": "turn",
+        "setting": {
+          "text": "a lofty chamber at Barts",
+          "place": "barts"
+        }
       },
       {
         "id": "sis.ev.agree",
@@ -627,7 +639,11 @@
           "watson",
           "baker-street"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "setting": {
+          "text": "the rooms at 221B Baker Street",
+          "place": "baker-street"
+        }
       },
       {
         "id": "sis.ev.article",
@@ -637,7 +653,10 @@
           "watson",
           "book-of-life"
         ],
-        "book": "study-in-scarlet"
+        "book": "study-in-scarlet",
+        "setting": {
+          "text": "the breakfast table"
+        }
       },
       {
         "id": "sis.ev.trade",

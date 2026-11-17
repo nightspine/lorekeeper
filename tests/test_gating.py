@@ -138,6 +138,30 @@ def test_the_view_carries_an_event_kind_only_when_the_index_has_one(scarlet, ser
     assert "kind" not in next(ev for ev in v["events"] if ev["id"] == "sis.ev.maiwand")
 
 
+def test_an_event_setting_appears_only_with_its_event(scarlet, series):
+    # Spoiler property: no setting text and no place link for an event past the position.
+    early = view([scarlet], Position("study-in-scarlet", "ch1.para05"), series)
+    assert [ev["id"] for ev in early["events"]] == ["sis.ev.maiwand", "sis.ev.criterion"]
+    assert {ev["id"]: ev["setting"] for ev in early["events"]}["sis.ev.criterion"] == \
+        {"text": "the Criterion Bar", "place": "criterion-bar"}
+    blob = repr(early)
+    for later in ("lofty chamber", "221B Baker Street", "breakfast table"):
+        assert later not in blob
+    late = view([scarlet], Position("study-in-scarlet", "ch2.para24"), series)
+    by_id = {ev["id"]: ev for ev in late["events"]}
+    assert by_id["sis.ev.article"]["setting"] == {"text": "the breakfast table"}   # no place: no link
+    assert all(ev["setting"].get("place") in {e["id"] for e in late["entities"]}
+               for ev in late["events"] if ev.get("setting", {}).get("place"))
+
+
+def test_a_place_link_to_an_entity_not_in_the_view_is_dropped_but_the_text_stays(scarlet, series):
+    import copy
+    ix = copy.deepcopy(scarlet)
+    ix["events"][1]["setting"] = {"text": "the Criterion Bar", "place": "not-in-the-view"}
+    v = view([ix], Position("study-in-scarlet", "ch1.para05"), series)
+    assert v["events"][1]["setting"] == {"text": "the Criterion Bar"}
+
+
 def test_the_view_carries_book_kind_only_when_the_index_has_one(scarlet, series):
     pos = Position("study-in-scarlet", "ch2.para51")
     assert "bookKind" not in view([scarlet], pos, series)
