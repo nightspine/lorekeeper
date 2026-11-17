@@ -176,13 +176,25 @@ def view(
         "relations": [_relation(r, b) for r, b in rel_sorted if r["id"] not in replaced],
         "relationHistory": [_relation(r, b) for r, b in rel_sorted if r["id"] in replaced],
         "events": [{"id": ev["id"], "summary": ev["summary"], "entities": ev["entities"], "book": b,
-                    **({"kind": ev["kind"]} if "kind" in ev else {})}
+                    **({"kind": ev["kind"]} if "kind" in ev else {}),
+                    **_setting(ev, visible_ids)}
                    for _, ev, b in sorted(events, key=lambda t: t[0])],
         "recap": ({"id": latest_recap[1]["id"], "text": latest_recap[1]["text"],
                    "book": latest_recap[2]} if latest_recap else None),
         "chapters": [{"id": rc["id"], "title": rc.get("title"), "text": rc["text"], "book": b}
                      for _, rc, b in sorted(recaps, key=lambda t: t[0]) if rc.get("scope") == "chapter"],
     }
+
+
+def _setting(ev: dict, visible_ids: set[str]) -> dict:
+    """An event's setting travels with it; its place link only when that entity is in the view."""
+    st = ev.get("setting")
+    if not st:
+        return {}
+    out = {"text": st["text"]}
+    if st.get("place") in visible_ids:
+        out["place"] = st["place"]
+    return {"setting": out}
 
 
 def _facet(f: dict, book: str | None) -> dict:

@@ -106,6 +106,11 @@ export function view(indexes, position, series = null, order = null, finished = 
   }
 
   const facetOut = (f, book) => ({ id: f.id, text: f.text, basis: f.basis, book });
+  const settingOut = (ev, ids) => {
+    const st = ev.setting;
+    if (!st) return {};
+    return { setting: { text: st.text, ...(st.place !== undefined && ids.has(st.place) ? { place: st.place } : {}) } };
+  };
   const relOut = (r, book) => ({ id: r.id, src: r.src, dst: r.dst, label: r.label, book, ...(r.kind !== undefined ? { kind: r.kind } : {}) });
 
   const outEntities = [...entities.values()]
@@ -149,7 +154,7 @@ export function view(indexes, position, series = null, order = null, finished = 
     relations: relSorted.filter(([, r]) => !replaced.has(r.id)).map(([, r, b]) => relOut(r, b)),
     relationHistory: relSorted.filter(([, r]) => replaced.has(r.id)).map(([, r, b]) => relOut(r, b)),
     events: events.sort((a, b) => cmp(a[0], b[0]))
-      .map(([, ev, b]) => ({ id: ev.id, summary: ev.summary, entities: ev.entities, book: b, ...(ev.kind !== undefined ? { kind: ev.kind } : {}) })),
+      .map(([, ev, b]) => ({ id: ev.id, summary: ev.summary, entities: ev.entities, book: b, ...(ev.kind !== undefined ? { kind: ev.kind } : {}), ...settingOut(ev, visibleIds) })),
     recap: latest ? { id: latest[1].id, text: latest[1].text, book: latest[2] } : null,
     chapters: recaps.filter((t) => t[1].scope === "chapter").sort((a, b) => cmp(a[0], b[0]))
       .map(([, rc, b]) => ({ id: rc.id, title: rc.title ?? null, text: rc.text, book: b })),
