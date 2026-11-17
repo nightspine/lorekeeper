@@ -28,7 +28,7 @@ from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v9"
+PROMPT_VERSION = "extract-v10"
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -109,6 +109,11 @@ EVENT_KINDS = ("turn", "minor")
 # What sort of tie a relation is (SPEC.md §4.3): the map colours and filters by it, and a newer tie of the
 # same kind between the same two replaces the older one instead of drawing a second line.
 RELATION_KINDS = ("family", "romance", "friendship", "alliance", "service", "hostility", "acquaintance", "place")
+MAX_SETTING_WORDS = 8   # an event's setting is a noun phrase ("the deck of the Demeter"), not a sentence (SPEC §4.4)
+SETTING_LEAD = re.compile(r"^(?:(?:in|at|on|inside|aboard|outside)\s+)+", re.IGNORECASE)
+NO_SETTING = {"none", "unknown", "n/a", "na", "not stated", "unstated", "unclear", "unspecified", "nowhere"}
+LOWER_FIRST = {"the", "a", "an", "his", "her", "their", "my", "our", "its", "your", "this", "that", "these", "those",
+               "some", "one", "another", "each", "every"}
 MAX_TIE_WORDS = 8   # a label longer than this is a sentence about the two, not a tie
 # Words that put a name on somebody else: "her mother Mrs. Westenra", "daughter of Mrs. Westenra".
 KIN_WORDS = TIE_WORDS + ("grandmother", "grandfather", "stepmother", "stepfather", "servant", "maid", "master")
@@ -206,6 +211,10 @@ Update the companion with what THIS passage adds. Report only new information.
   "plot" for a development that moves the main story or changes what a character wants, knows or can do;
   "minor" for a small moment that colours the scene but changes nothing: a meal, a journey detail, small talk, a
   passing mood. Most events are "plot"; a passage has at most one or two turning points and may have none.
+  Give each a "where": the place it happens as a short noun phrase in the book's own words, at most 8 words, with no
+  preposition ("a carriage", "the Westenra drawing room", "the deck of the Demeter"), ONLY when the paragraphs it
+  rests on state or clearly imply it. When the passage does not say where, or the event is a thought or a
+  summary of days, leave "where" empty. Never use a place you know from elsewhere in the book or from memory.
 - summary: {summary} complete sentences (each under 35 words) on what happens in THIS passage, in reading order,
   giving most room to what moves the story: what is revealed, decided, lost, gained or set in motion, and what that
   means for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label
@@ -239,6 +248,9 @@ likely or commonly known.
 A (name) claim is unsupported unless the passage itself uses that name for that individual. It is also unsupported
 when the passage uses that name for a relative or another person (a mother, husband, servant, someone the entity
 speaks to).
+A (setting) claim names the place where the event before it happens. It is supported when the passage states or
+clearly implies that the event takes place there; it is unsupported when the passage puts the event elsewhere, says
+nothing about where, or the place is only known from outside the passage.
 - later: claims that are right but are only fully shown after the paragraph they cite. Give the id and the
   earliest paragraph by which everything in the claim has been shown.
 - moments: ids of (fact) claims that are right but narrate one action in a scene ("He jumps onto the troll")
@@ -379,8 +391,8 @@ def extract_schema(relations: bool) -> dict:
         "updates": _ARR(_obj({"id": _STR, "p": _INT, "desc": _STR, "corrects": _STR}, ["id", "p", "desc"])),
         "profiles": _ARR(_obj({"id": _STR, "p": _INT, "text": _STR}, ["id", "p", "text"])),
         "names": _ARR(_obj({"id": _STR, "name": _STR, "p": _INT}, ["id", "name", "p"])),
-        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR), "weight": {"enum": ["turn", "plot", "minor"]}},
-                            ["p", "text", "who", "weight"])),
+        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR), "weight": {"enum": ["turn", "plot", "minor"]}, "where": _STR},
+                            ["p", "text", "who", "weight", "where"])),
         "summary": _ARR(_STR),
         "recap": _STR,
     }
@@ -1277,6 +1289,9 @@ class Generator:
                 weight = ev.get("weight")
                 c.data = {"entities": ents, **({"kind": weight} if weight in EVENT_KINDS else {})}
                 cands.append(c)
+                st = self._setting_candidate(c, ev.get("where"), passage)
+                if st:
+                    cands.append(st)
         summary = raw.get("summary") if isinstance(raw.get("summary"), list) else []
         for i, sentence in enumerate(summary[:14]):
             # Each sentence is checked on its own, so one bad detail doesn't cost the whole summary.
@@ -1296,6 +1311,7 @@ class Generator:
         if self.opts.verify and cands:
             self.on_phase("verify")
             cands = self._verify(cands, passage, chunk.start)
+        cands = self._attach_settings(cands)
         self.summary_parts = []
         self._events_at_chunk_start = len(self.events)
         for c in cands:
@@ -1331,6 +1347,46 @@ class Generator:
         from_seq = max([*cited, *(self.entity_from[e] for e in entities)])
         return Candidate(kind, cid, claim, from_seq, sorted(set(cited)))
 
+    def _setting_candidate(self, ev: Candidate, where, passage: str) -> Candidate | None:
+        """The place an event happens, as a claim of its own so the fact-check can drop it and keep the event."""
+        s = " ".join(str(where or "").split()).strip(" .,;:\"'()[]")
+        s = SETTING_LEAD.sub("", s).strip()
+        if not s or s.casefold() in NO_SETTING:
+            return None
+        if len(text.words(s)) > MAX_SETTING_WORDS:
+            self.stats["dropped: setting too long"] += 1
+            return None
+        first = s.split()[0]
+        if first[0].isupper() and not first.isupper():
+            low = first[0].lower() + first[1:]
+            mid = re.search(r"[a-z,;] " + re.escape(first) + r"\b", passage)   # capitalised away from a sentence start
+            if first.casefold() in LOWER_FIRST or (not mid and re.search(r"\b" + re.escape(low) + r"\b", passage)):
+                s = low + s[len(first):]
+        c = Candidate("setting", "st" + ev.cid[1:], s, ev.from_seq, list(ev.evidence),
+                      {"event": ev.cid, "event_text": ev.text, "place": self._place_for(s)})
+        return c
+
+    def _place_for(self, setting: str) -> str | None:
+        """The place entity of this index that the setting names ("the Demeter" for "the Demeter"): the same
+        name without articles, exact; never a person or a thing, never a fuzzy match."""
+        core = self._core(setting)
+        if not core:
+            return None
+        hits = [eid for eid in self.entities if self._type(eid) == "place"
+                and any(self._core(n) == core for n in self._names(eid))]
+        return hits[0] if len(hits) == 1 else None
+
+    def _attach_settings(self, cands: list[Candidate]) -> list[Candidate]:
+        """Checked settings move onto the events that survived; a setting whose event went is simply gone."""
+        events = {c.cid: c for c in cands if c.kind == "event"}
+        out = []
+        for c in cands:
+            if c.kind != "setting":
+                out.append(c)
+            elif (ev := events.get(c.data["event"])):
+                ev.data["setting"] = {"text": c.text, **({"place": c.data["place"]} if c.data.get("place") else {})}
+        return out
+
     @staticmethod
     def _family_role(kind, label, a, b):
         """The role a `family` tie states between a and b (None for other kinds and for labels that are not
@@ -1355,7 +1411,7 @@ class Generator:
         seen |= {(r["src"], r["dst"], r["label"].casefold()) for r in self.relations}
         out = []
         for c in cands:
-            if c.kind == "summary":   # a summary may restate an event: that's what summaries do
+            if c.kind in ("summary", "setting"):   # a summary may restate an event: that's what summaries do; many events share a place
                 out.append(c)
                 continue
             key = (("name", c.data["entity"], c.text.casefold()) if c.kind == "name"
@@ -1404,6 +1460,8 @@ class Generator:
         if c.kind == "relation":
             kind = f" ({c.data['kind']} tie)" if c.data.get("kind") else ""
             return f"{where}{name(c.data['src'])}, {c.text}, {name(c.data['dst'])}{kind}"
+        if c.kind == "setting":
+            return f'(setting, cited at paragraph {n}) The event "{c.data["event_text"]}" happens in: {c.text}'
         return where + c.text
 
     def _verify(self, cands: list[Candidate], passage: str, chunk_start: int) -> list[Candidate]:
@@ -1464,7 +1522,10 @@ class Generator:
         for c in cands:
             if c.cid in bad and len(self.rejected) < 500:
                 self.rejected.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start), "because": why[c.cid][1]})
-        self.stats["dropped: not supported"] += len(cands) - len(keep)
+        gone = [c for c in cands if c.cid in bad]
+        settings = sum(1 for c in gone if c.kind == "setting")
+        self.stats["dropped: setting not in the text"] += settings
+        self.stats["dropped: not supported"] += len(gone) - settings
         return keep
 
     def chapter_title(self, chunk: Chunk) -> str:
@@ -1573,11 +1634,17 @@ class Generator:
         else:
             self.events.append({"id": self._next_id(f"{self.key}.ev"), "from": item["from"], "summary": c.text,
                                 "entities": c.data["entities"], "evidence": item["evidence"],
-                                **({"kind": c.data["kind"]} if c.data.get("kind") else {})})
-            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text, **({"weight": c.data["kind"]} if c.data.get("kind") else {})})
+                                **({"kind": c.data["kind"]} if c.data.get("kind") else {}),
+                                **({"setting": c.data["setting"]} if c.data.get("setting") else {})})
+            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text,
+                               **({"setting": c.data["setting"]["text"]} if c.data.get("setting") else {}), **({"weight": c.data["kind"]} if c.data.get("kind") else {})})
             self.stats["events"] += 1
             if c.data.get("kind") == "turn":
                 self.stats["turning points"] += 1
+            if c.data.get("setting"):
+                self.stats["event settings"] += 1
+                if c.data["setting"].get("place"):
+                    self.stats["settings linked to a place"] += 1
 
     # ---- output ----------------------------------------------------------------------------
 
