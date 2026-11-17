@@ -246,13 +246,37 @@ SHOULD NOT infer ties the book never states.
 
 ### 4.4 Events
 
-`{ id, from, summary, entities[], evidence, kind? }`: happenings in reading
+`{ id, from, summary, entities[], evidence, kind?, setting? }`: happenings in reading
 order. `kind` is optional and says how much the event drives the story:
 `"turn"` marks a turning point (a revelation, twist, reversal, realization,
 death, or a decision that changes the course of the story), `"minor"` a small
 moment that colours a scene without changing its course. An event without
 `kind` is an ordinary development. Clients SHOULD make turning points stand
 out and MAY hide minor events by default.
+
+`setting` is optional and says where the event happens: `{ "text": "a carriage",
+"place": "<entity id>" }`. `text` is a noun phrase of at most 8 words in the
+book's own terms, lowercase except proper nouns, with no leading preposition
+("a carriage", "the Westenra drawing room", "the deck of the Demeter", "Castle
+Dracula"). `place`, when present, is the id of a `place` entity the index (or
+an earlier book of the series) has, for a setting that names that place. A
+setting is part of the event: it is gated by the event's `from` and is written
+as the reader understands it there, so it MUST NOT use a name or fact the book
+has not given yet ("the count's castle" before the book names it as Castle
+Dracula). It MUST be stated or clearly implied by the event's `evidence`; a
+producer that cannot tell where an event happens leaves it out, and never
+guesses it from an earlier event or from outside the book. The `summary` keeps
+saying what happened and does not repeat the setting. Clients MAY group
+consecutive events with the same `setting.text` (compared case-insensitively)
+into a scene, and MAY show the last visible setting, but SHOULD NOT carry it
+into a later chapter, since the scene has probably moved on. Absent `setting`
+means unknown; indexes without it stay valid.
+
+```json
+{ "id": "ev.cab", "from": "ch2.para14", "summary": "Holmes questions the driver.",
+  "entities": ["holmes"], "evidence": ["ch2.para14"],
+  "setting": { "text": "Lauriston Gardens", "place": "lauriston-gardens" } }
+```
 
 ### 4.5 Recaps
 
@@ -382,6 +406,7 @@ A conforming validator checks, at minimum:
 | Evidence ordinal ≤ `from` ordinal | no |
 | Entity `from` = earliest name; nothing revealed before its entity | no |
 | Relation/event entities visible at the item's `from` | no |
+| An event's `setting.place` is a `place` entity of this index or an earlier book, visible at the event's `from` | no (series: needs earlier books) |
 | `replaces` targets exist, are the same kind, and are revealed earlier | no (series: needs earlier books) |
 | Nothing revealed after `coverage.through` | no |
 | Anchors resolve in the edition; anchor blocks have ≥ 6 words; `seq` matches for the `builtFrom` edition | yes |
@@ -428,7 +453,8 @@ ordinal, file order). Then:
 7. **Chapters**: every visible chapter recap, in reading order, as `{ id, title, text, book }`.
 8. **Coverage**: `exhausted` is true when the index is partial and ordinal(`A`) ≥ ordinal(`coverage.through`).
 
-9. **Book kind**: if the index of the current book `B` has `bookKind`, the view carries the same `bookKind`; otherwise the view has none. It is a property of the book, not a gated item, so it is never withheld.
+9. **Event settings**: a visible event carries its `setting.text` unchanged. It carries `setting.place` only when that entity is in the view's `entities`; otherwise the view keeps the text and drops the link. An event that is not visible contributes nothing, neither its setting nor a place link.
+10. **Book kind**: if the index of the current book `B` has `bookKind`, the view carries the same `bookKind`; otherwise the view has none. It is a property of the book, not a gated item, so it is never withheld.
 
 ### 7.4 Safety requirements
 

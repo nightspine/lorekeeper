@@ -104,3 +104,29 @@ def test_book_kind_in_view_and_lookup_schemas():
     assert not list(V(lookup).iter_errors({"results": [row]}))
     row["bookKind"] = ""
     assert list(V(lookup).iter_errors({"results": [row]}))
+
+
+def test_event_setting_rules(scarlet, four, series):
+    import copy
+
+    def errors(ix, prior=()):
+        return [i for i in validate.check_index(ix, list(prior)) if i.level == "error"]
+
+    ok = copy.deepcopy(scarlet)
+    ok["events"][0]["setting"] = {"text": "a b c d e f g h"}   # eight words
+    assert errors(ok) == []
+    ok["events"][0]["setting"] = {"text": "the battle of Maiwand", "place": "maiwand"}
+    assert errors(ok) == []
+    for setting in ({"text": "a b c d e f g h i"}, {"text": ""}, {"text": " padded"}, {"place": "maiwand"},
+                    {"text": "x", "extra": 1}):
+        bad = copy.deepcopy(scarlet)
+        bad["events"][0]["setting"] = setting
+        assert errors(bad), setting
+    for place in ("no-such-entity", "watson"):   # unknown id; an entity that is not a place
+        bad = copy.deepcopy(scarlet)
+        bad["events"][0]["setting"] = {"text": "x", "place": place}
+        assert errors(bad), place
+    # A place from an earlier book is fine when the earlier books are supplied.
+    later = copy.deepcopy(four)
+    later["events"][0]["setting"] = {"text": "Baker Street", "place": "baker-street"}
+    assert errors(later, [scarlet]) == []
