@@ -2,7 +2,7 @@
    A workbench page beside the book: one compact head row, the ruler pinned under it on every tab, the tabs, then the
    list, with the open entry in a pane on the right (1101px and up; the modal drawer below that). Flat rows on
    hairlines, no boxes. Only the position orb glows. */
-main[data-route="reader"] { padding: 0; }
+main[data-route="reader"], main[data-route="preview"] { padding: 0; }
 .reader { --ruler-h: 48px; min-width: 0; }
 .reader > *, .rd-split > * { min-width: 0; }
 .rd-head { gap: 8px 16px; min-height: 56px; padding: 8px 28px; }

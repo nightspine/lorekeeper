@@ -24,6 +24,14 @@ from .jobs import is_story
 
 
 
+def model_label(generator: dict | None) -> str | None:
+    """How a version says what made it: the model's name, "Hand-written" without a generator."""
+    if not generator:
+        return "Hand-written"
+    model = generator.get("model")
+    return (CLAUDE_MODELS.get(model, {}).get("label") or model) if model else generator.get("name")
+
+
 def series_num(index) -> float | None:
     try:
         return float(index)
@@ -189,7 +197,7 @@ class Catalog:
                     v["complete"] = True    # every story section is covered; only front/back matter is not
             default = st["defaults"].get(e["key"])
             if not any(v["key"] == default for v in e["versions"]):
-                ranked = sorted(e["versions"], key=lambda v: (v["complete"], v.get("coverage") or 0, v.get("updated") or ""),
+                ranked = sorted(e["versions"], key=lambda v: (v["complete"], v.get("coverage") or 0, v["source"] != "community", v.get("updated") or ""),
                                 reverse=True)
                 default = ranked[0]["key"] if ranked else None
             e["default"] = default
@@ -218,6 +226,7 @@ class Catalog:
 
     def _versions(self) -> dict[str, list[dict]]:
         by_hash: dict[str, list[dict]] = {}
+        installed = (self.state().get("community") or {}).get("installed", {})
         for item in self.library.scan().values():
             doc = item["doc"]
             if doc.get("kind") != "index":
@@ -228,15 +237,17 @@ class Catalog:
             stats = {"entities": len(doc.get("entities", [])),
                      "facts": sum(len(e.get("facets", [])) for e in doc.get("entities", [])),
                      "events": len(doc.get("events", []))}
-            model = gen.get("model")
+            community = installed.get(item["key"])
             v = {"key": item["key"], "source": item["source"], "id": doc.get("id"),
-                 "model": (CLAUDE_MODELS.get(model, {}).get("label") or model) if model
-                 else ("Hand-written" if not gen else gen.get("name")),
+                 "model": model_label(gen),
                  "complete": bool(doc.get("coverage", {}).get("complete")),
                  "bookKind": doc.get("bookKind"),
                  "throughSeq": seqs.get(doc.get("coverage", {}).get("through")),
                  "updated": prov.get("updated") or prov.get("created"), **stats,
                  "review": ((prov.get("review") or [{}])[-1] or {}).get("status")}
+            if community:
+                v["sharedBy"] = str(community.get("listing", "")).split("/")[0]
+                v["communityVersion"] = community.get("version")
             for ed in doc.get("editions", []):
                 if ed.get("textHash") and ed.get("builtFrom", True):
                     by_hash.setdefault(ed["textHash"], []).append(dict(v))

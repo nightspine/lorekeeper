@@ -766,3 +766,38 @@ def test_remove_works_on_a_damaged_tree(tmp_path, src, dracula, scarlet, series)
     assert registry.remove("someone/dracula", src, "r", NOW) == ["someone/dracula"]
     assert [r["id"] for r in json.loads((src / "removed.json").read_text())] == [
         "someone/sherlock-holmes-study-in-scarlet", "someone/dracula"]
+
+
+# ---- attestation counts ---------------------------------------------------------------------
+
+def _audit(**kw):
+    return {"kind": "audit", "by": "builder", "at": NOW, "textHash": DRACULA_HASH, "sampled": 50, "supported": 48,
+            "model": "m", **kw}
+
+
+@pytest.mark.parametrize("att", [
+    _audit(supported=60),
+    _audit(sampled=0, supported=0),
+    _audit(supported=40, unsupported=8, unsure=5),
+    {"kind": "book-checks", "by": "builder", "at": NOW, "textHash": DRACULA_HASH, "anchors": 3, "resolved": 4, "errors": 0},
+    {"kind": "spoiler-gate", "by": "builder", "at": NOW, "textHash": DRACULA_HASH, "names": 5, "found": 6, "early": 0},
+    {"kind": "spoiler-gate", "by": "builder", "at": NOW, "textHash": DRACULA_HASH, "names": 5, "found": 4, "early": 5},
+])
+def test_check_refuses_attestation_counts_that_cannot_be_true(tmp_path, src, dracula, att):
+    bundle = make(dracula)
+    bundle["attestations"] = [att]
+    check_error(tmp_path, src, bundle, "do not add up")
+
+
+def test_check_accepts_a_sound_audit(tmp_path, src, dracula):
+    bundle = make(dracula)
+    bundle["attestations"] = [_audit(unsupported=1, unsure=1)]
+    ctx, issues = registry.check(write(tmp_path / "c.json", bundle), "someone", src)
+    assert ctx is not None, errs(issues)
+
+
+def test_listing_problems_reports_impossible_counts(tmp_path, src, dracula):
+    listing = add(tmp_path, src, make(dracula))
+    assert registry.listing_problems(listing) == []
+    listing["attestations"].append(_audit(supported=60))
+    assert any("do not add up" in m for m in registry.listing_problems(listing))

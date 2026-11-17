@@ -645,7 +645,13 @@ Each says what was checked (`kind`), who vouches for it (`by`) and when
 | `validates` | The schema and every §6.4 check that needs no book; for a book in a series, also the series checks against the latest versions of the books it requires. | none |
 | `book-checks` | The §6.4 checks that need the book, run on the edition `textHash`. | `anchors` in the index, `resolved` of them, `errors` reported |
 | `spoiler-gate` | For every name of every entity, the first block of `textHash` whose words (§3.2) contain the name's words as a contiguous run. | `names` checked, `found` (names the text uses), `early` (names whose `from` anchor resolves to a block before that first use) |
-| `audit` | A sample of the index's claims, fact-checked by `model` against the passages they cite in `textHash`. | `sampled`, `supported`, `model` |
+| `audit` | A sample of the index's claims, fact-checked by `model` against the passages they cite in `textHash`. | `sampled`, `supported`, `model`; optional `unsupported` and `unsure` (the rest of the sample) |
+
+The counts of an attestation must be possible: an `audit` has `sampled` above
+0 and `supported + unsupported + unsure` within it, `book-checks` has `resolved`
+within `anchors`, and `spoiler-gate` has `early` within `found` within `names`.
+A registry refuses a bundle whose counts are not, and a client MUST ignore an
+attestation whose counts are not.
 
 `by` is `registry` (the registry ran the check), `builder` (the publisher's
 tool, at share time) or `reader` (another reader's app, against its own copy).

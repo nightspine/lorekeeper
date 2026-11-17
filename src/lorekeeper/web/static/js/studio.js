@@ -2,6 +2,8 @@ import { api } from "./api.js";
 import { onOllama, parseHash, replaceHash, state as appState } from "./app.js";
 import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadError, loading, relTime, STATUS_LABEL, toast, typeTag } from "./dom.js";
 import { confirmDialog, cover, partLine } from "./build.js";
+import { openShare, readyMade } from "./community.js";
+import { registerProvider } from "./palette.js";
 
 const PHASES = [
   { key: "extract", label: "Reading", icon: "book-open" },
@@ -194,6 +196,24 @@ function configure(target, book, ctx, fromJob = null) {
   // The estimate and the reason the button is off share one line; this is the only place the estimate is shown.
   const est = h("p.build-est", { role: "status" });
   const startBtn = h("button.btn.primary", { type: "button" }, "Build index");
+  // A ready-made index offered above: building is the second choice, so it is not the page's one primary button.
+  const ready = catalogKey ? readyMade(catalogKey) : null;
+  const providerHead = h("h2#build-q.build-q", "Where should it run?");
+  const buildOwn = h("h2.build-q.build-own", { hidden: true }, "Or build your own");
+  ready?.onOffer((offering) => {
+    startBtn.classList.toggle("primary", !offering);
+    buildOwn.hidden = !offering;
+  });
+  ctx.cleanup.push(() => ready?.stop());
+  if (ready) {
+    // Opens the block (and its opt-in question, if it has not been answered) for this book.
+    const off = registerProvider("build-community", () => [{ id: "find-community", label: "Find a community index for this book",
+      group: "This book", keywords: "ready-made shared registry browse", run: () => {
+        ready.refresh();
+        setTimeout(() => { ready.el.scrollIntoView({ block: "center" }); ready.el.querySelector("button, a")?.focus(); }, 200);
+      } }]);
+    ctx.cleanup.push(off);
+  }
 
   function update() {
     const chosen = book.chapters.filter((c) => picked.has(c.n));
@@ -339,9 +359,11 @@ function configure(target, book, ctx, fromJob = null) {
         cover({ title: book.title, authors: book.authors, cover: book.cover ? `/api/catalog/cover/up:${book.id}` : null }, "sm"),
         h("div", h("h1", book.title), h("p.by", book.authors.join(", ") || "Unknown author"))),
       h("p.build-facts", `${fmtInt(book.words)} words, ${storyCount} story ${storyCount === 1 ? "section" : "sections"}.`)),
+    ready?.el,
     banner,
+    buildOwn,
     h("section.build-run", h("h2#kind-q.build-q", "Book kind"), kindRows),
-    h("section.build-run", h("h2#build-q.build-q", "Where should it run?"), providerCards),
+    h("section.build-run", providerHead, providerCards),
     h("div.build-go", est, startBtn),
     catalogKey ? h("p.hint.build-hand", "Prefer to write it yourself? Start an empty index and add entries as you read. ",
       h("button.linkish", { type: "button", on: { click: async (ev) => {
@@ -601,6 +623,10 @@ export function mountStudio(root) {
             message: "Its generated index is deleted too. This can't be undone.", confirmLabel: "Delete run" })) return;
           try { await api.deleteJob(jobId); toast("Run deleted"); location.hash = "#/studio"; } catch (e) { toast(e.message, "error"); }
         } } }, icon("trash"), "Delete run"));
+      }
+      if (m.status === "done" && job.config?.whole_story) {
+        a.push(h("button.linkish.share-line", { type: "button", on: { click: () => openShare(libraryKey(job), job.book_title) } },
+          "Share this index with the community"));
       }
       clear(el.actions, a);
       if (keep) [...el.actions.children].find((x) => x.textContent === keep)?.focus();

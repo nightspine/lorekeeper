@@ -222,7 +222,7 @@ let shownHash = null;   // the hash of the page on screen, so a stray "#main" ca
 export function replaceHash(url) { shownHash = url; history.replaceState(null, "", url); }
 let firstRender = true;
 const VIEWS = { library: [mountLibrary, "Library"], book: [mountBook, "Book"], series: [mountSeries, "Series"],
-  studio: [mountStudio, "Runs"], build: [mountBuild, "Build"], reader: [mountReader, "Reader"], settings: [mountSettings, "Settings"],
+  studio: [mountStudio, "Runs"], build: [mountBuild, "Build"], reader: [mountReader, "Reader"], preview: [mountReader, "Preview"], settings: [mountSettings, "Settings"],
   login: [mountLogin, "Sign in"], password: [mountPassword, "New password"] };
 
 /** Go to `url` inside the page on screen (a Settings section): a history entry, no re-render. */
@@ -260,7 +260,7 @@ function render() {
   }
   // The Reader is opened from the Library with a book; without one, show the books that can be read.
   if (route === "reader" && !params.get("i")) { location.replace("#/library?show=ready"); return; }
-  const section = { book: "library", series: "library", reader: "library", build: "library", login: "", password: "" }[route] ?? route;
+  const section = { book: "library", series: "library", reader: "library", build: "library", preview: "library", login: "", password: "" }[route] ?? route;
   // Dialogs and drawers belong to the page that opened them.
   document.querySelectorAll(".modal-backdrop, .drawer, .drawer-backdrop").forEach((el) => el.remove());
   paintCurrent(route, section);

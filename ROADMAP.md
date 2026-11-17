@@ -40,5 +40,6 @@ This is a large change across SPEC §4 and §7, the schemas and the conformance 
 ## 5. Sharing
 
 - Landed: the registry format (SPEC §8.7): listings, attestations, share bundles and a static profile, with `lorekeeper share` and `lorekeeper registry check|add|remove|build`. Any static host can serve a registry, and a client finds an index by text hash with one GET.
-- Still to do: the in-app flow to browse, preview, install and share an index; ratings on a small service; signed indexes and publisher keys (SPEC §11.6).
+- Landed: the in-app flow. A build page offers an exact-text match from the community registry (opt in), previews it in the Reader held to the first chapters, adds it as a read-only version, and shares one you built through a checklist, a saved bundle and the registry's submission form. Audits of 50 claims are offered with a cloud model key.
+- Still to do: indexes made for another edition of the same book; installing a series as a set; making an installed index your own to edit; ratings on a small service; signed indexes and publisher keys (SPEC §11.6).
 - Index embedding in EPUB (SPEC §9) end to end.

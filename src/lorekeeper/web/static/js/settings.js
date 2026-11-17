@@ -36,6 +36,7 @@ export function mountSettings(root) {
     { id: "bookorbit", name: "Book Orbit" },
     { id: "cloud", name: "Cloud models" },
     { id: "local", name: "Local models" },
+    { id: "community", name: "Community indexes" },
   ].filter(Boolean);
   const ids = SECTIONS.map((x) => x.id);
   const asked = parseHash().parts[0];
@@ -104,6 +105,44 @@ export function mountSettings(root) {
       howItWorks(`A password is ${PASSWORD_RULE}, and it must differ from the current one. Changing it signs you out everywhere else.`,
         "Forgot it? Run lorekeeper reset-password on the server: it prints a new one and ends every session."));
   }
+
+  // ---- Community indexes ---------------------------------------------------------------------
+  async function paintCommunity(focusId) {
+    let c;
+    try { c = await api.communityConfig(); } catch (e) {
+      if (disposed) return;
+      lines.community.textContent = "Couldn't check";
+      return clear(panes.community, head("community", "Community indexes"), h("p.set-note", e.message));
+    }
+    if (disposed) return;
+    lines.community.textContent = c.enabled === true ? (c.default ? "On" : "On, another registry") : c.enabled === false ? "Off" : "Not asked yet";
+    const on = h("input", { type: "checkbox", role: "switch", id: "community-on", checked: c.enabled === true });
+    on.addEventListener("change", async () => {
+      on.disabled = true;
+      try { await api.setCommunity(on.checked); toast(on.checked ? "Community indexes are on" : "Community indexes are off"); }
+      catch (e) { toast(e.message, "error"); }
+      paintCommunity("community-on");
+    });
+    const url = h("input.input", { id: "community-url", type: "url", value: c.url, spellcheck: "false", autocomplete: "off" });
+    const save = h("button.btn", { type: "submit" }, "Save address");
+    clear(panes.community,
+      head("community", "Community indexes", "Ready-made indexes other people shared for the book you are looking at."),
+      h("form.set-rows", { on: { submit: async (e) => {
+        e.preventDefault();
+        save.disabled = true;
+        try { await api.setCommunity(undefined, url.value.trim()); toast("Registry address saved"); }
+        catch (ex) { toast(ex.message, "error"); }
+        paintCommunity("community-url");
+      } } },
+      row(h("label", { for: "community-on" }, "Look for them"), h("span.switch", on,
+        h("span", c.enabled === true ? "On" : c.enabled === false ? "Off, nothing is sent" : "Not asked yet"))),
+      h("div.set-row.form-row", h("label.set-lbl", { for: "community-url" }, "Registry address"), h("div.set-val", url,
+        c.default ? null : h("p.hint", "This is not the project's registry. You are trusting its owner to list indexes.")), h("div.set-act", save))),
+      howItWorks("Lorekeeper asks the registry about a book when you open its build page, and sends a fingerprint of the book's text, nothing else. Off means nothing is sent.",
+        "An index you add is checked against your own copy first. Indexes you already added stay in your library when this is off."));
+    if (focusId) document.getElementById(focusId)?.focus();
+  }
+  paintCommunity();
 
   // ---- Local models (Ollama) --------------------------------------------------------------------
   // Built once; each 15-second poll repaints only the status rows and the model table, so the open
