@@ -148,3 +148,35 @@ def test_the_view_carries_book_kind_only_when_the_index_has_one(scarlet, series)
 def test_the_view_takes_book_kind_from_the_current_book_only(scarlet, four, series):
     v = view([{**scarlet, "bookKind": "non-fiction"}, four], Position("sign-of-four", "ch1.para12"), series)
     assert "bookKind" not in v
+
+
+def _with_settings(scarlet):
+    import copy
+    ix = copy.deepcopy(scarlet)
+    for ev in ix["events"]:
+        if ev["id"] == "sis.ev.meeting":
+            ev["setting"] = {"text": "a laboratory", "place": "baker-street"}
+        if ev["id"] == "sis.ev.maiwand":
+            ev["setting"] = {"text": "the battlefield", "place": "maiwand"}
+    return ix
+
+
+def test_the_view_copies_an_event_setting_and_links_only_visible_places(scarlet, series):
+    ix = _with_settings(scarlet)
+    # baker-street is introduced at ch1.para52, after the meeting event (ch1.para35)
+    v = view([ix], Position("study-in-scarlet", "ch1.para35"), series)
+    evs = {e["id"]: e for e in v["events"]}
+    assert evs["sis.ev.maiwand"]["setting"] == {"text": "the battlefield", "place": "maiwand"}
+    assert evs["sis.ev.meeting"]["setting"] == {"text": "a laboratory"}
+    v = view([ix], Position("study-in-scarlet", "ch1.para52"), series)
+    evs = {e["id"]: e for e in v["events"]}
+    assert evs["sis.ev.meeting"]["setting"] == {"text": "a laboratory", "place": "baker-street"}
+    assert "setting" not in next(e for e in v["events"] if e["id"] == "sis.ev.criterion")
+
+
+def test_no_setting_or_place_link_for_a_future_event(scarlet, series):
+    ix = _with_settings(scarlet)
+    v = view([ix], Position("study-in-scarlet", "ch1.para05"), series)
+    assert all(e["id"] != "sis.ev.meeting" for e in v["events"])
+    assert "a laboratory" not in json.dumps(v)
+    assert "baker-street" not in json.dumps(v)
