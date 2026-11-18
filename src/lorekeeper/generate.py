@@ -1357,7 +1357,7 @@ class Generator:
             self.stats["dropped: setting too long"] += 1
             return None
         first = s.split()[0]
-        if first[0].isupper() and not first.isupper():
+        if first[0].isupper() and (not first.isupper() or first.casefold() in LOWER_FIRST):   # "A" is all capitals too
             low = first[0].lower() + first[1:]
             mid = re.search(r"[a-z,;] " + re.escape(first) + r"\b", passage)   # capitalised away from a sentence start
             if first.casefold() in LOWER_FIRST or (not mid and re.search(r"\b" + re.escape(low) + r"\b", passage)):
@@ -1451,7 +1451,8 @@ class Generator:
                 continue
             seen.add(key)
             out.append(c)
-        return out
+        kept = {c.cid for c in out}
+        return [c for c in out if c.kind != "setting" or c.data.get("event") in kept]   # a dropped event's setting goes too
 
     def _copied(self, s: str) -> bool:
         return bool(text.copied_runs(s, self.book_shingles, MAX_COPY))
