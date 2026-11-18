@@ -888,56 +888,33 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             mention_names[vk] = hit = (time.time(), v)
         return hit[1], anchor
 
-    SNIPPET = 240
-
-    def snippet(raw: str, start: int, end: int) -> dict:
-        """The sentence around a match, at most SNIPPET characters, with the name marked by offsets."""
-        a = max(raw.rfind(c, 0, start) for c in ".!?\u2026") + 1
-        a = a if a and start - a < SNIPPET else 0
-        m = re.search(r"[.!?\u2026][\"'\u201d\u2019)]*(?:\s|$)", raw[end:])
-        b = end + m.end() if m else len(raw)
-        lo = a
-        while lo < len(raw) and raw[lo].isspace():
-            lo += 1
-        hi = b
-        if hi - lo > SNIPPET:   # a long sentence: a window around the name, on word edges
-            lo2 = max(lo, start - (SNIPPET - (end - start)) // 2)
-            hi = min(b, lo2 + SNIPPET)
-            lo = max(lo, hi - SNIPPET)
-            if lo > a and (sp := raw.find(" ", lo, start)) != -1:
-                lo = sp + 1
-            if hi < b and (sp := raw.rfind(" ", end, hi)) != -1:
-                hi = sp
-        return {"text": raw[lo:hi].rstrip(), "start": start - lo, "end": end - lo}
-
-    def mentions_body(book, seq: int, got: dict | None) -> dict:
-        starts = [c.start for c in book.chapters]
-        cur = max((i for i, s in enumerate(starts) if s <= seq), default=-1)
-        counts = (got or {}).get("chapters", {})
-        chapters = [{"n": i + 1, "title": book.chapters[i].title, "count": counts.get(i, 0)} for i in range(cur + 1)]
-        seen = [c for c in chapters if c["count"]]
+    def mentions_body(book, m, eid: str) -> dict:
+        from .. import mentions
+        cur = m.current
+        if cur is None:
+            return {"total": len(book.chapters), "chapters": [], "current": None,
+                    "first": None, "busiest": None, "latest": None}
+        counts = m.counts.get(eid) or [0] * (cur + 1)
+        chapters = [{"n": i + 1, "title": book.chapters[i].title, "count": counts[i]} for i in range(cur + 1)]
         body = {"total": len(book.chapters), "chapters": chapters, "current": None,
                 "first": None, "busiest": None, "latest": None}
-        if not seen or cur < 0:
+        seen = [c for c in chapters if c["count"]]
+        if not seen:
             return body
         busiest = max(seen, key=lambda c: (c["count"], -c["n"]))
         body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
         body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
         body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
-        snips = [{"seq": q, **snippet(book.blocks[q].raw, s0, e0)}
-                 for q, spans in sorted((got or {}).get("matches", {}).items()) if q <= seq
-                 for s0, e0 in spans][-60:]
-        body["current"] = {"n": cur + 1, "count": chapters[cur]["count"], "snippets": snips}
+        spans = m.spans.get(eid, [])
+        body["current"] = {"n": cur + 1, "count": chapters[cur]["count"],
+                           "snippets": mentions.snippets({b.seq: b for b in book.blocks}, spans)}
         return body
 
     @app.get("/api/library/{key}/mentions")
     def library_mentions(key: str, entity: str, seq: int):
         """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`.
         Names are the ones the gated view shows at that position, and chapters after it are not even titled."""
-        try:
-            from .. import mentions
-        except ImportError:   # until the pipeline branch lands
-            from . import mentions_stub as mentions
+        from .. import mentions
         item = library.scan().get(key)
         if item is None or item["doc"].get("kind") != "index":
             raise HTTPException(404, "no such index")
@@ -949,11 +926,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if not 0 <= seq < len(book.blocks):
             raise HTTPException(422, "seq is outside the book")
         view, _ = gated_for_mentions(item, p, seq)
-        names = {e["id"]: [e["name"], *e["aliases"]] for e in view["entities"]}
+        names = mentions.visible_names(view)
         if entity not in names:
             raise HTTPException(404, "no such entry at this position")
-        got = mentions.count(book.blocks, book.chapters, names, seq).get(entity)
-        return mentions_body(book, seq, got)
+        return mentions_body(book, mentions.count(book.blocks, book.chapters, names, seq), entity)
 
     # ---- duplicate entities ----------------------------------------------------------------------
 
