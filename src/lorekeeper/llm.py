@@ -203,6 +203,11 @@ class Claude:
         if resp.stop_reason == "refusal":
             self.usage.refusals += 1
             return {}
+        if resp.stop_reason == "max_tokens":
+            # Cut off at the output limit: an empty result, as Ollama and the OpenAI-compatible backends
+            # return, so the generator splits the part instead of failing the run.
+            self.usage.truncated += 1
+            return {}
         text = next((b.text for b in resp.content if b.type == "text"), "")
         try:
             return json.loads(text)
