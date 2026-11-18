@@ -64,7 +64,7 @@ def check_wording(kind: str, s: str, cited: str | None = None, shingles: set | N
         raise WordingError(f"Too long: {noun} is at most {limit} characters")
     if kind in ("name", "title"):
         return
-    if kind == "setting" and len(text.words(s)) > generate.MAX_SETTING_WORDS:
+    if kind == "setting" and len(s.split()) > generate.MAX_SETTING_WORDS:
         raise WordingError(f"Too long: a setting is at most {generate.MAX_SETTING_WORDS} words, like “the deck of the Demeter”")
     m = generate.HINDSIGHT.search(s)
     if m:
@@ -412,6 +412,10 @@ class Editor:
             if e["type"] != etype:
                 e["type"] = etype
                 ctx.changed.add(j)
+        if etype != "place":      # a setting links only to a place; the text stays
+            for j, d in enumerate(ctx.docs):
+                if self._unlink_place(d, eid):
+                    ctx.changed.add(j)
         return f"Changed {ctx.names(eid)[0]} to a {etype}", {"entity": eid}
 
     def _op_delete_entity(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
@@ -427,12 +431,24 @@ class Editor:
             d["relations"] = [r for r in d.get("relations", []) if eid not in (r["src"], r["dst"])]
             for ev in d.get("events", []):
                 ev["entities"] = [x for x in ev["entities"] if x != eid]
+            self._unlink_place(d, eid)
             for e in d.get("entities", []):
                 for f in e.get("facets", []):
                     self._unreplace(f, gone)
             if json.dumps(d, sort_keys=True) != before:
                 ctx.changed.add(j)
         return f"Deleted {name}", {"entity": eid}
+
+    @staticmethod
+    def _unlink_place(doc: dict, eid: str) -> bool:
+        """Drop `setting.place` links to `eid` (the setting's text stays)."""
+        hit = False
+        for ev in doc.get("events", []):
+            st = ev.get("setting")
+            if st and st.get("place") == eid:
+                del st["place"]
+                hit = True
+        return hit
 
     @staticmethod
     def _unreplace(item: dict, gone: set[str]) -> None:
