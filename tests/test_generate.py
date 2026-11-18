@@ -539,11 +539,11 @@ class _Where(FakeLLM):
 
 
 def test_an_event_setting_is_normalised_and_linked_to_a_known_place(book_path, tmp_path):
-    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Inside the lighthouse,", "on the Rocks"]))
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Inside the lighthouse,", "on the Cliffs"]))
     by = {ev["summary"]: ev for ev in ix["events"]}
     place = next(e["id"] for e in ix["entities"] if e["type"] == "place")
     assert by["Alice arrives at the lighthouse."]["setting"] == {"text": "the lighthouse", "place": place}
-    assert by["Alice finds a hidden letter."]["setting"] == {"text": "the Rocks"}   # no place known: text only
+    assert by["Alice finds a hidden letter."]["setting"] == {"text": "the Cliffs"}   # no place known: text only
     assert report["stats"]["event settings"] == 2 and report["stats"]["settings linked to a place"] == 1
     assert generate.MAX_SETTING_WORDS == 8
     assert '"where"' in generate.EXTRACT and "from elsewhere" in generate.EXTRACT
@@ -792,3 +792,70 @@ def test_one_passage_keeps_a_tie_per_role(book_path, tmp_path):
     ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
         [("Alice Marlow", "cousin of", "Ezra Pike", "family"), ("Alice Marlow", "wife of", "Ezra Pike", "family")], []))
     assert sorted(_current_labels(ix)) == ["cousin of", "wife of"]
+
+
+class _Late(_Where):
+    """The checker accepts the setting but says the passage shows it only at paragraph 5."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "verdicts" in schema.get("properties", {}):
+            out["later"] = out.get("later", []) + [{"id": line.split(":")[0], "p": 5}
+                                                   for line in prompt.splitlines() if "(setting" in line and "the lighthouse" in line]
+        return out
+
+
+def test_a_setting_the_checker_moves_later_than_its_event_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Late(["the lighthouse", "a boat"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert "setting" not in by["Alice arrives at the lighthouse."]       # would have shown it before the text did
+    assert by["Alice finds a hidden letter."]["setting"] == {"text": "a boat"}
+    assert report["stats"]["dropped: setting revealed later than its event"] == 1
+
+
+class _OnlyASetting(_Where):
+    """The place is named by no event's `who`: only a setting uses it."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            for ev in out["events"]:
+                ev["who"] = [w for w in ev["who"] if w != "lighthouse"]
+        return out
+
+
+def test_a_place_used_only_as_a_setting_is_not_kept_and_the_link_goes(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_OnlyASetting(["the lighthouse", "a boat"]))
+    assert not any(e["type"] == "place" for e in ix["entities"])
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert by["Alice arrives at the lighthouse."]["setting"] == {"text": "the lighthouse"}   # text stays, no place
+    assert [str(e) for e in validate.check_index(ix) if e.level == "error"] == []
+    assert validate.check_schema(ix, "index") == []
+
+
+def test_a_setting_of_nine_whitespace_tokens_is_refused(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the hall & the stairs of the old house", "a boat"]))
+    assert not any(ev.get("setting", {}).get("text", "").startswith("the hall") for ev in ix["events"])
+    assert report["stats"]["dropped: setting too long"] == 1
+
+
+class _LatePlace(_Where):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["new"].append({"name": "floorboards", "type": "place", "p": 6, "desc": "A bare spot.", "desc_p": 6})
+        return out
+
+
+def test_a_place_first_named_after_the_event_is_not_linked(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_LatePlace(["the floorboards", "a boat"]))
+    first = next(ev for ev in ix["events"] if ev["summary"] == "Alice arrives at the lighthouse.")
+    assert first["setting"] == {"text": "the floorboards"}
+    assert [str(e) for e in validate.check_index(ix) if e.level == "error"] == []
+
+
+def test_a_setting_naming_a_word_the_book_has_not_used_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Castle Dracula", "Alice Marlow's room"]))
+    texts = [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")]
+    assert texts == ["Alice Marlow's room"]
+    assert report["stats"]["dropped: setting names a word the book hasn't used"] == 1
