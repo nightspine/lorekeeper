@@ -907,7 +907,10 @@
       ],
       "evidence": [
         "ch1.para30"
-      ]
+      ],
+      "setting": {
+        "text": "Holmes's rooms"
+      }
     },
     {
       "id": "sof.ev.watch",
@@ -931,8 +934,13 @@
         "mrs-hudson"
       ],
       "evidence": [
+        "ch1.para52",
+        "ch1.para53",
         "ch1.para55"
-      ]
+      ],
+      "setting": {
+        "text": "Holmes's rooms"
+      }
     },
     {
       "id": "sof.ev.father",
