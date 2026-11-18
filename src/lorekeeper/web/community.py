@@ -17,6 +17,7 @@ import json
 import os
 import math
 import re
+import socket
 import shutil
 import threading
 import time
@@ -37,6 +38,7 @@ LOOKUP_TTL = 600           # seconds a lookup file is served without asking the 
 MAX_BODY = 6 * 1024 * 1024
 TIMEOUT = 10             # seconds for one fetch in all: connect, redirects, headers and body
 MAX_REDIRECTS = 3
+MAX_INFLIGHT = 4         # fetches running at once; a timed-out one is closed, and this bounds the rest
 MAX_FILE_NAME = 255      # bytes in one file name on common filesystems
 MAX_RESULTS = 200        # lookup results considered: a real title has a handful of listings, and each costs a schema check
 AUDIT_CLAIMS = 50
@@ -58,6 +60,8 @@ class CommunityError(Exception):
 
 class FetchError(Exception):
     """The registry could not be reached, answered with something we refuse to read, or sent too much."""
+
+_slots = threading.BoundedSemaphore(MAX_INFLIGHT)
 
 
 def inside(base: str, target: str) -> bool:
@@ -98,27 +102,61 @@ def default_fetch(url: str, base: str | None = None) -> tuple[int, bytes]:
     body; at most MAX_BODY bytes read; a redirect is followed (MAX_REDIRECTS at most) only under `base` (the
     registry's address; else the request's own origin). Raises FetchError when nothing usable came back
     (a 404 is a status, not an error)."""
+    if not _slots.acquire(blocking=False):
+        raise FetchError("too many registry requests are still running")
     deadline = time.monotonic() + TIMEOUT
     out: list = []
+    conns: list = []
 
     def run() -> None:
         try:
-            out.append(_fetch(url, base, deadline))
+            out.append(_fetch(url, base, deadline, conns))
         except BaseException as e:  # noqa: BLE001 - handed to the caller
             out.append(e)
+        finally:
+            _slots.release()
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
     t.join(max(0.0, deadline - time.monotonic()) + 0.05)     # a server that drips headers cannot outlast this
     if not out:
+        for c in list(conns):     # really close it: shut the socket so the blocked read in the thread ends now
+            try:
+                if c.sock is not None:
+                    c.sock.shutdown(socket.SHUT_RDWR)
+                c.close()
+            except OSError:
+                pass
         raise FetchError("the registry took too long to answer")
     if isinstance(out[0], BaseException):
         raise out[0]
     return out[0]
 
 
-def _fetch(url: str, base: str | None, deadline: float) -> tuple[int, bytes]:
-    opener = urllib.request.build_opener(_Confined(base, deadline))
+class _Tracked:
+    """HTTP(S) handlers that record each connection they open, so a fetch past its deadline can close them."""
+
+    @staticmethod
+    def handlers(conns: list):
+        def wrap(cls):
+            def factory(*a, **k):
+                c = cls(*a, **k)
+                conns.append(c)
+                return c
+            return factory
+
+        class H(urllib.request.HTTPHandler):
+            def http_open(self, req):
+                return self.do_open(wrap(http.client.HTTPConnection), req)
+
+        class S(urllib.request.HTTPSHandler):
+            def https_open(self, req):
+                return self.do_open(wrap(http.client.HTTPSConnection), req)
+        return [H(), S()]
+
+
+def _fetch(url: str, base: str | None, deadline: float, conns: list | None = None) -> tuple[int, bytes]:
+    opener = urllib.request.build_opener(_Confined(base, deadline), *_Tracked.handlers(conns if conns is not None else []))
     req = urllib.request.Request(url, headers={"User-Agent": "lorekeeper", "Accept": "application/json"})
     try:
         with opener.open(req, timeout=max(0.1, deadline - time.monotonic())) as r:
@@ -194,8 +232,8 @@ def registry_slug(url: str) -> str:
 
 
 def _attaches(editions, text_hash: str) -> bool:
-    """Does an edition of the index match this text and one the catalog attaches a version to (not `builtFrom: false`)?"""
-    return any(isinstance(e, dict) and e.get("textHash") == text_hash and e.get("builtFrom", True) is not False
+    """Does an edition of the index match this text and one the catalog attaches a version to (`builtFrom` exactly true, as the Reader and `check_against_book` count an exact edition)?"""
+    return any(isinstance(e, dict) and e.get("textHash") == text_hash and e.get("builtFrom") is True
                for e in editions)
 
 
@@ -358,8 +396,8 @@ class Community:
                 continue     # a series set is not offered in this version
             if registry.listing_problems(listing) or listing["id"] != r["id"] or listing["digest"] != r["digest"]:
                 continue
-            if not _attaches(listing["editions"], text_hash):
-                continue     # exact text only, and an edition the catalog would attach it to
+            if not any(e.get("textHash") == text_hash for e in listing["editions"]):
+                continue     # exact text only (a listing carries no builtFrom; fetch checks it on the index itself)
             try:
                 href, pub, slug, version = self._resolve(url, r["href"])
             except CommunityError:
@@ -536,7 +574,7 @@ class Community:
         book_issues = registry.errors_of(validate.check_against_book(doc, blocks))
         resolved = anchor_mod.resolve(doc["anchors"], blocks)
         lying = next((i for i, a in enumerate(doc["anchors"])
-                      if "seq" in a and resolved.get(a["id"]) is not None and a["seq"] != resolved[a["id"]]), None)
+                      if "seq" in a and resolved.get(a["id"]) != a["seq"]), None)     # unresolved counts: the seq is trusted
         if lying is not None:     # the Reader places anchors by seq hint on an exact edition, so a wrong one would reveal early
             raise CommunityError(422, "The index's paragraph numbers don't match this copy of the book, so it was "
                                  "not used.", "invalid")

@@ -422,21 +422,71 @@ def test_one_malformed_result_is_dropped_and_the_valid_one_kept(env):
     assert [r["id"] for r in books(env)["results"]] == [env.reg.listing["id"]]
 
 
-def test_an_edition_the_catalog_would_not_attach_is_not_offered_or_fetched(env):
+def test_an_edition_that_is_not_built_from_the_text_is_refused_at_fetch_and_install(env):
     turn_on(env, URL)
-    lookup = json.loads((env.reg.out / f"v0/lookup/text/{env.th}.json").read_text())
-    for e in lookup["results"][0]["listing"]["editions"]:
-        e["builtFrom"] = False
-    env.reg.override[listing_url(env)] = (200, json.dumps(lookup).encode())
-    assert books(env)["results"] == []
-    # offered by the listing, but the index itself says builtFrom false: refused at fetch
-    env.reg.override.pop(listing_url(env))
-    env.app.state.community.now = lambda: 10 ** 10
+    for flag in (False, None):      # false, or missing: only builtFrom true is an exact edition
+        env.app.state.community.now = lambda: 10 ** 10 + (10_000 if flag is None else 0)
+        doc = good_doc(env)
+        if flag is None:
+            doc["editions"][0].pop("builtFrom", None)
+        else:
+            doc["editions"][0]["builtFrom"] = flag
+        d = serve_index(env, registry.dumps(doc).encode())
+        res = {"id": offer(env)["id"], "digest": d}
+        r = fetch(env, res)
+        assert r.status_code == 422 and r.json()["code"] == "invalid" and "not made for this copy" in r.json()["detail"]
+        assert not env.app.state.community._cache_file(d).exists()
+        assert install(env, res).status_code in (409, 422)
+
+
+def test_an_unresolved_anchor_with_a_seq_hint_is_refused_but_one_without_is_reported(env):
+    turn_on(env, URL)
     doc = good_doc(env)
-    doc["editions"][0]["builtFrom"] = False
+    doc["anchors"][0]["fp"] = "0" * len(doc["anchors"][0]["fp"])      # the hint says 0 but nothing resolves
     d = serve_index(env, registry.dumps(doc).encode())
     r = fetch(env, {"id": offer(env)["id"], "digest": d})
-    assert r.status_code == 422 and r.json()["code"] == "invalid" and "not made for this copy" in r.json()["detail"]
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not env.app.state.community._cache_file(d).exists()
+    env.app.state.community.now = lambda: 10 ** 10
+    doc["anchors"][0].pop("seq")
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 200 and r.json()["resolved"] == 0
+
+
+def test_timed_out_fetches_are_closed_and_in_flight_ones_are_capped(monkeypatch):
+    import threading
+    import time as _t
+    monkeypatch.setattr(community_mod, "TIMEOUT", 0.6)
+    closed = []
+
+    def drip(conn):
+        conn.recv(4096)
+        try:
+            for b in b"HTTP/1.1 200 OK\r\nX-A: " + b"a" * 1000:
+                conn.send(bytes([b]))
+                _t.sleep(0.2)
+        except OSError:
+            closed.append(1)
+    url, stop = serve_once(drip, 20)
+    base = threading.active_count()
+    try:
+        for _ in range(community_mod.MAX_INFLIGHT + 3):      # more than the cap, one after another
+            with pytest.raises(community_mod.FetchError):
+                community_mod.default_fetch(url + "/reg/x", url + "/reg")
+        _t.sleep(0.6)
+        assert closed and threading.active_count() <= base + 3     # the timed-out connections were shut, threads ended
+    finally:
+        stop()
+
+
+def test_fetches_beyond_the_cap_are_refused_at_once(monkeypatch):
+    import threading
+    sem = threading.BoundedSemaphore(1)
+    sem.acquire()
+    monkeypatch.setattr(community_mod, "_slots", sem)
+    with pytest.raises(community_mod.FetchError, match="too many"):
+        community_mod.default_fetch("http://127.0.0.1:9/x")
 
 
 def test_a_lying_seq_hint_is_refused_and_not_cached(env):
@@ -630,6 +680,7 @@ def test_fetch_reports_problems_against_the_copy_without_refusing(env):
     doc = good_doc(env)
     a = doc["anchors"][0]
     a["fp"] = "0" * len(a["fp"])
+    a.pop("seq", None)      # with a seq hint this is refused (below); without one it is only reported
     d = serve_index(env, registry.dumps(doc).encode())
     r = fetch(env, {"id": offer(env)["id"], "digest": d})
     assert r.status_code == 200, r.text
