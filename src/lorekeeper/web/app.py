@@ -889,15 +889,24 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return hit[1], anchor
 
     def mentions_body(book, m, eid: str) -> dict:
+        """Chapters are the story chapters (as the build form counts them), numbered 1..N in reading order."""
         from .. import mentions
-        cur = m.current
-        if cur is None:
-            return {"total": len(book.chapters), "chapters": [], "current": None,
-                    "first": None, "busiest": None, "latest": None}
-        counts = m.counts.get(eid) or [0] * (cur + 1)
-        chapters = [{"n": i + 1, "title": book.chapters[i].title, "count": counts[i]} for i in range(cur + 1)]
-        body = {"total": len(book.chapters), "chapters": chapters, "current": None,
+        from .jobs import mark_story
+        ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+        secs = [{"title": c.title or f"Section {i + 1}",
+                 "words": sum(len(b.words) for b in book.blocks[c.start:end])}
+                for i, (c, end) in enumerate(zip(book.chapters, ends))]
+        mark_story(secs)
+        story = [i for i, c in enumerate(secs) if c["story"]]         # section index of story chapter n = story[n - 1]
+        body = {"total": len(story), "chapters": [], "current": None,
                 "first": None, "busiest": None, "latest": None}
+        cur = m.current
+        if cur is None or not story or cur < story[0]:                # front matter: nothing to chart yet
+            return body
+        counts = m.counts.get(eid) or [0] * (cur + 1)
+        chapters = [{"n": n + 1, "title": secs[i]["title"], "count": counts[i]}
+                    for n, i in enumerate(story) if i <= cur]
+        body["chapters"] = chapters
         seen = [c for c in chapters if c["count"]]
         if not seen:
             return body
@@ -905,9 +914,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
         body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
         body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
-        spans = m.spans.get(eid, [])
-        body["current"] = {"n": cur + 1, "count": chapters[cur]["count"],
-                           "snippets": mentions.snippets({b.seq: b for b in book.blocks}, spans)}
+        if cur in story:                                              # a position in back matter has no current chapter
+            body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
+                               "snippets": mentions.snippets({b.seq: b for b in book.blocks}, m.spans.get(eid, []))}
         return body
 
     @app.get("/api/library/{key}/mentions")

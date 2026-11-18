@@ -4,7 +4,8 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from .test_editor import edit, handmade  # noqa: E402
+from .conftest import CORPUS, EXAMPLES  # noqa: E402
+from .test_editor import edit  # noqa: E402
 from .test_web import client, upload  # noqa: E402, F401
 
 # The Lighthouse: seq 0 "Chapter One" heading, 1 Alice arrives, 2 her brother Tom, 3 "The keeper, a quiet
@@ -12,7 +13,8 @@ from .test_web import client, upload  # noqa: E402, F401
 
 
 def setup(client, tmp_path):
-    book, key = handmade(client, tmp_path)
+    key = book_with(client, tmp_path, front=False)
+    book = None
     edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A young woman who arrives at a lighthouse.")
     edit(client, key, op="add-entity", name="Tom Marlow", type="person", seq=2)
     edit(client, key, op="add-name", entity="tom-marlow", value="Tom", kind="alias", seq=2)
@@ -97,3 +99,75 @@ def test_not_found_cases(client, tmp_path):
     for p in (tmp_path / "data").rglob("*.epub"):
         p.unlink()
     assert get(client, key, "alice-marlow", 5).status_code == 404
+
+
+# ---- chapters are the story chapters -------------------------------------------------------------------------
+
+PAD = " The wind came off the water and the gulls wheeled over the rocks until the light began to fade at last."
+
+
+def book_with(client, tmp_path, front):
+    """The Lighthouse with chapter two long enough to count as story, and optionally a front-matter entry first."""
+    from .test_generate import CH2, make_epub
+    path = make_epub(tmp_path / "front.epub", ch2=[CH2[0] + PAD * 2, CH2[1]],
+                     front=("Title Page", ["The Lighthouse, a novel in two chapters by A. Writer, printed for the first time.",
+                                           "All rights reserved by the author and the publisher of this edition."]) if front else None)
+    r = client.post("/api/books", files={"file": ("front.epub", path.read_bytes(), "application/epub+zip")})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/catalog/books/up:{r.json()['id']}/handmade", json={"license": "CC-BY-4.0"})
+    assert r.status_code == 200, r.text
+    return r.json()["key"]
+
+
+def test_front_matter_is_not_a_chapter(client, tmp_path):
+    key = book_with(client, tmp_path, front=True)
+    # Front matter takes seq 0-2 (heading and two paragraphs); chapter one's heading is 3, Alice arrives at 4.
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=4, desc="A young woman who arrives at a lighthouse.")
+    r = get(client, key, "alice-marlow", 6).json()
+    assert r["total"] == 2 and [(c["n"], c["title"]) for c in r["chapters"]] == [(1, "Chapter One")]
+    assert r["current"]["n"] == 1 and r["first"]["n"] == 1
+    # Chapter two is numbered 2, not 3.
+    r = get(client, key, "alice-marlow", 10).json()
+    assert [(c["n"], c["title"]) for c in r["chapters"]] == [(1, "Chapter One"), (2, "Chapter Two")]
+    assert r["total"] == 2
+
+
+def test_a_position_in_front_matter_has_no_chapters(client, tmp_path):
+    key = book_with(client, tmp_path, front=True)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=4)
+    # Nobody is visible at seq 1, so ask about an entry added at the title page itself.
+    edit(client, key, op="add-entity", name="Writer", type="person", seq=1)
+    r = get(client, key, "writer", 2)
+    assert r.status_code == 200
+    assert r.json() == {"total": 2, "chapters": [], "current": None, "first": None, "busiest": None, "latest": None}
+
+
+@pytest.mark.skipif(not CORPUS.is_dir(), reason="needs corpus/pg244")
+def test_study_in_scarlet_is_numbered_from_chapter_one(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from lorekeeper import epub
+    from lorekeeper.web import app as web_app
+    from lorekeeper.web.jobs import mark_story
+
+    path = CORPUS / "pg244" / "pg244.epub"
+    if not path.exists():
+        pytest.skip("needs corpus/pg244")
+    book = epub.read(path)
+    ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+    secs = [{"title": c.title or "", "words": sum(len(b.words) for b in book.blocks[c.start:e])}
+            for c, e in zip(book.chapters, ends)]
+    mark_story(secs)
+    story = [i for i, s in enumerate(secs) if s["story"]]
+    assert story[0] > 0                                               # there is front matter
+    app = web_app.create_app(tmp_path / "data", [("examples", EXAMPLES.parent)], [CORPUS / "pg244"],
+                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        key = "examples--sherlock-holmes--study-in-scarlet"
+        seq = book.chapters[story[1]].start - 1                       # the last block of chapter one
+        r = c.get(f"/api/library/{key}/mentions", params={"entity": "holmes", "seq": seq})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["total"] == len(story)
+        assert body["chapters"][0]["n"] == 1 and body["chapters"][0]["title"].startswith("CHAPTER I.")
+        assert [ch["n"] for ch in body["chapters"]] == list(range(1, len(body["chapters"]) + 1))
