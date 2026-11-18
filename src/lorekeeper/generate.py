@@ -55,8 +55,9 @@ def default_chunk_words(provider: str | None) -> int:
 
 
 def default_chunk_mode(provider: str | None) -> str:
-    """Whole chapters for a cloud model (one call per chapter, whatever its length); fixed-size parts for Ollama."""
-    return "words" if (provider or "ollama") == "ollama" else "chapter"
+    """Fixed-size parts for every provider: the measurement showed no gain from whole chapters on books whose
+    chapters fit in a part, so "chapter" is an option, not the default."""
+    return "words"
 
 
 def max_part_words(provider: str | None, num_ctx: int = 16384) -> int:
