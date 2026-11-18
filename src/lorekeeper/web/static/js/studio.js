@@ -59,6 +59,10 @@ function configure(target, book, ctx, fromJob = null) {
   const legacy = Boolean(fromJob) && !("check_model" in t);
   let chunkChosen = Boolean(fromJob) && cfg.chunk_words >= 1000 && !legacy;   // a size the user set stays
   if (!chunkChosen) cfg.chunk_words = defaultChunk(cfg.provider);
+  // Whole chapters are the default for a cloud model, off for Ollama; a rerun keeps what its run had.
+  const defaultMode = (pv) => (pv === "ollama" ? "words" : "chapter");
+  let modeChosen = Boolean(fromJob);
+  if (!modeChosen) cfg.chunk_mode = defaultMode(cfg.provider);
   let replaceOld = Boolean(fromJob);
   const maxWords = Math.max(1, ...book.chapters.map((c) => c.words));
   const catalogKey = ctx.catalog || fromJob?.config.catalog_key || null;
@@ -134,6 +138,7 @@ function configure(target, book, ctx, fromJob = null) {
       if (!radio.checked) return;
       cfg.provider = pv; cfg.model = null; cfg.check_model = null;
       if (!chunkChosen) { cfg.chunk_words = defaultChunk(pv); chunk.value = String(cfg.chunk_words); }
+      if (!modeChosen) { cfg.chunk_mode = defaultMode(pv); wholeBox.checked = cfg.chunk_mode === "chapter"; }
       ctxField.hidden = pv !== "ollama";
       fillModels(); update();
     });
@@ -163,8 +168,8 @@ function configure(target, book, ctx, fromJob = null) {
   const chunk = h("input.range", { type: "range", min: "1000", max: "8000", step: "500", value: String(cfg.chunk_words), id: "cfg-chunk",
     "aria-describedby": "chunk-hint" });
   const chunkVal = h("output.num", { for: "cfg-chunk" }, `${fmtInt(cfg.chunk_words)} words`);
-  const wholeBox = h("input", { type: "checkbox", id: "cfg-whole", checked: cfg.chunk_mode === "chapter", "aria-describedby": "whole-hint" });
-  wholeBox.addEventListener("change", () => { cfg.chunk_mode = wholeBox.checked ? "chapter" : "words"; update(); });
+  const wholeBox = h("input", { type: "checkbox", role: "switch", id: "cfg-whole", checked: cfg.chunk_mode === "chapter", "aria-describedby": "whole-hint" });
+  wholeBox.addEventListener("change", () => { modeChosen = true; cfg.chunk_mode = wholeBox.checked ? "chapter" : "words"; update(); });
   const sizeField = h("div.field", { id: "size-field" }, h("div.field-split",
     h("label", { for: "cfg-chunk" }, "Part size"), chunkVal), chunk,
     h("p.hint#chunk-hint", "Words the model reads per call."));
@@ -561,7 +566,7 @@ export function mountStudio(root) {
           h("div.monitor-id", h("h2", job.book_title),
             h("p.run-meta",
               el.badge, el.model = h("span.run-model", job.config.model || "default model"),
-              h("span", `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
+              h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
               h("span", job.config.verify === false ? "no fact-check" : "fact-checked"))),
           el.actions),
         el.error,
