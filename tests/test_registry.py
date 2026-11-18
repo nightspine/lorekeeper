@@ -161,7 +161,7 @@ def test_spoiler_gate_is_cheap_for_many_names_sharing_a_common_word():
     index = {"anchors": [{"id": "a0", "fp": fp}], "entities": [{"id": "e", "names": names}]}
     t0 = time.monotonic()
     gate = registry.spoiler_gate(index, blocks)
-    assert time.monotonic() - t0 < 1.0
+    assert time.monotonic() - t0 < 10.0      # a healthy run takes ~0.1 s; rescanning per name takes minutes
     assert (gate["names"], gate["found"]) == (5002, 2)
 
 

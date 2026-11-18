@@ -262,3 +262,42 @@ def test_estimate_matches_what_audit_sends(tmp_path):
     assert est["claims"] == r["sampled"] and est["calls"] == len(j.prompts) == 3
     assert est["input_chars"] == sum(len(audit.SYSTEM) + len(p) for p in j.prompts)
     assert audit.estimate({"anchors": [], "entities": []}, blocks) == {"claims": 0, "calls": 0, "input_chars": 0}
+
+
+def test_a_recap_only_or_small_index_is_still_audited():
+    only = [audit.Claim(f"c{i}", i, "summary", "t", [i]) for i in range(1, 6)]
+    assert len(audit.sample(only, 50)) == 5
+    few = [audit.Claim(f"c{i}", i, "fact", "t", [i]) for i in range(1, 9)]
+    many = [audit.Claim(f"c{i}", i, "summary", "t", [i]) for i in range(9, 39)]
+    got = audit.sample(few + many, 50)
+    assert sum(c.kind == "summary" for c in got) == 1 and sum(c.kind == "fact" for c in got) == 8
+
+
+def test_dracula_facts_keep_a_primary_name_the_book_has_revealed():
+    import json
+    from pathlib import Path
+    idx = json.loads((Path(__file__).parent.parent / "examples/dracula/dracula.json").read_text())
+    ordinal = {a["id"]: i for i, a in enumerate(idx["anchors"])}
+    resolved = {a["id"]: a.get("seq") for a in idx["anchors"]}
+    facts = {c.text for c in audit.claims_of(idx, resolved) if c.kind == "fact"}
+    checked = 0
+    for e in idx["entities"]:
+        prim = next((n for n in e["names"] if n.get("kind") == "primary"), None)
+        for f in e.get("facets", []):
+            if f.get("kind") == "profile" or prim is None or ordinal[prim["from"]] > ordinal[f["from"]]:
+                continue
+            checked += 1
+            assert f"{prim['value']}: {f['text']}" in facts
+    assert checked > 30
+
+
+def test_ties_name_each_end_as_the_book_had_revealed_it(tmp_path):
+    blocks = book(tmp_path)
+    idx = index_of(blocks)
+    ids = [a["id"] for a in idx["anchors"]]
+    resolved = {a["id"]: a["seq"] for a in idx["anchors"]}
+    idx["entities"][0]["names"] = [{"value": "Alice Marlow", "kind": "primary", "from": ids[6]},
+                                   {"value": "the stranger", "kind": "alias", "from": ids[0]}]
+    idx["relations"][0]["from"] = idx["relations"][0]["evidence"][0] = ids[1]
+    rel = next(c for c in audit.claims_of(idx, resolved) if c.kind == "relation")
+    assert rel.text == "the stranger, looks for, the stranger"

@@ -68,14 +68,17 @@ def _sentences(t: str) -> list[str]:
 
 
 def _name_at(entity: dict, frm: str, ordinal: dict[str, int], default: str) -> str:
-    """The name the book has revealed by anchor `frm`: the entity's latest name whose `from` is at or before
-    it; none yet, the earliest name. Never a name the reader has not met by then."""
+    """The name to use for `entity` at anchor `frm`: its primary name when the book has revealed it by then;
+    else the latest name revealed by then; else the earliest name. Never a name the reader has not met yet."""
     at = ordinal.get(frm)
-    named = [(ordinal[n["from"]], i, n["value"]) for i, n in enumerate(entity.get("names") or [])
+    named = [(ordinal[n["from"]], i, n["value"], n.get("kind") == "primary") for i, n in enumerate(entity.get("names") or [])
              if n.get("value") and n.get("from") in ordinal]
     if at is None or not named:
         return default
     seen = [t for t in named if t[0] <= at]
+    for t in seen:
+        if t[3]:
+            return t[2]
     return max(seen)[2] if seen else min(named)[2]
 
 
@@ -97,6 +100,7 @@ def claims_of(index: dict, resolved: dict[str, int | None]) -> list[Claim]:
             return
         out.append(Claim(f"c{len(out) + 1}", ordinal[frm], kind, text_.strip(), seqs, frm=resolved.get(frm), **kw))
 
+    ents = {e.get("id"): e for e in index.get("entities") or []}
     names = {}
     for e in index.get("entities") or []:
         nm = next((n["value"] for n in e.get("names") or [] if n.get("kind") == "primary"), None) \
@@ -107,7 +111,10 @@ def claims_of(index: dict, resolved: dict[str, int | None]) -> list[Claim]:
                 add("fact", f"{_name_at(e, f.get('from', ''), ordinal, nm)}: {f.get('text', '')}",
                     f.get("from", ""), f.get("evidence"))
     for r in index.get("relations") or []:
-        a, b = names.get(r.get("src"), r.get("src")), names.get(r.get("dst"), r.get("dst"))
+        def end(id_):
+            e = ents.get(id_)
+            return _name_at(e, r.get("from", ""), ordinal, names.get(id_, id_)) if e else id_
+        a, b = end(r.get("src")), end(r.get("dst"))
         add("relation", f"{a}, {r.get('label', '')}, {b}", r.get("from", ""), r.get("evidence"))
     for ev in index.get("events") or []:
         add("event", ev.get("summary", ""), ev.get("from", ""), ev.get("evidence"))
@@ -134,9 +141,13 @@ def sample(claims: list[Claim], n: int, seed: int = 0) -> list[Claim]:
     others = [c for c in claims if c.kind != "summary"]
     if len(claims) <= n and len(summaries) <= len(claims) // SUMMARY_SHARE:
         return list(claims)
-    # recap sentences are at most a tenth of what is actually sampled, also when fewer than n are
+    # recap sentences are at most a tenth of what is actually sampled, with two exceptions: at least one when
+    # any exist beside other claims, and up to a tenth of n when there is nothing else to check
     k_o = min(len(others), n - min(len(summaries), n // SUMMARY_SHARE))
-    k_s = min(len(summaries), n // SUMMARY_SHARE, k_o // (SUMMARY_SHARE - 1))
+    if others:
+        k_s = min(len(summaries), max(1, k_o // (SUMMARY_SHARE - 1)), n - k_o)
+    else:
+        k_s = min(len(summaries), n // SUMMARY_SHARE)
     picked = _strata(summaries, k_s, seed) + _strata(others, k_o, seed + 1)
     picked.sort(key=lambda c: (c.ordinal, int(c.cid[1:])))
     return picked
