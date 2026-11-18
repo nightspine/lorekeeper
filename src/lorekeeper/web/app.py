@@ -851,6 +851,110 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {"synced": True, "source": "bookorbit", "updatedAt": entry.get("updatedAt"),
                 "percentage": entry.get("percentage"), **got}
 
+    # ---- mentions of an entry, per chapter, gated at the position ----------------------------------
+
+    mention_names: dict[tuple, tuple[float, dict]] = {}   # (key, anchor) → (time, the gated view); kept a minute
+
+    def gated_for_mentions(item: dict, p: Path, seq: int) -> tuple[dict, str | None]:
+        """The Reader's view at block `seq` (the block being read does not count, §3.7) and its anchor."""
+        from .. import gating, locators
+        doc = item["doc"]
+        book = parsed(p)
+        ck = ("res", str(item["path"]), item["path"].stat().st_mtime, str(p), p.stat().st_mtime)
+        if ck not in mention_names:
+            mention_names[ck] = (time.time(), locators.resolve_edition(doc, book))
+        resolved = mention_names[ck][1]
+        anchor = locators.position(doc["anchors"], resolved, seq)
+        vk = ("view", item["key"], anchor, item["path"].stat().st_mtime)
+        hit = mention_names.get(vk)
+        if hit is None or time.time() - hit[0] > 60:
+            sref = doc.get("series")
+            indexes, series = [doc], None
+            if sref:
+                scan = library.scan()
+                mans = [i for i in scan.values() if i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
+                if mans:
+                    series = mans[0]["doc"]
+                    for b in series["books"]:
+                        if b["key"] != sref["book"]:
+                            c = next((i for i in scan.values() if i["doc"].get("kind") == "index"
+                                      and (i["doc"].get("series") or {}).get("id") == sref["id"]
+                                      and i["doc"]["series"]["book"] == b["key"]), None)
+                            if c:
+                                indexes.append(c["doc"])
+            v = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor), series, None, None)
+            if len(mention_names) > 64:
+                mention_names.clear()
+            mention_names[vk] = hit = (time.time(), v)
+        return hit[1], anchor
+
+    SNIPPET = 240
+
+    def snippet(raw: str, start: int, end: int) -> dict:
+        """The sentence around a match, at most SNIPPET characters, with the name marked by offsets."""
+        a = max(raw.rfind(c, 0, start) for c in ".!?\u2026") + 1
+        a = a if a and start - a < SNIPPET else 0
+        m = re.search(r"[.!?\u2026][\"'\u201d\u2019)]*(?:\s|$)", raw[end:])
+        b = end + m.end() if m else len(raw)
+        lo = a
+        while lo < len(raw) and raw[lo].isspace():
+            lo += 1
+        hi = b
+        if hi - lo > SNIPPET:   # a long sentence: a window around the name, on word edges
+            lo2 = max(lo, start - (SNIPPET - (end - start)) // 2)
+            hi = min(b, lo2 + SNIPPET)
+            lo = max(lo, hi - SNIPPET)
+            if lo > a and (sp := raw.find(" ", lo, start)) != -1:
+                lo = sp + 1
+            if hi < b and (sp := raw.rfind(" ", end, hi)) != -1:
+                hi = sp
+        return {"text": raw[lo:hi].rstrip(), "start": start - lo, "end": end - lo}
+
+    def mentions_body(book, seq: int, got: dict | None) -> dict:
+        starts = [c.start for c in book.chapters]
+        cur = max((i for i, s in enumerate(starts) if s <= seq), default=-1)
+        counts = (got or {}).get("chapters", {})
+        chapters = [{"n": i + 1, "title": book.chapters[i].title, "count": counts.get(i, 0)} for i in range(cur + 1)]
+        seen = [c for c in chapters if c["count"]]
+        body = {"total": len(book.chapters), "chapters": chapters, "current": None,
+                "first": None, "busiest": None, "latest": None}
+        if not seen or cur < 0:
+            return body
+        busiest = max(seen, key=lambda c: (c["count"], -c["n"]))
+        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
+        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
+        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
+        snips = [{"seq": q, **snippet(book.blocks[q].raw, s0, e0)}
+                 for q, spans in sorted((got or {}).get("matches", {}).items()) if q <= seq
+                 for s0, e0 in spans][-60:]
+        body["current"] = {"n": cur + 1, "count": chapters[cur]["count"], "snippets": snips}
+        return body
+
+    @app.get("/api/library/{key}/mentions")
+    def library_mentions(key: str, entity: str, seq: int):
+        """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`.
+        Names are the ones the gated view shows at that position, and chapters after it are not even titled."""
+        try:
+            from .. import mentions
+        except ImportError:   # until the pipeline branch lands
+            from . import mentions_stub as mentions
+        item = library.scan().get(key)
+        if item is None or item["doc"].get("kind") != "index":
+            raise HTTPException(404, "no such index")
+        p = next((q for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
+                  for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
+        if p is None:
+            raise HTTPException(404, "book file for this index not found")
+        book = parsed(p)
+        if not 0 <= seq < len(book.blocks):
+            raise HTTPException(422, "seq is outside the book")
+        view, _ = gated_for_mentions(item, p, seq)
+        names = {e["id"]: [e["name"], *e["aliases"]] for e in view["entities"]}
+        if entity not in names:
+            raise HTTPException(404, "no such entry at this position")
+        got = mentions.count(book.blocks, book.chapters, names, seq).get(entity)
+        return mentions_body(book, seq, got)
+
     # ---- duplicate entities ----------------------------------------------------------------------
 
     def not_community(key: str) -> None:
