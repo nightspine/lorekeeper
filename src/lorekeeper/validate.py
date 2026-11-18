@@ -8,6 +8,7 @@ Cross-book checks run when a series and its other indexes are supplied.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from functools import cache
 from importlib import resources
@@ -195,6 +196,7 @@ def check_against_book(index: dict, blocks: list[Block]) -> list[Issue]:
     resolved = anchor_mod.resolve(index["anchors"], blocks)
     book_hash = text.text_hash(b.words for b in blocks)
     exact = any(e["textHash"] == book_hash and e.get("builtFrom") for e in index["editions"])
+    fp_count = Counter(b.fingerprint for b in blocks)      # once, not once per anchor
     for i, a in enumerate(index["anchors"]):
         loc = resolved[a["id"]]
         if loc is None:
@@ -203,7 +205,7 @@ def check_against_book(index: dict, blocks: list[Block]) -> list[Issue]:
         if len(blocks[loc].words) < text.MIN_ANCHOR_WORDS:
             issues.append(Issue("error", f"anchors[{i}]",
                                 f"anchor block has fewer than {text.MIN_ANCHOR_WORDS} words"))
-        if sum(1 for b in blocks if b.fingerprint == a["fp"]) > 1:
+        if fp_count[a["fp"]] > 1:
             issues.append(Issue("warning", f"anchors[{i}]", "fingerprint is not unique in this edition"))
         if exact and "seq" in a and a["seq"] != loc:
             issues.append(Issue("error", f"anchors[{i}]", f"seq hint {a['seq']} but found at {loc}"))

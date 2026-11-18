@@ -176,19 +176,43 @@ def spoiler_gate(index: dict, blocks: list[Block]) -> dict:
     resolved = anchor_mod.resolve(index["anchors"], blocks)
     eff = anchor_mod.effective_locations(index["anchors"], resolved)
     loc = {a["id"]: eff[i] for i, a in enumerate(index["anchors"])}
-    by_word: dict[str, list[int]] = defaultdict(list)
+    # One pass over the book with a trie of the names' words: cost is the book's words times the longest
+    # match actually present, however many names (or names sharing a first word) an index lists.
+    root: list = [{}, None, False]       # [children, first seq, ends a name]
+    wanted: dict[tuple, list] = {}
+
+    def node_of(name_words: list[str]) -> list:
+        key = tuple(name_words)
+        if key not in wanted:
+            node = root
+            for w in key:
+                node = node[0].setdefault(w, [{}, None, False])
+            node[2] = True
+            wanted[key] = node
+        return wanted[key]
+
+    for ent in index["entities"]:
+        for nm in ent.get("names", []):
+            nw = text.words(nm.get("value", ""))
+            if nw:
+                node_of(nw)
+    pending = len({id(n) for n in wanted.values()})
     for b in blocks:
-        for w in set(b.words):
-            by_word[w].append(b.seq)  # ascending, since blocks are in order
+        if not pending:
+            break
+        ws = b.words
+        for i in range(len(ws)):
+            node = root[0].get(ws[i])
+            j = i
+            while node is not None:
+                if node[2] and node[1] is None:
+                    node[1] = b.seq
+                    pending -= 1
+                j += 1
+                node = node[0].get(ws[j]) if j < len(ws) else None
 
     def first_use(name_words: list[str]) -> int | None:
-        n = len(name_words)
-        for seq in by_word.get(name_words[0], ()):
-            ws = blocks[seq].words
-            for i in range(len(ws) - n + 1):
-                if ws[i:i + n] == name_words:
-                    return seq
-        return None
+        return wanted[tuple(name_words)][1]
 
     names = found = early = 0
     examples: list[dict] = []

@@ -296,12 +296,263 @@ def test_resolve_refuses_outside_the_registry():
             r(URL, href)
 
 
-def test_default_fetch_refuses_a_redirect_off_origin():
-    h = community_mod._SameOrigin()
+def test_a_redirect_is_followed_only_under_the_registry():
     import urllib.request
-    req = urllib.request.Request("https://registry.test/reg/x")
-    with pytest.raises(Exception, match="another origin"):
-        h.redirect_request(req, None, 302, "Found", {}, "https://evil.test/x")
+    h = community_mod._Confined(URL)
+    req = urllib.request.Request(URL + "/v0/lookup/text/x.json")
+    for target in ("https://evil.test/reg/x", "https://registry.test/other/x", "https://registry.test/regx/x",
+                   "http://registry.test/reg/x", "https://registry.test/reg/../other/x"):
+        with pytest.raises(Exception, match="outside the registry"):
+            h.redirect_request(req, None, 302, "Found", {}, target)
+    assert h.redirect_request(req, None, 302, "Found", {}, URL + "/v0/other.json").full_url == URL + "/v0/other.json"
+
+
+def serve_once(handler_body, n=1):
+    """A loopback server running handler_body(conn) for each of n connections; (url, thread-stopper)."""
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+
+    def run():
+        for _ in range(n):
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=lambda c=conn: handler_body(c), daemon=True).start()
+    threading.Thread(target=run, daemon=True).start()
+    return f"http://127.0.0.1:{srv.getsockname()[1]}", srv.close
+
+
+def test_fetch_follows_a_redirect_inside_the_registry_and_refuses_one_outside():
+    def h(conn):
+        data = conn.recv(4096).decode()
+        path = data.split()[1]
+        if path == "/reg/a":
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /reg/b\r\nContent-Length: 0\r\n\r\n")
+        elif path == "/reg/b":
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        else:
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\n\r\n")
+        conn.close()
+    url, stop = serve_once(h, 6)
+    try:
+        assert community_mod.default_fetch(url + "/reg/a", url + "/reg") == (200, b"ok")
+        with pytest.raises(community_mod.FetchError):
+            community_mod.default_fetch(url + "/reg/c", url + "/reg")      # another path on the same host
+    finally:
+        stop()
+
+
+def test_fetch_stops_after_a_few_redirects():
+    hits = []
+
+    def h(conn):
+        hits.append(1)
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /reg/loop\r\nContent-Length: 0\r\n\r\n")
+        conn.close()
+    url, stop = serve_once(h, 30)
+    try:
+        with pytest.raises(community_mod.FetchError):
+            community_mod.default_fetch(url + "/reg/loop", url + "/reg")
+        assert len(hits) <= community_mod.MAX_REDIRECTS + 2
+    finally:
+        stop()
+
+
+def test_one_deadline_covers_slow_headers_and_a_slow_body(monkeypatch):
+    import time as _t
+    monkeypatch.setattr(community_mod, "TIMEOUT", 1)
+
+    def drip_headers(conn):         # a byte every 0.3 s: no single read ever times out
+        conn.recv(4096)
+        try:
+            for b in b"HTTP/1.1 200 OK\r\nX-A: " + b"a" * 100:
+                conn.send(bytes([b]))
+                _t.sleep(0.3)
+        except OSError:
+            pass
+
+    def drip_body(conn):
+        conn.recv(4096)
+        try:
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+            for _ in range(100):
+                conn.send(b"x")
+                _t.sleep(0.3)
+        except OSError:
+            pass
+    for body in (drip_headers, drip_body):
+        url, stop = serve_once(body)
+        t0 = _t.monotonic()
+        try:
+            with pytest.raises(community_mod.FetchError):
+                community_mod.default_fetch(url + "/reg/x", url + "/reg")
+        finally:
+            stop()
+        assert _t.monotonic() - t0 < 15, body.__name__      # ~1 s healthy; following the drip takes 30 s
+
+
+def test_a_huge_lookup_is_answered_quickly_and_validates_a_bounded_number_of_results(env, monkeypatch):
+    import time as _t
+    turn_on(env, URL)
+    n = 0
+    real = community_mod._result_validator()
+
+    class Counting:
+        def iter_errors(self, r):
+            nonlocal n
+            n += 1
+            return real.iter_errors(r)
+    monkeypatch.setattr(community_mod, "_result_validator", lambda: Counting())
+    env.reg.override[listing_url(env)] = (200, b'{"results": [' + b",".join([b"{}"] * 1_000_000) + b"]}")
+    t0 = _t.monotonic()
+    assert books(env) == {"state": "ok", "results": []}
+    assert _t.monotonic() - t0 < 60 and n == community_mod.MAX_RESULTS
+
+
+def test_one_malformed_result_is_dropped_and_the_valid_one_kept(env):
+    turn_on(env, URL)
+    lookup = json.loads((env.reg.out / f"v0/lookup/text/{env.th}.json").read_text())
+    lookup["results"] = [{"id": 5}, lookup["results"][0], {}, "x"]
+    env.reg.override[listing_url(env)] = (200, json.dumps(lookup).encode())
+    assert [r["id"] for r in books(env)["results"]] == [env.reg.listing["id"]]
+
+
+def test_an_edition_that_is_not_built_from_the_text_is_refused_at_fetch_and_install(env):
+    turn_on(env, URL)
+    for flag in (False, None):      # false, or missing: only builtFrom true is an exact edition
+        env.app.state.community.now = lambda: 10 ** 10 + (10_000 if flag is None else 0)
+        doc = good_doc(env)
+        if flag is None:
+            doc["editions"][0].pop("builtFrom", None)
+        else:
+            doc["editions"][0]["builtFrom"] = flag
+        d = serve_index(env, registry.dumps(doc).encode())
+        res = {"id": offer(env)["id"], "digest": d}
+        r = fetch(env, res)
+        assert r.status_code == 422 and r.json()["code"] == "invalid" and "not made for this copy" in r.json()["detail"]
+        assert not env.app.state.community._cache_file(d).exists()
+        assert install(env, res).status_code in (409, 422)
+
+
+def test_an_unresolved_anchor_with_a_seq_hint_is_refused_but_one_without_is_reported(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["fp"] = "0" * len(doc["anchors"][0]["fp"])      # the hint says 0 but nothing resolves
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not env.app.state.community._cache_file(d).exists()
+    env.app.state.community.now = lambda: 10 ** 10
+    doc["anchors"][0].pop("seq")
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 200 and r.json()["resolved"] == 0
+
+
+def settled(timeout=15):
+    """Wait for every fetch slot to come back (polling, never one instant)."""
+    import time as _t
+    end = _t.monotonic() + timeout
+    while _t.monotonic() < end:
+        if community_mod._slots._value == community_mod.MAX_INFLIGHT:
+            return True
+        _t.sleep(0.05)
+    return False
+
+
+def test_timed_out_fetches_are_closed_and_in_flight_ones_are_capped(monkeypatch):
+    import threading
+    import time as _t
+    monkeypatch.setattr(community_mod, "TIMEOUT", 0.6)
+    closed = []
+
+    def drip(conn):
+        conn.recv(4096)
+        try:
+            for b in b"HTTP/1.1 200 OK\r\nX-A: " + b"a" * 1000:
+                conn.send(bytes([b]))
+                _t.sleep(0.2)
+        except OSError:
+            closed.append(1)
+    url, stop = serve_once(drip, 20)
+    try:
+        for _ in range(community_mod.MAX_INFLIGHT + 3):      # more than the cap, one after another
+            with pytest.raises(community_mod.FetchError):
+                community_mod.default_fetch(url + "/reg/x", url + "/reg")
+        assert settled()      # the timed-out connections were shut and their threads ended
+        assert closed
+    finally:
+        stop()
+
+
+def test_a_connection_that_comes_up_after_the_deadline_is_closed_and_frees_its_slot(monkeypatch):
+    import socket
+    import time as _t
+    monkeypatch.setattr(community_mod, "TIMEOUT", 0.5)
+    served = []
+
+    def drip(conn):
+        served.append(1)
+        try:
+            conn.recv(4096)
+            for b in b"HTTP/1.1 200 OK\r\nX-A: " + b"a" * 1000:
+                conn.send(bytes([b]))
+                _t.sleep(0.2)
+        except OSError:
+            pass
+    url, stop = serve_once(drip, 5)
+    real = socket.create_connection
+
+    def slow(*a, **k):
+        _t.sleep(1.2)         # connecting returns well after the 0.5 s deadline
+        return real(*a, **k)
+    monkeypatch.setattr(socket, "create_connection", slow)
+    try:
+        with pytest.raises(community_mod.FetchError):
+            community_mod.default_fetch(url + "/reg/x", url + "/reg")
+        assert settled(10)      # the worker closed the late connection instead of reading the drip
+    finally:
+        stop()
+
+
+def test_fetches_beyond_the_cap_are_refused_at_once(monkeypatch):
+    import threading
+    sem = threading.BoundedSemaphore(1)
+    sem.acquire()
+    monkeypatch.setattr(community_mod, "_slots", sem)
+    with pytest.raises(community_mod.FetchError, match="too many"):
+        community_mod.default_fetch("http://127.0.0.1:9/x")
+
+
+def test_a_lying_seq_hint_is_refused_and_not_cached(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["seq"] = doc["anchors"][0]["seq"] + 1
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not env.app.state.community._cache_file(d).exists()
+
+
+def test_registry_slug_keeps_a_non_default_port_and_the_default_name():
+    slug = community_mod.registry_slug
+    assert slug(community_mod.DEFAULT_URL) == "nightspine-github-io-lorekeeper-registry"
+    assert slug("https://nightspine.github.io:443/lorekeeper-registry") == slug(community_mod.DEFAULT_URL)
+    assert slug("http://localhost:8001/reg") != slug("http://localhost:8002/reg")
+    assert slug("http://localhost:8001/reg") == "localhost-8001-reg"
+
+
+def test_a_name_too_long_for_the_filesystem_is_refused():
+    with pytest.raises(community_mod.CommunityError) as e:
+        community_mod.Community._file_name(URL, "p" * 128, "a" * 128, 1)
+    assert e.value.status == 422
+    name = community_mod.Community._file_name(URL, "someone", "a" * 100, 1)
+    assert len(name) + 37 <= 255
 
 
 def listing(i, **kw):
@@ -469,6 +720,7 @@ def test_fetch_reports_problems_against_the_copy_without_refusing(env):
     doc = good_doc(env)
     a = doc["anchors"][0]
     a["fp"] = "0" * len(a["fp"])
+    a.pop("seq", None)      # with a seq hint this is refused (below); without one it is only reported
     d = serve_index(env, registry.dumps(doc).encode())
     r = fetch(env, {"id": offer(env)["id"], "digest": d})
     assert r.status_code == 200, r.text
@@ -1097,3 +1349,76 @@ def test_the_cache_keeps_the_twenty_most_recent(tmp_path):
     left = sorted(p.name for p in folder.glob("*.lore.json"))
     assert len(left) == 20 and left[0] == f"{5:064x}.lore.json"
     assert len(list(folder.glob("*.audit.json"))) == 20
+
+
+def test_an_index_with_two_built_from_editions_is_refused(env):
+    turn_on(env, URL)
+    for case in (0, 1):
+        env.app.state.community.now = lambda: 10 ** 10 + case * 10_000
+        doc = good_doc(env)
+        other = {"textHash": "e" * 64, "builtFrom": True}
+        doc["editions"] = [doc["editions"][0], other] if case == 0 else [other, doc["editions"][0]]
+        d = serve_index(env, registry.dumps(doc).encode())
+        res = {"id": offer(env)["id"], "digest": d}
+        r = fetch(env, res)
+        assert r.status_code == 422 and "not made for this copy" in r.json()["detail"], case
+        assert not env.app.state.community._cache_file(d).exists()
+    # one built-from edition plus an unrelated one that is not built from: fine
+    env.app.state.community.now = lambda: 10 ** 10 + 50_000
+    doc = good_doc(env)
+    doc["editions"].append({"textHash": "e" * 64, "builtFrom": False})
+    d = serve_index(env, registry.dumps(doc).encode())
+    assert fetch(env, {"id": offer(env)["id"], "digest": d}).status_code == 200
+
+
+def test_a_refused_index_is_removed_from_the_cache(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["seq"] = doc["anchors"][0]["seq"] + 1
+    body = registry.dumps(doc).encode()
+    d = serve_index(env, body)
+    com = env.app.state.community
+    com._write(com._cache_file(d), body)                 # cached before the check existed
+    com._write(com._audit_file(d), b"{}")
+    res = {"id": offer(env)["id"], "digest": d}
+    assert fetch(env, res).status_code == 422
+    assert not com._cache_file(d).exists() and not com._audit_file(d).exists()
+    r = install(env, res)
+    assert r.status_code == 409 and r.json()["code"] == "not-fetched"
+
+
+def test_uninstall_still_removes_an_install_made_under_the_port_less_name(env):
+    url = "http://localhost:8123/reg"
+    com = env.app.state.community
+    old = com._file_name(url, "someone", "tale", 1, legacy=True)
+    assert old != com._file_name(url, "someone", "tale", 1)
+    key = f"community--{old[:-len('.json')]}"
+    com.indexes.mkdir(parents=True, exist_ok=True)
+    (com.indexes / old).write_text("{}")
+
+    def apply(st):
+        st.setdefault("community", {}).setdefault("installed", {})[key] = {
+            "listing": "someone/tale", "version": 1, "registry": url}
+    com.catalog.update_state(apply)
+    assert env.delete(f"/api/community/installed/{key}").json() == {"ok": True}
+    assert not (com.indexes / old).exists()
+
+
+def test_resolve_uses_the_one_confinement_rule():
+    assert community_mod.inside(URL, URL + "/v0/x") and not community_mod.inside(URL, URL + "/../x")
+    assert not hasattr(community_mod, "_SameOrigin") and not hasattr(community_mod, "_Tracked")
+
+
+def test_install_checks_the_cached_document_again(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["seq"] = doc["anchors"][0]["seq"] + 1
+    body = registry.dumps(doc).encode()
+    d = serve_index(env, body)
+    com = env.app.state.community
+    com._write(com._cache_file(d), body)                 # cached before the check existed
+    res = {"id": offer(env)["id"], "digest": d}
+    r = install(env, res)
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not com._cache_file(d).exists() and not list(com.indexes.glob("*")) if com.indexes.exists() else True
+    assert env.app.state.community.catalog.state().get("community", {}).get("installed", {}) == {}
