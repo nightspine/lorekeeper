@@ -233,11 +233,25 @@ def _parse_ranges(spec: str) -> list[int]:
 
 
 def _chunk_mode(args) -> str:
-    """--parts, or its alias --whole-chapters, else the provider's default (chapter for a cloud model)."""
+    """--parts, or its alias --whole-chapters; a --chunk-words alone means sized parts; a resumed run keeps the
+    mode it was started with; else the provider's default (chapter for a cloud model)."""
     from . import generate
     if args.whole_chapters:
         return "chapter"
-    return args.parts or generate.default_chunk_mode(args.provider)
+    if args.parts:
+        return args.parts
+    if args.chunk_words:
+        return "words"
+    if args.resume:
+        state = Path(str(args.output) + ".state")
+        try:
+            recorded = json.loads(state.read_text()).get("chunk_mode") if state.exists() else None
+        except (OSError, ValueError):
+            recorded = None
+        # A state from before the mode was recorded was a words run.
+        if state.exists():
+            return recorded if recorded in ("words", "chapter") else "words"
+    return generate.default_chunk_mode(args.provider)
 
 
 def cmd_generate(args) -> int:
@@ -623,11 +637,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--chapters", help="table-of-contents entries to index, e.g. 5-6 or 5,7-9 (see `toc`)")
     s.add_argument("--chunk-words", type=int, default=None,
                    help="words per model call (default: 8000, about a chapter, for a cloud model; 2500 for Ollama)")
-    s.add_argument("--parts", choices=["words", "chapter"], default=None,
+    mode = s.add_mutually_exclusive_group()
+    mode.add_argument("--parts", choices=["words", "chapter"], default=None,
                    help="words: fixed-size parts (--chunk-words); chapter: one model call per chapter whatever its length "
                         "(cut at a scene break past 20,000 words, or the model's context for Ollama; --chunk-words is then ignored). "
-                        "Default: chapter for a cloud model, words for Ollama")
-    s.add_argument("--whole-chapters", action="store_true", help="alias for --parts chapter")
+                        "Default: chapter for a cloud model, words for Ollama; --chunk-words alone means words; --resume keeps the run's own mode")
+    mode.add_argument("--whole-chapters", action="store_true", help="alias for --parts chapter")
     s.add_argument("--check-model", default=None, help="cloud model of the same provider for the fact-check (e.g. claude-sonnet-5-5); default: the same model")
     s.add_argument("--depth", choices=["light", "standard", "deep"], default="standard")
     s.add_argument("--kind", choices=["auto", "fiction", "non-fiction", "self-help"], default="auto",

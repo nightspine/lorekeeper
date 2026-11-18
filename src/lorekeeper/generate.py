@@ -1893,7 +1893,7 @@ class Generator:
     # ---- resume ----------------------------------------------------------------------------
 
     def state(self) -> dict:
-        return {"done": self.done, "recap": self.recap_text, "summary": self.summary_text, "stats": dict(self.stats),
+        return {"chunk_mode": self.opts.chunk_mode, "done": self.done, "recap": self.recap_text, "summary": self.summary_text, "stats": dict(self.stats),
                 "counters": dict(self.counters), "created": self.created,
                 "entity_from": self.entity_from, "item_seq": self.item_seq, "item_kind": self.item_kind}
 
