@@ -1,3 +1,4 @@
+import dataclasses
 """Generator pipeline with a scripted model: structure, corrections and every drop rule."""
 
 import json
@@ -900,27 +901,91 @@ def test_a_chapter_under_the_cap_is_one_whole_part_with_a_bridge(book_path):
 
 def test_a_chapter_over_the_cap_splits_at_a_scene_break(tmp_path):
     long = [f"Paragraph {i} of the long chapter keeps going with plenty of words to count here today." for i in range(8)]
-    long[5] = "Later that night"          # heading-like: a scene break
+    long[5] = "Later That Night"          # heading-like: a scene break
     path = make_epub(tmp_path / "long.epub", ch1=long)
     g = _chapter_gen(path, max_part_words=60)
     parts = [p for p in g.chunks() if p.chapter == 0]
     assert len(parts) > 1 and not any(p.whole for p in parts)
-    heading = next(b.seq for b in g.book.blocks if b.raw == "Later that night")
+    heading = next(b.seq for b in g.book.blocks if b.raw == "Later That Night")
     assert any(p.start == heading for p in parts)
     assert all(a.end + 1 == b.start for a, b in zip(parts, parts[1:]))
 
 
 def test_scene_break_detection():
-    assert generate.is_scene_break("* * *", 0) and generate.is_scene_break("—", 0)
-    assert generate.is_scene_break("Part Two", 2)
-    assert not generate.is_scene_break("Yes.", 1)
+    for t in ("III", "Chapter Two", "MINA HARKER'S JOURNAL", "Later That Night"):
+        assert generate.is_scene_break(t, len(t.split())), t
+    for t in ("Then\u2014", "Yours ever, Jonathan Harker", "\u201cYes.\u201d", "Yes.", "later that night", "* * *"):
+        assert not generate.is_scene_break(t, len(t.split()) if t != "* * *" else 0), t
 
 
-def test_ollama_cap_follows_the_context():
-    assert generate.max_part_words("ollama", 16384) == 9011
-    assert generate.max_part_words("ollama", 1_000_000) == generate.MAX_PART_WORDS
+def test_ollama_cap_leaves_room_for_the_prompt_and_the_output():
+    assert generate.max_part_words("ollama", 8192) == 1500
+    assert generate.max_part_words("ollama", 16384) == 6501
+    assert generate.max_part_words("ollama", 32768) == 17970
+    assert generate.max_part_words("ollama", 1_000_000) == generate.MAX_PART_WORDS == 20000
     assert generate.max_part_words("claude") == generate.MAX_PART_WORDS
-    assert generate.default_chunk_mode("claude") == "words" and generate.default_chunk_mode("ollama") == "words"
+    assert generate.default_chunk_mode("claude") == "chapter" and generate.default_chunk_mode("ollama") == "words"
+
+
+def test_no_bridge_from_front_matter(tmp_path):
+    path = make_epub(tmp_path / "fm.epub")
+    g = _chapter_gen(path)
+    parts = g.chunks()
+    assert parts[0].chapter == -1 or parts[0].bridge is None
+    assert all(p.bridge is None for p in parts if p.chapter == -1)
+    first_real = next((i for i, p in enumerate(parts) if p.chapter >= 0), 0)
+    if first_real > 0:
+        assert parts[first_real].bridge is None or parts[first_real - 1].chapter >= 0
+
+
+class CutOffLLM(FakeLLM):
+    """The first extraction reply is empty (cut off at the limit), the next ones come from the script."""
+    def __init__(self, cut=1, always=False):
+        super().__init__()
+        self.cut, self.always, self.extractions = cut, always, []
+
+    def complete(self, system, prompt, schema, prefix=None):
+        if "new" in schema.get("properties", {}):
+            self.extractions.append(prefix or "")
+            if self.always or len(self.extractions) <= self.cut:
+                return {}
+        return super().complete(system, prompt, schema, prefix)
+
+
+def _cutoff_run(book_path, tmp_path, llm):
+    logs = []
+    out = tmp_path / "o.lore.json"
+    generate.run(epub.read(book_path), llm, generate.Options(chapters={1}), book_path, out, log=logs.append)
+    return logs
+
+
+def test_a_cut_off_reply_splits_the_part_and_logs_it(book_path, tmp_path):
+    llm = CutOffLLM(cut=1)
+    logs = _cutoff_run(book_path, tmp_path, llm)
+    assert sum("extraction reply was cut off; splitting the part in two" in m for m in logs) == 1
+    assert len(llm.extractions) == 3          # the whole part, then both halves
+    assert len(set(llm.extractions[1:])) == 2
+
+
+def test_a_half_that_fails_again_is_logged_and_done(book_path, tmp_path):
+    llm = CutOffLLM(always=True)
+    logs = _cutoff_run(book_path, tmp_path, llm)
+    assert any("cut off again" in m for m in logs)
+    state = json.loads((tmp_path / "o.lore.json.state").read_text()) if (tmp_path / "o.lore.json.state").exists() else None
+    if state:
+        assert state["done"]
+
+
+def test_requests_per_part_are_capped(book_path, tmp_path):
+    llm = FakeLLM()
+    big = " ".join(["word"] * 40000)
+    g = generate.Generator(epub.read(book_path), llm, generate.Options(), book_path, lambda m: None)
+    chunk = g.chunks()[0]
+    g.book.blocks[chunk.start] = dataclasses.replace(g.book.blocks[chunk.start], words=big.split())   # 40,000 words
+    g.process(chunk)
+    prompt = next(c for c in llm.calls if "events" in c)
+    assert f"{generate.MAX_EVENTS}" in prompt and "at most 8 per entity" in prompt
+
 
 
 def test_whole_chapter_prompt_has_an_uncited_bridge_and_one_recap_each(book_path, tmp_path):
