@@ -326,7 +326,7 @@ def test_editing_an_event_keeps_a_place_link_the_editor_could_not_make(client, t
     edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1)
     edit(client, key, op="add-entity", name="The Lighthouse", type="place", seq=1)
     ev = edit(client, key, op="add-event", summary="Alice arrives.", entities=["alice-marlow"], seq=1, setting="at the lighthouse")
-    path = next(p for p in tmp_path.rglob("*.lore.json") if "lighthouse" in p.read_text())
+    path = next(p for p in tmp_path.rglob("*.lore.json") if "merges" not in p.parts and "lighthouse" in p.read_text())  # not a journal snapshot
     import json
     d = json.loads(path.read_text())
     for e in d["events"]:
