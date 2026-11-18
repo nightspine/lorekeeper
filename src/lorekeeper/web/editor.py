@@ -673,7 +673,10 @@ class Editor:
         if "setting" in op or ("seq" in op and ev.get("setting")):
             raw = op["setting"] if "setting" in op else ev["setting"]["text"]
             setting = self._setting(ctx, raw, ev["from"])
-            if setting:
+            cur = ev.get("setting")
+            if setting and cur and cur.get("text") == setting["text"] and op.get("seq") is None:
+                pass        # unchanged text on an event that did not move: keep the link as it is
+            elif setting:
                 ev["setting"] = setting
             else:
                 ev.pop("setting", None)

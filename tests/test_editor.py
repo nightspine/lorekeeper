@@ -319,3 +319,22 @@ def test_a_setting_counts_words_like_the_schema(client, tmp_path):
     _, key = handmade(client, tmp_path)
     r = refuse(client, key, 422, op="add-event", summary="x", entities=[], seq=5, setting="the hall & the stairs of the old house")
     assert r["code"] == "wording"
+
+
+def test_editing_an_event_keeps_a_place_link_the_editor_could_not_make(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1)
+    edit(client, key, op="add-entity", name="The Lighthouse", type="place", seq=1)
+    ev = edit(client, key, op="add-event", summary="Alice arrives.", entities=["alice-marlow"], seq=1, setting="at the lighthouse")
+    path = next(p for p in tmp_path.rglob("*.lore.json") if "lighthouse" in p.read_text())
+    import json
+    d = json.loads(path.read_text())
+    for e in d["events"]:
+        if e["id"] == ev["id"]:
+            e["setting"]["place"] = "from-an-earlier-book"      # a link made by the generator
+    path.write_text(json.dumps(d))
+    byid = lambda: {e["id"]: e for e in doc_of(client, key)["events"]}  # noqa: E731
+    edit(client, key, op="edit-event", id=ev["id"], summary="Alice arrives late.", setting="the lighthouse")
+    assert byid()[ev["id"]]["setting"] == {"text": "the lighthouse", "place": "from-an-earlier-book"}
+    edit(client, key, op="edit-event", id=ev["id"], setting="a boat")      # changed text re-resolves
+    assert byid()[ev["id"]]["setting"] == {"text": "a boat"}
