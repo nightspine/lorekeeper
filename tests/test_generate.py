@@ -920,7 +920,7 @@ def test_ollama_cap_follows_the_context():
     assert generate.max_part_words("ollama", 16384) == 9011
     assert generate.max_part_words("ollama", 1_000_000) == generate.MAX_PART_WORDS
     assert generate.max_part_words("claude") == generate.MAX_PART_WORDS
-    assert generate.default_chunk_mode("claude") == "chapter" and generate.default_chunk_mode("ollama") == "words"
+    assert generate.default_chunk_mode("claude") == "words" and generate.default_chunk_mode("ollama") == "words"
 
 
 def test_whole_chapter_prompt_has_an_uncited_bridge_and_one_recap_each(book_path, tmp_path):
