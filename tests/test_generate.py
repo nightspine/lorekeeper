@@ -1,8 +1,9 @@
-import dataclasses
 """Generator pipeline with a scripted model: structure, corrections and every drop rule."""
 
+import dataclasses
 import json
 import re
+from pathlib import Path
 import zipfile
 
 import pytest
@@ -1024,12 +1025,60 @@ def test_cli_parts_default_follows_the_provider():
     from argparse import Namespace
     from lorekeeper import cli
     def mode(provider="ollama", parts=None, whole=False):
-        return cli._chunk_mode(Namespace(provider=provider, parts=parts, whole_chapters=whole))
+        return cli._chunk_mode(Namespace(provider=provider, parts=parts, whole_chapters=whole,
+                                         chunk_words=None, resume=False, output="x"))
     assert mode() == "words"
     assert mode("claude") == "chapter"
     assert mode("claude", parts="words") == "words"
     assert mode(whole=True) == "chapter"
     assert mode(parts="chapter") == "chapter"
+
+
+def _cli_mode(monkeypatch, *argv):
+    from lorekeeper import cli
+    seen = {}
+    monkeypatch.setattr(generate, "run", lambda book, model, opts, *a, **k: seen.update(mode=opts.chunk_mode) or {"validation_errors": 0})
+    monkeypatch.setattr(cli, "_make_model", lambda *a, **k: object())
+    assert cli.main(["generate", *argv]) == 0
+    return seen["mode"]
+
+
+def test_cli_chunk_words_alone_means_words(book_path, tmp_path, monkeypatch):
+    base = [str(book_path), "-o", str(tmp_path / "o.json"), "--provider", "claude"]
+    assert _cli_mode(monkeypatch, *base) == "chapter"
+    assert _cli_mode(monkeypatch, *base, "--chunk-words", "3000") == "words"
+
+
+def test_cli_whole_chapters_and_parts_words_conflict(book_path, tmp_path):
+    from lorekeeper import cli
+    with pytest.raises(SystemExit):
+        cli.main(["generate", str(book_path), "-o", str(tmp_path / "o.json"), "--whole-chapters", "--parts", "words"])
+
+
+def test_resume_keeps_the_recorded_mode(book_path, tmp_path, monkeypatch):
+    out = tmp_path / "o.json"
+    _run_to(book_path, out, generate.Options(chunk_mode="words", chunk_words=60))
+    assert json.loads(Path(str(out) + ".state").read_text())["chunk_mode"] == "words"
+    base = [str(book_path), "-o", str(out), "--provider", "claude", "--resume"]
+    assert _cli_mode(monkeypatch, *base) == "words"
+    assert _cli_mode(monkeypatch, *base, "--parts", "chapter") == "chapter"
+    # a state from before the mode was recorded was a words run
+    st = Path(str(out) + ".state"); d = json.loads(st.read_text()); d.pop("chunk_mode"); st.write_text(json.dumps(d))
+    assert _cli_mode(monkeypatch, *base) == "words"
+
+
+def test_resume_in_the_recorded_mode_rereads_nothing(book_path, tmp_path):
+    out = tmp_path / "o.json"
+    _run_to(book_path, out, generate.Options(chunk_mode="words", chunk_words=60))
+    n = len(json.loads(out.read_text())["recaps"])
+    llm = FakeLLM()
+    generate.run(epub.read(book_path), llm, generate.Options(chunk_mode="words", chunk_words=60), book_path, out,
+                 resume=True, log=lambda m: None)
+    assert llm.calls == [] and len(json.loads(out.read_text())["recaps"]) == n
+
+
+def _run_to(book_path, out, opts):
+    generate.run(epub.read(book_path), FakeLLM(), opts, book_path, out, log=lambda m: None)
 
 
 def test_requests_per_part_are_capped(book_path, tmp_path):
