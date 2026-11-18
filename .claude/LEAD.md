@@ -65,18 +65,22 @@ herdr-app do tab.new --space <space> --name "work: core-engineer" \
 
 `herdr-app do` prints the terminal address. `hc wait <terminal>` returns at a check-in (about three minutes), not when the agent is done, so loop on it until `hc ls --json` shows the terminal's status is no longer `working` (`idle`, `done` or `blocked`). Keep `--task` short and free of quotes: a long task was not delivered once. Read the tab a few seconds later; if it sits at an empty prompt, send the task with `hc send --if idle <terminal> "..."` (it pastes and presses Enter), and put any long notes in a file the message points to. Wait with `hc wait <terminal>`, then read `$BRIEF/handoff-<role>.md` and `hc read <terminal> --lines 60`. Herdr shows the tab as working, blocked (needs the person: tell them which tab) or done.
 
-**4. Review.** When every worker of the round has handed off, start the reviewer in the same space. It is a Cursor agent on Sol, in plan mode so it cannot edit, following the same instructions a Claude reviewer would (`.claude/agents/code-reviewer.md`):
+**4. Review.** When every worker of the round has handed off, start the reviewer in the same space. It is a Cursor agent on Sol, in plan mode so it cannot edit, following the same instructions a Claude reviewer would (`.claude/agents/code-reviewer.md`). It only reads: Cursor asks before every shell command and the lead cannot answer for it, so the lead runs the checks and hands over the diff and the results as files inside the worktree (`.claude/work/` is gitignored there too):
 
 ```sh
+cd $WT; R=.claude/work/$SLUG; mkdir -p $R; cp $BRIEF/brief.md $BRIEF/handoff-*.md $BRIEF/review-*.md $R/ 2>/dev/null
+git diff main...HEAD > $R/diff-1.patch
+# the checks from code-reviewer.md ("What you run"), each command and the end of its output, into $R/checks-1.txt;
+# uv may touch uv.lock: git checkout uv.lock afterwards
 herdr-app do tab.new --space <space> --name "review: round 1 (Sol)" --folder $WT \
   --argv '["cursor-agent","--mode","plan","--model","gpt-5.6-sol-high"]' \
-  --task "You are the code reviewer. Your instructions are .claude/agents/code-reviewer.md: follow them, run the checks they list. Review feature $SLUG on branch feat/$SLUG in this worktree. Brief: $BRIEF/brief.md. Handoffs: $BRIEF/handoff-*.md. You cannot write files: give the whole review as your final message, in the format the instructions describe."
+  --task "You are the code reviewer. Your instructions are .claude/agents/code-reviewer.md: follow them. Review feature $SLUG, branch feat/$SLUG, in this worktree. Do not run shell commands: use only your file reading and search tools. Everything you need is in $R: brief.md, the handoffs, diff-1.patch (the whole change against main) and checks-1.txt (the checks, already run by the lead on this commit). You cannot write files: give the whole review as your final message, in the format the instructions describe, starting with the verdict line."
 hc label <terminal> herdr.crew=hex "herdr.crew.name=Sol reviewer"
 ```
 
-The label makes it show in Herdr's Companions as "Sol reviewer" (HEX, the tester); for a later round name it "Sol reviewer 2". It reports working and done like the Claude agents, so wait on it the same way. When it is done, copy its final message (`hc read <terminal>`) into `$BRIEF/review-1.md` unchanged. Its findings are claims: check each blocking one against the code before sending it to a worker, and say in the review file which you could not confirm.
+The label makes it show in Herdr's Companions as "Sol reviewer" (HEX, the tester); for a later round name it "Sol reviewer 2" and add `review-<n>.md` and a patch of only that round's commits to what it reads. It reports working and done like the Claude agents, so wait on it the same way. When it is done, copy its final message (`hc read <terminal> --lines 300`) into `$BRIEF/review-1.md` unchanged, then add a section with your check of each blocking finding against the code and your decision on it, which the worker reads as overriding the brief. Its findings are claims, not a verdict you pass on unread.
 
-This needs a one-time setup per machine, outside the repository: `cursor-agent` signed in on a plan that offers Sol (`cursor-agent models`); `~/.cursor/hooks.json` calling `~/.cursor/hooks/herdr-status.sh` on `sessionStart`, `beforeSubmitPrompt` and `stop` (Cursor does not report its status to Herdr by itself; the script writes the OSC 7501 report to the terminal of the agent's process); and the crew mod reading the `herdr.crew.name` label (`labelName` in `mods/crew/cast.js`, a local change a mod update would undo). If Cursor or Sol is not available, say so to the person and fall back to the Claude reviewer for that round: `claude --agent code-reviewer --model opus --permission-mode auto --add-dir ~/projects/lorekeeper/corpus`, which writes the review file itself.
+This needs a one-time setup per machine, outside the repository: `cursor-agent` signed in on a plan that offers Sol (`cursor-agent models`); `~/.cursor/hooks.json` calling `~/.cursor/hooks/herdr-status.sh` on `beforeSubmitPrompt` and `stop` (not `sessionStart`: it can land after the first prompt and overwrite working) (Cursor does not report its status to Herdr by itself; the script writes the OSC 7501 report to the terminal of the agent's process); and the crew mod reading the `herdr.crew.name` label (`labelName` in `mods/crew/cast.js`, a local change a mod update would undo). If Cursor or Sol is not available, say so to the person and fall back to the Claude reviewer for that round: `claude --agent code-reviewer --model opus --permission-mode auto --add-dir ~/projects/lorekeeper/corpus`, which writes the review file itself.
 
 Read the verdict. On CHANGES REQUESTED, send the findings back to the worker whose area they fall in. Its Claude is still open in its tab:
 
@@ -115,7 +119,7 @@ Merging is the one outward action; ask the person first unless they said to ship
 
 ## Small tasks
 
-A lookup, a question about the code, or a one-file fix that nobody needs to watch: use the Agent tool with `subagent_type` set to the role and `isolation: "worktree"`, with the same brief rules in the prompt. Code written that way is still reviewed (the Sol reviewer on the diff, headless: `cursor-agent -p --mode plan --model gpt-5.6-sol-high --workspace <worktree> "<task as in step 4>"`) before it is merged.
+A lookup, a question about the code, or a one-file fix that nobody needs to watch: use the Agent tool with `subagent_type` set to the role and `isolation: "worktree"`, with the same brief rules in the prompt. Code written that way is still reviewed (the Sol reviewer on the diff, headless and given the same files as in step 4: `cursor-agent -p --trust --mode plan --model gpt-5.6-sol-high --workspace <worktree> "<task as in step 4>"`) before it is merged.
 
 ## Brief template
 
