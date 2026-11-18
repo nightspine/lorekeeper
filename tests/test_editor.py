@@ -308,7 +308,7 @@ def test_deleting_or_retyping_a_linked_place_unlinks_its_settings(client, tmp_pa
     b = edit(client, key, op="add-event", summary="Alice leaves.", entities=[], seq=5, setting="the cove")
     byid = lambda: {e["id"]: e for e in doc_of(client, key)["events"]}  # noqa: E731
     assert byid()[a["id"]]["setting"]["place"] == "the-lighthouse"
-    edit(client, key, op="set-type", entity="the-lighthouse", type="thing")
+    edit(client, key, op="set-type", entity="the-lighthouse", type="object")
     assert byid()[a["id"]]["setting"] == {"text": "the lighthouse"}
     edit(client, key, op="delete-entity", entity="the-cove")
     assert byid()[b["id"]]["setting"] == {"text": "the cove"}
