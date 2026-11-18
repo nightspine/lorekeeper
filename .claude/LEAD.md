@@ -93,7 +93,7 @@ git -C ~/projects/lorekeeper worktree remove "$WT"
 herdr-app do space.close --id <space> --confirmed true
 ```
 
-Merging is the one outward action; ask the person first unless they said to ship without asking. Keep `.claude/work/<slug>/` (it is gitignored) as the record of what was decided.
+Merging needs no question any more: the person said on 2026-11-18 "merge when CI is green, do not wait for me, you are in charge of releases". So once the review gate has passed and CI is green, squash-merge. Then run the release: find the release-please PR (its title starts with `chore(main): release`; `gh pr list --search` cannot find it, filter the JSON by title), close and reopen it so its checks run on the bot's branch, merge it when green, confirm the tag and the Docker image, and open and merge the `uv.lock` refresh chore that RELEASING.md asks for. Ask first only for anything destructive or outward beyond that. Keep `.claude/work/<slug>/` (it is gitignored) as the record of what was decided.
 
 **7. Report** in one message: what shipped, the PR link, what was left out and why, and where the record is.
 
