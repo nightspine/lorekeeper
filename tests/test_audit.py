@@ -296,7 +296,7 @@ def test_ties_name_each_end_as_the_book_had_revealed_it(tmp_path):
     idx = index_of(blocks)
     ids = [a["id"] for a in idx["anchors"]]
     resolved = {a["id"]: a["seq"] for a in idx["anchors"]}
-    idx["entities"][0]["names"] = [{"value": "Alice Marlow", "kind": "primary", "from": ids[6]},
+    idx["entities"][0]["names"] = [{"value": "Alice Marlow", "kind": "primary", "from": ids[-1]},
                                    {"value": "the stranger", "kind": "alias", "from": ids[0]}]
     idx["relations"][0]["from"] = idx["relations"][0]["evidence"][0] = ids[1]
     rel = next(c for c in audit.claims_of(idx, resolved) if c.kind == "relation")
