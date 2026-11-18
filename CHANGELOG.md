@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.1](https://github.com/nightspine/lorekeeper/compare/v0.10.0...v0.10.1) (2026-11-18)
+
+
+### Bug Fixes
+
+* bound what a community registry can make the app compute, and refuse indexes whose paragraph numbers could reveal early ([#66](https://github.com/nightspine/lorekeeper/issues/66)) ([d420fca](https://github.com/nightspine/lorekeeper/commit/d420fca7381ebba34a008c20fbf5b899987ef041))
+
 ## [0.10.0](https://github.com/nightspine/lorekeeper/compare/v0.9.0...v0.10.0) (2026-11-18)
 
 
