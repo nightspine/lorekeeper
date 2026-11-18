@@ -52,7 +52,7 @@ function configure(target, book, ctx, fromJob = null) {
     : book.chapters.filter((c) => c.story).map((c) => c.n));
   // A cloud model reads about a chapter per call; a local model keeps a chunk its context allows.
   const defaultChunk = (pv) => (pv === "ollama" ? 2500 : 8000);
-  const cfg = { provider: "ollama", model: null, check_model: null, chunk_words: null, depth: "standard", events: true, verify: true,
+  const cfg = { provider: "ollama", model: null, check_model: null, chunk_words: null, chunk_mode: "words", depth: "standard", events: true, verify: true,
     series_id: "", book_key: "", license: "CC0-1.0", num_ctx: 16384, book_kind: "auto" };
   for (const k of Object.keys(cfg)) if (t[k] !== undefined && t[k] !== null) cfg[k] = t[k];
   // A run from before the fact-check model and smaller chunks re-runs with today's defaults.
@@ -163,6 +163,11 @@ function configure(target, book, ctx, fromJob = null) {
   const chunk = h("input.range", { type: "range", min: "1000", max: "8000", step: "500", value: String(cfg.chunk_words), id: "cfg-chunk",
     "aria-describedby": "chunk-hint" });
   const chunkVal = h("output.num", { for: "cfg-chunk" }, `${fmtInt(cfg.chunk_words)} words`);
+  const wholeBox = h("input", { type: "checkbox", id: "cfg-whole", checked: cfg.chunk_mode === "chapter", "aria-describedby": "whole-hint" });
+  wholeBox.addEventListener("change", () => { cfg.chunk_mode = wholeBox.checked ? "chapter" : "words"; update(); });
+  const sizeField = h("div.field", { id: "size-field" }, h("div.field-split",
+    h("label", { for: "cfg-chunk" }, "Part size"), chunkVal), chunk,
+    h("p.hint#chunk-hint", "Words the model reads per call."));
   const DEPTH_HINT = {
     light: "Main characters and places only, one short update each. Fastest.",
     standard: "The cast and anything worth looking up, a few updates each per chapter.",
@@ -220,7 +225,9 @@ function configure(target, book, ctx, fromJob = null) {
     const words = chosen.reduce((a, c) => a + c.words, 0);
     const whole = chosen.length === storySet.size && chosen.every((c) => storySet.has(c.n));
     summary.textContent = `Sections: ${whole ? "the whole story, " : ""}${chosen.length} of ${book.chapters.length} (${fmtInt(words)} words)`;
-    optHint.textContent = [cfg.model, `${cfg.depth} depth`, `${fmtInt(cfg.chunk_words)}-word parts`].filter(Boolean).join(", ");
+    const whole_ = cfg.chunk_mode === "chapter";
+    sizeField.hidden = whole_;
+    optHint.textContent = [cfg.model, `${cfg.depth} depth`, whole_ ? "whole chapters" : `${fmtInt(cfg.chunk_words)}-word parts`].filter(Boolean).join(", ");
     chunk.style.setProperty("--fill", `${((cfg.chunk_words - 1000) / 7000) * 100}%`);
     chunkVal.textContent = `${fmtInt(cfg.chunk_words)} words`;
     const cloudNow = isCloud(cfg.provider);
@@ -378,9 +385,10 @@ function configure(target, book, ctx, fromJob = null) {
         h("summary", icon("chevron"), "Options", optHint),
         h("div.advanced-body",
           h("div.field", h("label", { for: "cfg-model" }, "Model"), modelSel, modelHint),
-          h("div.field", h("div.field-split",
-            h("label", { for: "cfg-chunk" }, "Part size"), chunkVal), chunk,
-            h("p.hint#chunk-hint", "Words the model reads per call.")),
+          h("div.field",
+            h("label.switch", { for: "cfg-whole" }, wholeBox, h("span", h("span.label.label-block", "Read whole chapters"),
+              h("span.hint#whole-hint", "One call per chapter, however long; a chapter over the model's limit is cut at a scene break. Best for books with long chapters."))),
+            sizeField),
           h("div.field", h("span.label", "Depth"), h("div.seg", { role: "group", "aria-label": "Depth" }, depthBtns), depthHint),
           h("label.switch", { for: "cfg-events" }, events,
             h("span", h("span.label.label-block", "Timeline of key events"))),
@@ -404,7 +412,7 @@ function configure(target, book, ctx, fromJob = null) {
         h("summary", icon("chevron"), "How this works"),
         h("div.how-body",
           h("p", "On this computer, Ollama reads the book: free and private, and slow. A cloud model is much faster and costs a little per book, billed to your own account with that provider; book text is sent to it only when you build."),
-          h("p", "Part size is how much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows."),
+          h("p", "Part size is how much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows. \"Read whole chapters\" makes it one call per chapter however long, cutting a chapter over the model's limit at a scene break."),
           h("p", "The timeline gives the Reader a few key moments per chapter; turning it off saves a little time. The fact-check is a second pass over each passage that rejects unsupported claims and moves early ones later; it makes a build about a third slower. Accuracy depends most on it, so a stronger model there keeps more true facts and catches more errors."),
           h("p", "Front and back matter (contents, acknowledgements, about the author, licences) is unchecked in Sections for you."),
           h("p", "Series id and book key are only needed when this book is part of a series you are indexing by hand. Books built from the Library get their series from it.")))),
