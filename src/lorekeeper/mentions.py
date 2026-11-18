@@ -10,6 +10,11 @@ Rules: whole words, case-sensitive as the index spells the name, over each block
 text; overlapping matches are merged and the longest name wins, so "Potter" inside
 "Harry Potter" counts only for the entity that owns "Harry Potter"; a pronoun is never a
 name. A name shared by two entities counts for both.
+
+Derived forms (people and creatures only, see `derive`): from each *visible* name, the name
+without its titles and the given name or surname alone, each only when no other visible entity's
+names contain that word. They come from names the view already shows, never from a name not yet
+revealed, so the safety condition above still holds.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ import re
 from bisect import bisect_right
 from dataclasses import dataclass, field
 
-from . import text
+from . import merge, text
 
 SNIPPET_MAX = 240
 _NOTE = re.compile(r"\([^)]*\)")  # "Chevalier (Gabriel)": a parenthetical note is not part of the name
@@ -26,9 +31,65 @@ _ABBREV = {"mr", "mrs", "ms", "dr", "st", "mt", "messrs", "mme", "mlle", "capt",
            "prof", "rev", "hon", "no", "vs", "etc", "jr", "sr"}
 
 
+def _tokens(name: str) -> list[str]:
+    return _NOTE.sub(" ", name).split()
+
+
+def _is_title(tok: str) -> bool:
+    return merge._plain(tok.rstrip(".,").casefold()) in merge.HONORIFICS
+
+
+def derive(entities: list[dict]) -> dict[str, list[str]]:
+    """Extra forms for the visible people and creatures: `entities` are {"id", "type", "names": [...]} of the view.
+
+    For each name of a person or creature (parenthetical note removed, split on spaces):
+    1. drop leading title words (merge.HONORIFICS, accents and a final "." ignored) while more than one word
+       remains; if nothing is left, what is left starts with a lowercase letter or is one title word, derive
+       nothing from this name ("the Count", "the Professor", "the stranger");
+    2. the remaining words are a form when they differ from the name ("Mrs. Westenra" → "Westenra");
+    3. when they are two or more words, the first word and the last word are forms too ("Lucy", "Westenra"),
+       unless that word is a title word, a lowercase word, a particle (merge.PARTICLES: "Van"), or under 3 letters.
+    A form is kept only if no *other* visible entity (of any type) has that word among the words of any of its
+    names, and it is not already a visible name of any entity. Comparison is exact (case-sensitive)."""
+    words_of: dict[str, set[str]] = {}
+    spelled: set[str] = set()
+    for e in entities:
+        for n in e["names"]:
+            spelled.add(" ".join(_tokens(n)))
+            words_of.setdefault(e["id"], set()).update(t.rstrip(".,") for t in _tokens(n))
+    out: dict[str, list[str]] = {}
+    for e in entities:
+        if e["type"] not in ("person", "creature"):
+            continue
+        others = set().union(*(w for k, w in words_of.items() if k != e["id"]))
+        forms: list[str] = []
+        for n in e["names"]:
+            t = _tokens(n)
+            while len(t) > 1 and _is_title(t[0]):
+                t = t[1:]
+            if not t or not t[0][:1].isupper() or (len(t) == 1 and _is_title(t[0])):
+                continue
+            cands = [" ".join(t)]
+            if len(t) > 1:
+                cands += [t[0], t[-1]]
+            for c in cands:
+                w = c.rstrip(".,")
+                if " " in c or len(t) == 1:
+                    ok = True
+                else:
+                    ok = (len(w) >= 3 and w[:1].isupper() and not _is_title(w) and w.casefold() not in merge.PARTICLES)
+                if ok and c not in spelled and c not in forms and not (set(c.split()) & others):
+                    forms.append(c)
+        if forms:
+            out[e["id"]] = forms
+    return out
+
+
 def visible_names(view: dict) -> dict[str, list[str]]:
-    """Entity id → every name the gated view shows for it (display name first)."""
-    return {e["id"]: [e["name"], *e.get("aliases", [])] for e in view["entities"]}
+    """Entity id → every name the gated view shows for it (display name first), then the derived forms."""
+    ents = [{"id": e["id"], "type": e["type"], "names": [e["name"], *e.get("aliases", [])]} for e in view["entities"]]
+    extra = derive(ents)
+    return {e["id"]: [*e["names"], *extra.get(e["id"], [])] for e in ents}
 
 
 class Matcher:
