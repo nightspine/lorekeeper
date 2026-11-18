@@ -34,7 +34,7 @@ Report skips honestly: a green run without the corpus does not cover anchors or 
 
 ## The verdict
 
-Write `<brief folder>/review-<n>.md` (n = 1 + the number of existing review files) and end your turn with its first line.
+Write `<brief folder>/review-<n>.md` (n = 1 + the number of existing review files) and end your turn with its first line. If you cannot write files (a Cursor agent in plan mode), give the whole review as your final message instead, in the same format; the lead files it.
 
 ```
 # Review <n>: PASS | CHANGES REQUESTED
