@@ -51,7 +51,7 @@ main[data-route="reader"], main[data-route="preview"] { padding: 0; }
 .ruler-sub { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; padding: 6px 28px; border-bottom: 1px solid var(--line); font-size: var(--text-xs); color: var(--text-3); }
 .ruler-sub:not(:has(> :not(:empty):not([hidden]))) { display: none; }
 .pos-source { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.pos-source:empty, .pos-hint[hidden], .rd-cover:empty, .pos-notices:empty { display: none; }
+.pos-setting:empty, .pos-source:empty, .pos-hint[hidden], .rd-cover:empty, .pos-notices:empty { display: none; }
 .pos-source .linkish { font-size: inherit; }
 .pos-source .dot-live { width: 7px; height: 7px; border-radius: 50%; background: var(--beacon); flex: none; }
 .pos-notices { display: contents; }
@@ -199,6 +199,12 @@ ol.chapter-list > li + li { border-top: 1px solid var(--edge); }
 .timeline li.tl-chapter { padding: 16px 4px 6px; font: 600 var(--text-xs)/1.3 var(--font-ui); color: var(--text-3); }
 .timeline li.tl-chapter::before { display: none; }
 .timeline li.tl-chapter + li { border-top: 0; }
+.timeline li.tl-setting { display: flex; align-items: center; gap: 6px; padding: 10px 4px 2px; font-size: var(--text-xs); color: var(--text-3); min-width: 0; }
+.timeline li.tl-setting::before { display: none; }
+.timeline li.tl-setting + li { border-top: 0; }
+.timeline li.tl-setting .svg-icon { width: 13px; height: 13px; flex: none; }
+.timeline li.tl-setting span, .timeline li.tl-setting .linkish { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-size: inherit; }
+.timeline li.tl-setting .linkish { color: var(--text-2); }
 .timeline li.turn::before { background: var(--ember); }
 .timeline li.turn .ev { font-weight: 600; color: var(--text); }
 .tl-kind { font: 600 var(--text-xs)/1.3 var(--font-ui); color: var(--ember); }
@@ -288,7 +294,7 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .track { min-width: 60px; }
   .ruler-sub { padding: 6px 16px; }
   .ruler-sub .chsel { flex: 1 1 140px; width: 0; min-width: 0; }   /* the long chapter names must not set the width */
-  .pos-hint { display: none; }
+  .pos-hint, .pos-setting { display: none; }
   .pos-series { padding: 8px 16px; }
   .rd-list { padding: 0 16px 32px; }
   .dup-sides { grid-template-columns: minmax(0, 1fr); }
