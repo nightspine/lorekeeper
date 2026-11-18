@@ -400,6 +400,10 @@ def merge(indexes: list[dict], keep: str, drop: str, name: str | None = None,
             if drop in ev["entities"]:
                 touched = True
                 ev["entities"] = list(dict.fromkeys(keep if x == drop else x for x in ev["entities"]))
+        for ev in ix.get("events", []):
+            if (ev.get("setting") or {}).get("place") == drop:
+                touched = True
+                ev["setting"]["place"] = keep
         if touched:
             changed.append(i)
     if changed:

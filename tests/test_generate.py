@@ -1,7 +1,9 @@
 """Generator pipeline with a scripted model: structure, corrections and every drop rule."""
 
+import dataclasses
 import json
 import re
+from pathlib import Path
 import zipfile
 
 import pytest
@@ -513,7 +515,91 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v9"
+    assert generate.PROMPT_VERSION == "extract-v11"
+
+
+class _Where(FakeLLM):
+    """Events with a setting: one names a known place, one an unsupported cellar, one is too long, one unsure."""
+    def __init__(self, wheres, unsure=()):
+        super().__init__()
+        self.wheres, self.unsure = wheres, unsure
+
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        props = schema.get("properties", {})
+        if "new" in props and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["events"] = [{**ev, "where": w} for ev, w in zip(out["events"], self.wheres)]
+        if "verdicts" in props:
+            out = dict(out)
+            out["verdicts"] = out["verdicts"] + [
+                {"id": line.split(":")[0], "verdict": "unsupported", "because": "the passage never goes there"}
+                for line in prompt.splitlines() if "(setting" in line and "the cellar" in line] + [
+                {"id": line.split(":")[0], "verdict": "unsure", "because": "only implied"}
+                for line in prompt.splitlines() if "(setting" in line and any(u in line for u in self.unsure)]
+        return out
+
+
+def test_an_event_setting_is_normalised_and_linked_to_a_known_place(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Inside the lighthouse,", "on the Cliffs"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    place = next(e["id"] for e in ix["entities"] if e["type"] == "place")
+    assert by["Alice arrives at the lighthouse."]["setting"] == {"text": "the lighthouse", "place": place}
+    assert by["Alice finds a hidden letter."]["setting"] == {"text": "the Cliffs"}   # no place known: text only
+    assert report["stats"]["event settings"] == 2 and report["stats"]["settings linked to a place"] == 1
+    assert generate.MAX_SETTING_WORDS == 8
+    assert '"where"' in generate.EXTRACT and "from elsewhere" in generate.EXTRACT
+    assert "where" in generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["required"]
+
+
+def test_a_proper_noun_keeps_its_capital_and_a_common_one_loses_it(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_Where(["The lighthouse", "Alice Marlow's room by the sea"]))
+    texts = [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")]
+    assert texts == ["the lighthouse", "Alice Marlow's room by the sea"]
+
+
+def test_a_setting_the_checker_rejects_is_dropped_and_the_event_stays(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "the cellar"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert "setting" in by["Alice arrives at the lighthouse."]
+    assert "setting" not in by["Alice finds a hidden letter."]            # the event stays without it
+    assert report["stats"]["dropped: setting not in the text"] == 1
+    assert any(r["kind"] == "setting" and r["because"] for r in report["rejected"])
+    assert report["stats"]["dropped: not supported"] == 2                 # only the usual summary/fact drops
+
+
+def test_an_unsure_setting_is_kept_and_listed(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "a boat"], unsure=("a boat",)))
+    assert any(ev.get("setting", {}).get("text") == "a boat" for ev in ix["events"])
+    assert any(u["kind"] == "setting" and "a boat" in u["claim"] for u in report["unsure"])
+
+
+def test_a_setting_longer_than_eight_words_or_empty_is_not_written(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["in the long low room at the top of the old tower", "none"]))
+    assert not any("setting" in ev for ev in ix["events"])
+    assert report["stats"]["dropped: setting too long"] == 1
+
+
+def test_settings_are_kept_unchecked_when_the_fact_check_is_off(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "the cellar"]), opts=generate.Options(verify=False))
+    assert sum(1 for ev in ix["events"] if ev.get("setting")) == 2
+
+
+class _EventGone(_Where):
+    """The checker rejects the event itself: its setting must not outlive it."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "verdicts" in schema.get("properties", {}):
+            out["verdicts"] += [{"id": line.split(":")[0], "verdict": "unsupported", "because": "no"}
+                                for line in prompt.splitlines() if "Alice finds a hidden letter" in line and "(event" in line]
+        return out
+
+
+def test_a_setting_goes_with_its_event_when_the_event_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_EventGone(["the lighthouse", "a boat"]))
+    assert not any("hidden letter" in ev["summary"] for ev in ix["events"])
+    assert [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")] == ["the lighthouse"]
+    assert report["stats"]["event settings"] == 1
 
 
 class _Labels(FakeLLM):
@@ -708,3 +794,322 @@ def test_one_passage_keeps_a_tie_per_role(book_path, tmp_path):
     ix, _, _ = _run(book_path, tmp_path, llm=_family_chain(
         [("Alice Marlow", "cousin of", "Ezra Pike", "family"), ("Alice Marlow", "wife of", "Ezra Pike", "family")], []))
     assert sorted(_current_labels(ix)) == ["cousin of", "wife of"]
+
+
+class _Late(_Where):
+    """The checker accepts the setting but says the passage shows it only at paragraph 5."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "verdicts" in schema.get("properties", {}):
+            out["later"] = out.get("later", []) + [{"id": line.split(":")[0], "p": 5}
+                                                   for line in prompt.splitlines() if "(setting" in line and "the lighthouse" in line]
+        return out
+
+
+def test_a_setting_the_checker_moves_later_than_its_event_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Late(["the lighthouse", "a boat"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert "setting" not in by["Alice arrives at the lighthouse."]       # would have shown it before the text did
+    assert by["Alice finds a hidden letter."]["setting"] == {"text": "a boat"}
+    assert report["stats"]["dropped: setting revealed later than its event"] == 1
+
+
+class _OnlyASetting(_Where):
+    """The place is named by no event's `who`: only a setting uses it."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            for ev in out["events"]:
+                ev["who"] = [w for w in ev["who"] if w != "lighthouse"]
+        return out
+
+
+def test_a_place_used_only_as_a_setting_is_not_kept_and_the_link_goes(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_OnlyASetting(["the lighthouse", "a boat"]))
+    assert not any(e["type"] == "place" for e in ix["entities"])
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert by["Alice arrives at the lighthouse."]["setting"] == {"text": "the lighthouse"}   # text stays, no place
+    assert [str(e) for e in validate.check_index(ix) if e.level == "error"] == []
+    assert validate.check_schema(ix, "index") == []
+
+
+def test_a_setting_of_nine_whitespace_tokens_is_refused(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the hall & the stairs of the old house", "a boat"]))
+    assert not any(ev.get("setting", {}).get("text", "").startswith("the hall") for ev in ix["events"])
+    assert report["stats"]["dropped: setting too long"] == 1
+
+
+class _LatePlace(_Where):
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "new" in schema.get("properties", {}) and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["new"].append({"name": "floorboards", "type": "place", "p": 6, "desc": "A bare spot.", "desc_p": 6})
+        return out
+
+
+def test_a_place_first_named_after_the_event_is_not_linked(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_LatePlace(["the floorboards", "a boat"]))
+    first = next(ev for ev in ix["events"] if ev["summary"] == "Alice arrives at the lighthouse.")
+    assert first["setting"] == {"text": "the floorboards"}
+    assert [str(e) for e in validate.check_index(ix) if e.level == "error"] == []
+
+
+def test_a_setting_naming_a_word_the_book_has_not_used_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Castle Dracula", "Alice Marlow's room"]))
+    texts = [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")]
+    assert texts == ["Alice Marlow's room"]
+    assert report["stats"]["dropped: setting names a word the book hasn't used"] == 1
+
+
+def _bare_generator():
+    from collections import Counter
+    g = generate.Generator.__new__(generate.Generator)
+    g.stats, g.entities, g.events, g.relations = Counter(), {}, [], []
+    return g
+
+
+def test_a_one_letter_article_is_lowercased_in_a_setting():
+    g = _bare_generator()
+    ev = generate.Candidate("event", "e1", "x", 1, [], {})
+    got = {w: g._setting_candidate(ev, w, "").text for w in ["A carriage", "The carriage", "Castle Dracula"]}
+    assert got == {"A carriage": "a carriage", "The carriage": "the carriage", "Castle Dracula": "Castle Dracula"}
+
+
+def test_a_repeated_events_setting_never_reaches_the_checker():
+    g = _bare_generator()
+    e1 = generate.Candidate("event", "e1", "Alice leaves.", 1, [], {})
+    e2 = generate.Candidate("event", "e2", "Alice leaves.", 1, [], {})
+    s1 = generate.Candidate("setting", "s1", "the hall", 1, [], {"event": "e1", "event_text": "Alice leaves."})
+    s2 = generate.Candidate("setting", "s2", "the cellar", 1, [], {"event": "e2", "event_text": "Alice leaves."})
+    out = g._dedupe([e1, e2, s1, s2])
+    assert [c.cid for c in out] == ["e1", "s1"]
+
+
+# ---- chapter mode ----------------------------------------------------------------------------
+
+def _chapter_gen(book_path, **kw):
+    return generate.Generator(epub.read(book_path), FakeLLM(), generate.Options(chunk_mode="chapter", **kw),
+                              book_path, lambda m: None)
+
+
+def test_a_chapter_under_the_cap_is_one_whole_part_with_a_bridge(book_path):
+    parts = _chapter_gen(book_path).chunks()
+    assert len(parts) == 2 and all(p.whole for p in parts)
+    assert parts[0].bridge is None and parts[1].bridge == (parts[0].end - 1, parts[0].end)
+
+
+def test_a_chapter_over_the_cap_splits_at_a_scene_break(tmp_path):
+    long = [f"Paragraph {i} of the long chapter keeps going with plenty of words to count here today." for i in range(8)]
+    long[5] = "Later That Night"          # heading-like: a scene break
+    path = make_epub(tmp_path / "long.epub", ch1=long)
+    g = _chapter_gen(path, max_part_words=60)
+    parts = [p for p in g.chunks() if p.chapter == 0]
+    assert len(parts) > 1 and not any(p.whole for p in parts)
+    heading = next(b.seq for b in g.book.blocks if b.raw == "Later That Night")
+    assert any(p.start == heading for p in parts)
+    assert all(a.end + 1 == b.start for a, b in zip(parts, parts[1:]))
+
+
+def test_scene_break_detection():
+    for t in ("III", "Chapter Two", "MINA HARKER'S JOURNAL", "Later That Night"):
+        assert generate.is_scene_break(t, len(t.split())), t
+    for t in ("Then\u2014", "Yours ever, Jonathan Harker", "\u201cYes.\u201d", "Yes.", "later that night", "* * *"):
+        assert not generate.is_scene_break(t, len(t.split()) if t != "* * *" else 0), t
+
+
+def test_ollama_cap_leaves_room_for_the_prompt_and_the_output():
+    assert generate.max_part_words("ollama", 8192) == 1500
+    assert generate.max_part_words("ollama", 16384) == 6501
+    assert generate.max_part_words("ollama", 32768) == 17970
+    assert generate.max_part_words("ollama", 1_000_000) == generate.MAX_PART_WORDS == 20000
+    assert generate.max_part_words("claude") == generate.MAX_PART_WORDS
+    assert generate.default_chunk_mode("claude") == "chapter" and generate.default_chunk_mode("ollama") == "words"
+
+
+def test_no_bridge_from_front_matter(tmp_path):
+    path = make_epub(tmp_path / "fm.epub")
+    g = _chapter_gen(path)
+    parts = g.chunks()
+    assert parts[0].chapter == -1 or parts[0].bridge is None
+    assert all(p.bridge is None for p in parts if p.chapter == -1)
+    first_real = next((i for i, p in enumerate(parts) if p.chapter >= 0), 0)
+    if first_real > 0:
+        assert parts[first_real].bridge is None or parts[first_real - 1].chapter >= 0
+
+
+class CutOffLLM(FakeLLM):
+    """The first extraction reply is empty (cut off at the limit), the next ones come from the script."""
+    def __init__(self, cut=1, always=False):
+        super().__init__()
+        self.cut, self.always, self.extractions = cut, always, []
+
+    def complete(self, system, prompt, schema, prefix=None):
+        if "new" in schema.get("properties", {}):
+            self.extractions.append(prefix or "")
+            if self.always or len(self.extractions) <= self.cut:
+                return {}
+        return super().complete(system, prompt, schema, prefix)
+
+
+def _cutoff_run(book_path, tmp_path, llm):
+    logs = []
+    out = tmp_path / "o.lore.json"
+    generate.run(epub.read(book_path), llm, generate.Options(chapters={1}), book_path, out, log=logs.append)
+    return logs
+
+
+def test_a_cut_off_reply_splits_the_part_and_logs_it(book_path, tmp_path):
+    llm = CutOffLLM(cut=1)
+    logs = _cutoff_run(book_path, tmp_path, llm)
+    assert sum("extraction reply was cut off; splitting the part in two" in m for m in logs) == 1
+    assert len(llm.extractions) == 3          # the whole part, then both halves
+    assert len(set(llm.extractions[1:])) == 2
+
+
+def test_a_half_that_fails_again_is_logged_and_done(book_path, tmp_path):
+    llm = CutOffLLM(always=True)
+    logs = _cutoff_run(book_path, tmp_path, llm)
+    assert any("cut off again" in m for m in logs)
+    state = json.loads((tmp_path / "o.lore.json.state").read_text())
+    keys = [k for k in state["done"]]
+    assert len(keys) == 3 and len(set(keys)) == 3          # both halves and the parent
+    parent = max(keys, key=lambda k: int(k.split("-")[1]) - int(k.split("-")[0]))
+    assert parent == keys[-1]
+    report = json.loads((tmp_path / "o.lore.json.report").read_text())
+    assert report["stats"]["dropped: reply cut off"] == 2
+
+
+def test_a_split_part_reports_both_halves_additions(book_path, tmp_path):
+    g = generate.Generator(epub.read(book_path), CutOffLLM(cut=1), generate.Options(chapters={1}), book_path, lambda m: None)
+    seen = []
+    orig = g._process_part
+
+    def spy(chunk):
+        out = orig(chunk)
+        seen.append(list(g.added))
+        return out
+    g._process_part = spy
+    g.process(g.chunks()[0])
+    assert len(seen) == 2 and seen[0] and seen[1]
+    assert g.added == seen[0] + seen[1]
+
+
+def test_a_cut_off_claude_reply_is_split_not_raised(book_path, tmp_path):
+    """Through the real Claude backend: stop_reason max_tokens on the first extraction splits the part."""
+    from types import SimpleNamespace as NS
+    from lorekeeper import llm as llmmod
+    fake, calls = FakeLLM(), {"extractions": 0}
+
+    class Messages:
+        def create(self, **kw):
+            schema = kw["output_config"]["format"]["schema"]
+            usage = NS(input_tokens=10, output_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+            if "new" in schema.get("properties", {}):
+                calls["extractions"] += 1
+                if calls["extractions"] == 1:
+                    return NS(stop_reason="max_tokens", content=[NS(type="text", text='{"new": [{"na')], usage=usage)
+            text = kw["messages"][0]["content"]
+            text = text if isinstance(text, str) else text[-1]["text"]
+            return NS(stop_reason="end_turn", usage=usage,
+                      content=[NS(type="text", text=json.dumps(fake.complete(kw["system"], text, schema)))])
+    client = NS(messages=Messages(), beta=NS(messages=Messages()))
+    backend = llmmod.Claude(name="claude-haiku-5-5", client=client)
+    logs = _cutoff_run(book_path, tmp_path, backend)
+    assert any("splitting the part in two" in m for m in logs)
+    assert backend.usage.truncated == 1
+
+
+def test_cli_parts_default_follows_the_provider():
+    from argparse import Namespace
+    from lorekeeper import cli
+    def mode(provider="ollama", parts=None, whole=False):
+        return cli._chunk_mode(Namespace(provider=provider, parts=parts, whole_chapters=whole,
+                                         chunk_words=None, resume=False, output="x"))
+    assert mode() == "words"
+    assert mode("claude") == "chapter"
+    assert mode("claude", parts="words") == "words"
+    assert mode(whole=True) == "chapter"
+    assert mode(parts="chapter") == "chapter"
+
+
+def _cli_mode(monkeypatch, *argv):
+    from lorekeeper import cli
+    seen = {}
+    monkeypatch.setattr(generate, "run", lambda book, model, opts, *a, **k: seen.update(mode=opts.chunk_mode) or {"validation_errors": 0})
+    monkeypatch.setattr(cli, "_make_model", lambda *a, **k: object())
+    assert cli.main(["generate", *argv]) == 0
+    return seen["mode"]
+
+
+def test_cli_chunk_words_alone_means_words(book_path, tmp_path, monkeypatch):
+    base = [str(book_path), "-o", str(tmp_path / "o.json"), "--provider", "claude"]
+    assert _cli_mode(monkeypatch, *base) == "chapter"
+    assert _cli_mode(monkeypatch, *base, "--chunk-words", "3000") == "words"
+
+
+def test_cli_whole_chapters_and_parts_words_conflict(book_path, tmp_path):
+    from lorekeeper import cli
+    with pytest.raises(SystemExit):
+        cli.main(["generate", str(book_path), "-o", str(tmp_path / "o.json"), "--whole-chapters", "--parts", "words"])
+
+
+def test_resume_keeps_the_recorded_mode(book_path, tmp_path, monkeypatch):
+    out = tmp_path / "o.json"
+    _run_to(book_path, out, generate.Options(chunk_mode="words", chunk_words=60))
+    assert json.loads(Path(str(out) + ".state").read_text())["chunk_mode"] == "words"
+    base = [str(book_path), "-o", str(out), "--provider", "claude", "--resume"]
+    assert _cli_mode(monkeypatch, *base) == "words"
+    assert _cli_mode(monkeypatch, *base, "--parts", "chapter") == "chapter"
+    # a state from before the mode was recorded was a words run
+    st = Path(str(out) + ".state"); d = json.loads(st.read_text()); d.pop("chunk_mode"); st.write_text(json.dumps(d))
+    assert _cli_mode(monkeypatch, *base) == "words"
+
+
+def test_resume_in_the_recorded_mode_rereads_nothing(book_path, tmp_path):
+    out = tmp_path / "o.json"
+    _run_to(book_path, out, generate.Options(chunk_mode="words", chunk_words=60))
+    n = len(json.loads(out.read_text())["recaps"])
+    llm = FakeLLM()
+    generate.run(epub.read(book_path), llm, generate.Options(chunk_mode="words", chunk_words=60), book_path, out,
+                 resume=True, log=lambda m: None)
+    assert llm.calls == [] and len(json.loads(out.read_text())["recaps"]) == n
+
+
+def _run_to(book_path, out, opts):
+    generate.run(epub.read(book_path), FakeLLM(), opts, book_path, out, log=lambda m: None)
+
+
+def test_requests_per_part_are_capped(book_path, tmp_path):
+    llm = FakeLLM()
+    big = " ".join(["word"] * 40000)
+    g = generate.Generator(epub.read(book_path), llm, generate.Options(), book_path, lambda m: None)
+    chunk = g.chunks()[0]
+    g.book.blocks[chunk.start] = dataclasses.replace(g.book.blocks[chunk.start], words=big.split())   # 40,000 words
+    g.process(chunk)
+    prompt = next(c for c in llm.calls if "events" in c)
+    assert f"{generate.MAX_EVENTS}" in prompt and "at most 8 per entity" in prompt
+
+
+
+def test_whole_chapter_prompt_has_an_uncited_bridge_and_one_recap_each(book_path, tmp_path):
+    ix, report, llm = _run(book_path, tmp_path, generate.Options(chunk_mode="chapter"))
+    assert report["chunks"] == 2
+    first, second = [c for c in llm.calls if "Update the companion" in c][:2]
+    assert "This passage is the whole of: Chapter One" in first and "Where the previous part left off" not in first
+    assert "Where the previous part left off" in second and "That night Alice found a letter" in second
+    assert "never cite" in second
+    chapter_recaps = [r for r in ix["recaps"] if r.get("scope") == "chapter"]
+    assert len(chapter_recaps) == len({r["title"] for r in chapter_recaps})
+    assert any("do not" in c or "support nothing" in c for c in llm.calls if "Claims:" in c)
+
+
+def test_words_mode_has_no_bridge(book_path, tmp_path):
+    _, _, llm = _run(book_path, tmp_path)
+    assert not any("Where the previous part left off" in c or "the whole of" in c for c in llm.calls)
+
+
+def test_a_family_tie_with_an_unresolved_end_has_no_role():
+    assert generate.Generator._family_role("family", "sister of", "alice", None) is None
+    assert generate.Generator._family_role("family", "sister of", None, None) is None

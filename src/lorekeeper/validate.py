@@ -8,6 +8,7 @@ Cross-book checks run when a series and its other indexes are supplied.
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from functools import cache
 from importlib import resources
@@ -116,6 +117,8 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
     prior_items = {x["id"]: k for p in prior for k, _, x in _items(p) if k in ("facet", "relation")}
     profiles = {x["id"] for p in [*prior, index] for k, _, x in _items(p) if k == "facet" and x.get("kind") == "profile"}
     entity_from = {e["id"]: ords.get(e["from"]) for e in index["entities"]}
+    types = {**{e["id"]: e["type"] for p in prior for e in p.get("entities", [])},
+             **{e["id"]: e["type"] for e in index["entities"]}}
     item_kind: dict[str, str] = {}
     item_from: dict[str, int | None] = {}
 
@@ -159,6 +162,17 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                 elif t not in prior_entities:
                     issues.append(Issue("warning" if unknown_prior else "error", where,
                                         f"unknown entity {t!r}"))
+        if kind == "event" and "place" in item.get("setting", {}):
+            pid = item["setting"]["place"]
+            if pid not in types:
+                issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
+                                    f"unknown entity {pid!r}"))
+            elif types[pid] != "place":
+                issues.append(Issue("error", f"{where}.setting.place", f"{pid!r} is not a place"))
+            elif pid in entity_from and entity_from[pid] is not None and entity_from[pid] > f \
+                    and pid not in prior_entities:
+                issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
+                                    f"references {pid!r} before it is revealed"))
         for r in item.get("replaces", []):
             if kind == "facet" and (r in profiles) != (item.get("kind") == "profile") and (r in item_kind or r in prior_items):
                 issues.append(Issue("warning", where, "a profile should replace only profiles, and details only details"))
@@ -182,6 +196,7 @@ def check_against_book(index: dict, blocks: list[Block]) -> list[Issue]:
     resolved = anchor_mod.resolve(index["anchors"], blocks)
     book_hash = text.text_hash(b.words for b in blocks)
     exact = any(e["textHash"] == book_hash and e.get("builtFrom") for e in index["editions"])
+    fp_count = Counter(b.fingerprint for b in blocks)      # once, not once per anchor
     for i, a in enumerate(index["anchors"]):
         loc = resolved[a["id"]]
         if loc is None:
@@ -190,7 +205,7 @@ def check_against_book(index: dict, blocks: list[Block]) -> list[Issue]:
         if len(blocks[loc].words) < text.MIN_ANCHOR_WORDS:
             issues.append(Issue("error", f"anchors[{i}]",
                                 f"anchor block has fewer than {text.MIN_ANCHOR_WORDS} words"))
-        if sum(1 for b in blocks if b.fingerprint == a["fp"]) > 1:
+        if fp_count[a["fp"]] > 1:
             issues.append(Issue("warning", f"anchors[{i}]", "fingerprint is not unique in this edition"))
         if exact and "seq" in a and a["seq"] != loc:
             issues.append(Issue("error", f"anchors[{i}]", f"seq hint {a['seq']} but found at {loc}"))

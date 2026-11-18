@@ -9,3 +9,4 @@ lorekeeper-data/
 .DS_Store
 build/
 .claude/work/
+.env

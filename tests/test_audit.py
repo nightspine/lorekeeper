@@ -10,7 +10,7 @@ def book(tmp_path):
     return epub.read(make_epub(tmp_path / "b.epub")).blocks
 
 
-def index_of(blocks, n_facts=3):
+def index_of(blocks, n_facts=18):
     seqs = [b.seq for b in blocks if len(b.words) >= 6]
     anchors = [{"id": f"a{s}", "fp": blocks[s].fingerprint, "seq": s} for s in seqs]
     facets = [{"id": f"f{i}", "from": f"a{seqs[i % len(seqs)]}", "evidence": [f"a{seqs[i % len(seqs)]}"],
@@ -53,15 +53,15 @@ def test_all_claims_when_fewer_than_n(tmp_path):
     idx = index_of(blocks)
     j = Judge()
     r = audit.audit(idx, blocks, j, n=50)
-    # 3 facts + 1 relation + 1 event + 2 chapter sentences ("Yes." is not a sentence; the story recap is skipped)
-    assert r == {"sampled": 7, "supported": 7, "unsupported": 0, "unsure": 0, "model": "judge"}
-    assert len(j.prompts) == 1
+    # 18 facts + 1 relation + 1 event + 2 chapter sentences ("Yes." is not a sentence; the story recap is skipped)
+    assert r == {"sampled": 22, "supported": 22, "unsupported": 0, "unsure": 0, "model": "judge"}
+    assert len(j.prompts) == 3
 
 
 def test_counts_only_supported(tmp_path):
     blocks = book(tmp_path)
     r = audit.audit(index_of(blocks), blocks, Judge(bad={"c1"}, unsure={"c2"}, omit={"c3"}), n=50)
-    assert (r["sampled"], r["supported"], r["unsupported"], r["unsure"]) == (7, 4, 1, 2)
+    assert (r["sampled"], r["supported"], r["unsupported"], r["unsure"]) == (22, 19, 1, 2)
     assert r["sampled"] == r["supported"] + r["unsupported"] + r["unsure"]
 
 
@@ -71,7 +71,7 @@ def test_profiles_are_not_sampled(tmp_path):
     f = idx["entities"][0]["facets"]
     f.append({"id": "p1", "kind": "profile", "from": idx["anchors"][0]["id"], "text": "A long sum of everything.", "basis": "stated"})
     j = Judge()
-    assert audit.audit(idx, blocks, j, n=50)["sampled"] == 7
+    assert audit.audit(idx, blocks, j, n=50)["sampled"] == 22
     assert "A long sum of everything" not in j.prompts[0]
 
 
@@ -79,7 +79,7 @@ def test_detail_lists_verdicts_with_passages(tmp_path):
     blocks = book(tmp_path)
     d = []
     audit.audit(index_of(blocks), blocks, Judge(bad={"c1"}), n=50, detail=d)
-    assert len(d) == 7 and d[0]["verdict"] == "unsupported" and d[0]["passage"].startswith("[")
+    assert len(d) == 22 and d[0]["verdict"] == "unsupported" and d[0]["passage"].startswith("[")
 
 
 def test_batches_of_ten_and_even_deterministic_sample(tmp_path):
@@ -127,7 +127,7 @@ def test_unusable_response_is_unsure(tmp_path):
         def complete(self, *a, **k):
             return {}
     r = audit.audit(index_of(blocks), blocks, Broken(), n=50)
-    assert r["supported"] == r["unsupported"] == 0 and r["unsure"] == r["sampled"] == 7
+    assert r["supported"] == r["unsupported"] == 0 and r["unsure"] == r["sampled"] == 22
 
 
 def _claim(seqs, frm):
@@ -226,6 +226,33 @@ def test_recap_sentences_are_at_most_a_tenth_of_the_sample():
     assert len(audit.sample(few, 50)) == 50
 
 
+def test_recap_sentences_stay_a_tenth_when_fewer_than_n_are_sampled():
+    cs = [audit.Claim(f"c{i}", i, "fact", "t", [i]) for i in range(1, 21)]
+    cs += [audit.Claim(f"c{i}", i, "summary", "t", [i]) for i in range(21, 26)]
+    got = audit.sample(cs, 50, seed=1)
+    s = sum(c.kind == "summary" for c in got)
+    assert len(got) < 50 and s * 10 <= len(got) and s == 2
+
+
+def test_a_fact_is_named_as_the_book_had_revealed_it(tmp_path):
+    blocks = book(tmp_path)
+    idx = index_of(blocks, n_facts=3)
+    ids = [a["id"] for a in idx["anchors"]]
+    e = idx["entities"][0]
+    e["names"] = [{"value": "Alice Marlow", "kind": "primary", "from": ids[4]},
+                  {"value": "the stranger", "kind": "alias", "from": ids[0]}]
+    e["facets"][0]["from"] = e["facets"][0]["evidence"][0] = ids[1]       # before the primary name arrives
+    e["facets"][1]["from"] = e["facets"][1]["evidence"][0] = ids[5]       # after it
+    resolved = {a["id"]: a["seq"] for a in idx["anchors"]}
+    texts = [c.text for c in audit.claims_of(idx, resolved) if c.kind == "fact"]
+    assert texts[0].startswith("the stranger: ") and any(t.startswith("Alice Marlow: ") for t in texts)
+    # no name has arrived yet: the earliest name
+    e["names"][1]["from"] = ids[2]
+    e["facets"][0]["from"] = e["facets"][0]["evidence"][0] = ids[1]
+    texts = [c.text for c in audit.claims_of(idx, resolved) if c.kind == "fact"]
+    assert texts[0].startswith("the stranger: ")
+
+
 def test_estimate_matches_what_audit_sends(tmp_path):
     blocks = book(tmp_path)
     idx = index_of(blocks, n_facts=30)
@@ -235,3 +262,42 @@ def test_estimate_matches_what_audit_sends(tmp_path):
     assert est["claims"] == r["sampled"] and est["calls"] == len(j.prompts) == 3
     assert est["input_chars"] == sum(len(audit.SYSTEM) + len(p) for p in j.prompts)
     assert audit.estimate({"anchors": [], "entities": []}, blocks) == {"claims": 0, "calls": 0, "input_chars": 0}
+
+
+def test_a_recap_only_or_small_index_is_still_audited():
+    only = [audit.Claim(f"c{i}", i, "summary", "t", [i]) for i in range(1, 6)]
+    assert len(audit.sample(only, 50)) == 5
+    few = [audit.Claim(f"c{i}", i, "fact", "t", [i]) for i in range(1, 9)]
+    many = [audit.Claim(f"c{i}", i, "summary", "t", [i]) for i in range(9, 39)]
+    got = audit.sample(few + many, 50)
+    assert sum(c.kind == "summary" for c in got) == 1 and sum(c.kind == "fact" for c in got) == 8
+
+
+def test_dracula_facts_keep_a_primary_name_the_book_has_revealed():
+    import json
+    from pathlib import Path
+    idx = json.loads((Path(__file__).parent.parent / "examples/dracula/dracula.json").read_text())
+    ordinal = {a["id"]: i for i, a in enumerate(idx["anchors"])}
+    resolved = {a["id"]: a.get("seq") for a in idx["anchors"]}
+    facts = {c.text for c in audit.claims_of(idx, resolved) if c.kind == "fact"}
+    checked = 0
+    for e in idx["entities"]:
+        prim = next((n for n in e["names"] if n.get("kind") == "primary"), None)
+        for f in e.get("facets", []):
+            if f.get("kind") == "profile" or prim is None or ordinal[prim["from"]] > ordinal[f["from"]]:
+                continue
+            checked += 1
+            assert f"{prim['value']}: {f['text']}" in facts
+    assert checked > 30
+
+
+def test_ties_name_each_end_as_the_book_had_revealed_it(tmp_path):
+    blocks = book(tmp_path)
+    idx = index_of(blocks)
+    ids = [a["id"] for a in idx["anchors"]]
+    resolved = {a["id"]: a["seq"] for a in idx["anchors"]}
+    idx["entities"][0]["names"] = [{"value": "Alice Marlow", "kind": "primary", "from": ids[-1]},
+                                   {"value": "the stranger", "kind": "alias", "from": ids[0]}]
+    idx["relations"][0]["from"] = idx["relations"][0]["evidence"][0] = ids[1]
+    rel = next(c for c in audit.claims_of(idx, resolved) if c.kind == "relation")
+    assert rel.text == "the stranger, looks for, the stranger"

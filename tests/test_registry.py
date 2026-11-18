@@ -150,6 +150,21 @@ def test_spoiler_gate_counts_early_names():
     assert gate["examples"] == [{"entity": "holmes", "name": "Mr Holmes"}]
 
 
+def test_spoiler_gate_is_cheap_for_many_names_sharing_a_common_word():
+    import time
+    from lorekeeper import text
+    words = ("the " * 40 + "end").split()
+    blocks = [epub.Block(i, 0, text.words(" ".join(words)), "x") for i in range(3000)]     # a book-sized list
+    fp = text.fingerprint(blocks[0].words)
+    names = [{"value": f"The Nobody{i} of Nowhere", "from": "a0"} for i in range(5000)]
+    names += [{"value": "the the the the", "from": "a0"}, {"value": "the end", "from": "a0"}]
+    index = {"anchors": [{"id": "a0", "fp": fp}], "entities": [{"id": "e", "names": names}]}
+    t0 = time.monotonic()
+    gate = registry.spoiler_gate(index, blocks)
+    assert time.monotonic() - t0 < 10.0      # a healthy run takes ~0.1 s; rescanning per name takes minutes
+    assert (gate["names"], gate["found"]) == (5002, 2)
+
+
 # ---- check / add ----------------------------------------------------------------------------
 
 def test_add_dracula_writes_source_tree(tmp_path, src, dracula):

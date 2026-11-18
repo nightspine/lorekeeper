@@ -553,6 +553,26 @@
             "minor"
           ],
           "description": "How much the event drives the story (SPEC.md §4.4): a turning point, or a small moment. Absent for an ordinary development."
+        },
+        "setting": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "additionalProperties": false,
+          "description": "Where the event happens, as the reader understands it at `from` (SPEC.md §4.4). Gated with the event.",
+          "properties": {
+            "text": {
+              "type": "string",
+              "pattern": "^\\S+(\\s+\\S+){0,7}$",
+              "maxLength": 120,
+              "description": "A noun phrase of at most 8 words in the book's own terms, with no leading preposition."
+            },
+            "place": {
+              "$ref": "#/$defs/slug",
+              "description": "The id of a `place` entity the index (or an earlier book of the series) has, when the setting names it."
+            }
+          }
         }
       }
     },

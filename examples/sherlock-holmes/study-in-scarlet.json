@@ -260,6 +260,11 @@
       "fp": "b0f48502ac234b66"
     },
     {
+      "id": "ch2.para23",
+      "seq": 123,
+      "fp": "da53505a58d23be3"
+    },
+    {
       "id": "ch2.para24",
       "seq": 124,
       "fp": "fe72c108568d6990"
@@ -1034,8 +1039,8 @@
       "evidence": [
         "ch1.para02"
       ],
-    "kind": "service"
-  },
+      "kind": "service"
+    },
     {
       "id": "sis.rel.stamford-watson",
       "src": "stamford",
@@ -1046,8 +1051,8 @@
       "evidence": [
         "ch1.para05"
       ],
-    "kind": "acquaintance"
-  },
+      "kind": "acquaintance"
+    },
     {
       "id": "sis.rel.holmes-barts",
       "src": "holmes",
@@ -1059,8 +1064,8 @@
         "ch1.para12",
         "ch1.para34"
       ],
-    "kind": "place"
-  },
+      "kind": "place"
+    },
     {
       "id": "sis.rel.watson-holmes.1",
       "src": "watson",
@@ -1071,8 +1076,8 @@
       "evidence": [
         "ch1.para60"
       ],
-    "kind": "friendship"
-  },
+      "kind": "friendship"
+    },
     {
       "id": "sis.rel.watson-holmes.2",
       "src": "watson",
@@ -1086,8 +1091,8 @@
       "replaces": [
         "sis.rel.watson-holmes.1"
       ],
-    "kind": "friendship"
-  },
+      "kind": "friendship"
+    },
     {
       "id": "sis.rel.lestrade-holmes",
       "src": "lestrade",
@@ -1098,8 +1103,8 @@
       "evidence": [
         "ch2.para28"
       ],
-    "kind": "service"
-  }
+      "kind": "service"
+    }
   ],
   "events": [
     {
@@ -1113,7 +1118,11 @@
       ],
       "evidence": [
         "ch1.para02"
-      ]
+      ],
+      "setting": {
+        "text": "the battle of Maiwand",
+        "place": "maiwand"
+      }
     },
     {
       "id": "sis.ev.criterion",
@@ -1126,7 +1135,11 @@
       ],
       "evidence": [
         "ch1.para05"
-      ]
+      ],
+      "setting": {
+        "text": "the Criterion Bar",
+        "place": "criterion-bar"
+      }
     },
     {
       "id": "sis.ev.meeting",
@@ -1139,10 +1152,15 @@
         "barts"
       ],
       "evidence": [
+        "ch1.para34",
         "ch1.para35"
       ],
-    "kind": "turn"
-  },
+      "kind": "turn",
+      "setting": {
+        "text": "a lofty chamber at Barts",
+        "place": "barts"
+      }
+    },
     {
       "id": "sis.ev.agree",
       "from": "ch1.para60",
@@ -1166,7 +1184,11 @@
       ],
       "evidence": [
         "ch2.para01"
-      ]
+      ],
+      "setting": {
+        "text": "the rooms at 221B Baker Street",
+        "place": "baker-street"
+      }
     },
     {
       "id": "sis.ev.article",
@@ -1178,8 +1200,12 @@
         "book-of-life"
       ],
       "evidence": [
+        "ch2.para23",
         "ch2.para24"
-      ]
+      ],
+      "setting": {
+        "text": "the breakfast table"
+      }
     },
     {
       "id": "sis.ev.trade",
@@ -1206,8 +1232,8 @@
       "evidence": [
         "ch2.para50"
       ],
-    "kind": "minor"
-  }
+      "kind": "minor"
+    }
   ],
   "recaps": [
     {

@@ -23,7 +23,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .. import epub, generate, text, validate
+from .. import epub, generate, merge, text, validate
 from ..generate import slug
 
 TYPES = ("person", "creature", "place", "group", "object", "concept", "term")
@@ -35,7 +35,7 @@ RELATION_KINDS = generate.RELATION_KINDS   # what sort of tie a relation is; abs
 # Spec length limits (SPEC.md §6.3), with how the message names each kind of text.
 LIMITS = {"detail": (280, "a detail"), "profile": (800, "a description"), "event": (280, "an event"),
           "label": (80, "a connection"), "name": (120, "a name"), "story": (1200, "a story recap"),
-          "chapter": (2000, "a chapter recap"), "title": (120, "a chapter title")}
+          "chapter": (2000, "a chapter recap"), "title": (120, "a chapter title"), "setting": (120, "a setting")}
 MAX_PASSAGE = 60   # paragraphs either side in one passage request
 
 
@@ -64,6 +64,8 @@ def check_wording(kind: str, s: str, cited: str | None = None, shingles: set | N
         raise WordingError(f"Too long: {noun} is at most {limit} characters")
     if kind in ("name", "title"):
         return
+    if kind == "setting" and len(s.split()) > generate.MAX_SETTING_WORDS:
+        raise WordingError(f"Too long: a setting is at most {generate.MAX_SETTING_WORDS} words, like “the deck of the Demeter”")
     m = generate.HINDSIGHT.search(s)
     if m:
         raise WordingError(f"Reads with hindsight ({_q(m.group(0))}): describe what a reader knows at this point.")
@@ -410,6 +412,10 @@ class Editor:
             if e["type"] != etype:
                 e["type"] = etype
                 ctx.changed.add(j)
+        if etype != "place":      # a setting links only to a place; the text stays
+            for j, d in enumerate(ctx.docs):
+                if self._unlink_place(d, eid):
+                    ctx.changed.add(j)
         return f"Changed {ctx.names(eid)[0]} to a {etype}", {"entity": eid}
 
     def _op_delete_entity(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
@@ -425,12 +431,24 @@ class Editor:
             d["relations"] = [r for r in d.get("relations", []) if eid not in (r["src"], r["dst"])]
             for ev in d.get("events", []):
                 ev["entities"] = [x for x in ev["entities"] if x != eid]
+            self._unlink_place(d, eid)
             for e in d.get("entities", []):
                 for f in e.get("facets", []):
                     self._unreplace(f, gone)
             if json.dumps(d, sort_keys=True) != before:
                 ctx.changed.add(j)
         return f"Deleted {name}", {"entity": eid}
+
+    @staticmethod
+    def _unlink_place(doc: dict, eid: str) -> bool:
+        """Drop `setting.place` links to `eid` (the setting's text stays)."""
+        hit = False
+        for ev in doc.get("events", []):
+            st = ev.get("setting")
+            if st and st.get("place") == eid:
+                del st["place"]
+                hit = True
+        return hit
 
     @staticmethod
     def _unreplace(item: dict, gone: set[str]) -> None:
@@ -620,6 +638,9 @@ class Editor:
         kind = self._event_kind(op)
         if kind:
             item["kind"] = kind
+        setting = self._setting(ctx, op.get("setting"), anchor)
+        if setting:
+            item["setting"] = setting
         ords = ctx.ords()
         evs = ctx.doc["events"]
         pos = next((k for k, x in enumerate(evs) if ords.get(x["from"], 0) > ords[anchor]), len(evs))
@@ -649,10 +670,36 @@ class Editor:
                 ev["kind"] = kind
             else:
                 ev.pop("kind", None)
+        if "setting" in op or ("seq" in op and ev.get("setting")):
+            raw = op["setting"] if "setting" in op else ev["setting"]["text"]
+            setting = self._setting(ctx, raw, ev["from"])
+            cur = ev.get("setting")
+            if setting and cur and cur.get("text") == setting["text"] and op.get("seq") is None:
+                pass        # unchanged text on an event that did not move: keep the link as it is
+            elif setting:
+                ev["setting"] = setting
+            else:
+                ev.pop("setting", None)
         ords = ctx.ords()
         ctx.doc["events"].sort(key=lambda x: ords.get(x["from"], 0))
         ctx.changed.add(j)
         return "Edited an event", {"id": iid, "text": old}
+
+    def _setting(self, ctx: _Ctx, raw, anchor: str) -> dict | None:
+        """An event's setting from what was typed: None when empty, else `{text, place?}`. The text is
+        cleaned the way the generator cleans it (no leading preposition) and held to the wording rules;
+        `place` is the place entry of this index the text names, only if revealed by the event's anchor."""
+        s = " ".join(str(raw or "").split()).strip(" .,;:\"'()[]")
+        s = generate.SETTING_LEAD.sub("", s).strip()
+        if not s or s.casefold() in generate.NO_SETTING:
+            return None
+        check_wording("setting", s, None, self.shingles(ctx.book) if ctx.book else None)
+        core = merge.core(s)
+        ords = ctx.ords()
+        hits = [e["id"] for e in ctx.doc.get("entities", [])
+                if e["type"] == "place" and ords.get(e["from"], 0) <= ords[anchor]
+                and any(merge.core(n["value"]) == core for n in e.get("names", []))]
+        return {"text": s, **({"place": hits[0]} if len(hits) == 1 else {})}
 
     @staticmethod
     def _event_kind(op: dict) -> str | None:

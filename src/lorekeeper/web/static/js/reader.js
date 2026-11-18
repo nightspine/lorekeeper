@@ -427,6 +427,7 @@ export function mountReader(root) {
     el.pctInput = h("input.input.pct-input", { type: "number", min: "0", max: "100", step: "1", "aria-label": "Reading position, percent" });
     el.chapSel = h("select.select.chsel#jump-chapter", { "aria-label": "Jump to chapter" });
     el.hint = h("span.pos-hint");
+    el.setting = h("span.pos-setting");
     el.notice = h("div.pos-notices");
     el.series = h("div.pos-series");
 
@@ -498,7 +499,7 @@ export function mountReader(root) {
     el.position = h("section.ruler", { "aria-label": "Reading position" },
       h("div.step-btns", prev, next), el.pct, el.chap, el.track, el.jump);
     // Secondary lines sit under the ruler only when they have something to say.
-    el.sub = h("div.ruler-sub", el.source, el.hint, el.headFacts, el.notice);
+    el.sub = h("div.ruler-sub", el.source, el.hint, el.setting, el.headFacts, el.notice);
     placeJump();
     el.tabs = h("div.view-tabs", { role: "tablist", "aria-label": "Index views" });
     el.panel = h("div.rd-panel", { role: "tabpanel", id: "panel-view", tabindex: "0" });
@@ -690,6 +691,23 @@ export function mountReader(root) {
     if (await load(target.key, { book: k })) saveUrl(); else s.finished = was;
   }
 
+  /** "Last setting: a carriage." from the latest visible event with one, only when it lies in the chapter the position is in. */
+  function paintLastSetting() {
+    const here = s.map.chapterAt(s.p);
+    let found = null;
+    if (here) {
+      for (let i = s.view.events.length - 1; i >= 0; i--) {
+        const ev = s.view.events[i];
+        if (!ev.setting?.text) continue;
+        const ch = eventChapter(ev);
+        if (ch && ch.start === here.start) found = ev;
+        break;
+      }
+    }
+    el.setting.textContent = found ? `Last setting: ${found.setting.text}.` : "";
+    el.setting.title = found ? found.summary : "";
+  }
+
   let frame = 0;
   let announceTimer;
   let announceCount = 0;
@@ -708,6 +726,7 @@ export function mountReader(root) {
     el.chap.textContent = ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal";
     el.chap.title = el.chap.textContent;
     paintSource();
+    paintLastSetting();
 
     const notices = [];
     if (!s.map.exact) notices.push(h("div.notice.info", icon("info"),
@@ -1041,6 +1060,26 @@ export function mountReader(root) {
     const at = s.map.anchorPos(r.from);
     return Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
   }
+  const capFirst = (t) => (t ? t[0].toUpperCase() + t.slice(1) : t);
+  /** The heading of a scene run: the setting, first letter capitalised; a quiet link when its place is in the view. */
+  function settingHeading(setting) {
+    const place = setting.place && nameOf(setting.place) ? setting.place : null;
+    const label = capFirst(setting.text);
+    return h("li.tl-setting", icon("pin"), place
+      ? h("button.linkish", { type: "button", on: { click: (ev) => openDrawer(place, { from: ev.currentTarget }) } }, label)
+      : h("span", label));
+  }
+  /** Consecutive events with the same setting (case-insensitive) form a run; events without one never join a neighbour. */
+  function sceneRuns(events) {
+    const runs = [];
+    for (const ev of events) {
+      const key = ev.setting?.text ? ev.setting.text.trim().toLowerCase() : null;
+      const last = runs[runs.length - 1];
+      if (key && last && last.key === key) last.events.push(ev);
+      else runs.push({ key, setting: key ? ev.setting : null, events: [ev] });
+    }
+    return runs;
+  }
   /** One timeline row: turning points stand out, small moments stay quiet. */
   function eventRow(ev, { chips = true } = {}) {
     const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`);
@@ -1089,7 +1128,7 @@ export function mountReader(root) {
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
       evs.length ? [s.newestFirst ? null : earlier, h("ol.timeline", near.map((g) => [
         g.label ? h("li.tl-chapter", g.label) : null,
-        g.events.map((ev) => eventRow(ev)),
+        sceneRuns(g.events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev))]),
       ])), s.newestFirst ? earlier : null]
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }

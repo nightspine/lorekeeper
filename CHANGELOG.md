@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.10.0](https://github.com/nightspine/lorekeeper/compare/v0.9.0...v0.10.0) (2026-11-18)
+
+
+### Features
+
+* whole-chapter parts, one model call per chapter, on by default for cloud models ([#62](https://github.com/nightspine/lorekeeper/issues/62)) ([3895a2c](https://github.com/nightspine/lorekeeper/commit/3895a2c15e348e8fc991023ef8790c7a7027ed0c))
+
+## [0.9.0](https://github.com/nightspine/lorekeeper/compare/v0.8.0...v0.9.0) (2026-11-18)
+
+
+### Features
+
+* event settings, where each event happens, with the Timeline grouped by scene ([#58](https://github.com/nightspine/lorekeeper/issues/58)) ([cf7616c](https://github.com/nightspine/lorekeeper/commit/cf7616cc1634a0f5d805fe9f52668aeaba1761f4))
+
 ## [0.8.0](https://github.com/nightspine/lorekeeper/compare/v0.7.1...v0.8.0) (2026-11-17)
 
 

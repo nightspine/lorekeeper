@@ -28,7 +28,12 @@ from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v9"
+PROMPT_VERSION = "extract-v11"
+MAX_PART_WORDS = 20000   # a whole-chapter part is never longer than this (cloud); Ollama: see max_part_words
+MAX_EVENTS = 60          # events requested per part, in any mode: more than a backend can return in one reply
+MAX_DETAILS = 8          # details requested per entity per part
+BRIDGE_WORDS = 150       # context shown from the end of the previous part in chapter mode
+WORDS_PER_TOKEN = 0.55
 MAX_COPY = validate.MAX_VERBATIM_WORDS + 1
 MAX_CONTEXT_FACTS = 4
 MAX_CONTEXT_TIES = 8
@@ -49,6 +54,40 @@ def default_chunk_words(provider: str | None) -> int:
     """Words per model call. A cloud model reads about a chapter at a time, so events and summaries
     come from one reading of it; a local model keeps the smaller chunk its context and speed allow."""
     return 2500 if (provider or "ollama") == "ollama" else 8000
+
+
+def default_chunk_mode(provider: str | None) -> str:
+    """Whole chapters with a cloud model (measured: scenes stay whole and far fewer claims are dropped where
+    chapters exceed the part size, no change where they don't); fixed-size parts with Ollama."""
+    return "words" if (provider or "ollama") == "ollama" else "chapter"
+
+
+def max_part_words(provider: str | None, num_ctx: int = 16384) -> int:
+    """The longest part chapter mode sends. A cloud model: MAX_PART_WORDS. Ollama: the context minus room for
+    the output (4,096 tokens) and the prompt scaffolding (about 3,000 tokens of instructions, known entities and
+    recap), times 0.7 words per token, at least 1,500 and never above the cloud cap:
+    max(1500, int((num_ctx - 4096 - 3000) * 0.7)). 8,192 -> 1,500; 16,384 -> 6,501; 32,768 -> 17,970."""
+    if (provider or "ollama") != "ollama":
+        return MAX_PART_WORDS
+    return min(MAX_PART_WORDS, max(1500, int((num_ctx - 4096 - 3000) * 0.7)))
+
+
+_HEADING_END = re.compile(r"[.!?,;:\u2014\u2013\-\u2026\"\u201c\u201d'\u2019)]$")
+_SENTENCE_PUNCT = re.compile(r"[.!?;:,\"\u201c\u201d]|\u2014|\u2013|\.\.\.|\u2026")
+_ROMAN = re.compile(r"^[IVXLCDM]+$")
+
+
+def is_scene_break(raw: str, n_words: int) -> bool:
+    """A heading-like block: under 6 words, no sentence punctuation in it, not ending in a dash, ellipsis or
+    comma, and every word capitalised, all capitals, or a number or Roman numeral. (The text model keeps only
+    blocks with words, so separators such as `* * *` never reach here.)"""
+    t = raw.strip()
+    if not t or n_words >= 6 or n_words < 1 or _HEADING_END.search(t) or _SENTENCE_PUNCT.search(t):
+        return False
+    toks = t.split()
+    if len(toks) == 1 and (t.isdigit() or _ROMAN.match(t)):
+        return True
+    return all(w[:1].isupper() or w.isdigit() for w in toks)
 
 
 # How much to extract. Output size is what makes generation slow, so depth trades coverage for speed.
@@ -109,6 +148,11 @@ EVENT_KINDS = ("turn", "minor")
 # What sort of tie a relation is (SPEC.md §4.3): the map colours and filters by it, and a newer tie of the
 # same kind between the same two replaces the older one instead of drawing a second line.
 RELATION_KINDS = ("family", "romance", "friendship", "alliance", "service", "hostility", "acquaintance", "place")
+MAX_SETTING_WORDS = 8   # an event's setting is a noun phrase ("the deck of the Demeter"), not a sentence (SPEC §4.4)
+SETTING_LEAD = re.compile(r"^(?:(?:in|at|on|inside|aboard|outside)\s+)+", re.IGNORECASE)
+NO_SETTING = {"none", "unknown", "n/a", "na", "not stated", "unstated", "unclear", "unspecified", "nowhere"}
+LOWER_FIRST = {"the", "a", "an", "his", "her", "their", "my", "our", "its", "your", "this", "that", "these", "those",
+               "some", "one", "another", "each", "every"}
 MAX_TIE_WORDS = 8   # a label longer than this is a sentence about the two, not a tie
 # Words that put a name on somebody else: "her mother Mrs. Westenra", "daughter of Mrs. Westenra".
 KIN_WORDS = TIE_WORDS + ("grandmother", "grandfather", "stepmother", "stepfather", "servant", "maid", "master")
@@ -178,9 +222,9 @@ PASSAGE = """Passage (paragraphs are numbered):
 """
 
 EXTRACT = """
-This passage is from: {chapter}
+{where}
 
-Story so far: {recap}
+{bridge}Story so far: {recap}
 
 The section just before this passage: {previous}
 
@@ -206,7 +250,11 @@ Update the companion with what THIS passage adds. Report only new information.
   "plot" for a development that moves the main story or changes what a character wants, knows or can do;
   "minor" for a small moment that colours the scene but changes nothing: a meal, a journey detail, small talk, a
   passing mood. Most events are "plot"; a passage has at most one or two turning points and may have none.
-- summary: {summary} complete sentences (each under 35 words) on what happens in THIS passage, in reading order,
+  Give each a "where": the place it happens as a short noun phrase in the book's own words, at most 8 words, with no
+  preposition ("a carriage", "the Westenra drawing room", "the deck of the Demeter"), ONLY when the paragraphs it
+  rests on state or clearly imply it. When the passage does not say where, or the event is a thought or a
+  summary of days, leave "where" empty. Never use a place you know from elsewhere in the book or from memory.
+- summary: {summary} complete sentences (each under 35 words) on what happens in {this}, in reading order,
   giving most room to what moves the story: what is revealed, decided, lost, gained or set in motion, and what that
   means for the people involved. Each item is a full sentence with a subject and a verb, never a heading, a label
   or a single word. Leave out scenery, meals and side remarks unless they bear on what follows, but never leave the
@@ -230,7 +278,7 @@ they were written from this passage. Give every claim a verdict with a one-line 
   character's claim stated as fact. Name that detail in "because".
 - unsure: you cannot tell from what you were given. Say what is missing in "because". Use it instead of guessing
   either way.
-"cited at paragraph N" is only where the claim says it is shown. Judge it on the whole passage; if what it says is
+{bridge_note}"cited at paragraph N" is only where the claim says it is shown. Judge it on the whole passage; if what it says is
 only shown after paragraph N, put it under later. Never reject a claim for where it is cited. Claims marked (recap)
 or (summary) may also use the earlier chapters below and the story so far. Claims marked (profile) describe an entity
 as a whole and may also use the "known" notes given with them. A (profile) claim that states a relationship, title,
@@ -239,6 +287,9 @@ likely or commonly known.
 A (name) claim is unsupported unless the passage itself uses that name for that individual. It is also unsupported
 when the passage uses that name for a relative or another person (a mother, husband, servant, someone the entity
 speaks to).
+A (setting) claim names the place where the event before it happens. It is supported when the passage states or
+clearly implies that the event takes place there; it is unsupported when the passage puts the event elsewhere, says
+nothing about where, or the place is only known from outside the passage.
 - later: claims that are right but are only fully shown after the paragraph they cite. Give the id and the
   earliest paragraph by which everything in the claim has been shown.
 - moments: ids of (fact) claims that are right but narrate one action in a scene ("He jumps onto the troll")
@@ -379,8 +430,8 @@ def extract_schema(relations: bool) -> dict:
         "updates": _ARR(_obj({"id": _STR, "p": _INT, "desc": _STR, "corrects": _STR}, ["id", "p", "desc"])),
         "profiles": _ARR(_obj({"id": _STR, "p": _INT, "text": _STR}, ["id", "p", "text"])),
         "names": _ARR(_obj({"id": _STR, "name": _STR, "p": _INT}, ["id", "name", "p"])),
-        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR), "weight": {"enum": ["turn", "plot", "minor"]}},
-                            ["p", "text", "who", "weight"])),
+        "events": _ARR(_obj({"p": _INT, "text": _STR, "who": _ARR(_STR), "weight": {"enum": ["turn", "plot", "minor"]}, "where": _STR},
+                            ["p", "text", "who", "weight", "where"])),
         "summary": _ARR(_STR),
         "recap": _STR,
     }
@@ -403,6 +454,8 @@ REPHRASE_SCHEMA = _obj({"items": _ARR(_obj({"id": _STR, "text": _STR}, ["id", "t
 class Options:
     chapters: list[int] | None = None    # 1-based table-of-contents entries; None = whole book
     chunk_words: int = 2500
+    chunk_mode: str = "words"            # words: parts of about chunk_words | chapter: one part per chapter, up to max_part_words
+    max_part_words: int = MAX_PART_WORDS
     depth: str = "standard"              # light | standard | deep
     events: bool = True
     verify: bool = True
@@ -417,11 +470,17 @@ class Options:
     book_kind: str | None = None   # fiction | non-fiction | self-help; None = infer (bookkind.infer)
 
 
+class _CutOff(Exception):
+    """The extraction reply was empty or cut off at the backend's output limit."""
+
+
 @dataclass
 class Chunk:
     chapter: int      # 0-based chapter index, -1 for front matter
     start: int        # first block seq
     end: int          # last block seq (inclusive)
+    whole: bool = False                       # the part is a complete chapter (chapter mode)
+    bridge: tuple[int, int] | None = None     # blocks of the previous part shown as context only (chapter mode)
 
     @property
     def key(self) -> str:
@@ -565,6 +624,9 @@ class Generator:
                 bounds.append((i, c.start, end))
         out: list[Chunk] = []
         for ch, start, end in bounds:
+            if self.opts.chunk_mode == "chapter":
+                out += self._chapter_parts(ch, start, end)
+                continue
             cur, words = start, 0
             for seq in range(start, end + 1):
                 n = len(self.book.blocks[seq].words)
@@ -573,7 +635,35 @@ class Generator:
                     cur, words = seq, 0
                 words += n
             out.append(Chunk(ch, cur, end))
-        return [c for c in out if sum(len(self.book.blocks[s].words) for s in range(c.start, c.end + 1)) >= 30]
+        out = [c for c in out if sum(len(self.book.blocks[s].words) for s in range(c.start, c.end + 1)) >= 30]
+        if self.opts.chunk_mode == "chapter":
+            for prev, c in zip(out, out[1:]):
+                if prev.end + 1 == c.start and prev.chapter >= 0:
+                    c.bridge = (max(prev.start, prev.end - 1), prev.end)
+        return out
+
+    def _chapter_parts(self, ch: int, start: int, end: int) -> list[Chunk]:
+        """One part for the whole chapter; a chapter over the cap is cut at a scene break in the last 40% of
+        the words so far, else at the paragraph where the cap is reached."""
+        blocks, cap = self.book.blocks, max(1, self.opts.max_part_words)
+        if sum(len(blocks[s].words) for s in range(start, end + 1)) <= cap:
+            return [Chunk(ch, start, end, whole=ch >= 0)]
+        parts, cur, words = [], start, 0
+        for seq in range(start, end + 1):
+            n = len(blocks[seq].words)
+            if words and words + n > cap:
+                cut, acc = seq, 0
+                for q in range(cur, seq):
+                    # a break block starts the next part, once 60% of the words so far are behind it
+                    if q > cur and acc >= 0.6 * words and is_scene_break(blocks[q].raw, len(blocks[q].words)):
+                        cut = q
+                    acc += len(blocks[q].words)
+                parts.append(Chunk(ch, cur, cut - 1))
+                cur = cut
+                words = sum(len(blocks[q].words) for q in range(cut, seq))
+            words += n
+        parts.append(Chunk(ch, cur, end))
+        return parts
 
     # ---- entity matching -------------------------------------------------------------------
 
@@ -946,6 +1036,16 @@ class Generator:
         return PASSAGE.format(passage="\n\n".join(
             f"[{i + 1}] {self.book.blocks[s].raw}" for i, s in enumerate(range(chunk.start, chunk.end + 1))))
 
+    def bridge_text(self, chunk: Chunk) -> str:
+        """The end of the previous part (its last two blocks, at most BRIDGE_WORDS words), as context only."""
+        if not chunk.bridge:
+            return ""
+        raw = " ".join(self.book.blocks[s].raw for s in range(chunk.bridge[0], chunk.bridge[1] + 1))
+        if len(raw.split()) > BRIDGE_WORDS:
+            raw = self.book.blocks[chunk.bridge[1]].raw
+        w = raw.split()
+        return ("… " + " ".join(w[-BRIDGE_WORDS:])) if len(w) > BRIDGE_WORDS else raw
+
     def _current_facets(self, eid: str) -> list[dict]:
         replaced = {r for e in self.entities.values() for f in e["facets"] for r in f.get("replaces", [])}
         facets = self.prior.get(eid, {}).get("facets", []) + self.entities.get(eid, {}).get("facets", [])
@@ -1003,25 +1103,78 @@ class Generator:
     # ---- one chunk -------------------------------------------------------------------------
 
     def process(self, chunk: Chunk) -> dict:
-        """Run one chunk: one extraction call, then checks. Returns the change in stats."""
+        """Run one chunk: one extraction call, then checks. Returns the change in stats. A reply cut off at the
+        backend's output limit (empty, or none of the expected keys) splits the part in two and processes the halves;
+        a half that fails again is logged and marked done, never silently."""
+        try:
+            return self._process_part(chunk)
+        except _CutOff:
+            pass
+        mid = self._split_point(chunk)
+        if mid is None:
+            self.log(f"  blocks {chunk.start}-{chunk.end}: extraction reply was cut off and the part is a single paragraph; skipped")
+            self.stats["dropped: reply cut off"] += 1
+            self.done.append(chunk.key)
+            return {"dropped: reply cut off": 1}
+        self.log("  extraction reply was cut off; splitting the part in two")
+        first = Chunk(chunk.chapter, chunk.start, mid - 1, bridge=chunk.bridge)
+        second = Chunk(chunk.chapter, mid, chunk.end, bridge=(max(first.start, first.end - 1), first.end) if chunk.chapter >= 0 else None)
+        total: Counter = Counter()
+        added: list[dict] = []
+        for half in (first, second):
+            try:
+                total.update(self._process_part(half))
+                added += self.added
+            except _CutOff:
+                self.log(f"  blocks {half.start}-{half.end}: extraction reply was cut off again; skipped")
+                self.stats["dropped: reply cut off"] += 1
+                self.done.append(half.key)
+                total["dropped: reply cut off"] += 1
+        self.done.append(chunk.key)
+        self.added = added
+        return dict(total)
+
+    def _split_point(self, chunk: Chunk) -> int | None:
+        """The first block of the second half: the latest heading-like block before the middle, else the middle paragraph."""
+        blocks = self.book.blocks
+        if chunk.end <= chunk.start:
+            return None
+        total = sum(len(blocks[s].words) for s in range(chunk.start, chunk.end + 1))
+        acc, heading, mid = 0, None, None
+        for s in range(chunk.start, chunk.end + 1):
+            if mid is None and acc * 2 >= total and s > chunk.start:
+                mid = s
+            if s > chunk.start and acc * 2 < total and is_scene_break(blocks[s].raw, len(blocks[s].words)):
+                heading = s
+            acc += len(blocks[s].words)
+        return heading or mid or chunk.end
+
+    def _process_part(self, chunk: Chunk) -> dict:
         t0 = time.time()
         self.added = []
         self._asked, self._redirect = 0, {}
         self.scope_start = min(self.scope_start, chunk.start) if hasattr(self, "scope_start") else chunk.start
         depth = DEPTHS.get(self.opts.depth, DEPTHS["standard"])
         words = sum(len(self.book.blocks[s].words) for s in range(chunk.start, chunk.end + 1))
-        n_events = max(6, round(words / 200)) if self.opts.events else 0   # every development, not a highlight reel
+        n_events = min(MAX_EVENTS, max(6, round(words / 200))) if self.opts.events else 0   # every development, not a highlight reel
         known, context = self._context(chunk)
         passage = self._passage(chunk)
         self._chunk_len = chunk.end - chunk.start + 1
         self.on_phase("extract")
+        self._bridge = self.bridge_text(chunk)
         raw = self.llm.complete(SYSTEM, EXTRACT.format(
-            chapter=self.chapter_title(chunk), recap=self.recap_text or "(the book is just beginning)",
+            where=(f"This passage is the whole of: {self.chapter_title(chunk)}" if chunk.whole
+                   else f"This passage is from: {self.chapter_title(chunk)}"),
+            this="THIS chapter, as the chapter's summary" if chunk.whole else "THIS passage",
+            bridge=(f"Where the previous part left off (context only: the paragraphs are not numbered, so never cite "
+                    f"them and never report anything from them as new; they just show where the story stood):\n"
+                    f"{self._bridge}\n\n" if self._bridge else ""),
+            recap=self.recap_text or "(the book is just beginning)",
             known=known, context=context,
             previous=self.summary_text or "(none)",
             summary=f"{max(3, min(8, round(words / 700)))} to {max(4, min(12, round(words / 450)))}",
             types="; ".join(f"{k} = {v}" for k, v in TYPES.items()), who=depth["who"],
-            per_entity=depth["per_entity"](words), events=n_events, profiles=max(8, min(16, round(words / 300))),   # room for every new entity plus the ones that grew
+            per_entity=min(MAX_DETAILS, depth["per_entity"](words)), events=n_events, profiles=max(8, min(16, round(words / 300))),   # room for every new entity plus the ones that grew
             relations=("\n- relations: lasting ties between two entities, what one IS to the other, as a (label) b, e.g. "
                        "a=\"Murray\", label=\"orderly of\", b=\"Watson\". The label reads from a to b in at most 6 words. "
                        "A tie is a standing state (sister of, employer of, guest of, enemy of, lives at), never one action "
@@ -1036,6 +1189,8 @@ class Generator:
                        "becomes a wife)."
                        if depth["relations"] else "")),
             extract_schema(depth["relations"]), prefix=passage)
+        if not isinstance(raw, dict) or not any(k in raw for k in EXTRACT_SCHEMA["properties"]):
+            raise _CutOff()
         before = Counter(self.stats)
         n = chunk.end - chunk.start + 1
         # Local paragraph number → block seq; None when the model cites a paragraph that isn't there.
@@ -1277,6 +1432,9 @@ class Generator:
                 weight = ev.get("weight")
                 c.data = {"entities": ents, **({"kind": weight} if weight in EVENT_KINDS else {})}
                 cands.append(c)
+                st = self._setting_candidate(c, ev.get("where"), passage)
+                if st:
+                    cands.append(st)
         summary = raw.get("summary") if isinstance(raw.get("summary"), list) else []
         for i, sentence in enumerate(summary[:14]):
             # Each sentence is checked on its own, so one bad detail doesn't cost the whole summary.
@@ -1296,6 +1454,7 @@ class Generator:
         if self.opts.verify and cands:
             self.on_phase("verify")
             cands = self._verify(cands, passage, chunk.start)
+        cands = self._attach_settings(cands)
         self.summary_parts = []
         self._events_at_chunk_start = len(self.events)
         for c in cands:
@@ -1331,11 +1490,82 @@ class Generator:
         from_seq = max([*cited, *(self.entity_from[e] for e in entities)])
         return Candidate(kind, cid, claim, from_seq, sorted(set(cited)))
 
+    def _setting_candidate(self, ev: Candidate, where, passage: str) -> Candidate | None:
+        """The place an event happens, as a claim of its own so the fact-check can drop it and keep the event."""
+        s = " ".join(str(where or "").split()).strip(" .,;:\"'()[]")
+        s = SETTING_LEAD.sub("", s).strip()
+        if not s or s.casefold() in NO_SETTING:
+            return None
+        if len(s.split()) > MAX_SETTING_WORDS:   # whitespace tokens, as the schema counts them ("the hall & the stairs")
+            self.stats["dropped: setting too long"] += 1
+            return None
+        first = s.split()[0]
+        if first[0].isupper() and (not first.isupper() or first.casefold() in LOWER_FIRST):   # "A" is all capitals too
+            low = first[0].lower() + first[1:]
+            mid = re.search(r"[a-z,;] " + re.escape(first) + r"\b", passage)   # capitalised away from a sentence start
+            if first.casefold() in LOWER_FIRST or (not mid and re.search(r"\b" + re.escape(low) + r"\b", passage)):
+                s = low + s[len(first):]
+        c = Candidate("setting", "st" + ev.cid[1:], s, ev.from_seq, list(ev.evidence),
+                      {"event": ev.cid, "event_text": ev.text})
+        return c
+
+    def _place_for(self, setting: str, at: int) -> str | None:
+        """The place entity of this index that the setting names ("the Demeter" for "the Demeter"): the same
+        name without articles, exact; never a person or a thing, never a fuzzy match, and only one revealed
+        at or before the event (`at`): a link to a later place would make the index invalid."""
+        core = self._core(setting)
+        if not core:
+            return None
+        hits = [eid for eid in self.entities if self._type(eid) == "place" and self.entity_from.get(eid, at + 1) <= at
+                and any(self._core(n) == core for n in self._names(eid))]
+        return hits[0] if len(hits) == 1 else None
+
+    def _words_through(self, seq: int) -> set[str]:
+        """Every word the book has used in blocks 0..seq (cached, grown forward)."""
+        done, words = getattr(self, "_used_words", (-1, set()))
+        if seq < done:
+            done, words = -1, set()
+        for s in range(done + 1, seq + 1):
+            words.update(self.book.blocks[s].words)
+        self._used_words = (max(done, seq), words)
+        return words
+
+    def _invented_word(self, setting: str, at: int) -> str | None:
+        """A capitalised word of the setting that the book hasn't used by block `at`: the model's memory."""
+        used = None
+        for w in setting.split():
+            if w[:1].isupper() and not w.isupper() or (w.isupper() and len(w) > 1):
+                for t in text.words(w):
+                    if used is None:
+                        used = self._words_through(at)
+                    if t not in used and t.removesuffix("s") not in used and t + "s" not in used:
+                        return w
+        return None
+
+    def _attach_settings(self, cands: list[Candidate]) -> list[Candidate]:
+        """Checked settings move onto the events that survived; a setting whose event went is simply gone."""
+        events = {c.cid: c for c in cands if c.kind == "event"}
+        out = []
+        for c in cands:
+            if c.kind != "setting":
+                out.append(c)
+            elif (ev := events.get(c.data["event"])):
+                if c.from_seq > ev.from_seq:   # the checker found the place only later: the event can't show it yet
+                    self.stats["dropped: setting revealed later than its event"] += 1
+                elif (w := self._invented_word(c.text, ev.from_seq)):
+                    self.stats["dropped: setting names a word the book hasn't used"] += 1
+                else:
+                    place = self._place_for(c.text, ev.from_seq)
+                    ev.data["setting"] = {"text": c.text, **({"place": place} if place else {})}
+        return out
+
     @staticmethod
     def _family_role(kind, label, a, b):
         """The role a `family` tie states between a and b (None for other kinds and for labels that are not
         kinship). Two family ties are the same tie only when their roles match: cousins who marry keep both."""
-        return kinship.role_key(label, a, b) if kind == "family" else None
+        if kind != "family" or not a or not b:   # an end that matches no entity has no role to compare
+            return None
+        return kinship.role_key(label, a, b)
 
     def _current_tie(self, a: str, b: str, kind: str, label: str = "") -> dict | None:
         """The newest relation of this kind between a and b (either direction) that nothing replaces yet. For a
@@ -1355,7 +1585,7 @@ class Generator:
         seen |= {(r["src"], r["dst"], r["label"].casefold()) for r in self.relations}
         out = []
         for c in cands:
-            if c.kind == "summary":   # a summary may restate an event: that's what summaries do
+            if c.kind in ("summary", "setting"):   # a summary may restate an event: that's what summaries do; many events share a place
                 out.append(c)
                 continue
             key = (("name", c.data["entity"], c.text.casefold()) if c.kind == "name"
@@ -1366,7 +1596,8 @@ class Generator:
                 continue
             seen.add(key)
             out.append(c)
-        return out
+        kept = {c.cid for c in out}
+        return [c for c in out if c.kind != "setting" or c.data.get("event") in kept]   # a dropped event's setting goes too
 
     def _copied(self, s: str) -> bool:
         return bool(text.copied_runs(s, self.book_shingles, MAX_COPY))
@@ -1404,6 +1635,8 @@ class Generator:
         if c.kind == "relation":
             kind = f" ({c.data['kind']} tie)" if c.data.get("kind") else ""
             return f"{where}{name(c.data['src'])}, {c.text}, {name(c.data['dst'])}{kind}"
+        if c.kind == "setting":
+            return f'(setting, cited at paragraph {n}) The event "{c.data["event_text"]}" happens in: {c.text}'
         return where + c.text
 
     def _verify(self, cands: list[Candidate], passage: str, chunk_start: int) -> list[Candidate]:
@@ -1418,6 +1651,9 @@ class Generator:
             used += len(line)
         checker = self.opts.check_llm or self.llm
         out = checker.complete(SYSTEM, VERIFY.format(recap=self.recap_text or "(none)", claims=claims,
+                                                     bridge_note=("The passage was read with a few lines of the previous part as context. "
+                                                                  "They are not part of the passage and support nothing: judge only on the passage.\n"
+                                                                  if getattr(self, "_bridge", "") else ""),
                                                      chapters="\n".join(reversed(chapters)) or "(none)"),
                                VERIFY_SCHEMA, prefix=passage)
         verdicts = out.get("verdicts") if isinstance(out, dict) else None
@@ -1464,7 +1700,10 @@ class Generator:
         for c in cands:
             if c.cid in bad and len(self.rejected) < 500:
                 self.rejected.append({"kind": c.kind, "claim": self._claim_text(c, chunk_start), "because": why[c.cid][1]})
-        self.stats["dropped: not supported"] += len(cands) - len(keep)
+        gone = [c for c in cands if c.cid in bad]
+        settings = sum(1 for c in gone if c.kind == "setting")
+        self.stats["dropped: setting not in the text"] += settings
+        self.stats["dropped: not supported"] += len(gone) - settings
         return keep
 
     def chapter_title(self, chunk: Chunk) -> str:
@@ -1573,11 +1812,17 @@ class Generator:
         else:
             self.events.append({"id": self._next_id(f"{self.key}.ev"), "from": item["from"], "summary": c.text,
                                 "entities": c.data["entities"], "evidence": item["evidence"],
-                                **({"kind": c.data["kind"]} if c.data.get("kind") else {})})
-            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text, **({"weight": c.data["kind"]} if c.data.get("kind") else {})})
+                                **({"kind": c.data["kind"]} if c.data.get("kind") else {}),
+                                **({"setting": c.data["setting"]} if c.data.get("setting") else {})})
+            self.added.append({"kind": "event", "id": self.events[-1]["id"], "text": c.text,
+                               **({"setting": c.data["setting"]["text"]} if c.data.get("setting") else {}), **({"weight": c.data["kind"]} if c.data.get("kind") else {})})
             self.stats["events"] += 1
             if c.data.get("kind") == "turn":
                 self.stats["turning points"] += 1
+            if c.data.get("setting"):
+                self.stats["event settings"] += 1
+                if c.data["setting"].get("place"):
+                    self.stats["settings linked to a place"] += 1
 
     # ---- output ----------------------------------------------------------------------------
 
@@ -1612,7 +1857,7 @@ class Generator:
             "anchors": anchors,
             "entities": sorted(self._kept_entities(), key=lambda e: (self.entity_from[e["id"]], e["id"])),
             "relations": self.relations,
-            "events": self.events,
+            "events": self._events_out(self._kept_entities()),
             "recaps": self.recaps,
         }
         if self.opts.series_id:
@@ -1626,6 +1871,17 @@ class Generator:
         used = {r[k] for r in self.relations for k in ("src", "dst")} | {x for ev in self.events for x in ev["entities"]}
         return [e for e in self.entities.values() if e["facets"] or e["id"] in used]
 
+    def _events_out(self, kept: list[dict]) -> list[dict]:
+        """The events as written: a place link to an entity that isn't published goes (the text stays)."""
+        ids = {e["id"] for e in kept}
+        out = []
+        for ev in self.events:
+            st = ev.get("setting")
+            if st and st.get("place") and st["place"] not in ids:
+                ev = {**ev, "setting": {k: v for k, v in st.items() if k != "place"}}
+            out.append(ev)
+        return out
+
     def _all_from(self) -> list[str]:
         kept = self._kept_entities()
         out = [e["from"] for e in kept]
@@ -1637,7 +1893,7 @@ class Generator:
     # ---- resume ----------------------------------------------------------------------------
 
     def state(self) -> dict:
-        return {"done": self.done, "recap": self.recap_text, "summary": self.summary_text, "stats": dict(self.stats),
+        return {"chunk_mode": self.opts.chunk_mode, "done": self.done, "recap": self.recap_text, "summary": self.summary_text, "stats": dict(self.stats),
                 "counters": dict(self.counters), "created": self.created,
                 "entity_from": self.entity_from, "item_seq": self.item_seq, "item_kind": self.item_kind}
 
