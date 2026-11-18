@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
 const C = await import(join(root, "src/lorekeeper/web/static/js/lorekeeper-client.js"));
 const { words, fingerprint, textHash, blocksFromDocument, buildEdition, resolveAnchors, effectiveLocations,
-  frontier, locate, position, LorekeeperIndex, LocatorError } = C;
+  frontier, locate, position, LorekeeperIndex, LocatorError, mentions, visibleNames, deriveNames } = C;
 const fx = (n) => JSON.parse(readFileSync(join(resolve(process.argv[2] || join(here, "fixtures")), n), "utf8"));
 const canon = (v) => JSON.stringify(v, (k, x) =>
   x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x);
@@ -260,6 +260,32 @@ for (const c of fx("anchors.json")) {
     && Array.isArray(hits[0].facets) && Array.isArray(hits[0].relations) && Array.isArray(hits[0].events), JSON.stringify(hits.map((h) => h.entity.name)));
   check("lookup by full name agrees", byFull.length === 1 && byFull[0].entity.id === hits[0]?.entity.id);
   check("lookup of an unknown name is empty", lk.lookup("Nobody Atall", end).length === 0);
+}
+
+// mentions: counts and visible names agree with mentions.py at three positions of Study in Scarlet ------------------
+{
+  const m = fx("mentions.json");
+  const index = JSON.parse(readFileSync(join(root, "examples/sherlock-holmes/study-in-scarlet.json"), "utf8"));
+  const lk = new LorekeeperIndex(index, edition);
+  m.positions.forEach((p, i) => {
+    const names = visibleNames(lk.view({ block: p.seq }));
+    check(`mentions position ${i + 1} (block ${p.seq}): visible names incl. derived forms match Python`, same(names, p.names),
+      JSON.stringify(names).slice(0, 300));
+    const got = mentions(m.blocks, m.chapters, p.names, p.seq);
+    check(`mentions position ${i + 1}: current chapter ${p.current}, counts and spans match Python`,
+      got.current === p.current && same(got.counts, p.counts) && same(got.spans, p.spans),
+      JSON.stringify(Object.entries(got.counts).filter(([k, v]) => !same(v, p.counts[k])).slice(0, 2)));
+    const later = Object.values(got.counts).every((c) => c.length === p.current + 1);
+    check(`mentions position ${i + 1}: nothing for chapters after the position`, later);
+  });
+  const total = m.positions.map((p) => Object.values(p.counts).reduce((n, c) => n + c.reduce((a, b) => a + b, 0), 0));
+  check(`mentions: fixtures are not empty (${total.join(", ")} mentions)`, total.every((n) => n > 0));
+  const hid = mentions([{ seq: 0, raw: "Mr. Hyde met Dr. Jekyll. The Count came." }], [{ start: 0 }],
+    { a: ["Dr. Jekyll", "Jekyll"], b: ["Hyde"] }, 0);
+  check("mentions: hand-made block", same(hid.counts, { a: [1], b: [1] }));
+  check("mentions: before the first chapter", mentions([], [{ start: 5 }], { a: ["X"] }, 3).current === null);
+  check("deriveNames: Count Dracula derives Dracula, not Count",
+    same(deriveNames([{ id: "d", type: "person", names: ["Count Dracula"] }]), { d: ["Dracula"] }));
 }
 
 process.exit(failures);
