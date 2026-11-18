@@ -513,7 +513,7 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v10"
+    assert generate.PROMPT_VERSION == "extract-v11"
 
 
 class _Where(FakeLLM):
@@ -883,3 +883,58 @@ def test_a_repeated_events_setting_never_reaches_the_checker():
     s2 = generate.Candidate("setting", "s2", "the cellar", 1, [], {"event": "e2", "event_text": "Alice leaves."})
     out = g._dedupe([e1, e2, s1, s2])
     assert [c.cid for c in out] == ["e1", "s1"]
+
+
+# ---- chapter mode ----------------------------------------------------------------------------
+
+def _chapter_gen(book_path, **kw):
+    return generate.Generator(epub.read(book_path), FakeLLM(), generate.Options(chunk_mode="chapter", **kw),
+                              book_path, lambda m: None)
+
+
+def test_a_chapter_under_the_cap_is_one_whole_part_with_a_bridge(book_path):
+    parts = _chapter_gen(book_path).chunks()
+    assert len(parts) == 2 and all(p.whole for p in parts)
+    assert parts[0].bridge is None and parts[1].bridge == (parts[0].end - 1, parts[0].end)
+
+
+def test_a_chapter_over_the_cap_splits_at_a_scene_break(tmp_path):
+    long = [f"Paragraph {i} of the long chapter keeps going with plenty of words to count here today." for i in range(8)]
+    long[5] = "Later that night"          # heading-like: a scene break
+    path = make_epub(tmp_path / "long.epub", ch1=long)
+    g = _chapter_gen(path, max_part_words=60)
+    parts = [p for p in g.chunks() if p.chapter == 0]
+    assert len(parts) > 1 and not any(p.whole for p in parts)
+    heading = next(b.seq for b in g.book.blocks if b.raw == "Later that night")
+    assert any(p.start == heading for p in parts)
+    assert all(a.end + 1 == b.start for a, b in zip(parts, parts[1:]))
+
+
+def test_scene_break_detection():
+    assert generate.is_scene_break("* * *", 0) and generate.is_scene_break("—", 0)
+    assert generate.is_scene_break("Part Two", 2)
+    assert not generate.is_scene_break("Yes.", 1)
+
+
+def test_ollama_cap_follows_the_context():
+    assert generate.max_part_words("ollama", 16384) == 9011
+    assert generate.max_part_words("ollama", 1_000_000) == generate.MAX_PART_WORDS
+    assert generate.max_part_words("claude") == generate.MAX_PART_WORDS
+    assert generate.default_chunk_mode("claude") == "chapter" and generate.default_chunk_mode("ollama") == "words"
+
+
+def test_whole_chapter_prompt_has_an_uncited_bridge_and_one_recap_each(book_path, tmp_path):
+    ix, report, llm = _run(book_path, tmp_path, generate.Options(chunk_mode="chapter"))
+    assert report["chunks"] == 2
+    first, second = [c for c in llm.calls if "Update the companion" in c][:2]
+    assert "This passage is the whole of: Chapter One" in first and "Where the previous part left off" not in first
+    assert "Where the previous part left off" in second and "That night Alice found a letter" in second
+    assert "never cite" in second
+    chapter_recaps = [r for r in ix["recaps"] if r.get("scope") == "chapter"]
+    assert len(chapter_recaps) == len({r["title"] for r in chapter_recaps})
+    assert any("do not" in c or "support nothing" in c for c in llm.calls if "Claims:" in c)
+
+
+def test_words_mode_has_no_bridge(book_path, tmp_path):
+    _, _, llm = _run(book_path, tmp_path)
+    assert not any("Where the previous part left off" in c or "the whole of" in c for c in llm.calls)
