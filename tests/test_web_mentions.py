@@ -31,11 +31,12 @@ def test_chapters_titles_and_counts_stop_at_the_position(client, tmp_path):
     _, key = setup(client, tmp_path)
     r = get(client, key, "alice-marlow", 5).json()
     assert r["total"] == 2
-    assert r["chapters"] == [{"n": 1, "title": "Chapter One", "count": 1}]      # chapter two: not even its title
-    assert r["current"]["n"] == 1 and r["current"]["count"] == 1
-    assert r["first"]["n"] == 1 and r["latest"]["n"] == 1 and r["busiest"] == {"n": 1, "title": "Chapter One", "count": 1}
-    snip = r["current"]["snippets"][0]
-    assert snip["seq"] == 1 and snip["text"][snip["start"]:snip["end"]] == "Alice Marlow"
+    # "Alice Marlow" (block 1) and the given name "Alice" (block 5), derived from the visible name.
+    assert r["chapters"] == [{"n": 1, "title": "Chapter One", "count": 2}]      # chapter two: not even its title
+    assert r["current"]["n"] == 1 and r["current"]["count"] == 2
+    assert r["first"]["n"] == 1 and r["latest"]["n"] == 1 and r["busiest"] == {"n": 1, "title": "Chapter One", "count": 2}
+    assert [(s["seq"], s["text"][s["start"]:s["end"]]) for s in r["current"]["snippets"]] == \
+        [(1, "Alice Marlow"), (5, "Alice")]
     assert "Chapter Two" not in str(r)
 
 
@@ -64,16 +65,27 @@ def test_nothing_before_the_first_mention(client, tmp_path):
 
 def test_a_name_revealed_later_is_not_counted_earlier(client, tmp_path):
     _, key = setup(client, tmp_path)
-    # "keeper" is the entity's name from seq 5 (hidden identity shape); its use in block 3 must not count
-    # while the name is hidden, and the later "Pike" must not count in chapter two before its reveal.
+    # "keeper" is a name of the entity from seq 5 (a hidden identity): its use in block 3 must not count while hidden.
     before = get(client, key, "ezra-pike", 5).json()
     assert before["chapters"] == [{"n": 1, "title": "Chapter One", "count": 1}]
     assert [s["text"][s["start"]:s["end"]] for s in before["current"]["snippets"]] == ["Ezra Pike"]
     after = get(client, key, "ezra-pike", 6).json()                    # block 5 is now finished: "keeper" is visible
     assert after["chapters"][0]["count"] == 2
-    still = get(client, key, "ezra-pike", 7).json()                    # "Pike" (block 7) is not revealed yet
-    assert still["chapters"][1]["count"] == 0
-    assert get(client, key, "ezra-pike", 8).json()["chapters"][1]["count"] == 1
+    # "Pike" is the surname of the display name "Ezra Pike", visible from the start: a derived form, so block 7 counts
+    # at seq 7 (inclusive) although the alias "Pike" is only revealed after block 7.
+    assert get(client, key, "ezra-pike", 7).json()["chapters"][1]["count"] == 1
+
+
+def test_an_entry_whose_every_form_is_revealed_later_is_never_counted_before_the_reveal(client, tmp_path):
+    _, key = setup(client, tmp_path)
+    # A stranger known only as "keeper"; the name "Ezra Pike" (block 3, same block) is revealed at block 5.
+    e = edit(client, key, op="add-entity", name="keeper", type="person", seq=3)
+    edit(client, key, op="add-name", entity=e["id"], value="Ezra Pike", kind="alias", seq=5)
+    r = get(client, key, e["id"], 5).json()
+    assert r["chapters"][0]["count"] == 1
+    assert [s["text"][s["start"]:s["end"]] for s in r["current"]["snippets"]] == ["keeper"]   # never "Ezra Pike", "Pike", "Ezra"
+    r = get(client, key, e["id"], 6).json()                            # revealed: both names, and their forms, count
+    assert r["chapters"][0]["count"] >= 2
 
 
 def test_not_found_cases(client, tmp_path):
