@@ -938,3 +938,8 @@ def test_whole_chapter_prompt_has_an_uncited_bridge_and_one_recap_each(book_path
 def test_words_mode_has_no_bridge(book_path, tmp_path):
     _, _, llm = _run(book_path, tmp_path)
     assert not any("Where the previous part left off" in c or "the whole of" in c for c in llm.calls)
+
+
+def test_a_family_tie_with_an_unresolved_end_has_no_role():
+    assert generate.Generator._family_role("family", "sister of", "alice", None) is None
+    assert generate.Generator._family_role("family", "sister of", None, None) is None

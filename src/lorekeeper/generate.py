@@ -1499,7 +1499,9 @@ class Generator:
     def _family_role(kind, label, a, b):
         """The role a `family` tie states between a and b (None for other kinds and for labels that are not
         kinship). Two family ties are the same tie only when their roles match: cousins who marry keep both."""
-        return kinship.role_key(label, a, b) if kind == "family" else None
+        if kind != "family" or not a or not b:   # an end that matches no entity has no role to compare
+            return None
+        return kinship.role_key(label, a, b)
 
     def _current_tie(self, a: str, b: str, kind: str, label: str = "") -> dict | None:
         """The newest relation of this kind between a and b (either direction) that nothing replaces yet. For a
