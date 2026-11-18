@@ -318,6 +318,7 @@ export function createEditor(ctx) {
     const summary = textarea(ev?.summary, 3, "What happens");
     const kind = select([["", "A development of the story"], ["turn", "A turning point: a revelation, twist or decision that changes its course"],
       ["minor", "A small moment that changes nothing"]], ev?.kind || "", "How much it matters");
+    const setting = input(ev?.setting?.text, "Setting, where it happens (optional)", "Where it happens, as the book says (optional): a carriage");
     const err = h("p.field-error");
     const chips = h("div.ents");
     const pick = h("select.select", { "aria-label": "Add an entry involved" });
@@ -331,11 +332,11 @@ export function createEditor(ctx) {
     }
     pick.addEventListener("change", () => { if (pick.value) { chosen.add(pick.value); paintChips(); } });
     paintChips();
-    return form(h("label.label", "What happens, in your own words"), summary, err, chips, pick, kind, revealLine(state),
+    return form(h("label.label", "What happens, in your own words"), summary, err, chips, pick, kind, setting, revealLine(state),
       actions(async () => {
         const op = ev
-          ? { op: "edit-event", id: ev.id, summary: summary.value.trim(), entities: [...chosen], kind: kind.value, ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
-          : { op: "add-event", summary: summary.value.trim(), entities: [...chosen], kind: kind.value, seq: state.seq };
+          ? { op: "edit-event", id: ev.id, summary: summary.value.trim(), entities: [...chosen], kind: kind.value, setting: setting.value.trim(), ...(state.seq !== seqOf(found) ? { seq: state.seq } : {}) }
+          : { op: "add-event", summary: summary.value.trim(), entities: [...chosen], kind: kind.value, seq: state.seq, ...(setting.value.trim() ? { setting: setting.value.trim() } : {}) };
         if (await apply(op, err)) done();
       }, done));
   }
