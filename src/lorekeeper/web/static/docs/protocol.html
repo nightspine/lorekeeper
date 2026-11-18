@@ -83,7 +83,7 @@ HTTP/1.1 304 Not Modified</code></pre>
 <pre><code>{ ..., &quot;locator&quot;: { &quot;position&quot;: &quot;ch1.para05&quot;, &quot;seq&quot;: 36, &quot;basis&quot;: &quot;cfi&quot;, &quot;exact&quot;: true } }</code></pre>
 <div class="table-wrap"><table><thead><tr><th>Member</th><th>Meaning</th></tr></thead><tbody><tr><td><code>position</code></td><td>The anchor id the view was gated at, or <code>null</code> for none.</td></tr><tr><td><code>seq</code></td><td>The block the locator mapped to. -1 for none.</td></tr><tr><td><code>basis</code></td><td>The form used: <code>block</code>, <code>cfi</code>, <code>xpointer</code>, <code>word</code> or <code>progress</code>.</td></tr><tr><td><code>exact</code></td><td>False for <code>progress</code> and for a fallback; otherwise true.</td></tr></tbody></table></div>
 <p>An event in <code>events</code> may carry a <code>setting</code>. Its <code>place</code> member is present only when that place entity is in the view; otherwise only the text is sent.</p>
-<pre><code>{ ..., &quot;events&quot;: [{ &quot;id&quot;: &quot;sis.ev.movein&quot;, &quot;from&quot;: &quot;ch2.para01&quot;,
+<pre><code>{ ..., &quot;events&quot;: [{ &quot;id&quot;: &quot;sis.ev.movein&quot;, &quot;book&quot;: &quot;study-in-scarlet&quot;,
     &quot;summary&quot;: &quot;They move into 221B Baker Street.&quot;, &quot;entities&quot;: [&quot;holmes&quot;, &quot;watson&quot;, &quot;baker-street&quot;],
     &quot;setting&quot;: { &quot;text&quot;: &quot;the rooms at 221B Baker Street&quot;, &quot;place&quot;: &quot;baker-street&quot; } }] }</code></pre>
 <p>The server resolves a locator only against an edition it holds: the one the index was built from, or another EPUB it stores, found by text hash or file hash.</p>
