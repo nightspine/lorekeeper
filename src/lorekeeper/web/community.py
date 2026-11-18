@@ -661,8 +661,13 @@ class Community:
         if got is None:
             raise CommunityError(409, "Preview the index first: it hasn't been downloaded and checked yet.", "not-fetched")
         body, doc = got
-        if not _attaches(doc["editions"], entry["textHash"]):
-            raise CommunityError(422, "The index was not made for this copy of the book.", "invalid")
+        try:      # the cached file is checked again, as at fetch: it may predate a check, and the API can be called directly
+            self._check_fetched(entry, digest, body, got)
+        except CommunityError:
+            with self._lock:
+                self._cache_file(digest).unlink(missing_ok=True)
+                self._audit_file(digest).unlink(missing_ok=True)
+            raise
         name = self._file_name(url, pub, slug, version)
         lib_key = f"community--{name[:-len('.json')]}"
         old = [k for _, k in self._installed().get(r["id"], [])]

@@ -1407,3 +1407,18 @@ def test_uninstall_still_removes_an_install_made_under_the_port_less_name(env):
 def test_resolve_uses_the_one_confinement_rule():
     assert community_mod.inside(URL, URL + "/v0/x") and not community_mod.inside(URL, URL + "/../x")
     assert not hasattr(community_mod, "_SameOrigin") and not hasattr(community_mod, "_Tracked")
+
+
+def test_install_checks_the_cached_document_again(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["seq"] = doc["anchors"][0]["seq"] + 1
+    body = registry.dumps(doc).encode()
+    d = serve_index(env, body)
+    com = env.app.state.community
+    com._write(com._cache_file(d), body)                 # cached before the check existed
+    res = {"id": offer(env)["id"], "digest": d}
+    r = install(env, res)
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not com._cache_file(d).exists() and not list(com.indexes.glob("*")) if com.indexes.exists() else True
+    assert env.app.state.community.catalog.state().get("community", {}).get("installed", {}) == {}
