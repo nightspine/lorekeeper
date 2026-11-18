@@ -101,6 +101,12 @@ export const api = {
   /** Paragraphs around `seq` in an edition on disk, for choosing a reveal point. */
   blocks: (hash, seq, before = 2, after = 2, indexKey = null) =>
     request("GET", `/api/editions/${encodeURIComponent(hash)}/blocks?seq=${seq}&before=${before}&after=${after}${indexKey ? `&i=${encodeURIComponent(indexKey)}` : ""}`),
+  /** Mentions of one entry per chapter, up to block `seq` (finished). Null when the server has nothing to count (no EPUB, older server, entry not visible). */
+  mentions: async (key, entity, seq) => {
+    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?entity=${encodeURIComponent(entity)}&seq=${seq}`);
+    if (!res.ok) return null;
+    return res.json();
+  },
   /** Start an empty index for a library book, to write by hand. */
   handmade: (catalogKey, license = null) => request("POST", `/api/catalog/books/${encodeURIComponent(catalogKey)}/handmade`, license ? { license } : {}),
   /** Book Orbit's reading position for this index. A 404 means an older server: treated as "not synced", no message. */
