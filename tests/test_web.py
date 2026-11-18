@@ -829,3 +829,23 @@ def test_chunk_mode_is_checked_kept_and_reaches_the_generator(client, tmp_path, 
         wait_for(client, r.json()["id"], {"done", "failed"})
         assert seen[-1][0] == want
     assert seen[0][1] == generate.max_part_words("ollama", 16384)
+
+
+def test_a_config_without_chunk_mode_plans_words_parts_on_a_cloud_provider(client, tmp_path, monkeypatch):
+    # Old configs and API callers (and a run resumed after an upgrade) keep word-mode parts.
+    book = upload(client, tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    seen = []
+    real = generate.Generator.__init__
+
+    def spy(self, *a, **kw):
+        real(self, *a, **kw)
+        seen.append(self.opts.chunk_mode)
+    monkeypatch.setattr(generate.Generator, "__init__", spy)
+    r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}})
+    if r.status_code != 200:
+        pytest.skip(f"cloud job not creatable here: {r.text}")
+    wait_for(client, r.json()["id"], {"done", "failed"})
+    assert "chunk_mode" not in r.json()["config"]
+    assert seen and seen[-1] == "words"
+    assert generate.default_chunk_mode("claude") == "chapter"
