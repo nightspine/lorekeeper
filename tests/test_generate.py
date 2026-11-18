@@ -859,3 +859,27 @@ def test_a_setting_naming_a_word_the_book_has_not_used_is_dropped(book_path, tmp
     texts = [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")]
     assert texts == ["Alice Marlow's room"]
     assert report["stats"]["dropped: setting names a word the book hasn't used"] == 1
+
+
+def _bare_generator():
+    from collections import Counter
+    g = generate.Generator.__new__(generate.Generator)
+    g.stats, g.entities, g.events, g.relations = Counter(), {}, [], []
+    return g
+
+
+def test_a_one_letter_article_is_lowercased_in_a_setting():
+    g = _bare_generator()
+    ev = generate.Candidate("event", "e1", "x", 1, [], {})
+    got = {w: g._setting_candidate(ev, w, "").text for w in ["A carriage", "The carriage", "Castle Dracula"]}
+    assert got == {"A carriage": "a carriage", "The carriage": "the carriage", "Castle Dracula": "Castle Dracula"}
+
+
+def test_a_repeated_events_setting_never_reaches_the_checker():
+    g = _bare_generator()
+    e1 = generate.Candidate("event", "e1", "Alice leaves.", 1, [], {})
+    e2 = generate.Candidate("event", "e2", "Alice leaves.", 1, [], {})
+    s1 = generate.Candidate("setting", "s1", "the hall", 1, [], {"event": "e1", "event_text": "Alice leaves."})
+    s2 = generate.Candidate("setting", "s2", "the cellar", 1, [], {"event": "e2", "event_text": "Alice leaves."})
+    out = g._dedupe([e1, e2, s1, s2])
+    assert [c.cid for c in out] == ["e1", "s1"]
