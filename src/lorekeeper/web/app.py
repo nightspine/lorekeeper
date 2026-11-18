@@ -561,6 +561,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(400, "config must be an object")
         if config.get("provider", "ollama") not in ("ollama", *llm.PROVIDERS):
             raise HTTPException(400, f"unknown provider {config.get('provider')!r}")
+        cm = config.get("chunk_mode")
+        if cm is not None and cm not in ("words", "chapter"):
+            raise HTTPException(422, "chunk_mode must be \"words\" or \"chapter\".")
         bk = config.get("book_kind")
         if bk is not None and (not isinstance(bk, str) or not bk.strip()):
             raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")

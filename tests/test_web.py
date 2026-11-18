@@ -9,7 +9,7 @@ import pytest
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient  # noqa: E402
 
-from lorekeeper import llm  # noqa: E402
+from lorekeeper import generate, llm  # noqa: E402
 from lorekeeper.web import app as web_app  # noqa: E402
 from lorekeeper.web import jobs as web_jobs  # noqa: E402
 
@@ -808,3 +808,44 @@ def test_a_manifest_failure_after_a_run_does_not_spoil_the_edits_result(client, 
     assert not done["report"]["edits"].get("failed")
     assert "series manifest: not refreshed" in "".join(p.read_text() for p in (tmp_path / "data").rglob(f"*{job['id']}*events*"))
 
+
+
+def test_chunk_mode_is_checked_kept_and_reaches_the_generator(client, tmp_path, monkeypatch):
+    book = upload(client, tmp_path)
+    for bad in ("chapters", 5, ["chapter"]):
+        r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_mode": bad}})
+        assert r.status_code == 422 and "chunk_mode" in r.json()["detail"], bad
+    seen = []
+    real = generate.Generator.__init__
+
+    def spy(self, *a, **kw):
+        real(self, *a, **kw)
+        seen.append((self.opts.chunk_mode, self.opts.max_part_words))
+    monkeypatch.setattr(generate.Generator, "__init__", spy)
+    for config, want in (({"chunk_mode": "chapter"}, "chapter"), ({"chunk_mode": "words"}, "words"), ({}, "words")):
+        r = client.post("/api/jobs", json={"book_id": book["id"], "config": {**config, "chunk_words": 5000}})
+        assert r.status_code == 200
+        assert r.json()["config"].get("chunk_mode") == config.get("chunk_mode")
+        wait_for(client, r.json()["id"], {"done", "failed"})
+        assert seen[-1][0] == want
+    assert seen[0][1] == generate.max_part_words("ollama", 16384)
+
+
+def test_a_config_without_chunk_mode_plans_words_parts_on_a_cloud_provider(client, tmp_path, monkeypatch):
+    # Old configs and API callers (and a run resumed after an upgrade) keep word-mode parts.
+    book = upload(client, tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    seen = []
+    real = generate.Generator.__init__
+
+    def spy(self, *a, **kw):
+        real(self, *a, **kw)
+        seen.append(self.opts.chunk_mode)
+    monkeypatch.setattr(generate.Generator, "__init__", spy)
+    r = client.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}})
+    if r.status_code != 200:
+        pytest.skip(f"cloud job not creatable here: {r.text}")
+    wait_for(client, r.json()["id"], {"done", "failed"})
+    assert "chunk_mode" not in r.json()["config"]
+    assert seen and seen[-1] == "words"
+    assert generate.default_chunk_mode("claude") == "chapter"
