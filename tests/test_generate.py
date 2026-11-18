@@ -513,7 +513,91 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v9"
+    assert generate.PROMPT_VERSION == "extract-v10"
+
+
+class _Where(FakeLLM):
+    """Events with a setting: one names a known place, one an unsupported cellar, one is too long, one unsure."""
+    def __init__(self, wheres, unsure=()):
+        super().__init__()
+        self.wheres, self.unsure = wheres, unsure
+
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        props = schema.get("properties", {})
+        if "new" in props and "Alice Marlow arrived" in (prefix or ""):
+            out = json.loads(json.dumps(out))
+            out["events"] = [{**ev, "where": w} for ev, w in zip(out["events"], self.wheres)]
+        if "verdicts" in props:
+            out = dict(out)
+            out["verdicts"] = out["verdicts"] + [
+                {"id": line.split(":")[0], "verdict": "unsupported", "because": "the passage never goes there"}
+                for line in prompt.splitlines() if "(setting" in line and "the cellar" in line] + [
+                {"id": line.split(":")[0], "verdict": "unsure", "because": "only implied"}
+                for line in prompt.splitlines() if "(setting" in line and any(u in line for u in self.unsure)]
+        return out
+
+
+def test_an_event_setting_is_normalised_and_linked_to_a_known_place(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["Inside the lighthouse,", "on the Rocks"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    place = next(e["id"] for e in ix["entities"] if e["type"] == "place")
+    assert by["Alice arrives at the lighthouse."]["setting"] == {"text": "the lighthouse", "place": place}
+    assert by["Alice finds a hidden letter."]["setting"] == {"text": "the Rocks"}   # no place known: text only
+    assert report["stats"]["event settings"] == 2 and report["stats"]["settings linked to a place"] == 1
+    assert generate.MAX_SETTING_WORDS == 8
+    assert '"where"' in generate.EXTRACT and "from elsewhere" in generate.EXTRACT
+    assert "where" in generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["required"]
+
+
+def test_a_proper_noun_keeps_its_capital_and_a_common_one_loses_it(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_Where(["The lighthouse", "Alice Marlow's room by the sea"]))
+    texts = [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")]
+    assert texts == ["the lighthouse", "Alice Marlow's room by the sea"]
+
+
+def test_a_setting_the_checker_rejects_is_dropped_and_the_event_stays(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "the cellar"]))
+    by = {ev["summary"]: ev for ev in ix["events"]}
+    assert "setting" in by["Alice arrives at the lighthouse."]
+    assert "setting" not in by["Alice finds a hidden letter."]            # the event stays without it
+    assert report["stats"]["dropped: setting not in the text"] == 1
+    assert any(r["kind"] == "setting" and r["because"] for r in report["rejected"])
+    assert report["stats"]["dropped: not supported"] == 2                 # only the usual summary/fact drops
+
+
+def test_an_unsure_setting_is_kept_and_listed(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "a boat"], unsure=("a boat",)))
+    assert any(ev.get("setting", {}).get("text") == "a boat" for ev in ix["events"])
+    assert any(u["kind"] == "setting" and "a boat" in u["claim"] for u in report["unsure"])
+
+
+def test_a_setting_longer_than_eight_words_or_empty_is_not_written(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_Where(["in the long low room at the top of the old tower", "none"]))
+    assert not any("setting" in ev for ev in ix["events"])
+    assert report["stats"]["dropped: setting too long"] == 1
+
+
+def test_settings_are_kept_unchecked_when_the_fact_check_is_off(book_path, tmp_path):
+    ix, _, _ = _run(book_path, tmp_path, llm=_Where(["the lighthouse", "the cellar"]), opts=generate.Options(verify=False))
+    assert sum(1 for ev in ix["events"] if ev.get("setting")) == 2
+
+
+class _EventGone(_Where):
+    """The checker rejects the event itself: its setting must not outlive it."""
+    def complete(self, system, prompt, schema, prefix=None):
+        out = super().complete(system, prompt, schema, prefix)
+        if "verdicts" in schema.get("properties", {}):
+            out["verdicts"] += [{"id": line.split(":")[0], "verdict": "unsupported", "because": "no"}
+                                for line in prompt.splitlines() if "Alice finds a hidden letter" in line and "(event" in line]
+        return out
+
+
+def test_a_setting_goes_with_its_event_when_the_event_is_dropped(book_path, tmp_path):
+    ix, report, _ = _run(book_path, tmp_path, llm=_EventGone(["the lighthouse", "a boat"]))
+    assert not any("hidden letter" in ev["summary"] for ev in ix["events"])
+    assert [ev["setting"]["text"] for ev in ix["events"] if ev.get("setting")] == ["the lighthouse"]
+    assert report["stats"]["event settings"] == 1
 
 
 class _Labels(FakeLLM):
