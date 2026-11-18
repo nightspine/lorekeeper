@@ -149,3 +149,4 @@ details.advanced .advanced-body { display: grid; gap: var(--space-4); padding-bo
   .chapter-row { grid-template-columns: auto 1fr 80px; }
   .console .input { width: 130px; }
 }
+#size-field[hidden] { display: none; }
