@@ -67,6 +67,18 @@ def _sentences(t: str) -> list[str]:
     return [p for p in parts if len(textmod.words(p)) >= MIN_SENTENCE_WORDS]
 
 
+def _name_at(entity: dict, frm: str, ordinal: dict[str, int], default: str) -> str:
+    """The name the book has revealed by anchor `frm`: the entity's latest name whose `from` is at or before
+    it; none yet, the earliest name. Never a name the reader has not met by then."""
+    at = ordinal.get(frm)
+    named = [(ordinal[n["from"]], i, n["value"]) for i, n in enumerate(entity.get("names") or [])
+             if n.get("value") and n.get("from") in ordinal]
+    if at is None or not named:
+        return default
+    seen = [t for t in named if t[0] <= at]
+    return max(seen)[2] if seen else min(named)[2]
+
+
 def claims_of(index: dict, resolved: dict[str, int | None]) -> list[Claim]:
     """Every checkable claim of the index, in anchor order. Claims whose anchors do not resolve
     in this edition are left out: there is no passage to check them against."""
@@ -92,7 +104,8 @@ def claims_of(index: dict, resolved: dict[str, int | None]) -> list[Claim]:
         names[e.get("id")] = nm
         for f in e.get("facets") or []:
             if f.get("kind") != "profile":
-                add("fact", f"{nm}: {f.get('text', '')}", f.get("from", ""), f.get("evidence"))
+                add("fact", f"{_name_at(e, f.get('from', ''), ordinal, nm)}: {f.get('text', '')}",
+                    f.get("from", ""), f.get("evidence"))
     for r in index.get("relations") or []:
         a, b = names.get(r.get("src"), r.get("src")), names.get(r.get("dst"), r.get("dst"))
         add("relation", f"{a}, {r.get('label', '')}, {b}", r.get("from", ""), r.get("evidence"))
@@ -117,12 +130,13 @@ def sample(claims: list[Claim], n: int, seed: int = 0) -> list[Claim]:
     drawn from each. Same index, n and seed give the same sample."""
     if n <= 0:
         return []
-    if len(claims) <= n and sum(c.kind == "summary" for c in claims) <= n // SUMMARY_SHARE:
-        return list(claims)
     summaries = [c for c in claims if c.kind == "summary"]
     others = [c for c in claims if c.kind != "summary"]
-    k_s = min(len(summaries), n // SUMMARY_SHARE)       # a tenth at most; the rest are facts, ties and events
-    k_o = min(len(others), n - k_s)
+    if len(claims) <= n and len(summaries) <= len(claims) // SUMMARY_SHARE:
+        return list(claims)
+    # recap sentences are at most a tenth of what is actually sampled, also when fewer than n are
+    k_o = min(len(others), n - min(len(summaries), n // SUMMARY_SHARE))
+    k_s = min(len(summaries), n // SUMMARY_SHARE, k_o // (SUMMARY_SHARE - 1))
     picked = _strata(summaries, k_s, seed) + _strata(others, k_o, seed + 1)
     picked.sort(key=lambda c: (c.ordinal, int(c.cid[1:])))
     return picked

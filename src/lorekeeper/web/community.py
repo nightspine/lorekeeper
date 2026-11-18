@@ -10,6 +10,7 @@ library.json); looking a book up tells the registry the person owns it.
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import http.client
 import json
@@ -25,6 +26,8 @@ import urllib.request
 import uuid
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+
 from .. import anchors as anchor_mod
 from .. import epub, registry, validate
 from .catalog import model_label
@@ -32,7 +35,10 @@ from .catalog import model_label
 DEFAULT_URL = "https://nightspine.github.io/lorekeeper-registry"
 LOOKUP_TTL = 600           # seconds a lookup file is served without asking the registry again
 MAX_BODY = 6 * 1024 * 1024
-TIMEOUT = 10
+TIMEOUT = 10             # seconds for one fetch in all: connect, redirects, headers and body
+MAX_REDIRECTS = 3
+MAX_FILE_NAME = 255      # bytes in one file name on common filesystems
+MAX_RESULTS = 200        # lookup results considered: a real title has a handful of listings, and each costs a schema check
 AUDIT_CLAIMS = 50
 KEEP = object()          # "leave it as it is" for configure()
 CACHE_KEEP = 20        # fetched indexes (and their audits) kept in community/cache
@@ -54,27 +60,71 @@ class FetchError(Exception):
     """The registry could not be reached, answered with something we refuse to read, or sent too much."""
 
 
-class _SameOrigin(urllib.request.HTTPRedirectHandler):
-    """Follow a redirect only within the origin the request started at."""
+def inside(base: str, target: str) -> bool:
+    """Is `target` under the registry `base`'s origin and path prefix? The one confinement rule for hrefs and redirects."""
+    b, t = urllib.parse.urlsplit(base), urllib.parse.urlsplit(target)
+    dots = {"..", "."} & set(urllib.parse.unquote(t.path).replace("\\", "/").split("/"))     # no climbing out by ../
+    return (b.scheme, b.netloc) == (t.scheme, t.netloc) and not dots and t.path.startswith(b.path.rstrip("/") + "/")
+
+
+class _Confined(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only if it stays under the registry's origin and path, at most MAX_REDIRECTS times,
+    and only while the fetch's deadline has not passed (each hop gets what is left of it)."""
+
+    max_redirections = MAX_REDIRECTS
+    max_repeats = MAX_REDIRECTS
+
+    def __init__(self, base: str | None = None, deadline: float | None = None) -> None:
+        self.base, self.deadline = base, deadline
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(urllib.parse.urljoin(req.full_url, newurl))
-        if (a.scheme, a.netloc) != (b.scheme, b.netloc):
-            raise urllib.error.HTTPError(req.full_url, code, "redirect to another origin refused", headers, fp)
+        target = urllib.parse.urljoin(req.full_url, newurl)
+        a, b = urllib.parse.urlsplit(req.full_url), urllib.parse.urlsplit(target)
+        if (a.scheme, a.netloc) != (b.scheme, b.netloc) or (self.base is not None and not inside(self.base, target)):
+            raise urllib.error.HTTPError(req.full_url, code, "redirect outside the registry refused", headers, fp)
+        if self.deadline is not None:
+            left = self.deadline - time.monotonic()
+            if left <= 0:
+                raise urllib.error.HTTPError(req.full_url, code, "the registry took too long to answer", headers, fp)
+            req.timeout = left          # http_error_302 opens the next hop with the old request's timeout
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def default_fetch(url: str) -> tuple[int, bytes]:
-    """GET `url`: (status, body). 10 s timeout, at most MAX_BODY bytes read, no redirect off the origin.
-    Raises FetchError when nothing usable came back (a 404 is a status, not an error)."""
-    opener = urllib.request.build_opener(_SameOrigin)
+_SameOrigin = _Confined      # the name older callers and tests used
+
+
+def default_fetch(url: str, base: str | None = None) -> tuple[int, bytes]:
+    """GET `url`: (status, body). One deadline of TIMEOUT seconds covers connecting, redirects, headers and the
+    body; at most MAX_BODY bytes read; a redirect is followed (MAX_REDIRECTS at most) only under `base` (the
+    registry's address; else the request's own origin). Raises FetchError when nothing usable came back
+    (a 404 is a status, not an error)."""
+    deadline = time.monotonic() + TIMEOUT
+    out: list = []
+
+    def run() -> None:
+        try:
+            out.append(_fetch(url, base, deadline))
+        except BaseException as e:  # noqa: BLE001 - handed to the caller
+            out.append(e)
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(max(0.0, deadline - time.monotonic()) + 0.05)     # a server that drips headers cannot outlast this
+    if not out:
+        raise FetchError("the registry took too long to answer")
+    if isinstance(out[0], BaseException):
+        raise out[0]
+    return out[0]
+
+
+def _fetch(url: str, base: str | None, deadline: float) -> tuple[int, bytes]:
+    opener = urllib.request.build_opener(_Confined(base, deadline))
     req = urllib.request.Request(url, headers={"User-Agent": "lorekeeper", "Accept": "application/json"})
     try:
-        with opener.open(req, timeout=TIMEOUT) as r:
+        with opener.open(req, timeout=max(0.1, deadline - time.monotonic())) as r:
             if int(r.headers.get("Content-Length") or 0) > MAX_BODY:
                 raise FetchError("the registry's answer is over the size limit")
             status = r.status
-            deadline = time.monotonic() + TIMEOUT      # the whole download, not each read
             chunks, size = [], 0
             while size <= MAX_BODY:
                 if time.monotonic() > deadline:
@@ -87,6 +137,8 @@ def default_fetch(url: str) -> tuple[int, bytes]:
                 size += len(chunk)
             body = b"".join(chunks)
     except urllib.error.HTTPError as e:
+        if 300 <= e.code < 400:
+            raise FetchError(f"the registry redirected somewhere we won't follow ({e.msg})") from e
         return e.code, b""
     except (OSError, ValueError, http.client.HTTPException) as e:     # URLError, timeouts, bad URLs, BadStatusLine
         raise FetchError(str(e)) from e
@@ -132,7 +184,27 @@ def _judged(c: dict) -> tuple[int, int]:
 
 def registry_slug(url: str) -> str:
     u = urllib.parse.urlsplit(url)
-    return re.sub(r"[^a-z0-9]+", "-", f"{u.hostname or ''}{u.path}".lower()).strip("-")[:60] or "registry"
+    try:
+        port = u.port
+    except ValueError:
+        port = None
+    default = {"https": 443, "http": 80}.get(u.scheme)
+    host = f"{u.hostname or ''}{'' if port in (None, default) else f':{port}'}"      # two local registries must not share files
+    return re.sub(r"[^a-z0-9]+", "-", f"{host}{u.path}".lower()).strip("-")[:60] or "registry"
+
+
+def _attaches(editions, text_hash: str) -> bool:
+    """Does an edition of the index match this text and one the catalog attaches a version to (not `builtFrom: false`)?"""
+    return any(isinstance(e, dict) and e.get("textHash") == text_hash and e.get("builtFrom", True) is not False
+               for e in editions)
+
+
+@functools.cache
+def _result_validator():
+    """A validator for one lookup result (api.schema.json), built once."""
+    root = validate.schema("api")
+    return Draft202012Validator({"$ref": f"{root['$id']}#/$defs/lookup/properties/results/items"},
+                                registry=validate._registry(), format_checker=Draft202012Validator.FORMAT_CHECKER)
 
 
 def _clip(value, n: int = 300) -> str:
@@ -144,10 +216,13 @@ class Community:
                  plan=None, now=time.time) -> None:
         self.dir = data_dir / "community"
         self.catalog, self.library = catalog, library
-        self.fetch = fetch or default_fetch
+        self.fetch = fetch or self._default_fetch
         self.reader = reader or epub.read
         self._audit, self.model, self.plan, self.now = audit, model, plan, now
         self._lock = threading.Lock()
+
+    def _default_fetch(self, url: str) -> tuple[int, bytes]:
+        return default_fetch(url, self.config()["url"])
 
     @property
     def indexes(self) -> Path:
@@ -271,17 +346,20 @@ class Community:
 
     def _usable(self, url: str, text_hash: str, body: bytes) -> list[dict]:
         doc, issues = registry.parse_json_capped(body, "lookup")
-        if issues or validate.check_schema(doc, "api", "lookup"):
+        if issues or not isinstance(doc, dict) or set(doc) != {"results"} or not isinstance(doc["results"], list):
             raise FetchError("the registry's lookup file is not valid")
+        check = _result_validator()
         out = []
-        for r in doc["results"]:
+        for r in doc["results"][:MAX_RESULTS]:      # each on its own, at its first error: a bad one is dropped, not the file
+            if not isinstance(r, dict) or next(check.iter_errors(r), None) is not None:
+                continue
             listing = r.get("listing")
             if r.get("series") or not isinstance(listing, dict) or listing.get("series"):
                 continue     # a series set is not offered in this version
             if registry.listing_problems(listing) or listing["id"] != r["id"] or listing["digest"] != r["digest"]:
                 continue
-            if not any(e.get("textHash") == text_hash for e in listing["editions"]):
-                continue     # exact text only
+            if not _attaches(listing["editions"], text_hash):
+                continue     # exact text only, and an edition the catalog would attach it to
             try:
                 href, pub, slug, version = self._resolve(url, r["href"])
             except CommunityError:
@@ -449,7 +527,7 @@ class Community:
         if bad:
             raise CommunityError(422, f"The index is not valid: {bad[0].message}", "invalid")
         th = entry["textHash"]
-        if th not in {e["textHash"] for e in doc["editions"]}:
+        if not _attaches(doc["editions"], th):
             raise CommunityError(422, "The index was not made for this copy of the book.", "invalid")
         path = self.library.edition_path(th)
         if path is None:
@@ -457,6 +535,11 @@ class Community:
         blocks = self.reader(path).blocks
         book_issues = registry.errors_of(validate.check_against_book(doc, blocks))
         resolved = anchor_mod.resolve(doc["anchors"], blocks)
+        lying = next((i for i, a in enumerate(doc["anchors"])
+                      if "seq" in a and resolved.get(a["id"]) is not None and a["seq"] != resolved[a["id"]]), None)
+        if lying is not None:     # the Reader places anchors by seq hint on an exact edition, so a wrong one would reveal early
+            raise CommunityError(422, "The index's paragraph numbers don't match this copy of the book, so it was "
+                                 "not used.", "invalid")
         early = registry.spoiler_gate(doc, blocks)["early"]
         with self._lock:
             if have is None:
@@ -516,7 +599,10 @@ class Community:
     def _file_name(registry_url: str, publisher: str, slug: str, version: int) -> str:
         if not (PART_RE.fullmatch(publisher) and PART_RE.fullmatch(slug) and isinstance(version, int) and version >= 1):
             raise CommunityError(400, "not a listing we can store")
-        return f"{registry_slug(registry_url)}--{publisher}--{slug}--v{version}.lore.json"
+        name = f"{registry_slug(registry_url)}--{publisher}--{slug}--v{version}.lore.json"
+        if len(name.encode()) + 1 + 32 + len(".tmp") > MAX_FILE_NAME:     # with the temporary file's suffix (see _write)
+            raise CommunityError(422, "That listing's name is too long to store on this computer.", "invalid")
+        return name
 
     def install(self, key: str, listing_id: str, digest) -> dict:
         digest = self._digest(digest)
@@ -527,7 +613,7 @@ class Community:
         if got is None:
             raise CommunityError(409, "Preview the index first: it hasn't been downloaded and checked yet.", "not-fetched")
         body, doc = got
-        if entry["textHash"] not in {e["textHash"] for e in doc["editions"]}:
+        if not _attaches(doc["editions"], entry["textHash"]):
             raise CommunityError(422, "The index was not made for this copy of the book.", "invalid")
         name = self._file_name(url, pub, slug, version)
         lib_key = f"community--{name[:-len('.json')]}"

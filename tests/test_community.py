@@ -296,12 +296,173 @@ def test_resolve_refuses_outside_the_registry():
             r(URL, href)
 
 
-def test_default_fetch_refuses_a_redirect_off_origin():
-    h = community_mod._SameOrigin()
+def test_a_redirect_is_followed_only_under_the_registry():
     import urllib.request
-    req = urllib.request.Request("https://registry.test/reg/x")
-    with pytest.raises(Exception, match="another origin"):
-        h.redirect_request(req, None, 302, "Found", {}, "https://evil.test/x")
+    h = community_mod._Confined(URL)
+    req = urllib.request.Request(URL + "/v0/lookup/text/x.json")
+    for target in ("https://evil.test/reg/x", "https://registry.test/other/x", "https://registry.test/regx/x",
+                   "http://registry.test/reg/x", "https://registry.test/reg/../other/x"):
+        with pytest.raises(Exception, match="outside the registry"):
+            h.redirect_request(req, None, 302, "Found", {}, target)
+    assert h.redirect_request(req, None, 302, "Found", {}, URL + "/v0/other.json").full_url == URL + "/v0/other.json"
+
+
+def serve_once(handler_body, n=1):
+    """A loopback server running handler_body(conn) for each of n connections; (url, thread-stopper)."""
+    import socket
+    import threading
+    srv = socket.socket()
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(5)
+
+    def run():
+        for _ in range(n):
+            try:
+                conn, _ = srv.accept()
+            except OSError:
+                return
+            threading.Thread(target=lambda c=conn: handler_body(c), daemon=True).start()
+    threading.Thread(target=run, daemon=True).start()
+    return f"http://127.0.0.1:{srv.getsockname()[1]}", srv.close
+
+
+def test_fetch_follows_a_redirect_inside_the_registry_and_refuses_one_outside():
+    def h(conn):
+        data = conn.recv(4096).decode()
+        path = data.split()[1]
+        if path == "/reg/a":
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /reg/b\r\nContent-Length: 0\r\n\r\n")
+        elif path == "/reg/b":
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+        else:
+            conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /elsewhere\r\nContent-Length: 0\r\n\r\n")
+        conn.close()
+    url, stop = serve_once(h, 6)
+    try:
+        assert community_mod.default_fetch(url + "/reg/a", url + "/reg") == (200, b"ok")
+        with pytest.raises(community_mod.FetchError):
+            community_mod.default_fetch(url + "/reg/c", url + "/reg")      # another path on the same host
+    finally:
+        stop()
+
+
+def test_fetch_stops_after_a_few_redirects():
+    hits = []
+
+    def h(conn):
+        hits.append(1)
+        conn.recv(4096)
+        conn.sendall(b"HTTP/1.1 302 Found\r\nLocation: /reg/loop\r\nContent-Length: 0\r\n\r\n")
+        conn.close()
+    url, stop = serve_once(h, 30)
+    try:
+        with pytest.raises(community_mod.FetchError):
+            community_mod.default_fetch(url + "/reg/loop", url + "/reg")
+        assert len(hits) <= community_mod.MAX_REDIRECTS + 2
+    finally:
+        stop()
+
+
+def test_one_deadline_covers_slow_headers_and_a_slow_body(monkeypatch):
+    import time as _t
+    monkeypatch.setattr(community_mod, "TIMEOUT", 1)
+
+    def drip_headers(conn):         # a byte every 0.3 s: no single read ever times out
+        conn.recv(4096)
+        try:
+            for b in b"HTTP/1.1 200 OK\r\nX-A: " + b"a" * 100:
+                conn.send(bytes([b]))
+                _t.sleep(0.3)
+        except OSError:
+            pass
+
+    def drip_body(conn):
+        conn.recv(4096)
+        try:
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n")
+            for _ in range(100):
+                conn.send(b"x")
+                _t.sleep(0.3)
+        except OSError:
+            pass
+    for body in (drip_headers, drip_body):
+        url, stop = serve_once(body)
+        t0 = _t.monotonic()
+        try:
+            with pytest.raises(community_mod.FetchError):
+                community_mod.default_fetch(url + "/reg/x", url + "/reg")
+        finally:
+            stop()
+        assert _t.monotonic() - t0 < 2.5, body.__name__
+
+
+def test_a_huge_lookup_is_answered_quickly_and_validates_a_bounded_number_of_results(env, monkeypatch):
+    import time as _t
+    turn_on(env, URL)
+    n = 0
+    real = community_mod._result_validator()
+
+    class Counting:
+        def iter_errors(self, r):
+            nonlocal n
+            n += 1
+            return real.iter_errors(r)
+    monkeypatch.setattr(community_mod, "_result_validator", lambda: Counting())
+    env.reg.override[listing_url(env)] = (200, b'{"results": [' + b",".join([b"{}"] * 1_000_000) + b"]}")
+    t0 = _t.monotonic()
+    assert books(env) == {"state": "ok", "results": []}
+    assert _t.monotonic() - t0 < 5 and n == community_mod.MAX_RESULTS
+
+
+def test_one_malformed_result_is_dropped_and_the_valid_one_kept(env):
+    turn_on(env, URL)
+    lookup = json.loads((env.reg.out / f"v0/lookup/text/{env.th}.json").read_text())
+    lookup["results"] = [{"id": 5}, lookup["results"][0], {}, "x"]
+    env.reg.override[listing_url(env)] = (200, json.dumps(lookup).encode())
+    assert [r["id"] for r in books(env)["results"]] == [env.reg.listing["id"]]
+
+
+def test_an_edition_the_catalog_would_not_attach_is_not_offered_or_fetched(env):
+    turn_on(env, URL)
+    lookup = json.loads((env.reg.out / f"v0/lookup/text/{env.th}.json").read_text())
+    for e in lookup["results"][0]["listing"]["editions"]:
+        e["builtFrom"] = False
+    env.reg.override[listing_url(env)] = (200, json.dumps(lookup).encode())
+    assert books(env)["results"] == []
+    # offered by the listing, but the index itself says builtFrom false: refused at fetch
+    env.reg.override.pop(listing_url(env))
+    env.app.state.community.now = lambda: 10 ** 10
+    doc = good_doc(env)
+    doc["editions"][0]["builtFrom"] = False
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 422 and r.json()["code"] == "invalid" and "not made for this copy" in r.json()["detail"]
+
+
+def test_a_lying_seq_hint_is_refused_and_not_cached(env):
+    turn_on(env, URL)
+    doc = good_doc(env)
+    doc["anchors"][0]["seq"] = doc["anchors"][0]["seq"] + 1
+    d = serve_index(env, registry.dumps(doc).encode())
+    r = fetch(env, {"id": offer(env)["id"], "digest": d})
+    assert r.status_code == 422 and r.json()["code"] == "invalid"
+    assert not env.app.state.community._cache_file(d).exists()
+
+
+def test_registry_slug_keeps_a_non_default_port_and_the_default_name():
+    slug = community_mod.registry_slug
+    assert slug(community_mod.DEFAULT_URL) == "nightspine-github-io-lorekeeper-registry"
+    assert slug("https://nightspine.github.io:443/lorekeeper-registry") == slug(community_mod.DEFAULT_URL)
+    assert slug("http://localhost:8001/reg") != slug("http://localhost:8002/reg")
+    assert slug("http://localhost:8001/reg") == "localhost-8001-reg"
+
+
+def test_a_name_too_long_for_the_filesystem_is_refused():
+    with pytest.raises(community_mod.CommunityError) as e:
+        community_mod.Community._file_name(URL, "p" * 128, "a" * 128, 1)
+    assert e.value.status == 422
+    name = community_mod.Community._file_name(URL, "someone", "a" * 100, 1)
+    assert len(name) + 37 <= 255
 
 
 def listing(i, **kw):
