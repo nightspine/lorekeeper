@@ -66,7 +66,7 @@ def max_part_words(provider: str | None, num_ctx: int = 16384) -> int:
     """The longest part chapter mode sends. A cloud model: MAX_PART_WORDS. Ollama: the context minus room for
     the output (4,096 tokens) and the prompt scaffolding (about 3,000 tokens of instructions, known entities and
     recap), times 0.7 words per token, at least 1,500 and never above the cloud cap:
-    max(1500, int((num_ctx - 4096 - 3000) * 0.7)). 8,192 -> 1,500; 16,384 -> 6,450; 32,768 -> 17,970."""
+    max(1500, int((num_ctx - 4096 - 3000) * 0.7)). 8,192 -> 1,500; 16,384 -> 6,501; 32,768 -> 17,970."""
     if (provider or "ollama") != "ollama":
         return MAX_PART_WORDS
     return min(MAX_PART_WORDS, max(1500, int((num_ctx - 4096 - 3000) * 0.7)))
@@ -1120,15 +1120,18 @@ class Generator:
         first = Chunk(chunk.chapter, chunk.start, mid - 1, bridge=chunk.bridge)
         second = Chunk(chunk.chapter, mid, chunk.end, bridge=(max(first.start, first.end - 1), first.end) if chunk.chapter >= 0 else None)
         total: Counter = Counter()
+        added: list[dict] = []
         for half in (first, second):
             try:
                 total.update(self._process_part(half))
+                added += self.added
             except _CutOff:
                 self.log(f"  blocks {half.start}-{half.end}: extraction reply was cut off again; skipped")
                 self.stats["dropped: reply cut off"] += 1
                 self.done.append(half.key)
                 total["dropped: reply cut off"] += 1
         self.done.append(chunk.key)
+        self.added = added
         return dict(total)
 
     def _split_point(self, chunk: Chunk) -> int | None:

@@ -971,9 +971,65 @@ def test_a_half_that_fails_again_is_logged_and_done(book_path, tmp_path):
     llm = CutOffLLM(always=True)
     logs = _cutoff_run(book_path, tmp_path, llm)
     assert any("cut off again" in m for m in logs)
-    state = json.loads((tmp_path / "o.lore.json.state").read_text()) if (tmp_path / "o.lore.json.state").exists() else None
-    if state:
-        assert state["done"]
+    state = json.loads((tmp_path / "o.lore.json.state").read_text())
+    keys = [k for k in state["done"]]
+    assert len(keys) == 3 and len(set(keys)) == 3          # both halves and the parent
+    parent = max(keys, key=lambda k: int(k.split("-")[1]) - int(k.split("-")[0]))
+    assert parent == keys[-1]
+    report = json.loads((tmp_path / "o.lore.json.report").read_text())
+    assert report["stats"]["dropped: reply cut off"] == 2
+
+
+def test_a_split_part_reports_both_halves_additions(book_path, tmp_path):
+    g = generate.Generator(epub.read(book_path), CutOffLLM(cut=1), generate.Options(chapters={1}), book_path, lambda m: None)
+    seen = []
+    orig = g._process_part
+
+    def spy(chunk):
+        out = orig(chunk)
+        seen.append(list(g.added))
+        return out
+    g._process_part = spy
+    g.process(g.chunks()[0])
+    assert len(seen) == 2 and seen[0] and seen[1]
+    assert g.added == seen[0] + seen[1]
+
+
+def test_a_cut_off_claude_reply_is_split_not_raised(book_path, tmp_path):
+    """Through the real Claude backend: stop_reason max_tokens on the first extraction splits the part."""
+    from types import SimpleNamespace as NS
+    from lorekeeper import llm as llmmod
+    fake, calls = FakeLLM(), {"extractions": 0}
+
+    class Messages:
+        def create(self, **kw):
+            schema = kw["output_config"]["format"]["schema"]
+            usage = NS(input_tokens=10, output_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0)
+            if "new" in schema.get("properties", {}):
+                calls["extractions"] += 1
+                if calls["extractions"] == 1:
+                    return NS(stop_reason="max_tokens", content=[NS(type="text", text='{"new": [{"na')], usage=usage)
+            text = kw["messages"][0]["content"]
+            text = text if isinstance(text, str) else text[-1]["text"]
+            return NS(stop_reason="end_turn", usage=usage,
+                      content=[NS(type="text", text=json.dumps(fake.complete(kw["system"], text, schema)))])
+    client = NS(messages=Messages(), beta=NS(messages=Messages()))
+    backend = llmmod.Claude(name="claude-haiku-5-5", client=client)
+    logs = _cutoff_run(book_path, tmp_path, backend)
+    assert any("splitting the part in two" in m for m in logs)
+    assert backend.usage.truncated == 1
+
+
+def test_cli_parts_default_follows_the_provider():
+    from argparse import Namespace
+    from lorekeeper import cli
+    def mode(provider="ollama", parts=None, whole=False):
+        return cli._chunk_mode(Namespace(provider=provider, parts=parts, whole_chapters=whole))
+    assert mode() == "words"
+    assert mode("claude") == "chapter"
+    assert mode("claude", parts="words") == "words"
+    assert mode(whole=True) == "chapter"
+    assert mode(parts="chapter") == "chapter"
 
 
 def test_requests_per_part_are_capped(book_path, tmp_path):

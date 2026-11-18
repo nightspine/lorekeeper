@@ -322,3 +322,11 @@ def argparse_for(argv):
     if "a" not in captured:
         raise SystemExit(2)
     return captured["a"]
+
+
+def test_max_tokens_is_a_truncated_empty_result():
+    client, _ = stub_client(text='{"a": [{"x": "cut', stop="max_tokens")
+    c = llm.Claude(name="claude-haiku-5-5", client=client)
+    assert c.complete("s", "p", SCHEMA) == {}
+    assert c.usage.truncated == 1
+
