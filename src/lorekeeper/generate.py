@@ -1353,7 +1353,7 @@ class Generator:
         s = SETTING_LEAD.sub("", s).strip()
         if not s or s.casefold() in NO_SETTING:
             return None
-        if len(text.words(s)) > MAX_SETTING_WORDS:
+        if len(s.split()) > MAX_SETTING_WORDS:   # whitespace tokens, as the schema counts them ("the hall & the stairs")
             self.stats["dropped: setting too long"] += 1
             return None
         first = s.split()[0]
@@ -1363,18 +1363,41 @@ class Generator:
             if first.casefold() in LOWER_FIRST or (not mid and re.search(r"\b" + re.escape(low) + r"\b", passage)):
                 s = low + s[len(first):]
         c = Candidate("setting", "st" + ev.cid[1:], s, ev.from_seq, list(ev.evidence),
-                      {"event": ev.cid, "event_text": ev.text, "place": self._place_for(s)})
+                      {"event": ev.cid, "event_text": ev.text})
         return c
 
-    def _place_for(self, setting: str) -> str | None:
+    def _place_for(self, setting: str, at: int) -> str | None:
         """The place entity of this index that the setting names ("the Demeter" for "the Demeter"): the same
-        name without articles, exact; never a person or a thing, never a fuzzy match."""
+        name without articles, exact; never a person or a thing, never a fuzzy match, and only one revealed
+        at or before the event (`at`): a link to a later place would make the index invalid."""
         core = self._core(setting)
         if not core:
             return None
-        hits = [eid for eid in self.entities if self._type(eid) == "place"
+        hits = [eid for eid in self.entities if self._type(eid) == "place" and self.entity_from.get(eid, at + 1) <= at
                 and any(self._core(n) == core for n in self._names(eid))]
         return hits[0] if len(hits) == 1 else None
+
+    def _words_through(self, seq: int) -> set[str]:
+        """Every word the book has used in blocks 0..seq (cached, grown forward)."""
+        done, words = getattr(self, "_used_words", (-1, set()))
+        if seq < done:
+            done, words = -1, set()
+        for s in range(done + 1, seq + 1):
+            words.update(self.book.blocks[s].words)
+        self._used_words = (max(done, seq), words)
+        return words
+
+    def _invented_word(self, setting: str, at: int) -> str | None:
+        """A capitalised word of the setting that the book hasn't used by block `at`: the model's memory."""
+        used = None
+        for w in setting.split():
+            if w[:1].isupper() and not w.isupper() or (w.isupper() and len(w) > 1):
+                for t in text.words(w):
+                    if used is None:
+                        used = self._words_through(at)
+                    if t not in used and t.removesuffix("s") not in used and t + "s" not in used:
+                        return w
+        return None
 
     def _attach_settings(self, cands: list[Candidate]) -> list[Candidate]:
         """Checked settings move onto the events that survived; a setting whose event went is simply gone."""
@@ -1384,7 +1407,13 @@ class Generator:
             if c.kind != "setting":
                 out.append(c)
             elif (ev := events.get(c.data["event"])):
-                ev.data["setting"] = {"text": c.text, **({"place": c.data["place"]} if c.data.get("place") else {})}
+                if c.from_seq > ev.from_seq:   # the checker found the place only later: the event can't show it yet
+                    self.stats["dropped: setting revealed later than its event"] += 1
+                elif (w := self._invented_word(c.text, ev.from_seq)):
+                    self.stats["dropped: setting names a word the book hasn't used"] += 1
+                else:
+                    place = self._place_for(c.text, ev.from_seq)
+                    ev.data["setting"] = {"text": c.text, **({"place": place} if place else {})}
         return out
 
     @staticmethod
@@ -1679,7 +1708,7 @@ class Generator:
             "anchors": anchors,
             "entities": sorted(self._kept_entities(), key=lambda e: (self.entity_from[e["id"]], e["id"])),
             "relations": self.relations,
-            "events": self.events,
+            "events": self._events_out(self._kept_entities()),
             "recaps": self.recaps,
         }
         if self.opts.series_id:
@@ -1692,6 +1721,17 @@ class Generator:
             return list(self.entities.values())
         used = {r[k] for r in self.relations for k in ("src", "dst")} | {x for ev in self.events for x in ev["entities"]}
         return [e for e in self.entities.values() if e["facets"] or e["id"] in used]
+
+    def _events_out(self, kept: list[dict]) -> list[dict]:
+        """The events as written: a place link to an entity that isn't published goes (the text stays)."""
+        ids = {e["id"] for e in kept}
+        out = []
+        for ev in self.events:
+            st = ev.get("setting")
+            if st and st.get("place") and st["place"] not in ids:
+                ev = {**ev, "setting": {k: v for k, v in st.items() if k != "place"}}
+            out.append(ev)
+        return out
 
     def _all_from(self) -> list[str]:
         kept = self._kept_entities()

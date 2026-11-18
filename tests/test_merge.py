@@ -506,3 +506,11 @@ def test_titled_surname_does_not_outrank_the_full_name():
     names = ["Lucy Westenra", "Lucy", "Mrs. Westenra"]
     assert merge.rank_names(names, {"westenra": 5, "lucy": 9})[0] == "Lucy Westenra"
     assert merge.rank_names(["Mrs. Westenra", "Lucy Westenra"], {})[0] == "Lucy Westenra"
+
+
+def test_merge_rewrites_an_event_setting_place():
+    ix = _index([_ent("baker-street", ["Baker Street"], "a1", "place"), _ent("baker-st", ["Baker St"], "a2", "place")],
+                events=[{"id": "e1", "from": "a3", "summary": "They meet in the rooms.", "entities": [],
+                         "evidence": ["a3"], "setting": {"text": "Baker Street", "place": "baker-street"}}])
+    merge.merge([ix], "baker-st", "baker-street")
+    assert ix["events"][0]["setting"] == {"text": "Baker Street", "place": "baker-st"}
