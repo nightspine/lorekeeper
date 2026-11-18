@@ -50,3 +50,25 @@ def test_js_view_matches_python_for_event_settings(scarlet, series):
                            capture_output=True, text=True)
         assert r.returncode == 0, r.stderr
         assert json.loads(r.stdout) == pyview([ix], Position("study-in-scarlet", anchor), series)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_js_empty_setting_is_absent(scarlet, series):
+    import copy
+    import json
+
+    from lorekeeper.gating import Position, view as pyview
+
+    ix = copy.deepcopy(scarlet)
+    for ev in ix["events"]:
+        if ev["id"] == "sis.ev.meeting":
+            ev["setting"] = {}
+    script = ("import {view} from %r; const [idx, ser] = JSON.parse(process.argv[1]);"
+              "console.log(JSON.stringify(view([idx], {book: 'study-in-scarlet', anchor: 'ch1.para52'}, ser)));"
+              ) % (ROOT / "src/lorekeeper/web/static/js/gating.js").as_uri()
+    r = subprocess.run(["node", "--input-type=module", "-e", script, json.dumps([ix, series])],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out == pyview([ix], Position("study-in-scarlet", "ch1.para52"), series)
+    assert all("setting" not in e for e in out["events"] if e["id"] == "sis.ev.meeting")

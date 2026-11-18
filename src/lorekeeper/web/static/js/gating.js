@@ -108,7 +108,7 @@ export function view(indexes, position, series = null, order = null, finished = 
   const facetOut = (f, book) => ({ id: f.id, text: f.text, basis: f.basis, book });
   const settingOut = (ev, ids) => {
     const st = ev.setting;
-    if (!st) return {};
+    if (!st || typeof st !== 'object' || st.text === undefined) return {};
     return { setting: { text: st.text, ...(st.place !== undefined && ids.has(st.place) ? { place: st.place } : {}) } };
   };
   const relOut = (r, book) => ({ id: r.id, src: r.src, dst: r.dst, label: r.label, book, ...(r.kind !== undefined ? { kind: r.kind } : {}) });

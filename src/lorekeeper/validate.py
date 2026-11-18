@@ -116,6 +116,8 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
     prior_items = {x["id"]: k for p in prior for k, _, x in _items(p) if k in ("facet", "relation")}
     profiles = {x["id"] for p in [*prior, index] for k, _, x in _items(p) if k == "facet" and x.get("kind") == "profile"}
     entity_from = {e["id"]: ords.get(e["from"]) for e in index["entities"]}
+    types = {**{e["id"]: e["type"] for p in prior for e in p.get("entities", [])},
+             **{e["id"]: e["type"] for e in index["entities"]}}
     item_kind: dict[str, str] = {}
     item_from: dict[str, int | None] = {}
 
@@ -161,8 +163,6 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                                         f"unknown entity {t!r}"))
         if kind == "event" and "place" in item.get("setting", {}):
             pid = item["setting"]["place"]
-            types = {**{e["id"]: e["type"] for p in prior for e in p.get("entities", [])},
-                     **{e["id"]: e["type"] for e in index["entities"]}}
             if pid not in types:
                 issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
                                     f"unknown entity {pid!r}"))
