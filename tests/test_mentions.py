@@ -70,7 +70,7 @@ def test_name_revealed_later_not_counted_earlier():
     blocks = book("Then the stranger came. Gabriel was his name.", "Gabriel!", "x", "Gabriel.")
     ch = [NS(start=0)]
     early = view([idx], Position(None, "a0"))
-    assert mentions.visible_names(early) == {"stranger": ["the stranger"]}
+    assert mentions.visible_names(early) == {"stranger": ["the stranger"]}  # title-only: nothing derived
     assert mentions.count(blocks, ch, mentions.visible_names(early), 3).counts["stranger"] == [1]  # "Gabriel" is not visible yet
     late = view([idx], Position(None, "a1"))
     assert mentions.count(blocks, ch, mentions.visible_names(late), 3).counts["stranger"] == [4]
@@ -103,3 +103,48 @@ def test_snippets_dedupe_and_limit():
     sn = mentions.snippets({b.seq: b for b in blocks}, m.spans["l"])
     assert len(sn) == 60 and sn[-1]["seq"] == 70 and all(x["text"][x["start"]:x["end"]] == "Lucy" for x in sn)
     assert len([x for x in mentions.snippets({b.seq: b for b in blocks}, m.spans["l"], 100) if x["seq"] == 0]) == 1
+
+
+def _ents(*specs):
+    return [{"id": i, "type": t, "names": ns} for i, t, ns in specs]
+
+
+def test_derived_given_name_and_surname():
+    d = mentions.derive(_ents(("lucy", "person", ["Lucy Westenra"])))
+    assert d == {"lucy": ["Lucy", "Westenra"]}
+    b = book("Lucy was ill. Lucy Westenra said Westenra.")
+    m = mentions.count(b, [NS(start=0)], {"lucy": ["Lucy Westenra", "Lucy", "Westenra"]}, 0)
+    assert m.counts["lucy"] == [3]
+
+
+def test_no_derived_form_shared_with_another_visible_entity():
+    d = mentions.derive(_ents(("harry", "person", ["Harry Potter"]), ("james", "person", ["James Potter"]),
+                              ("lily", "person", ["Lily Evans"])))
+    assert d["harry"] == ["Harry"] and d["james"] == ["James"] and d["lily"] == ["Lily", "Evans"]
+    d = mentions.derive(_ents(("lucy", "person", ["Lucy Westenra"]), ("mrs", "person", ["Mrs. Westenra"])))
+    assert d == {"lucy": ["Lucy"]}   # "Westenra" is in both; Mrs. Westenra keeps only her spelled name
+
+
+def test_titles_only_and_title_words_derive_nothing():
+    assert mentions.derive(_ents(("p", "person", ["the Professor"]), ("c", "person", ["Count"]))) == {}
+    d = mentions.derive(_ents(("d", "person", ["Count Dracula"])))
+    assert d == {"d": ["Dracula"]}                      # not "Count"
+    d = mentions.derive(_ents(("v", "person", ["Abraham Van Helsing"], ), ("w", "person", ["Dr. Seward"])))
+    assert d["v"] == ["Abraham", "Helsing"] and d["w"] == ["Seward"]  # "Van" is a particle
+
+
+def test_derived_forms_only_for_people_and_creatures():
+    assert mentions.derive(_ents(("p", "place", ["Castle Dracula"]), ("t", "thing", ["Holy Grail"]))) == {}
+    assert mentions.derive(_ents(("w", "creature", ["Black Fang"]))) == {"w": ["Black", "Fang"]}
+
+
+def test_derived_forms_never_from_a_name_not_yet_visible():
+    idx = {
+        "lorekeeper": "0.1", "kind": "index", "id": "t", "anchors": [{"id": "a0", "seq": 0}, {"id": "a1", "seq": 5}],
+        "entities": [{"id": "x", "type": "person", "from": "a0",
+                      "names": [{"value": "the stranger", "kind": "primary", "from": "a0"},
+                                {"value": "Gabriel Voss", "from": "a1"}]}],
+        "coverage": {"through": "a1", "complete": True}, "relations": [], "events": [], "recaps": [],
+    }
+    assert mentions.visible_names(view([idx], Position(None, "a0"))) == {"x": ["the stranger"]}
+    assert mentions.visible_names(view([idx], Position(None, "a1")))["x"][-2:] == ["Gabriel", "Voss"]
