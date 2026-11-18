@@ -298,3 +298,24 @@ def test_an_event_can_carry_a_setting_and_lose_it(client, tmp_path):
     r = refuse(client, key, 422, op="add-event", summary="x", entities=[], seq=5, setting="one two three four five six seven eight nine")
     assert r["code"] == "wording" and "8 words" in r["detail"]
     refuse(client, key, 422, op="edit-event", id=ev["id"], setting="a room that seemingly was hers")
+
+
+def test_deleting_or_retyping_a_linked_place_unlinks_its_settings(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    edit(client, key, op="add-entity", name="The Lighthouse", type="place", seq=1)
+    edit(client, key, op="add-entity", name="The Cove", type="place", seq=1)
+    a = edit(client, key, op="add-event", summary="Alice arrives.", entities=[], seq=5, setting="the lighthouse")
+    b = edit(client, key, op="add-event", summary="Alice leaves.", entities=[], seq=5, setting="the cove")
+    byid = lambda: {e["id"]: e for e in doc_of(client, key)["events"]}  # noqa: E731
+    assert byid()[a["id"]]["setting"]["place"] == "the-lighthouse"
+    edit(client, key, op="set-type", entity="the-lighthouse", type="thing")
+    assert byid()[a["id"]]["setting"] == {"text": "the lighthouse"}
+    edit(client, key, op="delete-entity", entity="the-cove")
+    assert byid()[b["id"]]["setting"] == {"text": "the cove"}
+    assert not [i for i in validate.check_index(doc_of(client, key)) if i.level == "error"]
+
+
+def test_a_setting_counts_words_like_the_schema(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    r = refuse(client, key, 422, op="add-event", summary="x", entities=[], seq=5, setting="the hall & the stairs of the old house")
+    assert r["code"] == "wording"
