@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM ghcr.io/astral-sh/uv:latest AS uv
 
-FROM python:3.12-slim AS build
+FROM python:3.15-slim AS build
 COPY --from=uv /uv /uvx /bin/
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
@@ -14,7 +14,7 @@ COPY schema/ schema/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --extra web --extra claude
 
-FROM python:3.12-slim
+FROM python:3.15-slim
 # The project is installed editable from /app/src, so this path must match the build stage.
 # The app reads SPEC.md and README.md from the repo root, examples/ is the bundled demo library,
 # and site/ is the landing page.
