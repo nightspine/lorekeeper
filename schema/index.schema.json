@@ -413,9 +413,10 @@
         },
         "kind": {
           "enum": [
-            "profile"
+            "profile",
+            "arc"
           ],
-          "description": "A self-contained description of the entity as the reader knows it at `from` (SPEC.md §4.2). Absent for details."
+          "description": "`profile`: a self-contained description of the entity as the reader knows it at `from`. `arc`: what has happened to the entity in this book, as the reader knows it at `from`, at most 400 characters (SPEC.md §4.2). Absent for details."
         }
       },
       "allOf": [
@@ -431,6 +432,25 @@
             "properties": {
               "text": {
                 "maxLength": 280
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "kind"
+            ],
+            "properties": {
+              "kind": {
+                "const": "arc"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "text": {
+                "maxLength": 400
               }
             }
           }
@@ -704,7 +724,8 @@
               },
               "kind": {
                 "enum": [
-                  "profile"
+                  "profile",
+                  "arc"
                 ]
               }
             },
@@ -721,6 +742,25 @@
                   "properties": {
                     "text": {
                       "maxLength": 280
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "required": [
+                    "kind"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "arc"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "text": {
+                      "maxLength": 400
                     }
                   }
                 }
