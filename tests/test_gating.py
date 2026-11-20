@@ -270,7 +270,6 @@ def test_a_standalone_index_has_at_most_one_arc_with_no_book():
     assert _arc_ids(at("p4"), "ada") == [("x.ada.a3", None)]
 
 
-@_arcs_pending
 def test_the_latest_arc_of_a_book_wins_even_without_replaces(scarlet, series):
     # §7.3 rule 5 follows position, not the replaced set: drop `replaces` and the result is the same.
     holmes = next(e for e in scarlet["entities"] if e["id"] == "holmes")
