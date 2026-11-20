@@ -82,7 +82,7 @@ export function mountReader(root) {
     // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
     // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
     p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : (readingList().find((e) => e.key === params.get("i"))?.p ?? 0),
-    tab: !preview && params.get("tab") === "ask" ? "ask" : "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
+    tab: !preview && params.get("tab") === "ask" ? "ask" : "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null, bkAll: new Set(), bkOpen: new Set(),
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
     earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
@@ -116,7 +116,7 @@ export function mountReader(root) {
       try { preview.info = { catalog: preview.catalog, ...await fetchPreview(preview.catalog, preview.listing, preview.hex) }; }
       catch (e) { if (!disposed) clear(wrap, previewError(e, preview.catalog)); return; }
       s.lib = { indexes: [], series: [] };
-      api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+      api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); if (s.view && !s.edit && (s.tab === "chapters" || s.tab === "timeline")) paintTabs(); }).catch(() => {});
       await load(s.key, { keepPosition: true });
       return;
     }
@@ -127,7 +127,7 @@ export function mountReader(root) {
         h("a.btn.primary", { href: "#/library?show=ready" }, icon("layers"), "Books ready to read")));
       return;
     }
-    api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+    api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); if (s.view && !s.edit && (s.tab === "chapters" || s.tab === "timeline")) paintTabs(); }).catch(() => {});
     await load(s.key, { keepPosition: true });
   }
 
@@ -989,28 +989,79 @@ export function mountReader(root) {
     }));
   }
 
-  /** One book's chapters as a list; numbering restarts per book. */
-  function chapterList(groups, { current }) {
+  // ---- book blocks: the one structure both the Chapters and the Timeline tabs use --------------
+
+  const NEAR = 5;   // chapters shown per book before "Show all"
+  const bkKey = (k) => k || "_";
+
+  /** The book's cover URL (from the API, never from the index), or null. */
+  function bookCover(key) {
+    let b = null;
+    if (!s.series || !key || key === s.book) b = catalogBook();
+    else {
+      const idx = s.lib.indexes.find((i) => i.series?.id === s.series.id && i.series.book === key);
+      b = idx && s.catalog?.books.find((x) => x.versions.some((v) => v.key === idx.key));
+    }
+    const url = b?.cover;
+    return typeof url === "string" && url.startsWith("/api/") ? url : null;
+  }
+  const bookTitleOf = (key) => (s.series && key ? s.series.books.find((x) => x.key === key)?.title || key : s.doc.work.title);
+  const bookNoLabel = (key) => {
+    if (!s.series || !key) return null;
+    const i = (s.series.orders[s.order] || []).indexOf(key);
+    return i < 0 ? null : `Book ${i + 1}`;
+  };
+
+  /** The cover fading into the ground with the book's title over it. As a summary it opens a collapsed book. */
+  function bookBanner(key, { summary = false } = {}) {
+    const cov = bookCover(key), label = bookNoLabel(key);
+    const img = cov ? h("img.banner-img", { src: cov, alt: "", loading: "lazy" }) : null;
+    if (img) img.addEventListener("error", () => img.remove());
+    return h(`${summary ? "summary" : "div"}.book-banner${cov ? ".has-cover" : ""}`, img,
+      h("span.banner-text", label ? h("span.banner-no", label) : null, h("span.banner-title", bookTitleOf(key))),
+      summary ? icon("chevron") : null);
+  }
+
+  /** One book on the rail. `items`: [{ label, title, body, cls, id, badge }] in display order, `reached` is the
+   *  count in the button ("Show all 12 chapters": what the reader has reached, never the book's total). */
+  function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none }) {
+    const all = s.bkAll.has(bkKey(key));
+    const folded = !all && items.length > NEAR;
+    const shown = !folded ? items : newest ? items.slice(0, NEAR) : items.slice(-NEAR);
+    const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
+      it.label ? h("span.ch-label", it.label) : null,
+      it.title ? h("div.ch-name", it.title, it.badge || null) : null,
+      it.body))) : none ? h("p.muted.book-none", none) : null;
+    const toggle = items.length > NEAR ? h("button.btn.ch-all", { type: "button", dataset: { book: bkKey(key) }, "aria-expanded": String(all),
+      on: { click: () => {
+        all ? s.bkAll.delete(bkKey(key)) : s.bkAll.add(bkKey(key));
+        repaint();
+        el.panel.querySelector(`.ch-all[data-book="${CSS.escape(bkKey(key))}"]`)?.focus({ preventScroll: true });
+      } } }, all ? `Show only the latest ${NEAR}` : `Show all ${items.length} ${noun}${items.length === 1 ? "" : "s"}`) : null;
+    if (current) return h("section.book-block.stack-book.current", { "aria-label": bookTitleOf(key) }, bookBanner(key), rail, toggle);
+    return h("details.book-block.stack-book.earlier", { "aria-label": bookTitleOf(key), open: s.bkOpen.has(bkKey(key)) ? "" : null,
+      on: { toggle: (ev) => { ev.currentTarget.open ? s.bkOpen.add(bkKey(key)) : s.bkOpen.delete(bkKey(key)); } } },
+      bookBanner(key, { summary: true }), rail, toggle);
+  }
+
+  /** The chapters of the current book as rail items. Numbering restarts per book. */
+  function chapterItems(groups, { current }) {
     const here = s.map.chapterAt(s.p);
     const numbered = groups.map((g, i) => ({ ...g, n: i + 1, last: i === groups.length - 1 }));
-    const ordered = s.chaptersNewest ? [...numbered].reverse() : numbered;
-    return h("ol.chapter-list", ordered.map((g) => {
+    return numbered.map((g) => {
       // Still inside this chapter: its summary covers only what has been read.
       const ongoing = current && g.last && here && here.title === g.title;
       const fresh = g.ids.some((id) => s.fresh.has(id));
-      const who = mentions(g.parts.join(" "));
-      const det = h(`details.chapter${fresh ? ".fresh" : ""}`, { "data-chapter": g.key, open: (current && g.last) || ordered.length <= 3 ? "" : null },
-        h("summary", h("span.ch-num.num", String(g.n)), h("span.ch-title", tidyTitle(g.title)),
-          ongoing ? h("span.chip.ch-ongoing", "So far") : null, fresh ? h("span.new-badge", "New") : null),
-        h("div.ch-body", g.parts.map((t, i) => {
+      const who = g.parts.length ? mentions(g.parts.join(" ")) : [];
+      return { id: g.key, label: `Chapter ${g.n}`, title: tidyTitle(g.title), cls: ongoing ? "now" : fresh ? "fresh" : "",
+        badge: ongoing ? h("span.chip.ch-ongoing", "So far") : fresh ? h("span.new-badge", "New") : null,
+        body: h("div.ch-body", g.parts.map((t, i) => {
           if (!s.edit) return h("p", t);
           const part = h("div.ch-part");
           clear(part, h("p", t), editor.recapRowActions({ id: g.ids[i], text: t }, part, { scope: "chapter", title: g.title }));
           return part;
-        }),
-          who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null));
-      return h("li", det);
-    }));
+        }), who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null) };
+    });
   }
 
   /** Two buttons, each with its own pressed state, instead of one that relabels itself. The repaint
@@ -1055,27 +1106,24 @@ export function mountReader(root) {
       on: { click: () => { s.chSeries = !s.chSeries; try { localStorage.setItem("lk-ch-series", s.chSeries ? "1" : "0"); } catch {} paintChapterRecaps(); } } },
       icon("layers"), "Whole series", h("span.n", String(groups.length - mine.length))) : null;
     const count = `${mine.length} chapter${mine.length === 1 ? "" : "s"} so far`;
+    const repaint = () => paintChapterRecaps();
+    // A chapter the position is in whose recap is not revealed yet shows its title only.
+    const here = s.map.chapterAt(s.p);
+    const mineItems = chapterItems(mine, { current: true });
+    if (here && mine.length && !mine.some((g) => g.title === here.title)) mineItems.push({ label: `Chapter ${mine.length + 1}`, title: tidyTitle(here.title), cls: "now", badge: h("span.chip.ch-ongoing", "So far") });
+    const ordered = (items) => (s.chaptersNewest ? [...items].reverse() : items);
+    const currentBlock = bookBlock(s.series ? s.book : null, ordered(mineItems), { current: true, newest: s.chaptersNewest, repaint,
+      none: "No chapter finished in this book yet. Its summaries appear as you read past each chapter." });
     if (!earlierBooks.length) {
-      return clear(el.panel, story, h("div.toolbar.chapters-bar", h("span.hint", count), addRecap, toggle), chapterList(mine, { current: true }));
+      return clear(el.panel, story, h("div.toolbar.chapters-bar", h("span.hint", count), addRecap, toggle), h("div.book-stack", currentBlock));
     }
-    const title = (b) => s.series.books.find((x) => x.key === b)?.title || b;
-    const currentBlock = h("section.book-block.current", { "aria-label": title(s.book) },
-      h("div.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(s.book)),
-        h("span.hint", mine.length ? `reading now, ${count}` : "reading now")),
-      mine.length ? chapterList(mine, { current: true })
-        : h("p.muted.book-none", "No chapter finished in this book yet. Its summaries appear as you read past each chapter."));
-    const earlierBlocks = earlierBooks.map((b) => {
-      const bg = groups.filter((g) => g.book === b);
-      return h("details.book-block.earlier", { "aria-label": title(b) },
-        h("summary.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(b)),
-          h("span.hint", `finished, ${bg.length} chapter${bg.length === 1 ? "" : "s"}`), icon("chevron")),
-        chapterList(bg, { current: false }));
-    });
+    const earlierBlocks = earlierBooks.map((b) => bookBlock(b, ordered(chapterItems(groups.filter((g) => g.book === b), { current: false })),
+      { current: false, newest: s.chaptersNewest, repaint }));
     // Newest first puts the book being read at the top and the earlier books beneath it, latest first.
     const blocks = s.chSeries ? (s.chaptersNewest ? [currentBlock, ...earlierBlocks.reverse()] : [...earlierBlocks, currentBlock]) : [currentBlock];
     clear(el.panel, story,
       h("div.toolbar.chapters-bar", h("span.hint", s.chSeries ? `${count} in this book, ${groups.length - mine.length} in earlier books` : count), seriesChip, addRecap, toggle),
-      h(`div.series-rail${s.chaptersNewest ? ".newest" : ""}`, blocks));
+      h("div.book-stack", blocks));
   }
 
   const nameOf = (id) => s.view.entities.find((e) => e.id === id);
@@ -1138,31 +1186,43 @@ export function mountReader(root) {
       title: s.tlMinor ? "Hide the small moments that don't change the story" : "Show the small moments too",
       on: { click: () => { s.tlMinor = !s.tlMinor; remember("lk-tl-minor", s.tlMinor); paintTimeline(); } } },
       "Small moments", h("span.n", String(minor))) : null;
-    // Events are grouped under the chapter they happen in (another book's events under that book).
-    const groups = [];
+    // The same book -> chapters structure as the Chapters tab: events under the chapter they happen in, an earlier
+    // book's events (its chapters are not mapped here) as a rail of their own.
+    const mineGroups = chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book);
+    const chapterNo = (ch) => {
+      const i = mineGroups.findIndex((g) => g.title === ch.title);
+      return i >= 0 ? i + 1 : (s.map.chapters || []).findIndex((c) => c.start === ch.start) + 1;
+    };
+    const here = s.map.chapterAt(s.p);
+    const groups = [], earlierEvents = new Map();
     for (const ev of evs) {
-      const other = s.series && ev.book && ev.book !== s.book;
-      const ch = other ? null : eventChapter(ev);
-      const key = other ? `book:${ev.book}` : ch ? `ch:${ch.start}` : "none";
+      if (s.series && ev.book && ev.book !== s.book) {
+        if (!earlierEvents.has(ev.book)) earlierEvents.set(ev.book, []);
+        earlierEvents.get(ev.book).push(ev);
+        continue;
+      }
+      const ch = eventChapter(ev);
+      const key = ch ? `ch:${ch.start}` : "none";
       const last = groups[groups.length - 1];
-      if (last && last.key === key) last.events.push(ev);
-      else groups.push({ key, label: other ? `From ${bookShort(ev.book)}` : ch ? tidyTitle(ch.title) : null, events: [ev] });
+      if (last && last.key === key) last.events.push(ev); else groups.push({ key, ch, events: [ev] });
     }
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
       : s.tlTurns ? ["No turning points yet", "Nothing read so far has changed the course of the story."]
         : ["Only small moments so far", "Turn on small moments to see them."];
-    // Deep into a book the timeline runs to hundreds of rows, so only the chapters nearest the position show until
-    // the reader asks for the rest; the fold sits on the far side, where the earlier chapters are.
-    const KEEP = 3, folded = !s.tlAll && groups.length > KEEP + 1;
-    const near = !folded ? groups : s.newestFirst ? groups.slice(0, KEEP) : groups.slice(-KEEP);
-    const hiddenEvents = groups.length - near.length && groups.filter((g) => !near.includes(g)).reduce((n, g) => n + g.events.length, 0);
-    const earlier = folded ? h("button.btn.ghost.tl-earlier", { type: "button", on: { click: () => { s.tlAll = true; paintTimeline(); } } },
-      `Show ${groups.length - KEEP} earlier chapter${groups.length - KEEP === 1 ? "" : "s"} (${hiddenEvents} event${hiddenEvents === 1 ? "" : "s"})`) : null;
+    const repaint = () => paintTimeline();
+    const items = groups.map((g) => ({
+      id: g.ch ? `tl:${g.ch.start}` : null, label: g.ch ? `Chapter ${chapterNo(g.ch) || ""}`.trim() : null, title: g.ch ? tidyTitle(g.ch.title) : null,
+      cls: g.ch && here && here.start === g.ch.start ? "now" : g.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "",
+      body: h("ol.tl-list", sceneRuns(g.events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev))])) }));
+    const currentBlock = items.length ? bookBlock(s.series ? s.book : null, items, { current: true, newest: s.newestFirst, repaint }) : null;
+    const order = s.series ? s.series.orders[s.order] || [] : [];
+    const earlierKeys = order.filter((b) => earlierEvents.has(b));
+    const earlierBlocks = (s.newestFirst ? earlierKeys.reverse() : earlierKeys).map((b) => bookBlock(b,
+      earlierEvents.get(b).map((ev) => ({ cls: s.fresh.has(ev.id) ? "fresh" : "", body: h("ol.tl-list", eventRow(ev)) })),
+      { current: false, newest: s.newestFirst, noun: "event", repaint }));
+    const blocks = s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock];
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
-      evs.length ? [s.newestFirst ? null : earlier, h("ol.timeline", near.map((g) => [
-        g.label ? h("li.tl-chapter", g.label) : null,
-        sceneRuns(g.events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev))]),
-      ])), s.newestFirst ? earlier : null]
+      evs.length ? h("div.book-stack", blocks.filter(Boolean))
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }
 
@@ -1704,11 +1764,18 @@ export function mountReader(root) {
   const clip = (x, n = 60) => (x.length > n ? `${x.slice(0, n - 1).trimEnd()}…` : x);
   function openChapter(key) {
     s.tab = "chapters"; paintTabs();
-    const det = [...el.panel.querySelectorAll("details.chapter")].find((d) => d.dataset.chapter === key);
-    if (!det) return;
-    for (let d = det; d; d = d.parentElement?.closest("details")) d.open = true;   // an earlier book's block may be closed
-    det.scrollIntoView({ block: "start" });
-    det.querySelector("summary")?.focus({ preventScroll: true });
+    let item = [...el.panel.querySelectorAll("li.ch-item")].find((d) => d.dataset.chapter === key);
+    if (!item) {   // behind "Show all" or in a collapsed earlier book
+      s.bkAll.add(bkKey(s.series ? s.book : null));
+      for (const b of s.series?.books || []) { s.bkAll.add(bkKey(b.key)); s.bkOpen.add(bkKey(b.key)); }
+      paintTabs();
+      item = [...el.panel.querySelectorAll("li.ch-item")].find((d) => d.dataset.chapter === key);
+    }
+    if (!item) return;
+    item.closest("details.book-block")?.setAttribute("open", "");
+    item.scrollIntoView({ block: "start" });
+    item.tabIndex = -1;
+    item.focus({ preventScroll: true });
   }
   function paletteItems() {
     if (disposed || !s.view || !s.map) return [];
