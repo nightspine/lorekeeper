@@ -28,6 +28,7 @@ ROSTER_CHARS = 120_000     # a roster of every entry, for a cloud model (Ollama'
 MAX_NAMED = 8              # picks (5) and the word-overlap entries (3) together
 KEEP_OVERLAP = 3
 NOT_CONTENT = {"name", "names", "named", "called", "whose", "whom"}
+CH_HEAD = "Chapter recaps:"
 NEIGHBOUR_CHARS = 30_000    # roster of the entries around a named one, for "who ...?" questions
 MAX_NEIGHBOUR_PICK = 3
 _WHO = re.compile(r"\b(?:who|whom|whose|which|where|called)\b|\bname\b", re.IGNORECASE)
@@ -614,6 +615,49 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     hdr_lines = _header(view, books, present, cur_book)
     recap_full = _clean(view["recap"]["text"], 2500) if view.get("recap") else ""
 
+    chm_idx, no_recaps = chapter_matches(view, question, bnames, cur_book)
+    for bk in no_recaps:
+        n = (books or {}).get(bk, {}).get("number")
+        sl.notes.append(f"Note: The index has no chapter recaps for {f'Book {n}' if n else _clean((books or {}).get(bk, {}).get('title') or bk, 60)}.")
+    chm: list[tuple[float, float, str, str, str, int]] = []      # asked for: placed before the fill loop
+    if chm_idx:
+        # Whole when together they fit in half the budget; else each part's text is shortened evenly to what
+        # fits; if even 80 characters a part cannot fit, the first and last parts and as many between as fit.
+        room = budget_chars // 2 - len(CH_HEAD) - 1      # the half includes the heading (and the "not shown" line)
+
+        def chapter_line(i: int, limit: int) -> tuple[str, str]:
+            c = view["chapters"][i]
+            tag = f"[ch:{c['id']}]"
+            tags[tag] = {"kind": "chapter", "id": c["id"], "entity": None, "book": c.get("book"),
+                         "label": _label("chapter", c, ents)}
+            return tag, (f"  Chapter: {tag}{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: "
+                         f"{_clean(c['text'], limit)}")
+
+        def total(idx: list[int], limit: int) -> int:
+            return sum(len(chapter_line(i, limit)[1]) + 1 for i in idx)
+
+        use, limit = list(chm_idx), 10**6
+        if total(use, limit) > room:
+            limit = 900
+            while limit > 80 and total(use, limit) > room:
+                limit = max(80, int(limit * 0.8))
+            if total(use, limit) > room:                    # too many parts even at 80 characters each
+                fit = max(2, (room - 90) // max(1, total(use, 80) // len(use)))
+                if fit < len(use):
+                    mid = use[1:-1]
+                    step = len(mid) / max(1, fit - 2)
+                    use = [use[0]] + [mid[int(k * step)] for k in range(fit - 2)] + [use[-1]]
+                    sl.notes.append(f"Note: {len(chm_idx) - len(use)} parts of this chapter are not shown.")
+        for i in use:
+            tag, line = chapter_line(i, limit)
+            chm.append((0.7, i, tag, line, "chm", i))
+    hdr_total = len(OPEN) + len(CLOSE) + 2 + sum(len(x) + 1 for x in hdr_lines)
+    chm_total = (sum(len(c[3]) + 1 for c in chm) + len(CH_HEAD) + 1) if chm else 0
+    # Claims on the budget, in order: delimiters and header; requested chapter parts (at most half, their
+    # heading and "not shown" line included); the rest of the mandatory part (recap, heads, notes) gets at
+    # most half or what is left, whichever is smaller; then the fill.
+    mand_limit = max(0, min(budget_chars // 2, budget_chars - hdr_total - chm_total))
+
     def head_lines(eid: str, plim: int) -> list[str]:
         e = ents[eid]
         also = f"; also called {', '.join(_clean(a, 40) for a in e['aliases'][:6])}" if e["aliases"] else ""
@@ -638,7 +682,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         return out_
 
     def mandatory(ids: list[str], plim: int, rlim: int) -> int:
-        n = len(OPEN) + len(CLOSE) + 2 + sum(len(x) + 1 for x in hdr_lines)
+        n = 0
         if recap_full and rlim:
             n += min(len(recap_full), rlim) + 25
         n += sum(len(x) + 1 for i in ids for x in head_lines(i, plim))
@@ -650,11 +694,11 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     ids_all = list(focus)
     plim_used, rlim_used = 600, 2500
     ids = ids_all
-    for k in range(len(ids_all), 0, -1):
+    for k in (range(len(ids_all), 0, -1) if ids_all else [0]):
         ids = ids_all[:k]
         fit = next(((pl, rl) for rl, pl in [(2500, 600), (2500, 300), (2500, 150), (800, 150), (300, 150), (0, 150)]
-                    if mandatory(ids, pl, rl) <= budget_chars // 2), None)
-        if fit or k == 1:
+                    if mandatory(ids, pl, rl) <= mand_limit), None)
+        if fit or k <= 1:
             plim_used, rlim_used = fit or (150, 0)
             break
     dropped_ids = ids_all[len(ids):]
@@ -731,42 +775,6 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         hits = ev_hits(ev["summary"])
         if tag not in seen_ev and (hits >= 2 or (hits and ev.get("book") in bnames)):
             add(4.5, -hits * 100, tag, "event", ev, ev_line(ev), "ev")
-    chm_idx, no_recaps = chapter_matches(view, question, bnames, cur_book)
-    for bk in no_recaps:
-        n = (books or {}).get(bk, {}).get("number")
-        sl.notes.append(f"Note: The index has no chapter recaps for {f'Book {n}' if n else _clean((books or {}).get(bk, {}).get('title') or bk, 60)}.")
-    chm: list[tuple[float, float, str, str, str, int]] = []      # asked for: placed before the fill loop
-    if chm_idx:
-        # Whole when together they fit in half the budget; else each part's text is shortened evenly to what
-        # fits; if even 80 characters a part cannot fit, the first and last parts and as many between as fit.
-        room = budget_chars // 2        # the gap lines come out of the fill that follows, not out of the chapter
-
-        def chapter_line(i: int, limit: int) -> tuple[str, str]:
-            c = view["chapters"][i]
-            tag = f"[ch:{c['id']}]"
-            tags[tag] = {"kind": "chapter", "id": c["id"], "entity": None, "book": c.get("book"),
-                         "label": _label("chapter", c, ents)}
-            return tag, (f"  Chapter: {tag}{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: "
-                         f"{_clean(c['text'], limit)}")
-
-        def total(idx: list[int], limit: int) -> int:
-            return sum(len(chapter_line(i, limit)[1]) + 1 for i in idx)
-
-        use, limit = list(chm_idx), 10**6
-        if total(use, limit) > room:
-            limit = 900
-            while limit > 80 and total(use, limit) > room:
-                limit = max(80, int(limit * 0.8))
-            if total(use, limit) > room:                    # too many parts even at 80 characters each
-                fit = max(2, room // max(1, total(use, 80) // len(use)))
-                if fit < len(use):
-                    mid = use[1:-1]
-                    step = len(mid) / max(1, fit - 2)
-                    use = [use[0]] + [mid[int(k * step)] for k in range(fit - 2)] + [use[-1]]
-                    sl.notes.append(f"Note: {len(chm_idx) - len(use)} parts of this chapter are not shown.")
-        for i in use:
-            tag, line = chapter_line(i, limit)
-            chm.append((0.7, i, tag, line, "chm", i))
     for i, c in enumerate(view["chapters"]):
         hits = ev_hits((c.get("title") or "") + " " + c["text"])
         named_book = c.get("book") in bnames
@@ -785,7 +793,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     # Fill to the budget in priority order.
     head_text = [OPEN, *hdr_lines, *recap_lines]
     tail = tail_lines(ids, dropped_ids)
-    used_chars = sum(len(x) + 1 for x in head_text) + fixed + len(CLOSE) + sum(len(x) + 1 for x in tail) + 200 * (len(focus) + 1)   # room for the "not shown" lines
+    used_chars = sum(len(x) + 1 for x in head_text) + fixed + len(CLOSE) + sum(len(x) + 1 for x in tail) + 200 * (len(focus) + 1) + 40   # room for the "not shown" lines and headings
     ch_cap = budget_chars // 4 if focus else budget_chars // 2
     ch_used = 0
     keep: list[tuple[float, float, str, str, str, int]] = list(chm)
@@ -829,24 +837,41 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
             omitted += gap
         return res
 
+    fill_at: list[int] = []         # indexes of the lines the final check may cut, last first
+
+    def put(lines: list[str], fill: bool = False) -> None:
+        for ln in lines:
+            if fill:
+                fill_at.append(len(out))
+            out.append(ln)
+
     for eid in focus:
-        out.extend(head[eid])
-        out.extend(c[3] for c in sorted((c for c in keep if c[4] == f"c:{eid}"), key=lambda c: c[5]))
+        put(head[eid])
+        put([c[3] for c in sorted((c for c in keep if c[4] == f"c:{eid}"), key=lambda c: c[5])], True)
         if conn_lost[eid]:
-            out.append(f"  ({conn_lost[eid]} more connections not shown)")
-        out.extend(seq([(f"[f:{f['id']}]", lines_of.get(f"[f:{f['id']}]", "")) for f in ent_details[eid]], "details"))
-        out.extend(seq([(f"[ev:{ev['id']}]", lines_of.get(f"[ev:{ev['id']}]", "")) for ev in ent_events[eid]], "events"))
+            put([f"  ({conn_lost[eid]} more connections not shown)"], True)
+        put(seq([(f"[f:{f['id']}]", lines_of.get(f"[f:{f['id']}]", "")) for f in ent_details[eid]], "details"), True)
+        put(seq([(f"[ev:{ev['id']}]", lines_of.get(f"[ev:{ev['id']}]", "")) for ev in ent_events[eid]], "events"), True)
     order = {f"[ev:{ev['id']}]": i for i, ev in enumerate(view["events"])}
     rest_ev = [c for c in keep if c[4] == "ev" and c[2] not in placed]
     if rest_ev:
-        out.append("Other events:")
-        out.extend(c[3] for c in sorted(rest_ev, key=lambda c: order.get(c[2], 0)))
+        put(["Other events:"], True)
+        put([c[3] for c in sorted(rest_ev, key=lambda c: order.get(c[2], 0))], True)
     rest_ch = [c for c in keep if c[4] in ("ch", "chm")]
     if rest_ch:
-        out.append("Chapter recaps:")
-        out.extend(c[3] for c in sorted(rest_ch, key=lambda c: c[5]))
-    out.extend(tail)
+        put([CH_HEAD], not chm)
+        for c in sorted(rest_ch, key=lambda c: c[5]):
+            put([c[3]], c[4] == "ch")
+    put(tail)
     out.append(CLOSE)
+    # The budget is an invariant: if the lines still add up to more (they should not), whole lines are cut from
+    # the end of the fill, never from the delimiters, the header, the requested chapters or the notes.
+    size = sum(len(x) + 1 for x in out) - 1
+    while size > budget_chars and fill_at:
+        i = fill_at.pop()
+        size -= len(out[i]) + 1
+        out[i] = None
+    out = [x for x in out if x is not None]
     sl.text = "\n".join(out)
     sl.omitted = omitted
     sl.tags = {t: v for t, v in tags.items() if t in sl.text}

@@ -894,9 +894,38 @@ def test_many_chapter_parts_never_exceed_the_budget_and_keep_the_ends(n, budget)
 
 
 def test_parts_that_fit_in_half_the_budget_go_in_whole():
-    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} " + "x" * 1_000 + f" END{i}", "book": "b1"} for i in range(4)]
+    # rendered chapter lines total 4,300 to 4,480 characters: over the old allowance (4,250), under half of 9,000
+    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} " + "x" * 1_040 + f" END{i}", "book": "b1"} for i in range(4)]
     v = mkview([ent("E1", "Hero")], chapters=ch)
-    total = sum(len(c["text"]) for c in ch)
-    assert 4_000 < total < ask.OLLAMA_BUDGET // 2 - 100
     sl = ask.select(v, "What happened in chapter 5?", [], ask.OLLAMA_BUDGET)
-    assert all(f"END{i}" in sl.text for i in range(4)) and sl.chars <= ask.OLLAMA_BUDGET
+    lines = [ln for ln in sl.text.splitlines() if ln.startswith("  Chapter: ")]
+    assert 4_300 <= sum(len(x) + 1 for x in lines) <= 4_480
+    assert all(f"Part {i} " + "x" * 1_040 + f" END{i}" in sl.text for i in range(4)) and sl.chars <= ask.OLLAMA_BUDGET
+
+
+def _generated_view(rng, parts, same_named, profile_chars, events, recap):
+    ents = [ent(f"J{i}", f"John Smith{i}", ["John"], profile=fac(f"P{i}", ("profile words " * 60)[:profile_chars]) if profile_chars else None,
+                facets=[fac(f"F{i}{k}", "a detail about John " + "z" * rng.randint(20, 200)) for k in range(rng.randint(0, 6))])
+            for i in range(same_named)]
+    evs = [ev(f"V{i}", "John does something " + "w" * rng.randint(10, 300), [f"J{rng.randrange(same_named)}"],
+              rng.choice([None, None, "turn", "minor"])) for i in range(events)]
+    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} " + "goes on. " * rng.randint(12, 230), "book": "b1"}
+          for i in range(parts)]
+    return mkview(ents, events=evs, chapters=ch, recap={"id": "S", "text": "Story so far. " * 200, "book": "b1"} if recap else None)
+
+
+def test_slices_never_exceed_the_budget():
+    import random
+    rng = random.Random(7)
+    n = 0
+    for budget in (3_000, ask.OLLAMA_BUDGET, 40_000):
+        for _ in range(14):
+            parts, same, prof = rng.choice([0, 1, 9, 40]), rng.randint(1, 15), rng.choice([0, 100, 300, 600])
+            events, recap = rng.choice([0, 20, 120, 300]), rng.choice([True, False])
+            v = _generated_view(rng, parts, same, prof, events, recap)
+            for q in ("What happened to John in chapter 5?", "What happened in chapter 5?", "Who is John?"):
+                sl = ask.select(v, q, [], budget)
+                assert sl.chars <= budget, (budget, parts, same, prof, events, recap, q, sl.chars)
+                assert sl.text.startswith(ask.OPEN) and sl.text.endswith(ask.CLOSE)
+                n += 1
+    assert n >= 120
