@@ -263,3 +263,59 @@ def test_sign_in_is_required(make):
         assert c.get("/api/ask").status_code == 401
         r = c.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"})
         assert r.status_code == 401 and not model.calls
+
+
+def test_book_must_be_the_one_the_index_belongs_to(ask):
+    a = doc("sign-of-four")["anchors"][3]["id"]
+    ok = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "anchor": a, "book": "sign-of-four"})
+    assert ok.status_code == 200
+    ok = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "anchor": a, "book": None})
+    assert ok.status_code == 200
+    r = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "anchor": a, "book": "study-in-scarlet"})
+    assert r.status_code == 422 and r.json()["code"] == "bad-position"
+    r = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "book": 3})
+    assert r.status_code == 422
+
+
+def test_the_backend_gets_a_two_minute_timeout(ask):
+    ask.model.timeout = 1800
+    ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"})
+    assert ask.model.timeout == 120
+
+
+def test_a_client_that_goes_away_does_not_free_the_slot_early(ask):
+    import asyncio
+
+    ask.model.gate = threading.Event()
+    route = next(r for r in ask.app.routes if getattr(r, "path", "") == "/api/library/{key}/ask")
+
+    class Req:
+        async def json(self):
+            return {"question": "Who is Holmes?"}
+
+    async def cancelled():
+        t = asyncio.ensure_future(route.endpoint(SIGN, Req()))
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if ask.model.calls:
+                break
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+    loop = asyncio.new_event_loop()   # not asyncio.run: that would wait for the threads on exit
+    for _ in range(2):
+        loop.run_until_complete(cancelled())
+        ask.model.calls.clear()
+    # two cancelled asks still run in their threads: a third is refused until they end
+    r = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"})
+    ask.model.gate.set()
+    assert r.status_code == 429
+    for _ in range(100):   # once the threads end, the slots come back
+        if ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"}).status_code == 200:
+            break
+        threading.Event().wait(0.05)
+    else:
+        raise AssertionError("slots were never freed")
+    loop.close()

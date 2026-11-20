@@ -806,6 +806,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     ask_slots = {"n": 0}
     ask_lock = threading.Lock()
     MAX_ASKS = 2
+    ASK_TIMEOUT = 120   # seconds a backend may wait on one call (Ollama and OpenAI-compatible have `timeout`)
 
     def ask_error(status: int, code: str, detail: str) -> JSONResponse:
         return JSONResponse({"detail": detail, "code": code}, status_code=status)
@@ -824,9 +825,6 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.post("/api/library/{key}/ask")
     async def ask_book(key: str, request: Request):
         body = await json_body(request)
-        item = library.scan().get(key)
-        if item is None or item["doc"].get("kind") != "index":
-            return ask_error(404, "not-found", "no such index")
         question = body.get("question")
         question = " ".join(question.split()) if isinstance(question, str) else ""
         if not question or len(question) > 500:
@@ -838,46 +836,68 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             cites = t.get("cites") if isinstance(t.get("cites"), list) else []
             turns.append(askmod.Turn(str(t.get("question") or "")[:500], str(t.get("answer") or "")[:1500],
                                      [c for c in cites if isinstance(c, str)][:40]))
-        anchor, order, finished = body.get("anchor"), body.get("order"), body.get("finished")
+        anchor, order, finished, book = body.get("anchor"), body.get("order"), body.get("finished"), body.get("book")
         if (anchor is not None and not isinstance(anchor, str)) or (order is not None and not isinstance(order, str)) \
+                or (book is not None and not isinstance(book, str)) \
                 or (finished is not None and not (isinstance(finished, list) and all(isinstance(k, str) for k in finished))):
             return ask_error(422, "bad-position", "The position is not understood.")
-        indexes, series = protocol.series_indexes(library.scan(), item)
-        sref = item["doc"].get("series")
-        if series and order is not None and order not in series["orders"]:
-            return ask_error(422, "bad-position", "That reading order does not exist.")
-        try:
-            view = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor),
-                               series, order, None if finished is None else set(finished))
-        except ValueError as e:
-            return ask_error(422, "bad-position", str(e))
-        titles = None
-        if series:
-            names = {b["key"]: b.get("title") for b in series["books"]}
-            titles = {k: {"title": names.get(k) or k, "number": n}
-                      for n, k in enumerate(series["orders"][order or series["defaultOrder"]], 1)}
-        c = pick_model("cheap")
-        if c["model"] is None:
-            return ask_error(409, c["reason"] or "no-model", "The local model is busy building an index."
-                             if c["reason"] == "ollama-busy" else "No model is set up to answer. Add a key in Settings.")
         with ask_lock:
             if ask_slots["n"] >= MAX_ASKS:
                 return ask_error(429, "busy", "Two questions are already being answered. Try again in a moment.")
             ask_slots["n"] += 1
+
+        def work():
+            """Everything that reads files, computes the view or waits on a model, off the event loop.
+            The slot is freed here, when the call really ends, not when the client goes away."""
+            try:
+                item = (scan := library.scan()).get(key)
+                if item is None or item["doc"].get("kind") != "index":
+                    return ask_error(404, "not-found", "no such index")
+                sref = item["doc"].get("series")
+                indexes, series = protocol.series_indexes(scan, item)
+                if book is not None and sref and sref["book"] != book:
+                    return ask_error(422, "bad-position", "That index is not the book being read.")
+                if series and order is not None and order not in series["orders"]:
+                    return ask_error(422, "bad-position", "That reading order does not exist.")
+                try:
+                    view = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor),
+                                       series, order, None if finished is None else set(finished))
+                except ValueError as e:
+                    return ask_error(422, "bad-position", str(e))
+                titles = None
+                if series:
+                    names = {b["key"]: b.get("title") for b in series["books"]}
+                    titles = {k: {"title": names.get(k) or k, "number": n}
+                              for n, k in enumerate(series["orders"][order or series["defaultOrder"]], 1)}
+                c = pick_model("cheap")
+                if c["model"] is None:
+                    return ask_error(409, c["reason"] or "no-model", "The local model is busy building an index."
+                                     if c["reason"] == "ollama-busy" else "No model is set up to answer. Add a key in Settings.")
+                if hasattr(c["model"], "timeout"):
+                    c["model"].timeout = ASK_TIMEOUT   # a question must not hold a slot for half an hour
+                budget = askmod.OLLAMA_BUDGET if c["local"] else askmod.DEFAULT_BUDGET
+                try:
+                    got = askmod.answer(view, question, c["model"], turns, budget, titles,
+                                        askmod.ROSTER_CHARS if not c["local"] else 0)
+                except llm.ProviderError as e:
+                    return ask_error(502, "model-failed", str(e)[:200])
+                except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key
+                    return ask_error(502, "model-failed", f"The model could not answer ({type(e).__name__}).")
+                info = ask_info(c)
+                return {"answer": got.answer, "found": got.found, "cites": got.cites, "note": got.note,
+                        "provider": info["provider"], "model": info["model"], "local": info["local"],
+                        "usage": got.usage}
+            finally:
+                with ask_lock:
+                    ask_slots["n"] -= 1
+
         try:
-            budget = askmod.OLLAMA_BUDGET if c["local"] else askmod.DEFAULT_BUDGET
-            got = await asyncio.to_thread(askmod.answer, view, question, c["model"], turns, budget, titles,
-                                          askmod.ROSTER_CHARS if not c["local"] else 0)
-        except llm.ProviderError as e:
-            return ask_error(502, "model-failed", str(e)[:200])
-        except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key
-            return ask_error(502, "model-failed", f"The model could not answer ({type(e).__name__}).")
-        finally:
+            fut = asyncio.get_running_loop().run_in_executor(None, work)
+        except BaseException:
             with ask_lock:
                 ask_slots["n"] -= 1
-        info = ask_info(c)
-        return {"answer": got.answer, "found": got.found, "cites": got.cites, "note": got.note,
-                "provider": info["provider"], "model": info["model"], "local": info["local"], "usage": got.usage}
+            raise
+        return await fut
 
     # ---- reading position from Book Orbit ---------------------------------------------------------
 
