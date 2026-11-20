@@ -107,7 +107,7 @@ def claims_of(index: dict, resolved: dict[str, int | None]) -> list[Claim]:
             or next((n["value"] for n in e.get("names") or []), e.get("id", ""))
         names[e.get("id")] = nm
         for f in e.get("facets") or []:
-            if f.get("kind") != "profile":
+            if f.get("kind") not in ("profile", "arc"):   # both sum up many paragraphs
                 add("fact", f"{_name_at(e, f.get('from', ''), ordinal, nm)}: {f.get('text', '')}",
                     f.get("from", ""), f.get("evidence"))
     for r in index.get("relations") or []:

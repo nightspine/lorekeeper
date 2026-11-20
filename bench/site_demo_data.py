@@ -45,7 +45,7 @@ def main(index_path: str, epub_path: str, out: str = "site/demo-data.js") -> Non
     anchors = [{"id": a["id"], "ch": chapter_at(seq_of[a["id"]])} for a in d["anchors"]]
     ents = []
     for e in d["entities"]:
-        facets = e.get("facets", [])
+        facets = [f for f in e.get("facets", []) if f.get("kind") != "arc"]   # arcs are not details
         has_profile = any(f.get("kind") == "profile" for f in facets)
         # Plain facts are only shown when an entity has no profile; otherwise they only count.
         ents.append({"id": e["id"], "type": e["type"], "from": ords[e["from"]],
