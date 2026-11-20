@@ -232,10 +232,14 @@ def _cap_runs(q: str) -> list[str]:
     return runs
 
 
-def _unknown_word(w: str, vocab: set[str]) -> bool:
-    """A normalised word that is neither in the view's text nor ordinary English."""
-    return not (w in vocab or w in COMMON or w in STOP or w in ORDINALS or w + "s" in vocab
-                or w.removesuffix("s") in vocab or w.removesuffix("s") in COMMON or w.removesuffix("es") in COMMON)
+def _unknown_word(w: str, vocab: set[str], common: frozenset[str] = COMMON) -> bool:
+    """A normalised word that is neither in the view's text nor ordinary English (`common`)."""
+    return not (w in vocab or w in common or w in STOP or w in ORDINALS or w + "s" in vocab
+                or w.removesuffix("s") in vocab or w.removesuffix("s") in common or w.removesuffix("es") in common)
+
+
+def _written_as_name(cap: bool, start: bool, after_title: bool) -> bool:
+    return (cap and not start) or after_title
 
 
 class _Names:
@@ -475,11 +479,15 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     raw = _raw_tokens(question)
     sl.unknown, name_idx = [], []
     for i, (rw, w, cap, start, after_title) in enumerate(raw):
-        if i in used or len(w) < 2 or (len(w) < 3 and not cap) or not _unknown_word(w, vocab) or _numeral(rw, raw[i - 1][1] if i else None):
+        as_name = _written_as_name(cap, start, after_title)
+        # A capitalised word that reads as a name is not excused by words that are also surnames or first
+        # names (Hunter, Baker); a lowercase one ("the baker") stays ordinary English.
+        if (i in used or len(w) < 2 or (len(w) < 3 and not cap) or _numeral(rw, raw[i - 1][1] if i else None)
+                or not _unknown_word(w, vocab, SENTENCE_FIRST if as_name and cap else COMMON)):
             continue
         if w not in sl.unknown:
             sl.unknown.append(w)
-        if (cap and not start) or after_title:
+        if as_name:
             name_idx.append(i)
     # As the reader wrote them: "John Smith" is one name (the capitalised runs), not "John" and "Smith".
     left = {raw[i][1] for i in name_idx}
@@ -728,15 +736,37 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         n = (books or {}).get(bk, {}).get("number")
         sl.notes.append(f"Note: The index has no chapter recaps for {f'Book {n}' if n else _clean((books or {}).get(bk, {}).get('title') or bk, 60)}.")
     chm: list[tuple[float, float, str, str, str, int]] = []      # asked for: placed before the fill loop
-    if chm_idx:       # every part of the chapter; over half the budget, each part's text is shortened evenly
-        per = max(80, min(900, (budget_chars // 2 - 300) // len(chm_idx) - 140))
-        for i in chm_idx:
+    if chm_idx:
+        # Whole when together they fit in half the budget; else each part's text is shortened evenly to what
+        # fits; if even 80 characters a part cannot fit, the first and last parts and as many between as fit.
+        room = max(400, budget_chars // 2 - 250)
+
+        def chapter_line(i: int, limit: int) -> tuple[str, str]:
             c = view["chapters"][i]
             tag = f"[ch:{c['id']}]"
             tags[tag] = {"kind": "chapter", "id": c["id"], "entity": None, "book": c.get("book"),
                          "label": _label("chapter", c, ents)}
-            chm.append((0.7, i, tag, f"  Chapter: {tag}{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: "
-                                     f"{_clean(c['text'], per)}", "chm", i))
+            return tag, (f"  Chapter: {tag}{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: "
+                         f"{_clean(c['text'], limit)}")
+
+        def total(idx: list[int], limit: int) -> int:
+            return sum(len(chapter_line(i, limit)[1]) + 1 for i in idx)
+
+        use, limit = list(chm_idx), 10**6
+        if total(use, limit) > room:
+            limit = 900
+            while limit > 80 and total(use, limit) > room:
+                limit = max(80, int(limit * 0.8))
+            if total(use, limit) > room:                    # too many parts even at 80 characters each
+                fit = max(2, room // max(1, total(use, 80) // len(use)))
+                if fit < len(use):
+                    mid = use[1:-1]
+                    step = len(mid) / max(1, fit - 2)
+                    use = [use[0]] + [mid[int(k * step)] for k in range(fit - 2)] + [use[-1]]
+                    sl.notes.append(f"Note: {len(chm_idx) - len(use)} parts of this chapter are not shown.")
+        for i in use:
+            tag, line = chapter_line(i, limit)
+            chm.append((0.7, i, tag, line, "chm", i))
     for i, c in enumerate(view["chapters"]):
         hits = ev_hits((c.get("title") or "") + " " + c["text"])
         named_book = c.get("book") in bnames
@@ -903,12 +933,15 @@ def _delta(before: dict | None, after: dict | None) -> dict | None:
 
 def _mask(q: str, vocab: set[str]) -> str:
     """An earlier question with every word the view does not hold replaced by "…": a name the reader has
-    not met must not come back through the history."""
-    def sub(m: re.Match) -> str:
-        raw = m.group(0).rstrip("'’-")
-        w = _norm(raw)
-        return "…" if (len(w) >= 3 or len(w) == 2 and raw[:1].isupper()) and _unknown_word(w, vocab) and not _numeral(raw, None) else m.group(0)
-    return _TOKEN.sub(sub, q)
+    not met must not come back through the history (judged as the current question's words are)."""
+    flagged: set[str] = set()
+    raw = _raw_tokens(q)
+    for i, (rw, w, cap, start, after_title) in enumerate(raw):
+        as_name = _written_as_name(cap, start, after_title)
+        if ((len(w) >= 3 or len(w) == 2 and cap) and not _numeral(rw, raw[i - 1][1] if i else None)
+                and _unknown_word(w, vocab, SENTENCE_FIRST if as_name and cap else COMMON)):
+            flagged.add(w)
+    return _TOKEN.sub(lambda m: "…" if _norm(m.group(0).rstrip("'’-")) in flagged else m.group(0), q)
 
 
 def _prompt(view: dict, question: str, sl: Slice, history: list[Turn]) -> str:

@@ -244,6 +244,7 @@ rob rod drew duke clay cliff major rich chip miner farmer glover thatcher wright
 forester gardener hayward lord lady sir captain sergeant colonel
 """.split()
 NAME_LIKE: frozenset[str] = frozenset(NAME_LIKE_BASE)
+COMMON = COMMON | NAME_LIKE              # ordinary lowercase words too: "who is the baker?"
 
 # What a sentence may open with without the index having said it: ordinary words that are not name-like.
 SENTENCE_FIRST: frozenset[str] = COMMON - NAME_LIKE
