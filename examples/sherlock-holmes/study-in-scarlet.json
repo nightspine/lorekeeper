@@ -622,6 +622,20 @@
           "text": "A young man who works in the hospital's chemical laboratory: a first-class chemist who knows anatomy well but follows no regular course of study, and who wants someone to share rooms with."
         },
         {
+          "id": "sis.holmes.a1",
+          "kind": "arc",
+          "from": "ch1.para60",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para34",
+            "ch1.para35",
+            "ch1.para37",
+            "ch1.para56",
+            "ch1.para60"
+          ],
+          "text": "Stamford brings Watson to meet him in the chemical laboratory at Barts, where he startles Watson by knowing he has served in Afghanistan. After warning Watson about his habits, he agrees to share rooms with him."
+        },
+        {
           "id": "sis.holmes.3",
           "from": "ch1.para31",
           "basis": "stated",
@@ -755,6 +769,23 @@
             "sis.holmes.p1"
           ],
           "text": "Watson's fellow lodger in Baker Street: a tall, very lean man with sharp eyes and a beak of a nose, who earns his living as a consulting detective, reasoning from small observed details to firm conclusions."
+        },
+        {
+          "id": "sis.holmes.a2",
+          "kind": "arc",
+          "from": "ch2.para28",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para35",
+            "ch1.para60",
+            "ch2.para01",
+            "ch2.para24",
+            "ch2.para28"
+          ],
+          "replaces": [
+            "sis.holmes.a1"
+          ],
+          "text": "Stamford introduces him to Watson at Barts, and the two take rooms together at 221B Baker Street. There he admits writing the article on observation that Watson mocked, and says he earns his living as a consulting detective."
         },
         {
           "id": "sis.holmes.15",

@@ -354,6 +354,21 @@
             "ch2.para35"
           ],
           "text": "Insists that a client is only a factor in a problem and that personal feelings must never colour his judgment."
+        },
+        {
+          "id": "sof.holmes.a1",
+          "kind": "arc",
+          "from": "ch2.para24",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05",
+            "ch1.para30",
+            "ch1.para51",
+            "ch1.para55",
+            "ch2.para20",
+            "ch2.para24"
+          ],
+          "text": "Bored without a case, he has been injecting cocaine, to Watson's alarm. He shows off his method by reading Watson's morning and the life of Watson's late brother from an old watch. When Mary Morstan brings him a puzzling letter, he and Watson agree to go with her that evening."
         }
       ]
     },
@@ -799,8 +814,8 @@
       "replaces": [
         "sis.rel.watson-holmes.2"
       ],
-    "kind": "friendship"
-  },
+      "kind": "friendship"
+    },
     {
       "id": "sof.rel.villard-holmes",
       "src": "le-villard",
@@ -823,8 +838,8 @@
         "ch1.para53",
         "ch1.para55"
       ],
-    "kind": "service"
-  },
+      "kind": "service"
+    },
     {
       "id": "sof.rel.forrester-holmes",
       "src": "mrs-forrester",
@@ -846,8 +861,8 @@
       "evidence": [
         "ch2.para09"
       ],
-    "kind": "family"
-  },
+      "kind": "family"
+    },
     {
       "id": "sof.rel.captain-sholto",
       "src": "captain-morstan",
@@ -869,8 +884,8 @@
       "evidence": [
         "ch2.para17"
       ],
-    "kind": "service"
-  },
+      "kind": "service"
+    },
     {
       "id": "sof.rel.watson-mary",
       "src": "watson",
@@ -881,8 +896,8 @@
       "evidence": [
         "ch2.para32"
       ],
-    "kind": "romance"
-  }
+      "kind": "romance"
+    }
   ],
   "events": [
     {
