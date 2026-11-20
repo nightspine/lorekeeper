@@ -238,3 +238,31 @@ def test_judge_entries_do_not_list_arcs_as_facts():
     arcs.arcs([(d, None)], Fake([GOOD]), log=lambda *_: None)
     assert arc_facets(d)
     assert all(GOOD not in f for f in merge._entities([d])["mira"]["facts"])
+
+
+def test_a_tie_to_an_entity_with_no_visible_name_is_left_out():
+    rel = {"id": "r1", "src": "mira", "dst": "oren", "label": "ward of", "from": "a2", "evidence": ["a2"]}
+    d = _doc(events=EVENTS, recaps=[11], relations=[rel])
+    d["entities"][1]["names"][0]["from"] = "a10"   # Oren is named only after the events
+    m = Fake({"Mira": ["Mira walks to the mill and learns her secret."]})
+    arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert arc_facets(d) and "ward of" not in m.prompts[0]
+    d = _doc(events=EVENTS, recaps=[11], relations=[rel])
+    m = Fake({"Mira": ["Mira walks to the mill and learns her secret."]})
+    arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert "Mira, ward of, Oren" in [p for p in m.prompts if "involve Mira" in p][0]
+
+
+def test_events_prompted_but_not_told_stay_new():
+    ev = [(1, "Mira walks to the mill with a basket.", ["mira"], None),
+          (2, "Mira meets the miller Oren at the gate.", ["mira"], None),
+          (4, "Mira is robbed on the road.", ["mira"], None),
+          (5, "Mira loses her basket in the river.", ["mira"], None),
+          (8, "Mira reaches the keep at dusk.", ["mira"], None)]
+    d = _doc(events=ev, recaps=[3, 4, 11])
+    # the first arc tells only event 1 of the two prompted; at the next end only one event is later than
+    # event 2, but event 2 was never told, so two are new and the arc is rewritten
+    m = Fake({"Mira": [{"text": "Mira walks to the mill with her basket.", "told": [1]},
+                       {"text": "Mira walks to the mill, meets Oren and is robbed on the road.", "told": [1, 2, 3]}]})
+    arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert [f["from"] for f in arc_facets(d)][:2] == ["a1", "a4"]
