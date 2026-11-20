@@ -49,9 +49,10 @@ def derive(entities: list[dict]) -> dict[str, list[str]]:
     2. the remaining words are a form when they differ from the name ("Mrs. Westenra" → "Westenra");
     3. when they are two or more words, the first word and the last word are forms too ("Lucy", "Westenra"),
        unless that word is a title word, a lowercase word, a particle (merge.PARTICLES: "Van"), or under 3 letters.
-    A form is kept only if no *other* visible entity (of any type) has that word among the words of any of its
+    A form is kept only if no *other* visible person or creature has that word among the words of any of its
     names, and it is not already a visible name of any entity. Comparison is exact (case-sensitive)."""
     words_of: dict[str, set[str]] = {}
+    people = {e["id"] for e in entities if e["type"] in ("person", "creature")}
     spelled: set[str] = set()
     for e in entities:
         for n in e["names"]:
@@ -61,7 +62,8 @@ def derive(entities: list[dict]) -> dict[str, list[str]]:
     for e in entities:
         if e["type"] not in ("person", "creature"):
             continue
-        others = set().union(*(w for k, w in words_of.items() if k != e["id"]))
+        # only other people and creatures compete for a bare given name or surname
+        others = set().union(*(w for k, w in words_of.items() if k != e["id"] and k in people))
         forms: list[str] = []
         for n in e["names"]:
             t = _tokens(n)
@@ -105,7 +107,7 @@ class Matcher:
                     if eid not in owned:
                         owned.append(eid)
         forms = sorted(self.owners, key=lambda n: (-len(n), n))
-        self.pattern = (re.compile(r"(?<![\w'’])(?:" + "|".join(re.escape(f) for f in forms) + r")(?!\w)")
+        self.pattern = (re.compile(r"(?<!\w)(?<!\w['’])(?:" + "|".join(re.escape(f) for f in forms) + r")(?!\w)")
                         if forms else None)
 
     def find(self, raw: str) -> list[tuple[int, int, list[str]]]:

@@ -148,3 +148,20 @@ def test_derived_forms_never_from_a_name_not_yet_visible():
     }
     assert mentions.visible_names(view([idx], Position(None, "a0"))) == {"x": ["the stranger"]}
     assert mentions.visible_names(view([idx], Position(None, "a1")))["x"][-2:] == ["Gabriel", "Voss"]
+
+
+def test_places_and_things_do_not_suppress_a_person_form():
+    d = mentions.derive(_ents(("count", "person", ["Count Dracula"]), ("castle", "place", ["Castle Dracula"]),
+                              ("lucy", "person", ["Lucy Westenra"]), ("tomb", "place", ["Westenra tomb"])))
+    assert d["count"] == ["Dracula"] and d["lucy"] == ["Lucy", "Westenra"]
+    assert "castle" not in d and "tomb" not in d      # a place derives nothing
+    d = mentions.derive(_ents(("a", "person", ["Harry Potter"]), ("b", "person", ["James Potter"])))
+    assert d["a"] == ["Harry"] and d["b"] == ["James"]   # two persons still share "Potter"
+
+
+def test_name_after_an_opening_quote_counts_but_not_inside_a_word():
+    m = mentions.Matcher({"l": ["Lucy"], "b": ["Brien"]})
+    for raw, n in [("'Lucy, come here,' said the Count", 1), ("\"Lucy", 1), ("‘Lucy’", 1), ("Lucy's", 1),
+                   ("o'Brien", 0), ("d’Lucy", 0), ("xLucy", 0)]:
+        assert len([f for f in m.find(raw) if "l" in f[2]]) == n, raw
+    assert len(m.find("o'Brien")) == 0

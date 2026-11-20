@@ -634,11 +634,12 @@ export function deriveNames(entities) {
       wordsOf.set(e.id, set);
     }
   }
+  const people = new Set(entities.filter((x) => x.type === "person" || x.type === "creature").map((x) => x.id));
   const out = {};
   for (const e of entities) {
     if (e.type !== "person" && e.type !== "creature") continue;
     const others = new Set();
-    for (const [k, ws] of wordsOf) if (k !== e.id) for (const w of ws) others.add(w);
+    for (const [k, ws] of wordsOf) if (k !== e.id && people.has(k)) for (const w of ws) others.add(w);
     const forms = [];
     for (const n of e.names) {
       let t = mentionTokens(n);
@@ -683,7 +684,7 @@ export class MentionMatcher {
     }
     const forms = [...this.owners.keys()].sort((a, b) => cpLen(b) - cpLen(a) || (a < b ? -1 : a > b ? 1 : 0));
     this.pattern = forms.length
-      ? new RegExp(String.raw`(?<![\p{L}\p{N}_'’])(?:${forms.map(escapeRe).join("|")})(?![\p{L}\p{N}_])`, "gu") : null;
+      ? new RegExp(String.raw`(?<![\p{L}\p{N}_])(?<![\p{L}\p{N}_]['’])(?:${forms.map(escapeRe).join("|")})(?![\p{L}\p{N}_])`, "gu") : null;
   }
 
   /** Non-overlapping [start, end, ownerIds] matches in one block, left to right (UTF-16 offsets). */
