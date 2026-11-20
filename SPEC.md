@@ -474,6 +474,7 @@ A server MAY compute views (§8.4). Its output MUST equal the client algorithm's
 - Label merged series content with its book ("From *A Study in Scarlet*").
 - Offer a lookup that searches visible names and aliases only.
 - A family tree MAY be drawn from the visible kinship ties (§4.3) alone; it must not show a marriage, birth or parentage before its `from`, nor count families it does not draw.
+- A chart of where an entity comes up, per chapter, MAY be computed from the book's text (§11, question 3). It must count only the visible names of the entity (§7.2), count the current chapter only through the current block, and show no count, title or marker for a chapter after the position (the total number of chapters is the only thing it may say about them).
 
 ## 8. Protocol
 
@@ -806,7 +807,7 @@ Embedding changes `fileHash` but not `textHash`.
 
 1. **Hash availability on devices.** Confirm that KOReader's Lua runtime offers SHA-256 cheaply (`ffi/sha2`?) and that Unicode category tests are practical in Lua. If not, consider a simpler word definition.
 2. **Block-level drift.** Editions that split or merge paragraphs (e.g. a list printed as one paragraph vs. many) leave anchors unresolved. That is safe but coarse. Should anchors carry a second fingerprint (e.g. the *last* 12 words)?
-3. **Mentions.** KOAssistant-style "appearances by chapter" would need per-entity mention anchors. Should they be in the index, or computed on device from names and aliases?
+3. **Mentions.** "Appearances by chapter" could be stored as per-entity mention anchors or computed from names and aliases. Answered for the reference implementation: computed from the book's text, not stored in the index, so the format is unchanged. A client counts whole-word, case-sensitive matches of the names the gated view shows at the reader's position, over the blocks of the reader's own edition; a match inside a longer name that belongs to another entity counts only for the longer one; pronouns are never counted. For persons and creatures, forms derived from those same visible names also count (the name without its titles, and the given name or surname alone when no other visible entity's names contain that word), so the counts match how a book refers to people, and a name revealed later still derives nothing earlier. The safety condition is that the names counted are the *visible* names (§7.2), never the index's full list: a name revealed later must not be counted earlier, or the counts would disclose a hidden identity. Whether a stored form is worth standardising for devices that cannot read the book text stays open.
 4. **Chapter structure.** Should indexes carry a gated table of contents so clients can label positions ("as of Chapter 7")?
 5. **Translations.** A translation is a different text; should it be a different work with linked entity ids?
 6. **Signatures.** Registries exist (§8.7) and record who vouches for each check, but nothing proves it: a listing, an attestation or a publisher name can be verified only by trusting the registry that serves it, and builder attestations only by repeating them. Signed indexes, signed attestations and publisher keys remain open.
