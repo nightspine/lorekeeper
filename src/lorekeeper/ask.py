@@ -127,6 +127,7 @@ class Slice:
     has_content: bool = False                        # words besides names and stop words
     asks_who: bool = False                           # the question asks who, which, where or for a name
     nobody: bool = False                             # the question names no entry and none is carried
+    banned_initial: list[str] = field(default_factory=list)   # capitalised sentence-initial words the view never uses
     unknown_names: list[str] = field(default_factory=list)   # unknown names as the reader wrote them
     omitted: int = 0
     notes: list[str] = field(default_factory=list)   # guidance lines for the model
@@ -355,6 +356,11 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     sl.unknown = [t[0] for i, t in enumerate(toks)
                   if t[1] and not t[2] and i not in used and t[0] not in STOP and t[0] not in vocab
                   and t[0] + "s" not in vocab and t[0].removesuffix("s") not in vocab and len(t[0]) >= 3]
+    # A sentence-initial word is not reported as a name ("Summarise"), but if the view never uses it the
+    # answer may not either: the one-word question "Moriarty?" must not get a description of Moriarty.
+    sl.banned_initial = [t[0] for i, t in enumerate(toks)
+                         if t[1] and t[2] and i not in used and t[0] not in STOP and t[0] not in vocab
+                         and t[0] + "s" not in vocab and t[0].removesuffix("s") not in vocab and len(t[0]) >= 3]
     # As the reader wrote them: "John Smith" is one name (the capitalised runs), not "John" and "Smith".
     left = set(sl.unknown)
     for run_text, ri, rj in names.runs(question, [t[0] for t in toks]):
@@ -846,7 +852,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
 
     base = _prompt(view, question, sl, history)
     allowed = set(text.words(_POSS.sub("", sl.text + " " + question + " " +
-                                        " ".join(t.question for t in history)))) - set(sl.unknown)
+                                        " ".join(t.question for t in history)))) - set(sl.unknown) - set(sl.banned_initial)
 
     def ask(extra: str = "") -> dict:
         r = llm.complete(SYSTEM, base + extra, SCHEMA)
@@ -862,7 +868,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
     if not a:
         return done(NOT_SAID, False, [], "no answer")
     # Every problem is fixed by the same one retry (a single extra call per question).
-    bad = _unknown_words(a, allowed, sl.unknown)
+    bad = _unknown_words(a, allowed, sl.unknown + sl.banned_initial)
     problems = []
     if found and not cites:
         problems.append("Your last answer cited no note. List the tag of every note you used in cites, "
@@ -881,7 +887,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
             note = "no sources"
         elif bad:
             note = "rewritten: outside knowledge"
-    if _unknown_words(a, allowed, sl.unknown):        # whatever is about to be returned, first try or retry
+    if _unknown_words(a, allowed, sl.unknown + sl.banned_initial):        # whatever is about to be returned, first try or retry
         return done(NOT_SAID, False, [], "refused: outside knowledge")
     a = _voice(a)
     out = [dict(sl.tags[c]) for c in cites]

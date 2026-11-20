@@ -625,3 +625,21 @@ def test_plain_who_is_question_stays_one_call():
     fake = Fake({"ids": ["H"]}, reply("Gabriel rides Jezebel.", ["e:H"]))
     ask.answer(horse_view(), "Which horse does Gabriel ride?", fake, roster_chars=10_000)
     assert len(fake.calls) == 2
+
+
+# ---- round 5: sentence-initial words the view never uses
+
+def test_one_word_unknown_question_may_not_describe_the_person():
+    fake = Fake(reply("Moriarty is a criminal mastermind.", ["recap"]), reply("Moriarty is a professor.", ["recap"]))
+    a = ask.answer(small(), "Moriarty?", fake)
+    assert a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge" and not a.found
+    assert len(fake.calls) == 3                       # the small pick (nothing scores), the answer, one retry
+    sl = ask.select(small(), "Moriarty?", [], 10_000)
+    assert sl.unknown == [] and sl.unknown_names == [] and sl.banned_initial == ["moriarty"]
+
+
+def test_sentence_initial_verb_is_banned_but_never_reported_as_a_name():
+    fake = Fake(reply("A doctor arrives at the asylum.", ["recap"]))
+    a = ask.answer(small(), "Summarise the last chapter", fake)
+    assert a.found and a.note is None and "nothing on" not in a.answer and len(fake.calls) == 2      # pick + answer
+    assert ask.select(small(), "Summarise the last chapter", [], 10_000).unknown_names == []
