@@ -116,9 +116,15 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
     prior_entities = {e["id"] for p in prior for e in p.get("entities", [])}
     prior_items = {x["id"]: k for p in prior for k, _, x in _items(p) if k in ("facet", "relation")}
     profiles = {x["id"] for p in [*prior, index] for k, _, x in _items(p) if k == "facet" and x.get("kind") == "profile"}
+    # Arcs (§4.6): an arc replaces only an earlier arc of the same entity in the same book.
+    own_arcs = {f["id"]: e["id"] for e in index["entities"] for f in e.get("facets", [])
+                if f.get("kind") == "arc"}
+    prior_arcs = {f["id"] for p in prior for e in p.get("entities", []) for f in e.get("facets", [])
+                  if f.get("kind") == "arc"}
     entity_from = {e["id"]: ords.get(e["from"]) for e in index["entities"]}
     types = {**{e["id"]: e["type"] for p in prior for e in p.get("entities", [])},
              **{e["id"]: e["type"] for e in index["entities"]}}
+    owner = {f["id"]: e["id"] for e in index["entities"] for f in e.get("facets", [])}
     item_kind: dict[str, str] = {}
     item_from: dict[str, int | None] = {}
 
@@ -173,8 +179,14 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                     and pid not in prior_entities:
                 issues.append(Issue("warning" if unknown_prior else "error", f"{where}.setting.place",
                                     f"references {pid!r} before it is revealed"))
+        is_arc = kind == "facet" and item.get("kind") == "arc"
         for r in item.get("replaces", []):
-            if kind == "facet" and (r in profiles) != (item.get("kind") == "profile") and (r in item_kind or r in prior_items):
+            if kind == "facet" and (is_arc or r in own_arcs or r in prior_arcs):
+                problem = _arc_replacement(r, owner[item["id"]], is_arc, own_arcs, prior_arcs,
+                                           r in item_kind or r in prior_items)
+                if problem:
+                    issues.append(Issue("error", where, problem))
+            elif kind == "facet" and (r in profiles) != (item.get("kind") == "profile") and (r in item_kind or r in prior_items):
                 issues.append(Issue("warning", where, "a profile should replace only profiles, and details only details"))
             if r in item_kind:
                 if item_kind[r] != kind:
@@ -188,6 +200,18 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                 issues.append(Issue("warning" if unknown_prior else "error", where,
                                     f"replaces unknown item {r!r}"))
     return issues
+
+
+def _arc_replacement(r: str, entity: str, is_arc: bool, own_arcs: dict[str, str],
+                     prior_arcs: set[str], known: bool) -> str | None:
+    """Why a facet may not replace `r` under the arc rules of §4.6, or None when it may."""
+    if not is_arc:
+        return f"only an arc can replace the arc {r!r}"
+    if r in prior_arcs:
+        return f"an arc cannot replace {r!r}, an arc of another book"
+    if r in own_arcs:
+        return None if own_arcs[r] == entity else f"an arc cannot replace {r!r}, an arc of another entity"
+    return f"an arc can replace only arcs, not {r!r}" if known else None   # unknown: reported below
 
 
 def check_against_book(index: dict, blocks: list[Block]) -> list[Issue]:
