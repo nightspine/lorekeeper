@@ -19,7 +19,7 @@ from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 
 from lorekeeper import anchors as anchors_mod
-from lorekeeper import epub, text
+from lorekeeper import epub, gating, locators, mentions, text
 
 ROOT = Path(__file__).resolve().parents[2]
 EPUB = ROOT / "corpus" / "pg244" / "pg244.epub"
@@ -103,6 +103,33 @@ def _html_cases() -> list[dict]:
     return out
 
 
+def _mentions_case(book: epub.Book) -> dict:
+    """mentions.py on Study in Scarlet at three positions: the visible names the gated view gives and the counts."""
+    index = json.loads((EXAMPLES / "study-in-scarlet.json").read_text())
+    resolved = locators.resolve_edition(index, book)
+    starts = [c.start for c in book.chapters]
+    positions = []
+    for seq in (starts[2] + 30, starts[5] + 80, starts[9] + 20):
+        anchor = locators.position(index["anchors"], resolved, seq)
+        view = gating.view([index], gating.Position(None, anchor))
+        names = mentions.visible_names(view)
+        m = mentions.count(book.blocks, book.chapters, names, seq)
+        positions.append({"seq": seq, "names": names, "current": m.current, "counts": m.counts,
+                          "spans": {k: [list(s) for s in v] for k, v in m.spans.items()}})
+    return {"blocks": [{"seq": b.seq, "raw": b.raw} for b in book.blocks],
+            "chapters": [{"title": c.title, "start": c.start} for c in book.chapters], "positions": positions,
+            "guard": _guard_rows()}
+
+
+def _guard_rows() -> list[dict]:
+    """Whole-word guard rows: a name after an opening quote counts, one inside a word (o'Brien) does not."""
+    out = []
+    for raw in ("'Lucy, come here,' said the Count", "o'Brien", "Lucy's", "\"Lucy", "\u2018Lucy\u2019", "d\u2019Lucy", "xLucy"):
+        mt = mentions.Matcher({"l": ["Lucy"], "b": ["Brien"]})
+        out.append({"raw": raw, "found": [[s, e, o] for s, e, o in mt.find(raw)]})
+    return out
+
+
 def write(outdir: Path) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
     book = epub.read(EPUB)
@@ -161,6 +188,7 @@ def write(outdir: Path) -> None:
         if name not in editions and (ROOT / name).is_file():
             editions[name] = _spine_documents(ROOT / name)
     (outdir / "editions.json").write_text(json.dumps(editions, ensure_ascii=False))
+    (outdir / "mentions.json").write_text(json.dumps(_mentions_case(book), ensure_ascii=False))
     (outdir / "htmlcases.json").write_text(json.dumps(_html_cases(), ensure_ascii=False))
 
 
