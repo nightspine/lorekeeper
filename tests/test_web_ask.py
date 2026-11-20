@@ -319,3 +319,34 @@ def test_a_client_that_goes_away_does_not_free_the_slot_early(ask):
     else:
         raise AssertionError("slots were never freed")
     loop.close()
+
+
+def test_a_client_that_leaves_before_the_job_starts_never_holds_a_slot(ask):
+    import asyncio
+    from concurrent.futures import ThreadPoolExecutor
+
+    route = next(r for r in ask.app.routes if getattr(r, "path", "") == "/api/library/{key}/ask")
+
+    class Req:
+        async def json(self):
+            return {"question": "Who is Holmes?"}
+
+    async def leave_while_queued():
+        pool = ThreadPoolExecutor(1)           # one thread, kept busy: the ask job waits in the queue
+        release = threading.Event()
+        pool.submit(release.wait, 5)
+        asyncio.get_running_loop().set_default_executor(pool)
+        t = asyncio.ensure_future(route.endpoint(SIGN, Req()))
+        await asyncio.sleep(0.2)
+        t.cancel()
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass
+        release.set()
+        pool.shutdown(wait=True)
+    for _ in range(3):                          # more than the two slots
+        asyncio.run(leave_while_queued())
+    assert not ask.model.calls
+    for _ in range(3):
+        assert ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"}).status_code == 200

@@ -841,14 +841,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 or (book is not None and not isinstance(book, str)) \
                 or (finished is not None and not (isinstance(finished, list) and all(isinstance(k, str) for k in finished))):
             return ask_error(422, "bad-position", "The position is not understood.")
-        with ask_lock:
-            if ask_slots["n"] >= MAX_ASKS:
-                return ask_error(429, "busy", "Two questions are already being answered. Try again in a moment.")
-            ask_slots["n"] += 1
 
         def work():
             """Everything that reads files, computes the view or waits on a model, off the event loop.
-            The slot is freed here, when the call really ends, not when the client goes away."""
+            The slot is taken and freed here, so only a job that is running holds one: a client that
+            leaves while this is still queued cancels it before it takes a slot, and one that leaves
+            while it runs does not free the slot until the model call really ends."""
+            with ask_lock:
+                if ask_slots["n"] >= MAX_ASKS:
+                    return ask_error(429, "busy", "Two questions are already being answered. Try again in a moment.")
+                ask_slots["n"] += 1
             try:
                 item = (scan := library.scan()).get(key)
                 if item is None or item["doc"].get("kind") != "index":
@@ -891,13 +893,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 with ask_lock:
                     ask_slots["n"] -= 1
 
-        try:
-            fut = asyncio.get_running_loop().run_in_executor(None, work)
-        except BaseException:
-            with ask_lock:
-                ask_slots["n"] -= 1
-            raise
-        return await fut
+        return await asyncio.get_running_loop().run_in_executor(None, work)
 
     # ---- reading position from Book Orbit ---------------------------------------------------------
 
