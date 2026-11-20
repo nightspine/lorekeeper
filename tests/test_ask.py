@@ -929,3 +929,49 @@ def test_slices_never_exceed_the_budget():
                 assert sl.text.startswith(ask.OPEN) and sl.text.endswith(ask.CLOSE)
                 n += 1
     assert n >= 120
+
+
+def _hostile_view(rng):
+    def eid(prefix, i):
+        return f"{prefix}{i}" + "i" * rng.choice([0, 0, 1, 50, 199, 250, 2_000, 5_000])
+    ents = []
+    for i in range(rng.randint(1, 8)):
+        pid = eid("P", i)
+        ents.append(ent(eid("E", i), "John Smith" + str(i), ["John"], profile=fac(pid, "profile words " * rng.randint(0, 40)) if rng.random() < .7 else None,
+                        facets=[fac(eid(f"F{i}_", k), "detail " + "z" * rng.randint(10, 300)) for k in range(rng.randint(0, 5))]))
+    ids = [e["id"] for e in ents]
+    evs = [ev(eid("V", i), "John does " + "w" * rng.randint(10, 300), [rng.choice(ids)], rng.choice([None, "turn"])) for i in range(rng.choice([0, 10, 80]))]
+    chs = [{"id": eid("C", i), "title": "CHAPTER V", "text": "Part goes on. " * rng.randint(5, 150), "book": "b1"} for i in range(rng.choice([0, 1, 9]))]
+    rels = [{"id": eid("R", i), "src": ids[0], "dst": rng.choice(ids), "label": "knows", "book": "b1"} for i in range(rng.randint(0, 5))]
+    return mkview(ents, relations=rels, events=evs, chapters=chs,
+                  recap={"id": eid("S", 0), "text": "Story so far. " * 100, "book": "b1"} if rng.random() < .7 else None)
+
+
+def test_the_budget_holds_for_hostile_ids_and_tiny_budgets():
+    import random
+    rng = random.Random(11)
+    n = 0
+    for budget in (500, 3_000, ask.OLLAMA_BUDGET):
+        for _ in range(25):
+            v = _hostile_view(rng)
+            for q in ("What happened to John in chapter 5?", "Who is John?", "What happened in the last chapter?"):
+                sl = ask.select(v, q, [], budget)
+                assert sl.chars <= budget, (budget, q, sl.chars)
+                assert sl.text.startswith(ask.OPEN) and sl.text.endswith(ask.CLOSE)
+                assert not any(len(t) > 220 for t in sl.tags)                  # nothing with a huge id is in the slice
+                n += 1
+    assert n >= 200
+
+
+def test_items_with_a_huge_id_are_left_out_and_counted():
+    long = "x" * 300
+    v = mkview([ent("E1", "Hero", facets=[fac("F1", "A fine detail."), fac(long, "A hidden detail.")])],
+               events=[ev("V1", "Hero sets out.", ["E1"]), ev(long, "Hero vanishes.", ["E1"])],
+               relations=[{"id": long, "src": "E1", "dst": "E1", "label": "knows", "book": "b1"}])
+    sl = ask.select(v, "What happened to Hero?", [], 10_000)
+    assert "hidden detail" not in sl.text and "vanishes" not in sl.text and "[ev:V1]" in sl.text
+    assert "1 more details not shown" in sl.text and "1 more events not shown" in sl.text
+    assert "more connections not shown" in sl.text
+    fake = Fake(reply("Hero sets out.", ["ev:V1"]))
+    a = ask.answer(v, "What happened to Hero?", fake)
+    assert a.found and all(long not in c["id"] for c in a.cites)

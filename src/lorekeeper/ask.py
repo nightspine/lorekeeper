@@ -464,10 +464,70 @@ def chapter_matches(view: dict, question: str, books_named: set[str], cur_book: 
     return sorted(i for g in hit for i in g), []
 
 
+MAX_ID = 200
+
+
+def _drop_long_ids(view: dict) -> tuple[dict, dict[str, dict[str, int]]]:
+    """The view without items whose id is longer than MAX_ID (a hostile index can make ids huge, and such an id
+    cannot be cited sensibly), and how many details, events and connections each entry lost."""
+    def long(x: dict) -> bool:
+        return len(str(x.get("id", ""))) > MAX_ID
+
+    ents_ = view["entities"]
+    if not (any(long(e) or (e["profile"] and long(e["profile"])) or any(long(f) for f in e["facets"]) for e in ents_)
+            or any(long(x) for k in ("relations", "relationHistory", "events", "chapters") for x in view[k])
+            or (view.get("recap") and long(view["recap"]))):
+        return view, {}
+    lost: dict[str, dict[str, int]] = {}
+
+    def note(eid: str, kind: str) -> None:
+        lost.setdefault(eid, {}).setdefault(kind, 0)
+        lost[eid][kind] += 1
+
+    v = dict(view)
+    v["entities"] = []
+    for e in ents_:
+        if long(e):
+            continue
+        e2 = dict(e)
+        e2["facets"] = []
+        for f in e["facets"]:
+            if long(f):
+                note(e["id"], "details")
+            else:
+                e2["facets"].append(f)
+        if e["profile"] and long(e["profile"]):
+            e2["profile"] = None
+        v["entities"].append(e2)
+    for k in ("relations", "relationHistory"):
+        v[k] = []
+        for r in view[k]:
+            if long(r):
+                note(r["src"], "connections")
+                note(r["dst"], "connections")
+            else:
+                v[k].append(r)
+    v["events"] = []
+    for ev in view["events"]:
+        if long(ev):
+            for x in ev["entities"]:
+                note(x, "events")
+        else:
+            v["events"].append(ev)
+    v["chapters"] = [c for c in view["chapters"] if not long(c)]
+    if view.get("recap") and long(view["recap"]):
+        v["recap"] = None
+    return v, lost
+
+
 def select(view: dict, question: str, history: list[Turn] = (), budget_chars: int = DEFAULT_BUDGET,
            books: dict[str, dict] | None = None, extra: list[str] | None = None,
            after: list[str] | None = None) -> Slice:
-    """The slice of `view` a question needs, within `budget_chars` (soft: one line may overshoot)."""
+    """The slice of `view` a question needs. `len(slice.text) <= budget_chars` holds for every input: the parts
+    are budgeted in order, and whatever still does not fit is cut whole line by line (fill, requested chapters,
+    notes, heads and profiles, recap, header), the delimiters last of all. An item whose id is longer than
+    MAX_ID characters is left out and counted in the "not shown" lines."""
+    view, long_ids = _drop_long_ids(view)
     ents = {e["id"]: e for e in view["entities"]}
     toks = _tokens(question)
     sl = Slice()
@@ -812,7 +872,8 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
                 ch_used += len(c[3]) + 1
     kept_tags = {c[2] for c in keep}
     lines_of = {c[2]: c[3] for c in keep}
-    out = list(head_text)
+    out: list[str] = []
+    tier: list[int | None] = []      # when the text is still too long, the lowest tier goes first; None never goes
     placed: set[str] = set()
     omitted = 0
 
@@ -837,40 +898,50 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
             omitted += gap
         return res
 
-    fill_at: list[int] = []         # indexes of the lines the final check may cut, last first
-
-    def put(lines: list[str], fill: bool = False) -> None:
+    def put(lines: list[str], t: int | None = 0) -> None:
         for ln in lines:
-            if fill:
-                fill_at.append(len(out))
             out.append(ln)
+            tier.append(t)
 
+    FILL, CHAPTERS, NOTES, HEADS, RECAP, HEADER = 0, 1, 2, 3, 4, 5
+    put([OPEN], None)
+    put(hdr_lines, HEADER)
+    put(recap_lines, RECAP)
     for eid in focus:
-        put(head[eid])
-        put([c[3] for c in sorted((c for c in keep if c[4] == f"c:{eid}"), key=lambda c: c[5])], True)
-        if conn_lost[eid]:
-            put([f"  ({conn_lost[eid]} more connections not shown)"], True)
-        put(seq([(f"[f:{f['id']}]", lines_of.get(f"[f:{f['id']}]", "")) for f in ent_details[eid]], "details"), True)
-        put(seq([(f"[ev:{ev['id']}]", lines_of.get(f"[ev:{ev['id']}]", "")) for ev in ent_events[eid]], "events"), True)
+        put(head[eid], HEADS)
+        put([c[3] for c in sorted((c for c in keep if c[4] == f"c:{eid}"), key=lambda c: c[5])], FILL)
+        if conn_lost[eid] + long_ids.get(eid, {}).get("connections", 0):
+            put([f"  ({conn_lost[eid] + long_ids.get(eid, {}).get('connections', 0)} more connections not shown)"], FILL)
+        put(seq([(f"[f:{f['id']}]", lines_of.get(f"[f:{f['id']}]", "")) for f in ent_details[eid]], "details"), FILL)
+        if long_ids.get(eid, {}).get("details"):
+            put([f"  ({long_ids[eid]['details']} more details not shown)"], FILL)
+            omitted += long_ids[eid]["details"]
+        put(seq([(f"[ev:{ev['id']}]", lines_of.get(f"[ev:{ev['id']}]", "")) for ev in ent_events[eid]], "events"), FILL)
+        if long_ids.get(eid, {}).get("events"):
+            put([f"  ({long_ids[eid]['events']} more events not shown)"], FILL)
+            omitted += long_ids[eid]["events"]
     order = {f"[ev:{ev['id']}]": i for i, ev in enumerate(view["events"])}
     rest_ev = [c for c in keep if c[4] == "ev" and c[2] not in placed]
     if rest_ev:
-        put(["Other events:"], True)
-        put([c[3] for c in sorted(rest_ev, key=lambda c: order.get(c[2], 0))], True)
+        put(["Other events:"], FILL)
+        put([c[3] for c in sorted(rest_ev, key=lambda c: order.get(c[2], 0))], FILL)
     rest_ch = [c for c in keep if c[4] in ("ch", "chm")]
     if rest_ch:
-        put([CH_HEAD], not chm)
+        put([CH_HEAD], CHAPTERS if chm else FILL)
         for c in sorted(rest_ch, key=lambda c: c[5]):
-            put([c[3]], c[4] == "ch")
-    put(tail)
-    out.append(CLOSE)
-    # The budget is an invariant: if the lines still add up to more (they should not), whole lines are cut from
-    # the end of the fill, never from the delimiters, the header, the requested chapters or the notes.
+            put([c[3]], CHAPTERS if c[4] == "chm" else FILL)
+    put(tail, NOTES)
+    put([CLOSE], None)
+    # The budget is an invariant for every input: lines still over it are cut whole, the end of each tier first,
+    # in the order fill, requested chapters, notes, heads and profiles, recap, header. The delimiters stay.
     size = sum(len(x) + 1 for x in out) - 1
-    while size > budget_chars and fill_at:
-        i = fill_at.pop()
-        size -= len(out[i]) + 1
-        out[i] = None
+    for t in (FILL, CHAPTERS, NOTES, HEADS, RECAP, HEADER):
+        for i in range(len(out) - 1, -1, -1):
+            if size <= budget_chars:
+                break
+            if tier[i] == t and out[i] is not None:
+                size -= len(out[i]) + 1
+                out[i] = None
     out = [x for x in out if x is not None]
     sl.text = "\n".join(out)
     sl.omitted = omitted
@@ -1055,6 +1126,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
     """Answer `question` from `view` with `llm`. Always returns an Answer; the model's reply is
     checked, retried at most once per problem, and replaced with NOT_SAID when it cannot be trusted."""
     history = list(history)[-6:]
+    shown, _ = _drop_long_ids(view)        # what the model may be told about: select() counts what it drops
     before = _usage(llm)
     sl = select(view, question, history, budget_chars, books)
 
@@ -1067,25 +1139,25 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
 
     if sl.nobody and roster_chars > 0:
         # Semantic search by the model the reader already has: it reads a roster of every entry and picks.
-        ids = _pick(view, llm, roster(view, roster_chars), question)
+        ids = _pick(shown, llm, roster(shown, roster_chars), question)
         if ids:
             sl = select(view, question, history, budget_chars, books, extra=ids)
     elif roster_chars > 0 and sl.asks_who and sl.has_content and (sl.named or sl.carried):
         # "Which horse does Gabriel ride?": the answer is an entry next to the one named, so the model reads
         # a roster of the neighbourhood only (ties, current or former, and shared events).
-        around = neighbours(view, sl.named + sl.carried)
+        around = neighbours(shown, sl.named + sl.carried)
         if around:
-            ids = _pick(view, llm, roster(view, min(roster_chars, NEIGHBOUR_CHARS), around), question,
+            ids = _pick(shown, llm, roster(shown, min(roster_chars, NEIGHBOUR_CHARS), around), question,
                         MAX_NEIGHBOUR_PICK)
             ids = [i for i in ids if i in around]
             if ids:
                 sl = select(view, question, history, budget_chars, books, after=ids)
     elif sl.needs_pick:
-        ids = _pick(view, llm, sl.roster, question)
+        ids = _pick(shown, llm, sl.roster, question)
         sl = select(view, question, history, budget_chars, books, extra=ids)
         sl.needs_pick = False
 
-    base = _prompt(view, question, sl, history)
+    base = _prompt(shown, question, sl, history)
     vocab = _slice_vocab(sl)
 
     def ask(extra: str = "") -> dict:
