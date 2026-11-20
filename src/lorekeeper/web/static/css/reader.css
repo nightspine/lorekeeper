@@ -396,6 +396,41 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .type-chips > * { flex: none; }
 }
 
+/* ---------- Ask: a question answered from the index's notes ---------- */
+.ask { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); max-width: 720px; min-width: 0; align-content: start; }
+.ask-log { display: grid; gap: var(--space-5); }
+.ask-log:empty { display: none; }
+.ask-turn { display: grid; gap: var(--space-2); }
+.ask-q { margin: 0; justify-self: end; max-width: 85%; color: var(--text-2); font-weight: 600; text-align: right; overflow-wrap: anywhere; white-space: pre-line; }
+.ask-a { margin: 0; line-height: 1.6; overflow-wrap: anywhere; white-space: pre-line; }
+.ask-from { min-width: 0; display: flex; gap: 4px 8px; align-items: baseline; font-size: var(--text-sm); color: var(--text-3); }
+.ask-from-lbl { flex: none; }
+.ask-cites { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 16px; min-width: 0; }
+.ask-cites li { min-width: 0; max-width: 100%; }
+.ask-cite { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
+.ask-from .linkish { font-weight: 500; }
+.ask-err { margin: 0; color: var(--rose); }
+.ask-wait { display: flex; align-items: center; gap: var(--space-3); }
+.ask-wait .loading { padding: var(--space-2) 0; justify-content: flex-start; }
+.ask-cleared { margin: 0; font-size: var(--text-sm); color: var(--text-3); }
+.ask-cleared:empty { display: none; }
+.ask-empty { display: grid; gap: var(--space-3); }
+.ask-empty p { margin: 0; color: var(--text-2); }
+.ask-examples { display: grid; border-top: 1px solid var(--line); }
+.ask-example { text-align: left; min-height: 40px; padding: 8px 2px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: inherit; cursor: pointer; }
+.ask-example:hover { color: var(--beacon); }
+.ask-off p { margin: 0; color: var(--text-2); }
+.ask-empty[hidden], .ask-off[hidden], .ask-composer[hidden], .ask-via[hidden] { display: none; }
+.ask-composer { position: sticky; bottom: 0; z-index: 2; display: grid; gap: 2px; padding: var(--space-3) 0 var(--space-2); background: var(--bg); border-top: 1px solid var(--line); }
+.ask-row { display: flex; gap: var(--space-2); align-items: flex-end; }
+.ask-field { flex: 1 1 auto; min-width: 0; resize: none; height: auto; min-height: 32px; padding-top: 6px; padding-bottom: 6px; line-height: 1.4; overflow-y: auto; }
+.ask-send { flex: none; }
+.ask-count { min-height: 0; text-align: right; }
+.ask-count:empty { display: none; }
+.ask-via { margin: 0; }
+.d-ask { margin: var(--space-2) 0 0; }
+.d-ask .linkish { font-weight: 600; }
+
 /* ---------- Where it comes up (the entry's mentions per chapter, mentions.js) ---------- */
 .mentions { gap: 12px; }
 .mentions[hidden] { display: none; }
