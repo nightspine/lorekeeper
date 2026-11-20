@@ -1,8 +1,9 @@
 """Bring indexes generated before profiles (prompt sets before extract-v4) up to date.
 
-`tidy` removes entities that are descriptions rather than names ("Gabriel's straight razor") and
-folds descriptions of a known entity ("Celene's brother Gabriel") into it, using the same rules the
-generator now applies (`generate.triage_name`).
+`tidy` removes entities that are descriptions rather than names ("Gabriel's straight razor") or only
+a kin or role word ("Mama", "Father"), and folds descriptions of a known entity ("Celene's brother
+Gabriel", and "Gabriel's sister" when one named person is tied to Gabriel as his sister) into it, using
+the same rules the generator now applies (`generate.triage_name`, `bare_kin_word`, `kin_ties`).
 
 `backfill` writes profile facets (SPEC.md §4.2) from the facts an index already has. Between two
 recaps, each entity that gained facts gets a profile written from only the facts revealed up to that
@@ -16,8 +17,10 @@ from __future__ import annotations
 
 from collections import Counter
 
-from . import merge
-from .generate import _POSSESSIVE, HINDSIGHT, MOMENTARY, SYSTEM, triage_name
+from . import kinship, merge
+from .generate import (_POSSESSIVE, HINDSIGHT, MOMENTARY, SYSTEM, bare_kin_word, hidden_identity, is_description,
+                       kin_description, kin_ties, sex_of, triage_name)
+from .generate import _gender, flip_modifiers, identity_modifiers
 
 
 def generate_possessive(name: str) -> bool:
@@ -76,10 +79,13 @@ def tidy(docs: list[dict]) -> dict:
     """Remove description-entities and fold wrapped references into their entity, in every doc.
     Returns {"removed": [names], "merged": [(drop name, keep name)], "changed": set of doc positions}."""
     ents, known, forget = _finder(docs)
-    removed, merged, changed = [], [], set()
+    removed, merged, changed, bare = [], [], set(), []
     counts = merge.word_counts(docs)
     for eid, (etype, names) in list(ents.items()):
         if not names or eid not in ents:
+            continue
+        if etype == "person" and all(bare_kin_word(n) for n in names):
+            bare.append(eid)   # "Mama", "Father", "the boy": removed below unless a kin tie says whose they are
             continue
         verdicts = [triage_name(n, etype, lambda x: known(x, etype, eid)) for n in names]
         if all(v[0] == "drop" for v in verdicts):
@@ -97,7 +103,98 @@ def tidy(docs: list[dict]) -> dict:
             merged.append((names[0], ents[target][1][0]))
             ents[target][1].extend(n for n in names if n not in ents[target][1])
             forget(eid)
-    return {"removed": removed, "merged": merged, "changed": changed}
+    kin_folded = _fold_kin(docs, ents, known, forget, counts, bare)
+    for _, _, i in kin_folded:
+        changed |= set(i)
+    for eid in bare:
+        if eid in ents and all(bare_kin_word(n) for n in ents[eid][1]):   # not folded: never a person of their own
+            changed |= set(remove(docs, eid))
+            removed.append(ents[eid][1][0])
+            forget(eid)
+            ents.pop(eid, None)
+    return {"removed": removed, "merged": merged, "kin_folded": [(a, b) for a, b, _ in kin_folded], "changed": changed}
+
+
+def _fold_kin(docs: list[dict], ents: dict, known, forget, counts, bare=()) -> list[tuple[str, str, list[int]]]:
+    """Fold the one named person the relations tie to X as his <kin> into the person known only as "X's <kin>"
+    (the description keeps its id, so no id carries a name the reader has not reached), when
+    - exactly one such description exists for X and exactly one named person fits (`kin_ties`, modifiers agreeing);
+    - the named person does not first appear in an earlier book than the description (those files are not rewritten
+      by a fold into a later one's entry);
+    - the tie that identifies them comes at or before the named person's first appearance (anchor order within a
+      book, series order across books), so no position shows both names without the tie;
+    - nothing ties the two together and the text keeps no identity back (`hidden_identity`).
+    An entry named only by a kin word ("Mother") that carries a kin tie ("mother of Darrow") is the description
+    "Darrow's mother" and is folded the same way (`bare`: their ids). Returns (description, named, changed doc positions)."""
+    rels = [r for d in docs for r in d.get("relations", [])]
+    events = [ev for d in docs for ev in d.get("events", [])]
+    facets: dict[str, list[str]] = {}
+    for d in docs:   # every book's facts: a hint that the identity is held back may sit in an earlier one
+        for e in d.get("entities", []):
+            facets.setdefault(e["id"], []).extend(f["text"] for f in e.get("facets", []))
+    ords = [{a["id"]: n for n, a in enumerate(d.get("anchors", []))} for d in docs]
+    first: dict[str, tuple[int, int]] = {}
+    for i, d in enumerate(docs):
+        for e in d.get("entities", []):
+            first.setdefault(e["id"], (i, ords[i].get(e.get("from"), 0)))
+    tie_at = {r["id"]: (i, ords[i].get(r.get("from"), 0)) for i, d in enumerate(docs) for r in d.get("relations", [])}
+    named = lambda x: x in ents and any(not is_description(n) and not bare_kin_word(n) for n in ents[x][1])  # noqa: E731
+    sex = lambda x: sex_of(ents[x][1] if x in ents else [], rels, x)  # noqa: E731
+    groups: dict[tuple, list[tuple[str, dict]]] = {}
+    for eid, (etype, names) in ents.items():
+        if etype != "person" or named(eid):
+            continue
+        for n in names:
+            kd = kin_description(n)
+            owner = known(kd[0], etype, eid) if kd else None
+            if owner and named(owner):
+                groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"]), identity_modifiers(kd[1]["modifiers"])),
+                                  []).append((eid, kd[1]))
+                break
+    for eid in bare:
+        word = _plain_last(ents[eid][1][0])
+        for r in rels:
+            p = kinship.parse(r["label"])
+            if not p or eid not in (r["src"], r["dst"]) or r["src"] == r["dst"]:
+                continue
+            if r["src"] == eid:
+                owner, parsed = r["dst"], dict(p)
+            else:
+                role = kinship.ROLES.get(p["role"], p["role"])
+                owner, parsed = r["src"], {"role": role, "word": role, "modifiers": flip_modifiers(p["modifiers"])}
+            if not _gender(parsed["word"]) and _gender(word):
+                parsed["word"] = word   # the entry's own word says which: "Mother" is a mother
+            if named(owner):
+                groups.setdefault((owner, parsed["role"], _gender(parsed["word"]), identity_modifiers(parsed["modifiers"])),
+                                  []).append((eid, parsed))
+                break
+    out = []
+    for (owner, *_), found in groups.items():
+        if len(found) != 1:
+            continue
+        eid, parsed = found[0]
+        ties = [(x, r) for x, r in kin_ties(rels, owner, parsed, sex, named) if x != eid]
+        fits = list(dict.fromkeys(x for x, _ in ties))
+        if len(fits) != 1:
+            continue
+        target = fits[0]
+        if first.get(target, (0, 0))[0] < first.get(eid, (0, 0))[0] \
+                or min(tie_at.get(r["id"], (1 << 30, 0)) for _, r in ties) > first.get(target, (-1, -1)) \
+                or any({r["src"], r["dst"]} == {target, eid} for r in rels) \
+                or hidden_identity(facets.get(eid, []), events, eid, target):
+            continue
+        label, keep_label = ents[eid][1][0], ents[target][1][0]
+        changed = merge.merge(docs, eid, target, None, counts)
+        out.append((label, keep_label, changed))
+        ents[eid][1].extend(n for n in ents[target][1] if n not in ents[eid][1])
+        forget(target)
+        ents.pop(target, None)
+    return out
+
+
+def _plain_last(name: str) -> str:
+    w = name.split()
+    return w[-1].casefold().strip(".,") if w else ""
 
 
 def remove(docs: list[dict], eid: str) -> list[int]:
