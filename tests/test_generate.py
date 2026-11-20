@@ -515,7 +515,7 @@ def test_events_are_weighed_and_turning_points_counted(book_path, tmp_path):
     assert report["stats"]["turning points"] == 1
     assert '"weight"' in generate.EXTRACT and "complete sentences" in generate.EXTRACT and "never leave the" in generate.EXTRACT
     assert generate.EXTRACT_SCHEMA["properties"]["events"]["items"]["properties"]["weight"]["enum"] == ["turn", "plot", "minor"]
-    assert generate.PROMPT_VERSION == "extract-v11"
+    assert generate.PROMPT_VERSION == "extract-v12"
 
 
 class _Where(FakeLLM):

@@ -28,7 +28,7 @@ from .epub import Book
 from .llm import LLM, Cancelled
 
 GENERATOR_VERSION = "0.3.0"
-PROMPT_VERSION = "extract-v11"
+PROMPT_VERSION = "extract-v12"
 MAX_PART_WORDS = 20000   # a whole-chapter part is never longer than this (cloud); Ollama: see max_part_words
 MAX_EVENTS = 60          # events requested per part, in any mode: more than a backend can return in one reply
 MAX_DETAILS = 8          # details requested per entity per part
@@ -169,6 +169,103 @@ def names_a_relative(name: str, texts) -> bool:
     return any(re.search(p, t, re.I) for t in texts if t for p in pats)
 
 
+# A kin or role word is never a person's name by itself: "Mama" means a different person to each character,
+# and "the boy" is whoever the scene is about. `bare_kin_word` is the test; "Uncle Vernon" or "Father Brown"
+# (a kin word and a proper name) is a real name and passes.
+BARE_WORDS = frozenset({
+    "father", "mother", "mama", "mum", "mummy", "mom", "mommy", "dad", "daddy", "papa", "da", "ma", "pa", "parent",
+    "parents", "brother", "sister", "son", "daughter", "child", "baby", "uncle", "aunt", "auntie", "cousin", "nephew",
+    "niece", "grandmother", "grandfather", "grandparent", "gran", "granny", "grandma", "grandpa", "wife", "husband",
+    "boy", "girl", "man", "woman", "lad", "lass", "stranger", "guard", "soldier", "servant", "maid", "voice",
+    "figure", "visitor", "messenger", "boatman", "driver", "coachman", "porter"})
+_BARE_LEAD = {"the", "a", "an", "my", "his", "her", "their", "our", "your", "its", "this", "that", "old", "young", "little",
+              "poor", "dead", "late", "elder", "older", "younger", "eldest", "youngest", "big", "tall", "dark", "strange",
+              "other", "new"}
+KIN_NOT_NAME = "dropped: kin or role word, not a name"
+# A description entity whose notes say the text keeps its identity back is not folded into whoever turns out to be it.
+HIDDEN_IDENTITY = re.compile(r"\b(identity|unnamed|nameless|unidentified|unknown (?:man|woman|person|figure|stranger|girl|boy)|"
+                             r"true name|real name|disguis\w*|conceal\w*|masked|veiled|hooded)\b", re.IGNORECASE)
+
+
+def bare_kin_word(name: str) -> bool:
+    """True when `name` is only a kin or role word once a leading article, possessive pronoun or plain adjective
+    is taken off ("Father", "Mama", "my mother", "the old man"). A possessive ("Gabriel's father") is not bare;
+    a kin word with a proper name ("Uncle Vernon", "Father Brown", "Mother Superior") is not either."""
+    if _POSSESSIVE.search(name or ""):
+        return False
+    note = re.search(r"\(([^)]*)\)", name or "")
+    if note and note[1].strip()[:1].isupper() and not bare_kin_word(note[1]):
+        return False   # "Mama (Auriél)": the note names her, so it is that name (`triage_name`)
+    w = _plain_words(clean_name(name))
+    while len(w) > 1 and w[0] in _BARE_LEAD:
+        w = w[1:]
+    return len(w) == 1 and (w[0] in BARE_WORDS or (w[0].endswith("s") and w[0][:-1] in BARE_WORDS))
+
+
+def is_description(name: str) -> bool:
+    """A person named by what they are, not by name: a possessive ("Gabriel's servant"), a lowercase start or
+    "the ..."/"a ..." ("the old priest")."""
+    name = clean_name(name)
+    first = name.split()[0] if name.split() else ""
+    return bool(_POSSESSIVE.match(name)) or (first[:1].islower() and first not in merge.NAME_PARTICLES) \
+        or first.casefold() in ("the", "a", "an")
+
+
+_MALE = {"father", "dad", "papa", "son", "brother", "husband", "uncle", "nephew", "grandfather", "grandson", "widower",
+         "godfather", "godson", "stepfather", "stepson"}
+_FEMALE = {"mother", "mum", "mom", "mama", "daughter", "sister", "wife", "aunt", "niece", "grandmother", "granddaughter",
+           "widow", "godmother", "goddaughter", "stepmother"}
+
+
+def _gender(word: str) -> str | None:
+    word = word.removeprefix("step")
+    return "m" if word in _MALE else "f" if word in _FEMALE else None
+
+
+def sex_of(names: list[str], relations: list[dict], eid: str) -> str | None:
+    """"m" or "f" when an entity's titles or its own kin ties say so ("Mrs. Westenra", "mother of ..."), else None."""
+    for n in names:
+        t = {("m" if x in merge.MASCULINE else "f") for x in merge._titles(n) if x in merge.MASCULINE | merge.FEMININE}
+        if len(t) == 1:
+            return t.pop()
+    for r in relations:
+        if r["src"] == eid and (p := kinship.parse(r["label"])) and (g := _gender(p["word"])):
+            return g
+    return None
+
+
+def kin_relatives(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[str]:
+    """The entities the relations already tie to `owner` as the `parsed` kin word says ("father of Gabriel", or
+    "Gabriel son of ...", seen from the other end), among those `usable(id)` accepts. A kin word with a sex
+    ("sister") excludes one known (`sex(id)`) to be the other sex."""
+    replaced = {x for r in relations for x in r.get("replaces", [])}
+    want, back = parsed["role"], kinship.ROLES.get(parsed["role"], parsed["role"])
+    word, hits = _gender(parsed["word"]), []
+    for r in relations:
+        if r["id"] in replaced or not (p := kinship.parse(r["label"])):
+            continue
+        if r["dst"] == owner and p["role"] == want:
+            other, g = r["src"], _gender(p["word"])    # "<other> father of <owner>": the word is about `other`
+        elif r["src"] == owner and p["role"] == back:
+            other, g = r["dst"], None                  # "<owner> son of <other>": nothing said about `other`
+        else:
+            continue
+        if other == owner or not usable(other) or (word and (g or sex(other)) not in (None, word)):
+            continue
+        hits.append(other)
+    return list(dict.fromkeys(hits))
+
+
+def kin_description(name: str) -> tuple[str, dict] | None:
+    """("Gabriel", {role, word, ...}) for "Gabriel's sister" / "Dior's elder brother": a possessive whose rest is
+    only a kinship word (kinship.parse); None for anything else ("Gabriel's sword", "sister Celene")."""
+    m = _POSSESSIVE.match(clean_name(name))
+    if not m:
+        return None
+    parsed = kinship.parse(m["rest"].strip())
+    return (m["owner"], parsed) if parsed and parsed["role"] not in ("related",) and "in-law" not in parsed["modifiers"] else None
+
+
 def names_two_people(name: str, own: list[str], texts) -> bool:
     """True when one sentence uses the titled `name` and one of the entry's own names as two separate mentions
     ("Mrs. Westenra was naturally anxious concerning Lucy"): the title is someone else's, not a second name.
@@ -236,7 +333,7 @@ What the companion says about entities named in this passage (their ties are the
 Entity types: {types}
 
 Update the companion with what THIS passage adds. Report only new information.
-- new: entities first named in this passage. Include {who}. "name" = the name exactly as THIS passage uses it, with no notes or descriptions added (not "Isla (thrall)"); never a name you know from elsewhere that the passage doesn't use. First check the companion: if the passage calls someone already there by another name (a first name, a title, a role such as "his uncle"), that is not new: report the name under names. One entity per individual: "Mr. and Mrs. Dursley" or "Lily and James Potter" are two entities. An entity has a name of its own, or is a person the text describes because it has not named them yet ("the old priest"). Someone's possessions, feelings, rooms, plans or fights are not entities ("Gabriel's sword", "Dior's fear"), and a known entity described another way ("Celene's brother", "the Lion") is that entity: use its id. "p" = paragraph where first named; "desc" = ONE sentence (under 30 words) that reads like the first line of a character sheet: who or what this is in the story as the passage shows it, its tie to the viewpoint character or to someone already known, its role or kind. Never its errands, plans, intentions or what it does in the scene. For someone named only in passing, say what the passage lets a reader know ("Someone close to Harker at home, whom he writes to and keeps notes for"), not a paraphrase of the sentence that names them; or "" if the passage shows nothing. A tie, rank, role, status or place goes in only if THIS passage says it, never from what you know of the book; "desc_p" = the paragraph that sentence relies on.
+- new: entities first named in this passage. Include {who}. "name" = the name exactly as THIS passage uses it, with no notes or descriptions added (not "Isla (thrall)"); never a name you know from elsewhere that the passage doesn't use. First check the companion: if the passage calls someone already there by another name (a first name, a title, a role such as "his uncle"), that is not new: report the name under names. One entity per individual: "Mr. and Mrs. Dursley" or "Lily and James Potter" are two entities. Be selective about people: report one only when the passage gives them a name of their own ("Mina", "Mr. Holmwood", "Uncle Vernon"), or, for someone it never names, only when they matter beyond the moment (they act, are described or tied to someone in a way that lasts). Never a kin or role word alone ("Father", "Mother", "Mama", "the boy", "a guard"): when the passage says "his father" or "Mother" and that relative is in the companion (see the ties above), it is that entity: use its id, and never add the word as a name. Someone's possessions, feelings, rooms, plans or fights are not entities ("Gabriel's sword", "Dior's fear"), and a known entity described another way ("Celene's brother", "the Lion") is that entity: use its id. "p" = paragraph where first named; "desc" = ONE sentence (under 30 words) that reads like the first line of a character sheet: who or what this is in the story as the passage shows it, its tie to the viewpoint character or to someone already known, its role or kind. Never its errands, plans, intentions or what it does in the scene. For someone named only in passing, say what the passage lets a reader know ("Someone close to Harker at home, whom he writes to and keeps notes for"), not a paraphrase of the sentence that names them; or "" if the passage shows nothing. A tie, rank, role, status or place goes in only if THIS passage says it, never from what you know of the book; "desc_p" = the paragraph that sentence relies on.
 - updates: what this passage reveals about what an entity IS, for entities in the companion (use the id) or in your "new" list (use the name): identity or role, appearance, nature, abilities, beliefs, allegiances, ties to others, and changes in status (wounded, promoted, captured, turned, dead). Not what they do in a scene: actions and plot belong in events and the summary. Write a lasting fact ("Can boil a person's blood, a power from his father"), not a moment ("He boils Alba's blood"). Something a character says, is told or believes is reported as that ("Has been told his parents died in a crash"), not as fact, unless the text confirms it. ONE sentence under 30 words each, "p" = the paragraph where it is shown, at most {per_entity} per entity. If it overturns something the companion says, put that fact's [id] in "corrects".
 - profiles: for EVERY new person, creature and group, however briefly it appears, and for each other entity this passage teaches something lasting about, a profile (a tie, rank, role, status or whereabouts may be stated ONLY when this passage or the companion's notes for that entity say it, even if you know it from the book: when the passage shows someone only in passing, name the connection the text actually shows and stop, "Someone Harker keeps notes for while travelling", not "Harker's fiancée"): the description a reader would want on a character sheet, of who or what it is as known so far. Identity and role, look, nature, abilities, and the ties that define it ("Harry's best friend", "the king's sister"). Only lasting changes in status count (orphaned, knighted, exiled, dead); never where it is or what it is doing at the moment, and never recent events ("now on the train", "has begun to trust X", "has just arrived"). Timeless present tense: "An orphaned farm boy raised by his uncle who discovers he can work magic; quick-tempered but loyal", not "Now on the road to the capital, he has begun to trust Mira". 1 to 3 sentences, under 70 words, rewritten in full from the companion's profile plus this passage. "id" = id or new name; "p" = the paragraph by which everything in it has been shown. At most {profiles}.
 - names: a new name or title for an entity already in the companion.{relations}
@@ -401,6 +498,12 @@ def triage_name(raw, etype: str | None, known) -> tuple[str, str]:
         eid = known(m["inner"].strip())
         if eid:
             return "known", eid
+    inner = m["inner"].strip() if m else ""
+    if m and inner[:1].isupper() and clean_name(m["outer"]) != name and not _described(m["outer"]) \
+            and _plain_words(clean_name(m["outer"])) and _plain_words(clean_name(m["outer"]))[-1] in BARE_WORDS:
+        # "Mama (Auriél)": a kin word with the name in a note is that name.
+        eid = known(inner)
+        return ("known", eid) if eid else ("name", inner)
     name = clean_name(name)
     m = _POSSESSIVE.match(name)
     if m:
@@ -746,6 +849,63 @@ class Generator:
             if len(hits) == 1:
                 return hits[0]
         return None
+
+    # ---- kin descriptions ("Gabriel's sister") -----------------------------------------------
+
+    def _sex(self, eid: str) -> str | None:
+        return sex_of(self._names(eid), self.relations, eid)
+
+    def _named(self, eid: str) -> bool:
+        """The entity has a name of its own, not only descriptions and kin words."""
+        return any(not is_description(n) and not bare_kin_word(n) for n in self._names(eid))
+
+    def kin_relatives(self, owner: str, parsed: dict) -> list[str]:
+        """The named people the companion already ties to `owner` as the kin word says (`kin_relatives`)."""
+        return kin_relatives(self.relations, owner, parsed, self._sex, lambda x: x in self._ids() and self._named(x))
+
+    def kin_match(self, name: str, known=None) -> tuple[str, list[str]]:
+        """What a possessive kin description ("Gabriel's sister") stands for: ("none", []) when it is not one,
+        ("no owner", []) when its owner is not a known named entity, ("unknown", []) when the owner is known and
+        no tie fits, else ("one", [id]) or ("several", ids). `known(name)` finds the owner (default `match_known`)."""
+        kd = kin_description(name)
+        if not kd:
+            return "none", []
+        owner = known(kd[0]) if known else self.match_known(kd[0], "person")
+        if not owner or not self._named(owner):
+            return "no owner", []
+        hits = self.kin_relatives(owner, kd[1])
+        return ("one" if len(hits) == 1 else "several" if hits else "unknown"), hits
+
+    def _hidden_identity(self, desc: str, named: str) -> bool:
+        """The text keeps who the description is a mystery: the description's own notes say so, or a turning point
+        names both (the revelation itself). Folding then would show the answer early or merge a disguise."""
+        if any(HIDDEN_IDENTITY.search(f["text"]) for f in self.entities[desc]["facets"]):
+            return True
+        return any(ev.get("kind") == "turn" and desc in ev["entities"] and named in ev["entities"] for ev in self.events)
+
+    def _fold_kin_descriptions(self) -> None:
+        """A tie that makes a named person "<X>'s <kin>" settles an earlier description entity ("Gabriel's sister")
+        as that person: fold the description into the named entity when exactly one description of this kind
+        exists for X and exactly one named person fits (`kin_relatives`), `_may_merge` allows it and the text does
+        not treat the identity as a secret. Names and facets keep their own `from`, so the description shows
+        from where it was first used and the name from where the book gives it."""
+        groups: dict[tuple, list[tuple[str, dict]]] = {}
+        for eid, e in list(self.entities.items()):
+            if e["type"] != "person" or eid in self.prior or self._named(eid):
+                continue
+            for n in self._names(eid):
+                if (kd := kin_description(n)) and (owner := self.match_known(kd[0], "person")) and self._named(owner):
+                    groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"])), []).append((eid, kd[1]))
+                    break
+        for (owner, _, _), found in groups.items():
+            if len(found) != 1:
+                continue
+            desc, parsed = found[0]
+            named = [x for x in self.kin_relatives(owner, parsed) if x != desc and x in self.entities]
+            if len(named) != 1 or not self._may_merge([named[0], desc]) or self._hidden_identity(desc, named[0]):
+                continue
+            self._merge_entities(named[0], desc)
+            self.stats["merged: kin description into the named relative"] += 1
 
     # ---- names that fit more than one entity -----------------------------------------------
 
@@ -1210,13 +1370,40 @@ class Generator:
         for ne in raw.get("new", []):
             parts = split_couple(clean_name(ne.get("name", ""))) if ne.get("type") == "person" else None
             proposals += [{**ne, "name": part, "_couple": clean_name(ne["name"])} for part in parts] if parts else [ne]
+        def has_part(name: str) -> bool:
+            """The response gives this description a part: a detail, a tie or an event names it."""
+            refs = [u.get("id") for u in raw.get("updates", []) if isinstance(u, dict)]
+            refs += [r.get(k) for r in (raw.get("relations") or []) if isinstance(r, dict) for k in ("a", "b")]
+            refs += [x for ev in raw.get("events", []) if isinstance(ev, dict) for x in (ev.get("who") or [])]
+            mine = self._core(name)
+            return any(isinstance(x, str) and (self._core(x) == mine or x.strip().casefold() == name.casefold()) for x in refs)
+
+        # Descriptions after the names, so "Gabriel's father" finds a "Gabriel" proposed in the same reply.
+        proposals.sort(key=lambda ne: bool(kin_description(clean_name(ne.get("name", "")))))
         for i, ne in enumerate(proposals):
             proposed = clean_name(ne.get("name", ""))
+            if ne.get("type") in ("person", "group") and bare_kin_word(proposed):
+                self.stats[KIN_NOT_NAME] += 1   # "Father", "Mama", "the boy": never a person of their own
+                continue
             verdict, value = triage_name(ne.get("name", ""), ne.get("type"),
                                          lambda n: here(n) or self.match_known(n, ne.get("type")))
             if verdict == "drop":
                 self.stats[f"dropped: {value}"] += 1
                 continue
+            matched = "descriptions matched to a known entity"
+            if verdict == "name" and ne.get("type") == "person" and is_description(value):
+                found, hits = self.kin_match(value, lambda n: here(n) or self.match_known(n, "person"))
+                if found == "one":
+                    verdict, value, matched = "known", hits[0], "kin descriptions matched to a known relative"
+                elif found == "several":
+                    self.stats["dropped: kin description fits several"] += 1
+                    continue
+                elif found == "no owner":
+                    self.stats["dropped: unnamed relative of no one known"] += 1
+                    continue
+                elif not has_part(value) and not has_part(proposed):
+                    self.stats["dropped: unnamed relative with no part"] += 1
+                    continue
             name = value if verdict == "name" else proposed
             at = seq(ne.get("p"))
             if not name or len(name) > 120 or at is None:
@@ -1234,7 +1421,7 @@ class Generator:
                 if not eid:
                     self.stats["dropped: no anchor"] += 1
                     continue
-                self.stats["descriptions matched to a known entity"] += 1
+                self.stats[matched] += 1
             else:
                 eid = self.resolve_name(name, ne.get("type"), chunk, at)
                 if eid and eid not in self.entities:
@@ -1277,6 +1464,8 @@ class Generator:
             ref = self._redirect.get(ref, ref)
             eid = ref if (ref in self.entities or ref in self.prior) else (
                 here(ref) or self.match_known(ref))
+            if eid is None and (kin := self.kin_match(ref, lambda n: here(n) or self.match_known(n, "person")))[0] == "one":
+                eid = kin[1][0]   # "Gabriel's father" in an event, when the companion knows who that is
             if eid and eid not in self.entities:
                 return self._localize(eid, at) if at is not None else None
             return eid
@@ -1289,6 +1478,9 @@ class Generator:
         for nn in raw.get("names", []):
             at = seq(nn.get("p"))
             eid = resolve(nn.get("id", ""), at)
+            if nn.get("name") and bare_kin_word(clean_name(nn["name"])):
+                self.stats[KIN_NOT_NAME] += 1   # "Mama" is a different person to each character
+                continue
             if nn.get("name"):
                 # The same rules as for a new entity's name; and a possessive ("Mina Harker's Journal") is
                 # never another name for someone who is already in the companion.
@@ -1460,6 +1652,7 @@ class Generator:
         for c in cands:
             self._commit(c)
         self._commit_summary(chunk)
+        self._fold_kin_descriptions()
         self.done.append(chunk.key)
 
         delta = {k: v - before.get(k, 0) for k, v in self.stats.items() if v != before.get(k, 0)}
@@ -1734,6 +1927,9 @@ class Generator:
     def _add_name(self, eid: str, name: str, kind: str, seq: int) -> None:
         e = self.entities[eid]
         if any(n["value"].casefold() == name.casefold() for n in e["names"]):
+            return
+        if e["type"] == "person" and bare_kin_word(name):
+            self.stats[KIN_NOT_NAME] += 1
             return
         mine = self._core(name)
         if any(o != eid and any(self._core(n) == mine and merge.compatible(name, n) for n in self._names(o))

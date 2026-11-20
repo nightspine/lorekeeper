@@ -395,11 +395,14 @@ def cmd_profiles(args) -> int:
     if args.tidy:
         t = profiles.tidy(docs)
         changed |= t["changed"]
-        print(f"tidy: removed {len(t['removed'])} description entries, folded {len(t['merged'])} into their entity")
+        print(f"tidy: removed {len(t['removed'])} description and kin-word entries, folded {len(t['merged'])} into their entity"
+              f" and {len(t['kin_folded'])} kin descriptions into the named relative")
         for name in t["removed"]:
             print(f"  - {name}")
         for drop, keep in t["merged"]:
             print(f"  {drop} → {keep}")
+        for drop, keep in t["kin_folded"]:
+            print(f"  {drop} → {keep} (kin description)")
     if args.redo:
         print(f"redo: removed {profiles.clear(docs)} existing profiles")
         changed |= set(range(len(docs)))
@@ -690,7 +693,7 @@ def main(argv: list[str] | None = None) -> int:
 
     s = sub.add_parser("profiles", help="tidy entities and backfill profiles in existing indexes")
     s.add_argument("index", nargs="+", help="index files, in series reading order")
-    s.add_argument("--tidy", action="store_true", help="also remove description entries and fold wrapped names")
+    s.add_argument("--tidy", action="store_true", help="also remove description entries and bare kin or role words (Mama, Father), fold wrapped names and kin descriptions")
     s.add_argument("--no-profiles", action="store_true", help="only tidy")
     s.add_argument("--redo", action="store_true", help="rewrite existing profiles (with the current prompt)")
     _add_provider_args(s, "claude")
