@@ -935,14 +935,23 @@ export function mountReader(root) {
   /** Visible chapter recaps, with the parts of one long chapter joined: [{ key, title, book, parts, ids }]. */
   function chapterGroups() {
     const out = [];
+    // The map chapter a recap of the book being read ends in (parts of one long chapter share it; two chapters with
+    // the same title do not). Unknown for earlier books and without a position for its anchor.
+    const docRecaps = new Map((s.doc.recaps || []).map((r) => [r.id, r]));
+    const chapterOf = (c) => {
+      if (s.series && c.book && c.book !== s.book) return null;
+      const at = s.map.anchorPos(docRecaps.get(c.id)?.from);
+      return Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+    };
     for (const c of s.view.chapters || []) {
       const last = out[out.length - 1];
-      if (last && last.title === c.title && last.book === c.book) { last.parts.push(c.text); last.ids.push(c.id); }
-      else out.push({ key: c.id, title: c.title || "Untitled section", book: c.book, parts: [c.text], ids: [c.id] });
+      const ch = chapterOf(c);
+      const same = last && last.title === c.title && last.book === c.book && (!ch || !last.ch || ch.start === last.ch.start);
+      if (same) { last.parts.push(c.text); last.ids.push(c.id); last.ch ||= ch; }
+      else out.push({ key: c.id, title: c.title || "Untitled section", book: c.book, parts: [c.text], ids: [c.id], ch });
     }
     return out;
   }
-
 
   /** Entities named in a piece of text: whole names and aliases, or a surname no other entity shares. */
   function mentions(text) {
@@ -1028,24 +1037,32 @@ export function mountReader(root) {
   /** Chapter rows of the book being read, oldest first, the same on both tabs: every revealed recap, the chapter the
    *  position is in (title only until its recap is revealed) and any chapter an event happens in. */
   function currentRows(groups) {
-    const rows = [], byTitle = new Map();
-    const add = (title, group) => {
-      let r = byTitle.get(title);
-      if (!r) { r = { title, group: null, events: [] }; byTitle.set(title, r); rows.push(r); }
-      if (group) r.group = r.group ? { ...r.group, parts: [...r.group.parts, ...group.parts], ids: [...r.group.ids, ...group.ids] } : group;
-      return r;
+    const rows = [], byKey = new Map();
+    const create = (key, title, ch) => { const r = { key, title, ch, group: null, events: [] }; byKey.set(key, r); rows.push(r); return r; };
+    // A row is a chapter, never a title: two chapters called "Interlude" stay two rows.
+    const forChapter = (ch) => {
+      const r = byKey.get(`c${ch.start}`);
+      if (r) return r;
+      const loose = rows.find((x) => !x.ch && x.title === ch.title);   // a recap whose anchor has no position here
+      if (loose) { byKey.set(`c${ch.start}`, loose); loose.ch = ch; return loose; }
+      return create(`c${ch.start}`, ch.title, ch);
     };
-    for (const g of groups) add(g.title, g);
+    for (const g of groups) {
+      const r = g.ch ? forChapter(g.ch) : create(`g:${g.key}`, g.title, null);
+      if (!r.group) r.title = g.title;   // the recap's own title, as the Chapters tab always showed
+      r.group = r.group ? { ...r.group, parts: [...r.group.parts, ...g.parts], ids: [...r.group.ids, ...g.ids] } : g;
+    }
     const here = s.map.chapterAt(s.p);
-    if (here) add(here.title, null).now = true;
+    if (here) forChapter(here).now = true;
     for (const ev of s.view.events) {
       if (s.series && ev.book && ev.book !== s.book) continue;
       const ch = eventChapter(ev);
-      if (ch) add(ch.title, null).events.push(ev);
+      if (ch) forChapter(ch).events.push(ev);
       else (rows.loose ||= []).push(ev);
     }
-    const idx = (r) => { const i = (s.map.chapters || []).findIndex((c) => c.title === r.title); return i < 0 ? Infinity : i; };
-    if (rows.every((r) => idx(r) !== Infinity)) rows.sort((a, b) => idx(a) - idx(b));
+    const chapters = s.map.chapters || [];
+    const idx = (r) => (r.ch ? chapters.findIndex((c) => c.start === r.ch.start) : -1);
+    if (rows.every((r) => idx(r) >= 0)) rows.sort((a, b) => idx(a) - idx(b));
     return rows;
   }
 
@@ -1235,10 +1252,11 @@ export function mountReader(root) {
       if (rowsB.length) return bookBlock(b, ordered(rowItems(rowsB)), { current: false, newest: s.newestFirst, repaint });
       // That index has no chapter recaps: its events as one block with scene runs.
       const evs = inRow(all.filter((ev) => ev.book === b));
+      if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
       return bookBlock(b, [], { current: false, newest: s.newestFirst, noun: "event", repaint,
         raw: { total: evs.length, build: (full) => (evs.length ? h("div.ch-body.tl-flat", rowBody(full || evs.length <= NEAR ? evs : s.newestFirst ? evs.slice(0, NEAR) : evs.slice(-NEAR))) : null) } });
     });
-    const blocks = s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock];
+    const blocks = (s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock]).filter(Boolean);
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
       blocks.some(Boolean) ? h("div.book-stack", blocks.filter(Boolean))
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
