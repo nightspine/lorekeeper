@@ -322,3 +322,12 @@ def test_a_valid_first_reply_survives_a_failed_rewrite_for_the_missing_told_list
     st = arcs.arcs([(d, None)], m, log=lambda *_: None)
     f = arc_facets(d)[0]
     assert f["text"] == GOOD and f["evidence"] == ["a1", "a2", "a5", "a8", "a9"]
+
+
+def test_drop_named_removes_only_the_named_arcs_and_their_references():
+    d = _doc(events=EVENTS, recaps=[6, 11])
+    arcs.arcs([(d, None)], Fake([GOOD, "Mira follows Oren to the keep."]), log=lambda *_: None)
+    a = arc_facets(d)
+    assert arcs.drop_named(d, [f"bk: {a[0]['id']} is revealed later"]) == 1
+    left = arc_facets(d)
+    assert [f["id"] for f in left] == [a[1]["id"]] and "replaces" not in left[0]

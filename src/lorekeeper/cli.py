@@ -533,10 +533,16 @@ def cmd_arcs(args) -> int:
     print(f"arcs: {stats.get('arcs', 0)} written, {stats.get('dropped', 0)} dropped"
           + (f" ({drops})" if drops else "") + f"; {model.usage.calls} calls, cost {cost}")
     for i, d in enumerate(docs):
-        errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
-        if errs:
-            print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
-            return 1
+        # One bad arc must not sink the book: drop the arcs the new errors name, and keep the rest.
+        for _ in range(5):
+            errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
+            if not errs:
+                break
+            gone = arcs.drop_named(d, [str(e) for e in errs])
+            if not gone:
+                print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
+                return 1
+            print(f"note: {paths[i].name}: dropped {gone} arc(s) the validator refused", file=sys.stderr)
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)

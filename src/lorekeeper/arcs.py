@@ -42,9 +42,10 @@ Describe things as a careful reader understands them at this point: no hindsight
 
 ARC = """These are the events of {book}, in order, that involve {name} ({kind}), up to the end of {where}.
 {also}{profile}{ties}{previous}
-Write what has happened to {name} in this book, as a reader who has read this far knows it: 1 to 3 sentences, at most
-60 words, plain and general. Keep the main events that happened to {name}: what {name} did, what was done to {name}, and
-where things stand, in the order they happened.
+Write what has happened to {name} in this book, as a reader who has read this far knows it. Limits: at most 3
+sentences and about 60 words (never more than 400 characters). Write 2 sentences unless the events gave {name} a lot to
+do. Plain and general: keep the main events that happened to {name} (what {name} did, what was done to {name}, where
+things stand), in the order they happened.
 
 Rules:
 - Use ONLY the events below. The description is context for who {name} is; do not repeat it or events of earlier books.
@@ -91,6 +92,20 @@ def clear(d: dict) -> int:
         n += len(e.get("facets", [])) - len(keep)
         e["facets"] = keep
     return n
+
+
+def drop_named(d: dict, messages: list[str]) -> int:
+    """Remove the arcs whose ids the validator messages name (and any reference to them in `replaces`); returns how many."""
+    arcs_ = {f["id"] for e in d["entities"] for f in e.get("facets", []) if f.get("kind") == "arc"}
+    bad = {i for i in arcs_ if any(i in m for m in messages)}
+    for e in d["entities"]:
+        e["facets"] = [f for f in e.get("facets", []) if f["id"] not in bad]
+        for f in e["facets"]:
+            if f.get("replaces"):
+                f["replaces"] = [r for r in f["replaces"] if r not in bad]
+                if not f["replaces"]:
+                    del f["replaces"]
+    return len(bad)
 
 
 def marks_for(d: dict, book: epub.Book | None = None) -> list[int]:
