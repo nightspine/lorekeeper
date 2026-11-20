@@ -20,7 +20,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .. import bookkind, epub, generate, llm, portraits, text, validate
+from .. import arcs as book_arcs, bookkind, epub, generate, llm, portraits, text, validate
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
@@ -370,6 +370,40 @@ class JobManager:
         self._emit(job, {"type": "log", "line": f"descriptions: {stats.get('portraits', 0)} written ({cost})"})
         return {**stats, "cost_usd": round(model.usage.cost_usd, 4)}
 
+    def _arcs(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
+        """Write each person's short arc for this book from the finished index (arcs.py). Needs a cloud
+        model key; a failure here keeps the index as the run wrote it."""
+        model = self.cheap_model(job.config.get("provider"))
+        if model is None:
+            self._emit(job, {"type": "log", "line": "book arcs: skipped (add a cloud model key in Settings to write them)"})
+            return {"skipped": "no cloud key"}
+        self._emit(job, {"type": "phase", "phase": "arcs"})
+        model.cancel = flag.is_set
+        try:
+            out = Path(job.output)
+            d = json.loads(out.read_text())
+            book_arcs.clear(d)
+
+            def progress(done: int, total: int) -> None:
+                job.progress = {**job.progress, "arcs": [done, total], "last": "arcs"}
+                self._emit(job, {"type": "arcs", "done": done, "total": total})
+            stats = book_arcs.arcs([(d, book)], model, log=lambda m: None, prior=prior, progress=progress)
+            errors = [e for e in validate.check_index(d) if e.level == "error"]
+            if errors:
+                raise ValueError(f"result would be invalid: {errors[0]}")
+            tmp = out.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
+            tmp.replace(out)
+        except llm.Cancelled:
+            self._emit(job, {"type": "log", "line": "book arcs: stopped; the index keeps its earlier arcs"})
+            return {"skipped": "stopped"}
+        except Exception as e:  # noqa: BLE001 - the index itself is done; don't fail the run over this
+            self._emit(job, {"type": "log", "line": f"book arcs: failed ({type(e).__name__}: {e}); kept the earlier ones"})
+            return {"failed": str(e)}
+        cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "cost unknown"
+        self._emit(job, {"type": "log", "line": f"book arcs: {stats.get('arcs', 0)} written ({cost})"})
+        return {**stats, "cost_usd": round(model.usage.cost_usd, 4)}
+
     def _reapply_edits(self, job: Job) -> dict:
         """Put the person's recorded edits for this book back onto the fresh index (editor.reapply)."""
         try:
@@ -433,6 +467,8 @@ class JobManager:
                                   on_event=on_event, should_stop=flag.is_set)
             if not report.get("stopped") and c.get("portraits", True):
                 report["portraits"] = self._portraits(job, book, opts.prior, flag)
+            if not report.get("stopped") and c.get("arcs", True):
+                report["arcs"] = self._arcs(job, book, opts.prior, flag)
             if not report.get("stopped") and self.after_run is not None:
                 report["edits"] = self._reapply_edits(job)
             job.report = report
