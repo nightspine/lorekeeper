@@ -546,3 +546,58 @@ def test_apostrophe_names_are_not_cut_in_the_outside_name_check():
     fake = Fake(reply("Keylan, called the Red Wrath or De'Faene, leads a clan.", ["e:E1"]))
     a = ask.answer(v, "Who is Keylan?", fake)
     assert a.found and a.note is None and len(fake.calls) == 1
+
+
+def horse_view():
+    ents = [ent("G", "Gabriel", profile=fac("PG", "A silver hunter.")),
+            ent("H", "Jezebel", type_="creature", profile=fac("PH", "A grey mare."), facets=[fac("FH", "A horse.")]),
+            ent("T", "Tara", facets=[fac("FT", "A baker.")]), ent("Z", "Faraway", profile=fac("PZ", "Unrelated."))]
+    rels = [{"id": "R1", "src": "G", "dst": "H", "label": "rides", "book": "b1"}]
+    old = [{"id": "R2", "src": "T", "dst": "G", "label": "once taught", "book": "b1"}]
+    v = mkview(ents, relations=rels, events=[ev("V1", "Gabriel and Tara talk.", ["G", "T"])])
+    v["relationHistory"] = old
+    return v
+
+
+def test_neighbourhood_is_ties_current_or_former_and_shared_events():
+    n = ask.neighbours(horse_view(), ["G"])
+    assert n == {"H": 1, "T": 2} and "Z" not in n
+
+
+def test_who_question_with_a_named_entry_picks_from_the_neighbourhood():
+    fake = Fake({"ids": ["H", "Z", "G"]}, reply("Gabriel rides Jezebel, a grey mare.", ["e:H"]))
+    a = ask.answer(horse_view(), "What is the name of the horse Gabriel rides?", fake, roster_chars=10_000)
+    assert len(fake.calls) == 2 and fake.calls[0][2] == ask.PICK_SCHEMA
+    roster_text = fake.calls[0][1]
+    assert "H | Jezebel (creature): A grey mare." in roster_text and "T | Tara" in roster_text
+    assert "Faraway" not in roster_text and "G | Gabriel" not in roster_text       # the neighbourhood only
+    prompt = fake.calls[1][1]
+    assert "[e:H]" in prompt and "[e:Z]" not in prompt                              # picks outside it are ignored
+    assert prompt.index("[e:G]") < prompt.index("[e:H]")                            # after the named entry
+    assert a.found and a.cites[0]["id"] == "H"
+
+
+@pytest.mark.parametrize("q,hist,rc", [("What did Gabriel do?", [], 10_000),                         # not a who question
+                                       ("Who is Gabriel?", [], 0),                                  # off
+                                       ("Who is Faraway?", [], 10_000)])                             # empty neighbourhood
+def test_no_neighbourhood_pick_when_not_asked_off_or_empty(q, hist, rc):
+    fake = Fake(reply("Something.", ["e:G", "e:Z"]))
+    ask.answer(horse_view(), q, fake, hist, roster_chars=rc)
+    assert len(fake.calls) == 1 and fake.calls[0][2] == ask.SCHEMA
+
+
+def test_carried_entry_with_a_who_question_also_picks():
+    hist = [ask.Turn("Who is Gabriel?", "x", ["e:G"])]
+    fake = Fake({"ids": ["H"]}, reply("He rides Jezebel.", ["e:H"]))
+    ask.answer(horse_view(), "Which one does he ride?", fake, hist, roster_chars=10_000)
+    assert len(fake.calls) == 2 and "[e:H]" in fake.calls[1][1]
+
+
+def test_neighbourhood_roster_is_capped_most_shared_first():
+    ents = [ent("G", "Hero")] + [ent(f"N{i}", f"Friend{i}", profile=fac(f"P{i}", "p" * 200)) for i in range(50)]
+    rels = [{"id": f"R{i}", "src": "G", "dst": f"N{i}", "label": "knows", "book": "b1"} for i in range(50)]
+    evs = [ev(f"V{j}", "Hero meets Friend49.", ["G", "N49"]) for j in range(3)]
+    fake = Fake({"ids": []}, reply("x", ["e:G"]))
+    ask.answer(mkview(ents, relations=rels, events=evs), "Who does Hero know?", fake, roster_chars=700)
+    text_ = fake.calls[0][1]
+    assert "N49 |" in text_ and len(text_.split("Question:")[0]) < 800 and "N45 |" not in text_
