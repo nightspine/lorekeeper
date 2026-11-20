@@ -526,6 +526,8 @@ def cmd_arcs(args) -> int:
     model = _make_model(args, args.model or (llm.PROVIDERS[args.provider]["cheap"] if args.provider in llm.PROVIDERS else None))
     prior = [json.loads(Path(x).read_text()) for x in args.prior or []]
     stats = arcs.arcs(list(zip(docs, books)), model, log=lambda m: print(m, file=sys.stderr), prior=prior)
+    if any(b is None for b in books):
+        print("note: no EPUB given for every book, so the 8-word copy check was skipped (pass --epub)", file=sys.stderr)
     drops = ", ".join(f"{v} {k}" for k, v in sorted(stats.items()) if k.startswith(("dropped:", "rewritten:")))
     cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "price unknown"
     print(f"arcs: {stats.get('arcs', 0)} written, {stats.get('dropped', 0)} dropped"

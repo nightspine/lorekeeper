@@ -220,7 +220,8 @@ An **arc** is a short account of the entity's part in this book's story so far:
 one to three plain sentences (at most 400 characters) that keep the main
 events that happen to it or that it causes. It tells only events of the book
 whose index holds it, never those of an earlier or later book, and only events
-visible at its `from`; `from` SHOULD be the anchor of the latest event it tells.
+visible at its `from`; `from` MUST be at or after the latest event it tells (a generator
+sets it to the anchor of the latest event the writer was given).
 Its `evidence` cites the blocks of the events it tells (their `evidence`
 anchors). The content rules of §6 apply as to any facet. Each book has its own
 arcs: a new arc SHOULD list the same book's previous current arc of that
