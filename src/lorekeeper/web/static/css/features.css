@@ -201,6 +201,18 @@
 .d-kin { margin: var(--space-2) 0 0; }
 .d-kin .linkish { font-weight: 600; }
 @media (max-width: 640px) {
+  .view-tabs.five .count { display: none; }
+  .ask-composer { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  .ask-field { min-height: 44px; }
+  .ask-send { min-height: 44px; }
+  .ask-example, .ask-cancel { min-height: 44px; }
+  .ask-cites { flex-direction: column; gap: 0; }
+  .ask-from { flex-direction: column; gap: 0; }
+  .ask-from-lbl { line-height: 44px; }
+  .ask-cites .ask-cite { display: block; max-width: 100%; line-height: 44px; text-align: left; }
+  .ask-err .linkish, .d-ask .linkish { display: inline-flex; align-items: center; min-height: 44px; }
+}
+@media (max-width: 640px) {
   .g-toolbar .filters { display: flex; align-items: center; gap: var(--space-2); flex: 1 1 0; min-width: 0; }
   .g-toolbar .filters .search.g-search { flex: 1 1 0; min-width: 0; }
   .g-trees-chip { flex: none; padding-inline: 4px; min-height: 44px; }

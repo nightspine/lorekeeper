@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask about a book - Lorekeeper docs</title>
+<meta name="description" content="Ask a question about the book you are reading and get an answer written from the index, up to where you are.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="ask.html" aria-current="page">Ask about a book</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Ask about a book</h1>
+<p class="lede">Type a question in the Reader's Ask tab, such as "What happened to Aaron in the second book?". You get a short answer written from the index, up to where you are. Most answers list the sources they were written from.</p>
+
+<p>It is for the moment when you put a series down for a month and come back unsure who someone is. The answer comes from the index, not from the book, so it is quick and cheap. Only index items revealed at your position are sent to the model.</p>
+
+<h2 id="use">Use it</h2>
+<p>Open a book in the Reader and choose <strong>Ask</strong>. The tab is there when a model is set up for it (see <a href="#model">Which model answers</a>). Type a question and press Enter. Shift+Enter starts a new line. A question can be up to 500 characters.</p>
+<ul>
+<li>Name people as the book does. "What happened to Kiara in the second book?" works, and so does "Quincey Morris" when the index lists him as "Quincey P. Morris".</li>
+<li>In a series, say which book you mean: "the second book", "book 2" or its title.</li>
+<li>Follow up. "And what about his sister?" uses the entries the last answer was about.</li>
+<li>Under an entry's name, <strong>Ask about</strong> types a first question for you without sending it. The command palette has <strong>Ask about this book</strong>.</li>
+<li>Ask about a chapter by number, roman numeral or name, or ask about the last or previous chapter. The chapter is looked for in the book your question names, else the book you are reading. If that book has no chapter recaps in your view, the answer says so. A chapter you have not reached has no recap in your view.</li>
+</ul>
+<p>Most answers list what they were written from under <strong>From</strong>: entries, details, connections, events or chapter recaps. Click one to open it in the Reader. A source the index no longer shows is plain text, and so is a "story so far" source once you have read on and the recap has been replaced. An answer can come without sources, and an answer that says the index does not say has none.</p>
+
+<h2 id="rules">What the answer can and cannot say</h2>
+<ul>
+<li><strong>Only what you have read is sent.</strong> The question is answered from the view at your position, the same view the other tabs show. In a series, the books you have marked finished count. Nothing later is sent to the model.</li>
+<li><strong>Only what the index says is the aim.</strong> If the index has nothing, the model is asked to say so in its own words. When the app itself refuses, the answer is "The index doesn't say, up to where you are." The model is told not to use what it remembers about the book.</li>
+<li><strong>A check on names.</strong> Before an answer is shown, the app checks the capitalised words in it against the index text it sent. A name that is not there is treated as the model's memory: the model gets one retry, and then the answer is replaced by the fixed sentence above. Your own question's words do not count as evidence. A few ordinary words are excused, such as "Chapter", the days and the months, and ordinary words that open a sentence ("However"). In a trial of 35 live questions on Claude Haiku, none was refused by this check.</li>
+<li><strong>Names you have not met.</strong> Words in your question that the index does not know are kept out of the answer. If your question names only a person the index does not show, and nothing carries over from your previous question, the app says so without calling a model. If you name one person you know and one you do not, the answer is about the one you know and ends with a sentence such as "The index has nothing on Moriarty up to where you are."</li>
+<li><strong>Known gaps.</strong> The checks look at words, not at facts. A model that knows the book could still state something from memory using only names you have met, and nothing catches that. The name check also errs the other way sometimes: a sentence opening with a word that is also a name, such as "King" or "Hunter", can be refused although it is innocent.</li>
+<li><strong>Only as good as the index.</strong> A thin or wrong entry gives a thin or wrong answer. For a long series the answer may use only part of an entry's history: the connections and events sent are limited, with the earliest and latest events favoured, and the notes say when something was left out.</li>
+</ul>
+<p>Earlier answers are never sent back to the model. A follow-up carries your earlier questions, with words the index does not know blanked out, and the names of the entries those answers were about, checked against the view you have now. A turn that was refused for an unknown name or for outside knowledge is left out of the history, though it stays on screen.</p>
+
+<h3 id="clearing">When the conversation clears</h3>
+<p>The conversation and anything typed in the field, sent or not, are cleared, with the line "Cleared, because your position moved back.", when:</p>
+<ul>
+<li>the position moves back at all, even if nothing visible changed;</li>
+<li>a Finished box is unticked, or you go back to an earlier book, change the reading order or open another index;</li>
+<li>an edit or merge removes or renames something that was visible when an answer was written.</li>
+</ul>
+<p>Reading on keeps it, including reading on into the next book of a series. The "story so far" recap is replaced as you read and does not clear anything. An answer that arrives after you moved back is discarded.</p>
+
+<h2 id="sent">What is sent where</h2>
+<p>The model gets your question, your last few questions, and a selection of index text: the entries the question is about, their profiles, details, connections and events, chapter recaps, and the story so far. It never gets the book's text or the author. When your view spans more than one book, the books' titles are included so that "the second book" can be matched. The amount is capped, with a lower cap for Ollama.</p>
+<p>With a cloud model, that text goes to the first configured cloud provider (a key saved in Settings, a key from the environment, or a custom server), Claude first. One line under the question field names the model answering now. It is not kept per answer. With Ollama, nothing leaves your computer.</p>
+
+<h3 id="picks">When the model first chooses entries</h3>
+<p>With a cloud model, some questions make one extra small call before the answer. It sends a list of entries, one line each with the name, the type and the start of its description, and gets back a few ids. It is a list of what the index shows at your position, never the book.</p>
+<ul>
+<li><strong>A question that names nobody</strong>, such as "Which vampire refuses to bow to anybody?". The list is the entries in your view, shortened when the view is large.</li>
+<li><strong>A "who", "whom", "whose", "which", "where", "called" or "name" question about someone named</strong> (or carried over from your last question) that has other words that matter, such as "Which horse does Gabriel ride?". The list is only the entries tied to that person or sharing an event with them, so it is not made for a person with neither. "Who is Phoebe?" sends no such list.</li>
+</ul>
+<p>These lists are not sent with Ollama. Ollama still makes a small pick over names only when a question names nobody and none of its words match an entry.</p>
+
+<h2 id="model">Which model answers</h2>
+<p>The same choice of model the duplicate check uses: the cheap model of the first configured cloud provider (Claude first), else Ollama with the default model. The Ask tab is hidden only when no model is set up. While the local model is busy with a build, the tab stays and says so. No setting changed for this feature.</p>
+<p>The server limits each question to 120 seconds on Ollama and on the OpenAI-compatible providers. Claude's client keeps its own default limit, which is longer.</p>
+
+<h2 id="cost">What it costs</h2>
+<p>These are measurements on one large series, about 700 entries and 385 events, not a general figure. A small or early index sends far less. There, a question that names someone sent roughly 9,000 to 19,000 tokens, which on Claude Haiku is 0.1 to 0.2 cents. A question that names nobody, where the model first picks from the list, cost about 0.6 cents. A local model costs nothing but time. A question may be retried once if the first answer breaks a rule. The server answers a couple of questions at a time and says "busy" to more.</p>
+
+<h2 id="saved">What is saved</h2>
+<p>Nothing. The conversation lives in the page and is gone when you reload or leave. The server keeps no questions, answers or logs of them.</p>
+
+<h2 id="api">For developers</h2>
+<p>The Ask routes belong to the web app, not to the <a href="protocol.html">/v0 protocol</a>, and they need a session when sign-in is on. <code>GET /api/ask</code> says whether a model is available. <code>POST /api/library/{key}/ask</code> takes <code>question</code>, the reader's <code>anchor</code> and optional <code>finished</code>, <code>order</code>, <code>book</code> and <code>history</code>, and returns <code>answer</code>, <code>found</code> (false when the index does not say), <code>cites</code> (the entries, details, connections, events and recaps it used, each with an id and a label), <code>note</code> (why an answer was refused or changed, or null), <code>provider</code>, <code>model</code>, <code>local</code> (true for Ollama) and <code>usage</code> (calls, tokens and cost, when the provider reports them). <code>book</code> is the series book the reader is showing; if the index is a different book of its series the route answers 422 <code>bad-position</code>. <code>history</code> is the last six turns as <code>question</code>, <code>answer</code> and <code>cites</code>; the server uses the questions and the cite ids, not the answers. The route builds the view with the gating rule, so nothing past the anchor reaches the model. Errors from the route carry a <code>code</code>: <code>not-found</code>, <code>bad-question</code>, <code>bad-position</code>, <code>no-model</code>, <code>ollama-busy</code>, <code>busy</code> or <code>model-failed</code>. Sign-in (401), a missing <code>X-Lorekeeper</code> header (403) and malformed JSON are answered as the rest of <code>/api</code> does. A reader app that wants the same feature can fetch the gated view over <code>/v0</code> and ask its own model.</p>
+
+</main>
+</div>
+</body>
+</html>

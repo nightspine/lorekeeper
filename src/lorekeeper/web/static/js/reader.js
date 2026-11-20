@@ -10,6 +10,7 @@ import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
+import { createAsk } from "./ask.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -81,7 +82,7 @@ export function mountReader(root) {
     // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
     // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
     p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : (readingList().find((e) => e.key === params.get("i"))?.p ?? 0),
-    tab: "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
+    tab: !preview && params.get("tab") === "ask" ? "ask" : "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
     earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
@@ -94,6 +95,16 @@ export function mountReader(root) {
   const wrap = h("div.reader");
   root.append(wrap);
   let disposed = false;
+
+  // Ask: questions answered from the index's notes at the position (ask.js). The thread lives in that closure.
+  const ask = createAsk({
+    key: () => s.key,
+    position: askPosition,
+    view: () => s.view,
+    examples: askExamples, canOpen: canOpenCite, open: openCite,
+    onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
+  });
+  if (!preview) ask.refreshStatus();
 
   // The first load: a spinner after a moment, and a page that says what failed with a way to try again.
   const openingText = preview ? "Downloading the index and checking it against your copy…" : "Opening the book…";
@@ -183,6 +194,7 @@ export function mountReader(root) {
     if (stale()) return false;
     watchDupes(key);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
+    ask.check();   // another index: nothing asked about the last one stays
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
     if (!preview) await syncPosition(key);
@@ -403,10 +415,12 @@ export function mountReader(root) {
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
+      if (s.tab === "ask") q.tab = "ask";
       setParams(q);
       // The rail's "Reading" list: the title and the position the person set, nothing from the index.
       const back = { ...q };
       delete back.edit;   // reopening from the rail reads; it does not reopen edit mode
+      delete back.tab;
       rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p) ? tidyTitle(s.map.chapterAt(s.p).title) : null,
         hash: `#/reader?${new URLSearchParams(back)}` });
     }, 250);
@@ -757,6 +771,7 @@ export function mountReader(root) {
       }, 400);
     }
     s.prevIds = ids;
+    ask.check();   // moved back, a book unticked or switched: the thread goes
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -777,22 +792,32 @@ export function mountReader(root) {
 
   function paintTabs() {
     const v = s.view;
-    wrap.classList.toggle("wide", s.tab === "links");   // the map alone gets the full width
+    wrap.classList.toggle("wide", s.tab === "links");
+    wrap.classList.toggle("asking-tab", s.tab === "ask");   // the map alone gets the full width
     // The short names are for a phone, where all four tabs share one row without scrolling sideways.
     const tabs = [["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
       ["timeline", "Timeline", v.events.length, "Timeline"], ["links", "Connections", v.relations.length, "Map"]];
+    // Ask needs a library key (not a community preview) and a model; opened by address it explains instead of hiding.
+    const askInfo = ask.available;
+    if (!preview && (s.tab === "ask" || (askInfo && (askInfo.available || askInfo.reason === "ollama-busy")))) tabs.push(["ask", "Ask", null, "Ask"]);
     const keys = tabs.map((x) => x[0]);
-    const select = (k, focus) => { s.tab = k; paintTabs(); if (focus) document.getElementById(`tab-${k}`)?.focus(); };
+    el.tabs.classList.toggle("five", tabs.length > 4);   // a phone has no room for the counts beside five names
+    const select = (k, focus) => {
+      const was = s.tab;
+      s.tab = k; paintTabs();
+      if (k === "ask" || was === "ask") saveUrl();
+      if (focus) document.getElementById(`tab-${k}`)?.focus();
+    };
     clear(el.tabs, tabs.map(([k, label, n, short]) => h("button", { type: "button", role: "tab", id: `tab-${k}`, "aria-controls": "panel-view",
       "aria-selected": String(s.tab === k), tabindex: s.tab === k ? "0" : "-1",
       on: { click: () => select(k, false), keydown: (ev) => {
         const i = keys.indexOf(k);
         const to = { ArrowRight: keys[(i + 1) % keys.length], ArrowLeft: keys[(i + keys.length - 1) % keys.length], Home: keys[0], End: keys[keys.length - 1] }[ev.key];
         if (to) { ev.preventDefault(); select(to, true); }
-      } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), h("span.count", String(n)))));
+      } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), n == null ? null : h("span.count", String(n)))));
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
     if (s.tab !== "links") { clear(el.mapSide); el.split.classList.remove("has-side"); }
-    ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks })[s.tab]();
+    ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks, ask: () => ask.mount(el.panel) })[s.tab]();
     el.panel.prepend(h("h2.sr-only", tabs.find((x) => x[0] === s.tab)[1]));
   }
 
@@ -1090,7 +1115,7 @@ export function mountReader(root) {
   }
   /** One timeline row: turning points stand out, small moments stay quiet. */
   function eventRow(ev, { chips = true, book = true } = {}) {
-    const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`);
+    const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`, { dataset: { ev: ev.id }, tabindex: "-1" });
     clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
       chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : book ? bookLabel(ev.book) : null,
       s.edit ? editor.eventRowActions(ev, li) : null);
@@ -1568,8 +1593,11 @@ export function mountReader(root) {
     const jumpNav = !s.edit && jumps.length > 1 ? h("nav.d-jumps", { "aria-label": "Sections" }, jumps.map(([k, label, n]) =>
       h("button.linkish", { type: "button", on: { click: () => body.querySelector(`[data-jump="${k}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) } },
         label, h("span.n", String(n))))) : null;
-    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin)
-      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav);
+    // A quiet way into the Ask tab with this entry's question typed, not sent.
+    const askLink = !preview && ask.available?.available ? h("p.d-ask", h("button.linkish", { type: "button",
+      on: { click: () => showAsk({ text: `What do I know about ${e.name} so far?` }) } }, `Ask about ${e.name}`)) : null;
+    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin, askLink)
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav, askLink);
     const content = [h("header", title, closeBtn), body];
     s.drawerShows = entryIds(e);
 
@@ -1611,13 +1639,89 @@ export function mountReader(root) {
     if (!refresh) closeBtn.focus();
   }
 
+  /** Where the view on screen is computed: what the request sends, and what the thread is compared against. */
+  function askPosition() {
+    const anchor = s.map.frontier(s.p);
+    const order = s.series ? s.series.orders[s.order] : null;
+    const finished = s.series ? finishedSet() : null;
+    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
+      rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
+  }
+  // ---- Ask: examples, sources, entry points -----------------------------------------------------
+
+  /** Three questions built only from the gated view: the most known person, a second one, the last chapter read. */
+  function askExamples() {
+    if (!s.view) return [];
+    const people = castEntities().filter((e) => e.type === "person").sort((a, b) => b.facets.length - a.facets.length);
+    const out = [];
+    if (people[0]) out.push(`Who is ${people[0].name}?`);
+    const second = people[1] || people[0];
+    if (second) out.push(`What has happened to ${second.name} so far?`);
+    const last = chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book).pop();
+    if (last) {
+      const t = tidyTitle(last.title);
+      out.push(`What happened in ${/^[IVXLCDM\d]+\.?$/i.test(t) ? `chapter ${t.replace(/\.$/, "")}` : t}?`);
+    }
+    return out;
+  }
+  const entryOfCite = (c) => {
+    if (c.entity && nameOf(c.entity)) return c.entity;
+    if (c.kind === "relation") { const r = s.view.relations.find((x) => x.id === c.id); return r && nameOf(r.src) ? r.src : null; }
+    if (c.kind === "facet") return s.view.entities.find((e) => e.profile?.id === c.id || e.facets.some((f) => f.id === c.id) || e.history.some((f) => f.id === c.id))?.id ?? null;
+    if (c.kind === "entity") return nameOf(c.id) ? c.id : null;
+    return null;
+  };
+  /** A source is a link only while the item is in the view on screen. */
+  function canOpenCite(c) {
+    if (disposed || !s.view) return false;
+    if (c.kind === "event") return s.view.events.some((ev) => ev.id === c.id);
+    if (c.kind === "chapter") return chapterGroups().some((g) => g.ids.includes(c.id));
+    if (c.kind === "recap") return s.view.recap?.id === c.id;   // the recap is replaced as the story goes on: the old one is plain text
+    return entryOfCite(c) != null;
+  }
+  async function openCite(c) {
+    if (!canOpenCite(c)) return;
+    if (c.kind === "event") {
+      s.tab = "timeline"; saveUrl();
+      paintTabs();
+      let li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
+      if (!li) {   // behind a filter or a fold: show it for this visit, without changing what the person remembered
+        const ev = s.view.events.find((x) => x.id === c.id);
+        s.tlAll = true; s.tlTurns = false; if (ev?.kind === "minor") s.tlMinor = true;
+        paintTabs();
+        li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
+      }
+      li?.scrollIntoView({ block: "center" });
+      li?.focus({ preventScroll: true });
+    } else if (c.kind === "chapter") {
+      const g = chapterGroups().find((x) => x.ids.includes(c.id));
+      if (s.series && g.book && g.book !== s.book) s.chSeries = true;
+      s.tab = "chapters"; saveUrl();
+      openChapter(g.key);
+    } else if (c.kind === "recap") {
+      s.tab = "chapters"; saveUrl(); paintTabs();
+      const story = el.panel.querySelector(".story-now");
+      story?.scrollIntoView({ block: "start" });
+    } else openDrawer(entryOfCite(c), { from: document.activeElement });
+  }
+  /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */
+  async function showAsk({ text = null } = {}) {
+    if (preview) return;
+    if (!(await okToMove("Opening Ask closes the form you were editing."))) return;
+    if (!paneMode() && s.drawer) closeDrawer({ focus: false });
+    s.tab = "ask"; saveUrl();
+    paintTabs();
+    if (text != null) ask.prefill(text); else ask.focus();
+    el.panel.scrollIntoView?.({ block: "nearest" });
+  }
+
   // ---- command palette ----------------------------------------------------------------------
   const clip = (x, n = 60) => (x.length > n ? `${x.slice(0, n - 1).trimEnd()}…` : x);
   function openChapter(key) {
     s.tab = "chapters"; paintTabs();
     const det = [...el.panel.querySelectorAll("details.chapter")].find((d) => d.dataset.chapter === key);
     if (!det) return;
-    det.open = true;
+    for (let d = det; d; d = d.parentElement?.closest("details")) d.open = true;   // an earlier book's block may be closed
     det.scrollIntoView({ block: "start" });
     det.querySelector("summary")?.focus({ preventScroll: true });
   }
@@ -1636,6 +1740,8 @@ export function mountReader(root) {
         run: () => setTimeout(() => el.chapSel?.focus(), 60) },
       { id: "reader:next", label: "Next reveal", group: "Reading", keywords: "forward step", run: () => stepReveal(1) },
       { id: "reader:prev", label: "Previous reveal", group: "Reading", keywords: "back step", run: () => stepReveal(-1) });
+    if (!preview && ask.available?.available) out.push({ id: "reader:ask", label: "Ask about this book", group: "Reading",
+      keywords: "ask question who what happened answer", run: () => showAsk() });
     if (currentFamilies().length) out.push({ id: "reader:trees", label: "Family trees", group: "Reading", keywords: "family tree kin relatives genealogy connections", run: () => showFamilyTree() });
     if (canEdit()) out.push({ id: "reader:edit", label: s.edit ? "Stop editing this index" : "Edit this index", group: "Reading",
       keywords: "edit change fix entry", run: () => setEdit(!s.edit) });
@@ -1648,7 +1754,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
