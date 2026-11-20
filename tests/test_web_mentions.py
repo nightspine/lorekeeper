@@ -106,12 +106,13 @@ def test_not_found_cases(client, tmp_path):
 PAD = " The wind came off the water and the gulls wheeled over the rocks until the light began to fade at last."
 
 
-def book_with(client, tmp_path, front):
+def book_with(client, tmp_path, front, mid=None):
     """The Lighthouse with chapter two long enough to count as story, and optionally a front-matter entry first."""
     from .test_generate import CH2, make_epub
     path = make_epub(tmp_path / "front.epub", ch2=[CH2[0] + PAD * 2, CH2[1]],
                      front=("Title Page", ["The Lighthouse, a novel in two chapters by A. Writer, printed for the first time.",
-                                           "All rights reserved by the author and the publisher of this edition."]) if front else None)
+                                           "All rights reserved by the author and the publisher of this edition."]) if front else None,
+                     mid=mid)
     r = client.post("/api/books", files={"file": ("front.epub", path.read_bytes(), "application/epub+zip")})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/catalog/books/up:{r.json()['id']}/handmade", json={"license": "CC-BY-4.0"})
@@ -234,3 +235,21 @@ def test_series_names_follow_the_readers_finished_books(tmp_path):
         assert total() == total(fin="study-in-scarlet") == expect({"study-in-scarlet"})
         assert total(fin="") < total()
         assert total(order="nope") == total()                              # an unknown order is the default one
+
+
+def test_a_part_heading_between_chapters_folds_into_the_chapter_before_it(client, tmp_path):
+    # seq 0-5 chapter one, then "Part Two" (heading 6, one paragraph 7, 8 words), then chapter two from seq 8.
+    mid = ("Part Two", ["Alice Marlow waits."])
+    key = book_with(client, tmp_path, front=False, mid=mid)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A young woman who arrives at a lighthouse.")
+    quiet = get(client, key, "alice-marlow", 5).json()
+    assert [c["n"] for c in quiet["chapters"]] == [1] and quiet["total"] == 2
+    inside = get(client, key, "alice-marlow", 7).json()            # inside the part heading's section
+    assert inside["current"] is None
+    assert [(c["n"], c["title"]) for c in inside["chapters"]] == [(1, "Chapter One")]
+    assert inside["chapters"][0]["count"] == quiet["chapters"][0]["count"] + 1    # the mention in the part page
+    assert inside["latest"]["n"] == 1 and inside["busiest"]["n"] == 1
+    after = get(client, key, "alice-marlow", 9).json()
+    assert [c["n"] for c in after["chapters"]] == [1, 2]
+    assert after["chapters"][0]["count"] == inside["chapters"][0]["count"]      # folded counts stay put
+    assert after["current"]["n"] == 2

@@ -853,72 +853,49 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     # ---- mentions of an entry, per chapter, gated at the position ----------------------------------
 
-    mention_names: dict[tuple, tuple[float, dict]] = {}   # (key, anchor) → (time, the gated view); kept a minute
+    mention_views: dict[tuple, tuple[float, dict]] = {}   # (key, anchor, order, fin, mtime) → (time, the gated view); a minute
+    story_flags: dict[tuple, list[bool]] = {}              # (epub path, mtime) → story flag per section, for books with no stored meta
 
-    def gated_for_mentions(item: dict, p: Path, seq: int, order: str | None = None,
-                           fin: str | None = None) -> tuple[dict, str | None]:
-        """The Reader's view with block `seq` finished (inclusive, §3.7) under the reader's own reading order and
-        finished books (`order`, `fin` as the Reader's URL carries them), and its anchor."""
-        from .. import gating, locators
-        doc = item["doc"]
-        book = parsed(p)
-        ck = ("res", str(item["path"]), item["path"].stat().st_mtime, str(p), p.stat().st_mtime)
-        if ck not in mention_names:
-            mention_names[ck] = (time.time(), locators.resolve_edition(doc, book))
-        resolved = mention_names[ck][1]
-        anchor = locators.position(doc["anchors"], resolved, seq, inclusive=True)
-        vk = ("view", item["key"], anchor, item["path"].stat().st_mtime, order, fin)
-        hit = mention_names.get(vk)
-        if hit is None or time.time() - hit[0] > 60:
-            sref = doc.get("series")
-            indexes, series = [doc], None
-            if sref:
-                scan = library.scan()
-                mans = [i for i in scan.values() if i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
-                if mans:
-                    series = mans[0]["doc"]
-                    for b in series["books"]:
-                        if b["key"] != sref["book"]:
-                            c = next((i for i in scan.values() if i["doc"].get("kind") == "index"
-                                      and (i["doc"].get("series") or {}).get("id") == sref["id"]
-                                      and i["doc"]["series"]["book"] == b["key"]), None)
-                            if c:
-                                indexes.append(c["doc"])
-            finished = chosen_order = None
-            if series:
-                chosen_order = order if order in series["orders"] and sref["book"] in series["orders"][order] \
-                    else series["defaultOrder"]
-                before = series["orders"][chosen_order]
-                before = before[:before.index(sref["book"])] if sref["book"] in before else []
-                if fin is None:
-                    finished = set(before)
-                else:
-                    finished = set(before) & {k for k in fin.split(",") if k}
-            v = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor), series,
-                            chosen_order, finished)
-            if len(mention_names) > 64:
-                mention_names.clear()
-            mention_names[vk] = hit = (time.time(), v)
-        return hit[1], anchor
+    def sections_story(p: Path, book) -> list[bool]:
+        """Which of the book's sections are story: the stored book meta's flags (`jobs.describe`, what the build form
+        shows), else worked out once for an EPUB the store does not hold (Book Orbit's)."""
+        if p.parent == books.root:
+            try:
+                meta = books.get(p.stem)
+            except (OSError, ValueError, KeyError):
+                meta = None
+            if meta and len(meta.get("chapters", [])) == len(book.chapters):
+                return [bool(c.get("story")) for c in meta["chapters"]]
+        k = (str(p), p.stat().st_mtime)
+        if k not in story_flags:
+            from .jobs import mark_story
+            ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+            secs = [{"title": c.title or f"Section {i + 1}",
+                     "words": sum(len(b.words) for b in book.blocks[c.start:end])}
+                    for i, (c, end) in enumerate(zip(book.chapters, ends))]
+            mark_story(secs)
+            story_flags[k] = [c["story"] for c in secs]
+        return story_flags[k]
 
-    def mentions_body(book, m, eid: str) -> dict:
-        """Chapters are the story chapters (as the build form counts them), numbered 1..N in reading order."""
+    def mentions_body(book, flags: list[bool], m, eid: str) -> dict:
+        """Chapters are the story chapters, numbered 1..N in reading order. A section between two story chapters that
+        is not story (a part title, an interlude) is counted in the column of the story chapter before it."""
         from .. import mentions
-        from .jobs import mark_story
-        ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
-        secs = [{"title": c.title or f"Section {i + 1}",
-                 "words": sum(len(b.words) for b in book.blocks[c.start:end])}
-                for i, (c, end) in enumerate(zip(book.chapters, ends))]
-        mark_story(secs)
-        story = [i for i, c in enumerate(secs) if c["story"]]         # section index of story chapter n = story[n - 1]
+        story = [i for i, f in enumerate(flags) if f]                 # section index of story chapter n = story[n - 1]
         body = {"total": len(story), "chapters": [], "current": None,
                 "first": None, "busiest": None, "latest": None}
         cur = m.current
         if cur is None or not story or cur < story[0]:                # front matter: nothing to chart yet
             return body
         counts = m.counts.get(eid) or [0] * (cur + 1)
-        chapters = [{"n": n + 1, "title": secs[i]["title"], "count": counts[i]}
-                    for n, i in enumerate(story) if i <= cur]
+        chapters = []
+        for n, i in enumerate(story):
+            if i > cur:
+                break
+            # up to the next story chapter; after the last one, only its own section (back matter is not folded in)
+            end = story[n + 1] if n + 1 < len(story) else i + 1
+            chapters.append({"n": n + 1, "title": book.chapters[i].title or f"Section {i + 1}",
+                             "count": sum(counts[i:min(end, cur + 1)])})
         body["chapters"] = chapters
         seen = [c for c in chapters if c["count"]]
         if not seen:
@@ -927,10 +904,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
         body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
         body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
-        if cur in story:                                              # a position in back matter has no current chapter
+        if flags[cur]:                                                # an interlude or back matter has no current chapter
             first = book.chapters[cur].start
             u16 = lambda t, i: len(t[:i].encode("utf-16-le")) // 2   # noqa: E731
-            sn = mentions.snippets({b.seq: b for b in book.blocks}, m.spans.get(eid, []))
+            sn = mentions.snippets(book.blocks, m.spans.get(eid, []))
             body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
                                "snippets": [{**x, "para": x["seq"] - first + 1,
                                              "start": u16(x["text"], x["start"]), "end": u16(x["text"], x["end"])}
@@ -941,26 +918,40 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def library_mentions(key: str, entity: str, seq: int, order: str | None = None, fin: str | None = None):
         """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`
         (the last finished block, counted: names are gated inclusively there).
-        Names are the ones the Reader's view shows at that position, under its reading order `order` and the
-        comma-separated finished books `fin` (absent: the Reader's defaults), and chapters after it are not even titled.
+        Names are the ones the Reader's view shows at that position, gated by the same helpers as `/v0` and the
+        Reader (`protocol.locate_anchor`, `gated_view`) under its reading order `order` and the comma-separated
+        finished books `fin` (absent: the Reader's defaults), and chapters after it are not even titled.
         Snippets carry `para` (1-based paragraph within the chapter) and `start`/`end` as UTF-16 code-unit
         offsets into `text`, since the consumer is JavaScript."""
         from .. import mentions
-        item = library.scan().get(key)
+        scan = library.scan()
+        item = scan.get(key)
         if item is None or item["doc"].get("kind") != "index":
             raise HTTPException(404, "no such index")
-        p = next((q for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
-                  for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
-        if p is None:
+        ed = next((ed for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
+                   and library.edition_path(ed.get("textHash", ""))), None)
+        if ed is None:
             raise HTTPException(404, "book file for this index not found")
+        p = library.edition_path(ed["textHash"])
         book = parsed(p)
         if not 0 <= seq < len(book.blocks):
             raise HTTPException(422, "seq is outside the book")
-        view, _ = gated_for_mentions(item, p, seq, order, fin)
-        names = mentions.visible_names(view)
+        pos = protocol.make_position(block=str(seq), textHash=ed["textHash"], inclusive="true",
+                                     order=order, finished=fin)
+        try:
+            anchor, _ = proto.locate_anchor(item, pos, True)
+            vk = (key, anchor, order, fin, item["path"].stat().st_mtime)
+            hit = mention_views.get(vk)
+            if hit is None or time.time() - hit[0] > 60:
+                if len(mention_views) > 64:
+                    mention_views.clear()
+                mention_views[vk] = hit = (time.time(), proto.gated_view(item, anchor, pos, scan, lenient=True))
+        except protocol.Problem as e:
+            raise HTTPException(e.status, e.detail or e.title) from e
+        names = mentions.visible_names(hit[1])
         if entity not in names:
             raise HTTPException(404, "no such entry at this position")
-        return mentions_body(book, mentions.count(book.blocks, book.chapters, names, seq), entity)
+        return mentions_body(book, sections_story(p, book), mentions.count(book.blocks, book.chapters, names, seq), entity)
 
     # ---- duplicate entities ----------------------------------------------------------------------
 
@@ -1180,5 +1171,5 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return Response(data, media_type="application/json",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
-    protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
+    proto = protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
     return app

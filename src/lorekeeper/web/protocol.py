@@ -256,9 +256,12 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
         anchor = locators.position(anchors, resolved_cache[key], located.seq, inclusive=inclusive)
         return anchor, {"seq": located.seq, "basis": located.basis, "exact": bool(located.exact)}
 
-    def gated_view(item: dict, anchor: str | None, p: Position) -> dict:
+    def gated_view(item: dict, anchor: str | None, p: Position, scan: dict | None = None,
+                   lenient: bool = False) -> dict:
+        """The gated view at `anchor`. `lenient` is the Reader's own tolerance for its URL: an unknown reading order
+        is the series' default, and only books before this one in the order can be finished."""
         doc = item["doc"]
-        scan = library.scan()
+        scan = scan if scan is not None else library.scan()
         sref = doc.get("series")
         manifest = None
         if sref:
@@ -276,12 +279,19 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
                 choice = next((c for c in cands if c["source"] == item["source"]), cands[0] if cands else None)
                 if choice:
                     indexes.append(choice["doc"])
-            if p.order is not None and p.order not in series["orders"]:
+            if p.order is not None and p.order not in series["orders"] and not lenient:
                 raise _bad(f"unknown reading order {p.order!r}")
+        order = p.order
         fin = None if p.finished is None else {k for k in p.finished.split(",") if k}
+        if lenient and series:
+            if order not in series["orders"] or sref["book"] not in series["orders"][order]:
+                order = None
+            chosen = series["orders"][order or series["defaultOrder"]]
+            if fin is not None:
+                fin &= set(chosen[:chosen.index(sref["book"])] if sref["book"] in chosen else [])
         try:
             return gating.view(indexes, gating.Position(sref["book"] if manifest else None, anchor),
-                               series, p.order, fin)
+                               series, order, fin)
         except ValueError as e:
             raise _bad(str(e)) from e
 
@@ -438,6 +448,7 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
             body["locator"] = {"position": anchor, **located}
         return body
 
+    router.locate_anchor, router.gated_view = locate_anchor, gated_view   # the app's own routes gate through these
     return router
 
 
@@ -445,9 +456,20 @@ def _isbn(value: str) -> str:
     return "".join(c for c in str(value) if c.isalnum()).upper()
 
 
-def install(app: FastAPI, library, parsed: Callable[[Path], epub.Book], api_token_value: str | None = None) -> None:
-    """Mount the protocol: routes, problem+json errors, CORS and the optional bearer token."""
-    app.include_router(build_router(library, parsed, api_token_value))
+def make_position(**given) -> Position:
+    """A `Position` built in code (the query defaults are FastAPI markers, so every field is set)."""
+    p = Position.__new__(Position)
+    for k in ("anchor", "block", "cfi", "xpointer", "spine", "word", "progress", "textHash", "fileHash",
+              "inclusive", "order", "finished"):
+        setattr(p, k, given.get(k))
+    return p
+
+
+def install(app: FastAPI, library, parsed: Callable[[Path], epub.Book], api_token_value: str | None = None) -> APIRouter:
+    """Mount the protocol: routes, problem+json errors, CORS and the optional bearer token.
+    Returns the router, whose `locate_anchor` and `gated_view` are the helpers the Reader's routes share."""
+    router = build_router(library, parsed, api_token_value)
+    app.include_router(router)
 
     @app.exception_handler(Problem)
     async def problem_handler(request: Request, exc: Problem):
@@ -480,3 +502,4 @@ def install(app: FastAPI, library, parsed: Callable[[Path], epub.Book], api_toke
         resp = await call_next(request)
         resp.headers.update(CORS)
         return resp
+    return router
