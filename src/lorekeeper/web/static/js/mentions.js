@@ -1,16 +1,21 @@
 // "Where it comes up": the entry drawer's chart of mentions per chapter, gated at the reader's position.
 // The server counts (names visible at the position only, chapters up to the current one, the current one
 // through the position); this file only draws what comes back. Text goes through textContent (h()).
-import { api, mentionsSig } from "./api.js";
+import { api, mentionsSig, generation } from "./api.js";
 import { clear, h, icon, tidyTitle } from "./dom.js";
 
 const CHART_H = 96;   // px; keep in step with .mchart in reader.css
-let latest = 0;       // the newest section; an answer for an older one is dropped
+const gen = generation();   // the newest section; an answer for an older one (or from before an invalidation) is dropped
 let pending = null;   // timers of the section being replaced
 let memo = null;      // { sig, data } so a repaint at the same position doesn't ask again
 
 /** Drop what was counted: the index changed (an edit or a merge), so old counts may name what is now hidden. */
-export const forgetMentions = () => { memo = null; };
+export const forgetMentions = () => {
+  memo = null;
+  gen.invalidate();   // a request already running must not write the memo when it comes back
+  if (pending) pending.forEach(clearTimeout);
+  pending = [];
+};
 
 const remembered = () => { try { return localStorage.getItem("lk-passages") === "1"; } catch { return false; } };
 const remember = (on) => { try { localStorage.setItem("lk-passages", on ? "1" : "0"); } catch { /* private mode */ } };
@@ -95,10 +100,10 @@ export function mentionsSection(key, id, seq, { immediate = false, order = null,
   const box = h("div.d-sec.mentions", { hidden: true, dataset: { jump: "mentions" } });
   if (pending) pending.forEach(clearTimeout);
   pending = [];
-  const mine = ++latest;
+  const mine = gen.next();
   const sig = mentionsSig(key, id, seq, order, fin, rev);
   const paint = (data) => {
-    if (mine !== latest || !hasMentions(data)) { if (mine === latest) box.hidden = true; return; }
+    if (!gen.current(mine) || !hasMentions(data)) { if (gen.current(mine)) box.hidden = true; return; }
     const n = data.current?.count ?? 0;
     clear(box, h("span.eyebrow", "Where it comes up"), chart(data),
       !data.current ? null : h("p.msent", n === 0 ? "Not mentioned in this chapter yet." : n === 1 ? "Mentioned once in this chapter so far." : `Mentioned ${n} times in this chapter so far.`),
@@ -109,11 +114,11 @@ export function mentionsSection(key, id, seq, { immediate = false, order = null,
   if (seq == null || seq < 0) return box;   // nothing has been read yet: nothing to count
   const run = async () => {
     pending.push(setTimeout(() => {   // a slow answer shows one quiet line
-      if (mine === latest && box.hidden) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
+      if (gen.current(mine) && box.hidden) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
     }, 300));
     let data = null;
     try { data = await api.mentions(key, id, seq, { order, fin }); } catch { data = null; }
-    if (mine !== latest) return;
+    if (!gen.current(mine)) return;
     memo = { sig, data };
     paint(data);
   };

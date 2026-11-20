@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { mentionsQuery, mentionsSig } = await import(join(here, "../../src/lorekeeper/web/static/js/api.js"));
+const { mentionsQuery, mentionsSig, generation } = await import(join(here, "../../src/lorekeeper/web/static/js/api.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 const parse = (q) => Object.fromEntries(new URLSearchParams(q));
@@ -40,6 +40,21 @@ test("the memo key changes when only provenance.updated changes", () => {
   const b = mentionsSig("k", "e", 10, "p", null, "2026-11-20T10:05:00Z");
   assert.notEqual(a, b);
   assert.equal(a, mentionsSig("k", "e", 10, "p", null, "2026-11-20T10:00:00Z"));
+});
+
+test("an answer that was in flight when the index changed is stale", () => {
+  const g = generation();
+  const mine = g.next();
+  assert.ok(g.current(mine));
+  g.invalidate();               // forgetMentions(): a merge or edit reloaded the index
+  assert.ok(!g.current(mine));  // the old answer is not painted or remembered
+  const again = g.next();
+  assert.ok(g.current(again) && !g.current(mine));
+});
+test("a newer section makes the older one stale", () => {
+  const g = generation();
+  const a = g.next(), b = g.next();
+  assert.ok(!g.current(a) && g.current(b));
 });
 
 process.exit(failed ? 1 : 0);

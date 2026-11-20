@@ -9,6 +9,15 @@ export function mentionsQuery({ entity, seq, order = null, fin = null }) {
 export const mentionsSig = (key, id, seq, order = null, fin = null, rev = "") =>
   `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}\n${rev ?? ""}`;
 
+/**
+ * Which mentions request is the newest. `next()` starts one; `invalidate()` (an edit or merge reloaded the index)
+ * makes every request still pending or in flight stale, so its answer is neither painted nor remembered.
+ */
+export function generation() {
+  let n = 0;
+  return { next: () => ++n, invalidate: () => { n++; }, current: (g) => g === n };
+}
+
 async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {
     method,
