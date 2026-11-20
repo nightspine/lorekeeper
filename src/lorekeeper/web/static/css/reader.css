@@ -214,6 +214,25 @@ ol.chapter-list > li + li { border-top: 1px solid var(--edge); }
 .link-chip::before { content: ""; width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--t); }
 .link-chip:hover { background: var(--hover); border-color: var(--t, var(--line-2)); }
 
+/* An entry across a series: one card per book on the rail, the book being read lit, the earlier ones read. */
+.arc-rail { gap: var(--space-5); padding-left: 24px; }
+.arc-rail::before { left: 5px; }
+.arc-card { gap: var(--space-3); }
+.arc-card::before { left: -24px; top: 6px; }
+.arc-card.earlier::before { border-color: var(--text-3); background: var(--text-3); }
+.arc-card .book-head { min-height: 0; }
+.arc-card .book-title { margin: 0; font: 700 var(--text-md)/1.35 var(--font-ui); letter-spacing: -.01em; }
+.arc-card.quiet .book-title { font-weight: 500; color: var(--text-3); }
+.arc-desc { display: grid; gap: 4px; justify-items: start; }
+.arc-text { margin: 0; font-size: var(--text-base); line-height: 1.55; color: var(--text-2); }
+.arc-text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.arc-more { font-size: var(--text-xs); }
+.arc-card .timeline { border: 0; }
+.arc-card .timeline li { padding-right: 0; }
+details.arc-details { border: 0; background: none; padding: 0; }
+details.arc-details summary { cursor: pointer; padding: 6px 0; font-weight: 600; font-size: var(--text-sm); color: var(--text-2); }
+.arc-card details.history { border-top: 0; }
+
 /* ---------- entity drawer ---------- */
 dialog.drawer { position: fixed; inset: 0 0 0 auto; z-index: 61; margin: 0; padding: 0; border: 1px solid var(--edge); border-right: 0; border-radius: var(--radius-l) 0 0 var(--radius-l); width: min(520px, 100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; overflow: hidden; background: var(--pane); color: var(--text); box-shadow: var(--shadow); }
 dialog.drawer[open] { display: flex; flex-direction: column; animation: slide-in var(--dur-slow) var(--ease); }
