@@ -43,7 +43,7 @@ Describe things as a careful reader understands them at this point: no hindsight
 ARC = """These are the events of {book}, in order, that involve {name} ({kind}), up to the end of {where}.
 {also}{profile}{ties}{previous}
 Write what has happened to {name} in this book, as a reader who has read this far knows it. Limits: at most 3
-sentences and about 60 words (never more than 400 characters). Write 2 sentences unless the events gave {name} a lot to
+sentences and 45 words, under 300 characters (a hard limit is 400). Write 2 sentences unless the events gave {name} a lot to
 do. Plain and general: keep the main events that happened to {name} (what {name} did, what was done to {name}, where
 things stand), in the order they happened.
 
