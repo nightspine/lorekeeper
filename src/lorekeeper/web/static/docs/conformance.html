@@ -36,7 +36,7 @@
               &quot;entities&quot;: [ ... ], &quot;relations&quot;: [ ... ], &quot;relationHistory&quot;: [ ... ],
               &quot;events&quot;: [ ... ], &quot;recap&quot;: null, &quot;chapters&quot;: [ ... ] }
 }</code></pre>
-<p>The inputs are the index files, the optional series manifest, a reading order (<code>null</code> for the default), a list of finished books (<code>null</code> for the default of every book before the current one) and the position. <code>expect</code> is the whole view, in the shape of <code>schema/view.schema.json</code>. There are fourteen cases, including a position before the first anchor, replacement across books, a book whose index is missing, an unfinished earlier book, and profiles inherited from an earlier book.</p>
+<p>The inputs are the index files, the optional series manifest, a reading order (<code>null</code> for the default), a list of finished books (<code>null</code> for the default of every book before the current one) and the position. <code>expect</code> is the whole view, in the shape of <code>schema/view.schema.json</code>. There are nineteen cases, including a position before the first anchor, replacement across books, a book whose index is missing, an unfinished earlier book, profiles inherited from an earlier book, and book arcs (one per book, one replaced within a book, an unfinished earlier book's arc hidden, one past the position hidden, and a standalone index).</p>
 
 <h2 id="locator-cases">Locator case shape</h2>
 <pre><code>{

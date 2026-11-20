@@ -38,6 +38,7 @@
           "basis": "stated",
           "book": "study-in-scarlet"
         },
+        "arcs": [],
         "facets": [
           {
             "id": "sis.watson.1",
@@ -114,6 +115,7 @@
         "name": "Murray",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.murray.1",
@@ -130,6 +132,7 @@
         "name": "Maiwand",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.maiwand.1",
@@ -146,6 +149,7 @@
         "name": "Stamford",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.stamford.1",
@@ -168,6 +172,7 @@
         "name": "Barts",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.barts.1",
@@ -190,6 +195,7 @@
         "name": "Criterion Bar",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.criterion.1",
@@ -213,6 +219,20 @@
           "basis": "stated",
           "book": "sign-of-four"
         },
+        "arcs": [
+          {
+            "id": "sis.holmes.a2",
+            "text": "Stamford introduces him to Watson at Barts, and the two agree to share rooms and move into 221B Baker Street. There he reveals that he wrote \"The Book of Life\" and explains that he is a consulting detective.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
+            "id": "sof.holmes.a1",
+            "text": "Watson confronts him about his cocaine habit. He deduces that Watson sent a telegram that morning and reads the history of Watson's brother from an old watch. Mary Morstan calls on him; he examines the letter summoning her to the Lyceum Theatre, and he and Watson agree to go with her that evening.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
         "facets": [
           {
             "id": "sis.holmes.1",
@@ -355,6 +375,12 @@
             "book": "study-in-scarlet"
           },
           {
+            "id": "sis.holmes.a1",
+            "text": "Stamford introduces him to Watson at Barts, and the two soon agree to share rooms.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
             "id": "sis.holmes.8",
             "text": "His profession is a mystery to Watson: he is not studying medicine or working toward any degree, yet his knowledge in certain areas is deep and exact.",
             "basis": "stated",
@@ -374,6 +400,7 @@
         "name": "Holmes's bloodstain test",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bloodtest.1",
@@ -392,6 +419,7 @@
           "Baker Street"
         ],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bakerst.1",
@@ -414,6 +442,7 @@
         "name": "Lestrade",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.lestrade.1",
@@ -442,6 +471,7 @@
         "name": "The Book of Life",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bookoflife.1",
@@ -470,6 +500,7 @@
         "name": "consulting detective",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.consulting.1",
@@ -486,6 +517,7 @@
         "name": "Dupin",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.dupin.1",
@@ -502,6 +534,7 @@
         "name": "Lecoq",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.lecoq.1",
@@ -518,6 +551,7 @@
         "name": "the retired Marine sergeant",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.sergeant.1",
@@ -540,6 +574,7 @@
         "name": "Gregson",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.gregson.1",
@@ -556,6 +591,7 @@
         "name": "Athelney Jones",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.jones.1",
@@ -572,6 +608,7 @@
         "name": "François Le Villard",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.villard.1",
@@ -588,6 +625,7 @@
         "name": "Mrs. Hudson",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.hudson.1",
@@ -606,6 +644,7 @@
           "Miss Morstan"
         ],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.morstan.1",
@@ -659,6 +698,7 @@
         "name": "Mrs. Cecil Forrester",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.forrester.1",
@@ -675,6 +715,7 @@
         "name": "Captain Morstan",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.capt.1",
@@ -697,6 +738,7 @@
         "name": "Andaman Islands",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.andaman.1",
@@ -713,6 +755,7 @@
         "name": "Major Sholto",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.sholto.1",
@@ -729,6 +772,7 @@
         "name": "Mary Morstan's pearls",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.pearls.1",
@@ -745,6 +789,7 @@
         "name": "Lyceum Theatre",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.lyceum.1",

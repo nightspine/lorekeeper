@@ -1,0 +1,151 @@
+{
+  "lorekeeper": "0.1",
+  "kind": "index",
+  "id": "conformance.standalone-arcs",
+  "work": {
+    "title": "Standalone arcs fixture",
+    "authors": [
+      "Lorekeeper conformance"
+    ],
+    "language": "en"
+  },
+  "editions": [
+    {
+      "textHash": "0000000000000000000000000000000000000000000000000000000000000000",
+      "label": "synthetic",
+      "builtFrom": true
+    }
+  ],
+  "coverage": {
+    "complete": true,
+    "through": "p4"
+  },
+  "provenance": {
+    "created": "2026-11-20T00:00:00Z",
+    "license": "CC0-1.0"
+  },
+  "anchors": [
+    {
+      "id": "p1",
+      "fp": "0000000000000001",
+      "seq": 10
+    },
+    {
+      "id": "p2",
+      "fp": "0000000000000002",
+      "seq": 20
+    },
+    {
+      "id": "p3",
+      "fp": "0000000000000003",
+      "seq": 30
+    },
+    {
+      "id": "p4",
+      "fp": "0000000000000004",
+      "seq": 40
+    }
+  ],
+  "entities": [
+    {
+      "id": "ada",
+      "type": "person",
+      "from": "p1",
+      "names": [
+        {
+          "value": "Ada",
+          "kind": "primary",
+          "from": "p1"
+        }
+      ],
+      "facets": [
+        {
+          "id": "x.ada.1",
+          "from": "p1",
+          "basis": "stated",
+          "evidence": [
+            "p1"
+          ],
+          "text": "A ferry pilot on the northern lakes."
+        },
+        {
+          "id": "x.ada.a1",
+          "kind": "arc",
+          "from": "p2",
+          "basis": "stated",
+          "evidence": [
+            "p2"
+          ],
+          "text": "She loses her ferry in a storm."
+        },
+        {
+          "id": "x.ada.a2",
+          "kind": "arc",
+          "from": "p3",
+          "basis": "stated",
+          "evidence": [
+            "p2",
+            "p3"
+          ],
+          "replaces": [
+            "x.ada.a1"
+          ],
+          "text": "She loses her ferry in a storm and takes work on a rival's boat."
+        },
+        {
+          "id": "x.ada.a3",
+          "kind": "arc",
+          "from": "p4",
+          "basis": "stated",
+          "evidence": [
+            "p2",
+            "p3",
+            "p4"
+          ],
+          "replaces": [
+            "x.ada.a2"
+          ],
+          "text": "She loses her ferry in a storm, takes work on a rival's boat and buys it from him."
+        }
+      ]
+    }
+  ],
+  "relations": [],
+  "events": [
+    {
+      "id": "x.ev.storm",
+      "from": "p2",
+      "summary": "Ada's ferry sinks in a storm.",
+      "entities": [
+        "ada"
+      ],
+      "evidence": [
+        "p2"
+      ],
+      "kind": "turn"
+    },
+    {
+      "id": "x.ev.work",
+      "from": "p3",
+      "summary": "Ada takes work on a rival's boat.",
+      "entities": [
+        "ada"
+      ],
+      "evidence": [
+        "p3"
+      ]
+    },
+    {
+      "id": "x.ev.buy",
+      "from": "p4",
+      "summary": "Ada buys the boat.",
+      "entities": [
+        "ada"
+      ],
+      "evidence": [
+        "p4"
+      ]
+    }
+  ],
+  "recaps": []
+}

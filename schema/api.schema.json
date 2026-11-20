@@ -354,6 +354,7 @@
               "facets",
               "history",
               "profile",
+              "arcs",
               "relations",
               "events"
             ],
@@ -380,6 +381,9 @@
                 "type": "array"
               },
               "profile": {},
+              "arcs": {
+                "type": "array"
+              },
               "relations": {
                 "type": "array",
                 "items": {

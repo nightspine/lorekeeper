@@ -1308,7 +1308,7 @@ class Generator:
             profile = self.current_profile(eid)
             if profile:
                 lines.append(f"    profile: {profile['text']}")
-            for f in [f for f in self._current_facets(eid) if f.get("kind") != "profile"][-MAX_CONTEXT_FACTS:]:
+            for f in [f for f in self._current_facets(eid) if f.get("kind") not in ("profile", "arc")][-MAX_CONTEXT_FACTS:]:
                 lines.append(f"    [{f['id']}] {f['text']}")
             if ties.get(eid):
                 lines.append("    ties: " + "; ".join(ties[eid][-MAX_CONTEXT_TIES:]))
@@ -1612,7 +1612,7 @@ class Generator:
                 prev = self.current_profile(eid)
                 c.data = {"entity": eid, "basis": "stated", "profile": True, "replaces": prev["id"] if prev else "",
                           "known": [x["text"] for x in ([prev] if prev else [])
-                                    + [f for f in self._current_facets(eid) if f.get("kind") != "profile"][-MAX_CONTEXT_FACTS:]]}
+                                    + [f for f in self._current_facets(eid) if f.get("kind") not in ("profile", "arc")][-MAX_CONTEXT_FACTS:]]}
                 cands.append(c)
         # A new entity's `desc` is a description: with a profile in the same response it is a
         # duplicate and goes; without one it becomes the entity's first profile, not a plain fact.
@@ -1632,7 +1632,7 @@ class Generator:
                 prev = self.current_profile(eid)
                 c.data = {"entity": eid, "basis": "stated", "profile": True, "replaces": prev["id"] if prev else "",
                           "known": [x["text"] for x in ([prev] if prev else [])
-                                    + [f for f in self._current_facets(eid) if f.get("kind") != "profile"][-MAX_CONTEXT_FACTS:]]}
+                                    + [f for f in self._current_facets(eid) if f.get("kind") not in ("profile", "arc")][-MAX_CONTEXT_FACTS:]]}
                 profiled.add(eid)
         # One tie per pair and kind in a passage, the one shown latest: a chapter can turn a guest into a prisoner
         # (two kinds, both kept), and a second "keeps prisoner" after "holds captive" says nothing new.

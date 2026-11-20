@@ -174,7 +174,7 @@ def _entities(indexes: list[dict]) -> dict[str, dict]:
         for e in ix.get("entities", []):
             ent = out.setdefault(e["id"], {"type": e["type"], "names": [], "facts": [], "profile": None,
                                            "first": (rank, ords.get(e["from"], 0))})
-            ent["facts"] += [f["text"] for f in e.get("facets", []) if f["text"] not in ent["facts"] and f.get("kind") != "profile"]
+            ent["facts"] += [f["text"] for f in e.get("facets", []) if f["text"] not in ent["facts"] and f.get("kind") not in ("profile", "arc")]
             profiles = [f for f in e.get("facets", []) if f.get("kind") == "profile"]
             if profiles:
                 ent["profile"] = max(profiles, key=lambda f: ords.get(f["from"], 0))["text"]

@@ -39,7 +39,8 @@ def test_replaced_facet_moves_to_history(scarlet, series):
     after = view([scarlet], Position("study-in-scarlet", "ch2.para28"), series)
     holmes = _ent(after, "holmes")
     assert "sis.holmes.8" not in [f["id"] for f in holmes["facets"]]
-    assert [f["id"] for f in holmes["history"]] == ["sis.holmes.p1", "sis.holmes.8"]   # the first profile, then the replaced fact
+    # the first profile, the replaced first arc, then the replaced fact, in reveal order
+    assert [f["id"] for f in holmes["history"]] == ["sis.holmes.p1", "sis.holmes.a1", "sis.holmes.8"]
 
 
 def test_display_name_follows_latest_primary(scarlet, series):
@@ -208,3 +209,74 @@ def test_no_setting_or_place_link_for_a_future_event(scarlet, series):
     assert all(e["id"] != "sis.ev.meeting" for e in v["events"])
     assert "a laboratory" not in json.dumps(v)
     assert "baker-street" not in json.dumps(v)
+
+
+# ---- book arcs (SPEC §4.2, §7.3 rule 5) ---------------------------------------------------------
+def _arc_ids(v, eid):
+    e = _ent(v, eid)
+    return [(a["id"], a["book"]) for a in e["arcs"]] if e else []
+
+
+def _all_ids(v, eid):
+    e = _ent(v, eid)
+    if not e:
+        return set()
+    return {f["id"] for k in ("facets", "history", "arcs") for f in e[k]} | ({e["profile"]["id"]} if e["profile"] else set())
+
+
+def test_an_arc_past_the_position_is_invisible(scarlet, series):
+    at = lambda a: view([scarlet], Position("study-in-scarlet", a), series)  # noqa: E731
+    assert _arc_ids(at("ch1.para58"), "holmes") == []                      # met, but no arc yet
+    assert "sis.holmes.a1" not in _all_ids(at("ch1.para58"), "holmes")
+    between = at("ch2.para24")
+    assert _arc_ids(between, "holmes") == [("sis.holmes.a1", "study-in-scarlet")]
+    assert "sis.holmes.a2" not in _all_ids(between, "holmes")              # not in arcs, facets or history
+
+
+def test_an_unfinished_earlier_books_arc_is_invisible(scarlet, four, series):
+    unread = view([scarlet, four], Position("sign-of-four", "ch2.para40"), series, finished=set())
+    assert _arc_ids(unread, "holmes") == [("sof.holmes.a1", "sign-of-four")]
+    assert not any(i.startswith("sis.") for i in _all_ids(unread, "holmes"))
+    before = view([scarlet, four], Position("sign-of-four", "ch2.para22"), series, finished=set())
+    assert _arc_ids(before, "holmes") == []
+
+
+def test_only_the_latest_visible_arc_of_a_book_is_current(scarlet, four, series):
+    v = view([scarlet], Position("study-in-scarlet", "ch2.para28"), series)
+    holmes = _ent(v, "holmes")
+    assert _arc_ids(v, "holmes") == [("sis.holmes.a2", "study-in-scarlet")]
+    assert "sis.holmes.a1" in [f["id"] for f in holmes["history"]]
+    assert not any(f["id"].startswith("sis.holmes.a") for f in holmes["facets"])   # arcs never list as details
+    # Across the series: one arc per book, in reading order, never inherited into the next book's slot.
+    both = view([scarlet, four], Position("sign-of-four", "ch2.para24"), series)
+    assert _arc_ids(both, "holmes") == [("sis.holmes.a2", "study-in-scarlet"), ("sof.holmes.a1", "sign-of-four")]
+    early = view([scarlet, four], Position("sign-of-four", "ch1.para05"), series)
+    assert _arc_ids(early, "holmes") == [("sis.holmes.a2", "study-in-scarlet")]
+
+
+def test_every_view_entity_has_arcs(scarlet, series):
+    v = view([scarlet], Position("study-in-scarlet", "ch2.para51"), series)
+    assert all(isinstance(e["arcs"], list) for e in v["entities"])
+    assert _ent(v, "watson")["arcs"] == []
+
+
+def test_a_standalone_index_has_at_most_one_arc_with_no_book():
+    from pathlib import Path
+    ix = json.loads((Path(__file__).resolve().parents[1] / "conformance/fixtures/standalone-arcs.json").read_text())
+    at = lambda a: view([ix], Position(None, a))  # noqa: E731
+    assert _arc_ids(at("p1"), "ada") == []
+    assert _arc_ids(at("p3"), "ada") == [("x.ada.a2", None)]
+    assert "x.ada.a3" not in _all_ids(at("p3"), "ada")
+    assert _arc_ids(at("p4"), "ada") == [("x.ada.a3", None)]
+
+
+def test_the_latest_arc_of_a_book_wins_even_without_replaces(scarlet, series):
+    # §7.3 rule 5 follows position, not the replaced set: drop `replaces` and the result is the same.
+    holmes = next(e for e in scarlet["entities"] if e["id"] == "holmes")
+    for f in holmes["facets"]:
+        if f.get("kind") == "arc":
+            f.pop("replaces", None)
+    v = view([scarlet], Position("study-in-scarlet", "ch2.para28"), series)
+    assert _arc_ids(v, "holmes") == [("sis.holmes.a2", "study-in-scarlet")]
+    assert "sis.holmes.a1" in [f["id"] for f in _ent(v, "holmes")["history"]]
+    assert not any(f["id"].startswith("sis.holmes.a") for f in _ent(v, "holmes")["facets"])

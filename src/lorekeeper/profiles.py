@@ -247,7 +247,7 @@ def backfill(docs: list[dict], model, batch: int = 15, log=print) -> dict:
             if ps:
                 current[e["id"]] = ps[-1]
             facts_so_far.setdefault(e["id"], []).extend(
-                f["text"] for f in e.get("facets", []) if f.get("kind") != "profile" and f["id"] not in replaced)
+                f["text"] for f in e.get("facets", []) if f.get("kind") not in ("profile", "arc") and f["id"] not in replaced)
     return dict(stats)
 
 
@@ -262,7 +262,7 @@ def _backfill_doc(d: dict, ords: dict, model, current: dict, earlier: dict, batc
     for mark in marks:
         due = []
         for eid, e in ents.items():
-            facts = [f for f in e.get("facets", []) if f.get("kind") != "profile"]
+            facts = [f for f in e.get("facets", []) if f.get("kind") not in ("profile", "arc")]
             gained = [f for f in facts if prev < ords[f["from"]] <= mark]
             if not gained:
                 continue

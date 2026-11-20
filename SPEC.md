@@ -214,7 +214,28 @@ pattern is RECOMMENDED.
 - `from` — the entity's first appearance in this book. It MUST equal its earliest name's `from`, unless the entity was introduced in an earlier series book.
 - `names[].kind` — `primary`, `alias`, `title`, `nickname`, or `descriptive` (a generator-supplied label for something unnamed, e.g. "the retired Marine sergeant"). The display name is the **latest visible `primary`** name (so "Baker Street" can become "221B Baker Street", or "Strider" become "Aragorn").
 - `facets` — short descriptions of what the entity **is**: who or what it is, its role, appearance, nature, abilities, allegiances, and changes in its status. Each is true *as the reader understands things at its `from`* (§6.2). Happenings belong in `events`, not facets.
-- `facets[].kind` — optional. `"profile"` marks a self-contained description of the entity as the reader knows it at `from` (who they are, what they look like, what they are to the story), written to be read on its own. Each new profile SHOULD list the previous current profile in `replaces`, including one from an earlier series book. Facets without `kind` are details.
+- `facets[].kind` — optional. `"profile"` marks a self-contained description of the entity as the reader knows it at `from` (who they are, what they look like, what they are to the story), written to be read on its own. Each new profile SHOULD list the previous current profile in `replaces`, including one from an earlier series book. `"arc"` marks what has happened to the entity **in this book**, as the reader knows it at `from` (see below). Facets without `kind` are details.
+
+An **arc** is a short account of the entity's part in this book's story so far:
+one to three plain sentences (at most 400 characters) that keep the main
+events that happen to it or that it causes. It tells only events of the book
+whose index holds it, never those of an earlier or later book, and only events
+visible at its `from`; `from` MUST be at or after the latest event it tells (a generator
+sets it to the anchor of the latest event the writer was given).
+Its `evidence` cites the blocks of the events it tells (their `evidence`
+anchors). The content rules of §6 apply as to any facet. Each book has its own
+arcs: a new arc SHOULD list the same book's previous current arc of that
+entity in `replaces`, and MUST NOT replace an arc of another book or of another
+entity (§4.6). Arcs are optional and are meant for people, creatures and
+groups; an index without them is valid, and clients show arcs as one per book
+(§7.3 rule 5), never joined into one text.
+
+```json
+{ "id": "sis.holmes.a2", "kind": "arc", "from": "ch2.para28", "basis": "stated",
+  "evidence": ["ch1.para34", "ch1.para35", "ch1.para60", "ch2.para01", "ch2.para23", "ch2.para24", "ch2.para28"],
+  "replaces": ["sis.holmes.a1"],
+  "text": "Stamford introduces him to Watson at Barts, and the two agree to share rooms and move into 221B Baker Street. There he reveals that he wrote \"The Book of Life\" and explains that he is a consulting detective." }
+```
 
 ### 4.3 Relations
 
@@ -304,7 +325,9 @@ what the reader once knew, but no longer current. This is how indexes handle:
 
 An item MUST only replace items of the same kind (facet ↔ facet, relation ↔
 relation) that are revealed earlier, either in the same book or in an earlier
-series book. Because items only ever replace *earlier* items, indexes can be
+series book. Among facets, a profile SHOULD replace only profiles and a detail
+only details; an arc MUST replace only earlier arcs of the same entity in the
+same book, and only an arc may replace an arc. Because items only ever replace *earlier* items, indexes can be
 generated forward through a series without editing earlier books' files.
 
 ### 4.7 Coverage
@@ -390,7 +413,7 @@ importance that only later text reveals. Overturned beliefs are handled with
 ### 6.3 Original wording
 
 - Facets, events, recaps and relation labels MUST NOT contain more than **8 consecutive words** from the book (after normalization, §3.2). Names are exempt.
-- Length limits: facet and event 280 characters (a profile facet 800), name 120, relation label 80, story recap 1200, chapter recap 2000.
+- Length limits: facet and event 280 characters (a profile facet 800, an arc 400), name 120, relation label 80, story recap 1200, chapter recap 2000.
 
 These limits keep an index a factual reference work, not a reproduction of the
 text.
@@ -408,6 +431,7 @@ A conforming validator checks, at minimum:
 | Relation/event entities visible at the item's `from` | no |
 | An event's `setting.place` is a `place` entity of this index or an earlier book, visible at the event's `from` | no (series: needs earlier books) |
 | `replaces` targets exist, are the same kind, and are revealed earlier | no (series: needs earlier books) |
+| An arc replaces only arcs of the same entity and book, and only arcs replace arcs | no |
 | Nothing revealed after `coverage.through` | no |
 | Anchors resolve in the edition; anchor blocks have ≥ 6 words; `seq` matches for the `builtFrom` edition | yes |
 | No run of more than 8 consecutive words from the book | yes |
@@ -448,13 +472,13 @@ ordinal, file order). Then:
 2. **Display name**: the last visible `primary` name; otherwise the first visible name; otherwise the id. **Aliases**: all other visible name values, deduplicated, in order.
 3. **Replacement**: `R` = the union of `replaces` over *visible* items. Facets and relations in `R` go to `history` / `relationHistory`; the others are current.
 4. **Profile**: the entity's last visible facet with `kind: "profile"`, as `{ id, text, basis, book }`, or null. Across a series this is inherited: a profile from a finished earlier book stays the entity's profile until a later one is visible. Profile facets are not listed in `facets`; earlier visible profiles go to `history`.
-5. **Relations** appear only when both endpoints are visible entities.
-6. **Recap**: the last visible story recap, or null.
-7. **Chapters**: every visible chapter recap, in reading order, as `{ id, title, text, book }`.
-8. **Coverage**: `exhausted` is true when the index is partial and ordinal(`A`) ≥ ordinal(`coverage.through`).
-
-9. **Event settings**: a visible event carries its `setting.text` unchanged. It carries `setting.place` only when that entity is in the view's `entities`; otherwise the view keeps the text and drops the link. An event that is not visible contributes nothing, neither its setting nor a place link.
-10. **Book kind**: if the index of the current book `B` has `bookKind`, the view carries the same `bookKind`; otherwise the view has none. It is a property of the book, not a gated item, so it is never withheld.
+5. **Arcs**: for each book that has a visible facet with `kind: "arc"` for the entity, the last visible one of that book, as `{ id, text, basis, book }`; the list is ordered by the book's rank in the reading order, so it holds at most one arc per book (at most one, with `book: null`, for a standalone index). It is `[]` when no arc is visible. Arcs are not inherited across books and are not listed in `facets`; every other visible arc goes to `history`, wherever `replaces` points. The book of an arc in a carried entry (§5.4) is its `origin`. A book that is neither finished nor the current book contributes no arc, by §7.2, and an arc of the current book past `A` is not visible.
+6. **Relations** appear only when both endpoints are visible entities.
+7. **Recap**: the last visible story recap, or null.
+8. **Chapters**: every visible chapter recap, in reading order, as `{ id, title, text, book }`.
+9. **Coverage**: `exhausted` is true when the index is partial and ordinal(`A`) ≥ ordinal(`coverage.through`).
+10. **Event settings**: a visible event carries its `setting.text` unchanged. It carries `setting.place` only when that entity is in the view's `entities`; otherwise the view keeps the text and drops the link. An event that is not visible contributes nothing, neither its setting nor a place link.
+11. **Book kind**: if the index of the current book `B` has `bookKind`, the view carries the same `bookKind`; otherwise the view has none. It is a property of the book, not a gated item, so it is never withheld.
 
 ### 7.4 Safety requirements
 
@@ -578,7 +602,7 @@ Parameters:
   "locator": { "position": "ch2.para14", "seq": 207, "basis": "word", "exact": true },
   "entities": [ { "id": "sherlock-holmes", "type": "person", "name": "Sherlock Holmes",
                   "aliases": [], "facets": [], "history": [], "profile": null,
-                  "relations": [], "events": [] } ] }
+                  "arcs": [], "relations": [], "events": [] } ] }
 ```
 
 `position` is the anchor id the lookup was gated at, or `null` for *none*.

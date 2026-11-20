@@ -975,3 +975,97 @@ def test_items_with_a_huge_id_are_left_out_and_counted():
     fake = Fake(reply("Hero sets out.", ["ev:V1"]))
     a = ask.answer(v, "What happened to Hero?", fake)
     assert a.found and all(long not in c["id"] for c in a.cites)
+
+
+# ---- book arcs
+
+def arc(i, text, book):
+    return {"id": i, "text": text, "basis": "stated", "book": book}
+
+
+def arc_view():
+    gab = ent("E1", "Gabriel", facets=[fac("F1", "Gabriel is a silversaint.", "b1")],
+              profile=fac("P1", "Gabriel de Leon, a silversaint and storyteller.", "b2"))
+    gab["arcs"] = [arc("A1", "Gabriel fled the cathedral and met Dior in the snow.", "b1"),
+                   arc("A2", "Gabriel rode south and was taken by the Voss.", "b2")]
+    gab["history"] = [arc("A0", "Gabriel's earlier arc text that was replaced.", "b2")]
+    other = ent("E2", "Dior")
+    other["arcs"] = []
+    v = mkview([gab, other], events=[ev("V1", "Gabriel meets Dior.", ["E1", "E2"], book="b1")])
+    v["position"] = {"book": "b2", "anchor": "a1"}
+    return v
+
+
+AB = {"b1": {"title": "First Tale", "number": 1}, "b2": {"title": "Second Tale", "number": 2}}
+
+
+def test_arcs_are_never_printed_as_details():
+    sl = ask.select(arc_view(), "What happened to Gabriel?", [], 20_000, AB)
+    detail_lines = [ln for ln in sl.text.splitlines() if ln.lstrip().startswith("Detail:")]
+    assert detail_lines and not any("fled the cathedral" in ln or "taken by the Voss" in ln or "earlier arc" in ln for ln in detail_lines)
+    assert "earlier arc text that was replaced" not in sl.text     # history is never shown
+
+
+def test_arcs_follow_the_profile_one_line_per_book_with_tags_and_cites():
+    sl = ask.select(arc_view(), "What happened to Gabriel?", [], 20_000, AB)
+    lines = sl.text.splitlines()
+    i = next(k for k, ln in enumerate(lines) if ln.strip().startswith("Now:"))
+    assert lines[i + 1] == "  In First Tale: [a:A1] Gabriel fled the cathedral and met Dior in the snow."
+    assert lines[i + 2] == "  In Second Tale: [a:A2] Gabriel rode south and was taken by the Voss."
+    assert sl.tags["[a:A2]"] == {"kind": "arc", "id": "A2", "entity": "E1", "book": "b2", "label": "Gabriel in Second Tale"}
+    fake = Fake(reply("Gabriel was taken by the Voss.", ["a:A2"]))
+    r = ask.answer(arc_view(), "What happened to Gabriel?", fake, books=AB)
+    assert [(c["kind"], c["id"]) for c in r.cites] == [("arc", "A2")]
+    assert "Under an entry" in fake.calls[0][0] or "In <book>" in fake.calls[0][0]
+    # an invented arc tag is dropped
+    r = ask.answer(arc_view(), "What happened to Gabriel?", Fake(reply("Gabriel was taken by the Voss.", ["a:A9", "a:A1"])), books=AB)
+    assert [c["id"] for c in r.cites] == ["A1"]
+
+
+def test_a_tight_budget_drops_the_oldest_books_arc_first_and_keeps_the_limit():
+    v = arc_view()
+    for budget in (700, 1200, 3000):
+        sl = ask.select(v, "What happened to Gabriel?", [], budget, AB)
+        assert sl.chars <= budget
+        if "[a:A1]" in sl.text:
+            assert "[a:A2]" in sl.text       # the older book's line is never kept without the newer
+        assert ("[a:A1]" in sl.text) <= ("[a:A1]" in sl.tags)
+
+
+def test_a_later_arc_is_absent_from_an_early_view(sherlock):
+    ix, series = sherlock
+    early = sview(sherlock, "study-in-scarlet", 20)
+    late = sview(sherlock, "sign-of-four", 40)
+    early_ids = {a["id"] for e in early["entities"] for a in e["arcs"]}
+    late_arcs = {a["id"]: a["text"] for e in late["entities"] for a in e["arcs"]}
+    hidden = {i: t for i, t in late_arcs.items() if i not in early_ids}
+    assert hidden
+    fake = Fake(reply("Holmes is a consulting detective.", ["recap"]))
+    for q in ["Who is Holmes?", "What happened to Holmes?"]:
+        sl = ask.select(early, q, [], 40_000, BOOKS)
+        prompt = ask._prompt(early, q, sl, [])
+        for i, t in hidden.items():
+            assert t not in sl.text and t not in prompt and f"[a:{i}]" not in sl.tags and i not in sl.text
+    ask.answer(early, "What happened to Holmes?", fake, books=BOOKS)
+    assert not any(t in c[1] for c in fake.calls for t in hidden.values())
+    sl = ask.select(late, "What happened to Holmes?", [], 40_000, BOOKS)
+    assert any(f"[a:{i}]" in sl.text for i in late_arcs)
+
+
+def test_final_trim_drops_the_oldest_arc_line_first():
+    v = arc_view()
+    seen_only_newest = False
+    for budget in range(ask.select(v, "What happened to Gabriel?", [], 20_000, AB).chars, 150, -7):
+        sl = ask.select(v, "What happened to Gabriel?", [], budget, AB)
+        has1, has2 = "[a:A1]" in sl.text, "[a:A2]" in sl.text
+        assert not (has1 and not has2), budget          # the newest book's line is never cut while an older one stays
+        seen_only_newest |= has2 and not has1
+    assert seen_only_newest
+
+
+def test_an_oversized_arc_id_is_never_sent_or_citable():
+    v = arc_view()
+    v["entities"][0]["arcs"][0]["id"] = "A" * (ask.MAX_ID + 1)
+    sl = ask.select(v, "What happened to Gabriel?", [], 20_000, AB)
+    assert "A" * 20 not in sl.text and "Gabriel fled the cathedral" not in sl.text and "[a:A2]" in sl.text
+    assert all(t.get("id") != "A" * (ask.MAX_ID + 1) for t in sl.tags.values())

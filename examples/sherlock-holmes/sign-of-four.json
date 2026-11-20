@@ -354,6 +354,24 @@
             "ch2.para35"
           ],
           "text": "Insists that a client is only a factor in a problem and that personal feelings must never colour his judgment."
+        },
+        {
+          "id": "sof.holmes.a1",
+          "kind": "arc",
+          "from": "ch2.para24",
+          "basis": "stated",
+          "evidence": [
+            "ch1.para05",
+            "ch1.para30",
+            "ch1.para51",
+            "ch1.para52",
+            "ch1.para53",
+            "ch1.para55",
+            "ch2.para20",
+            "ch2.para22",
+            "ch2.para24"
+          ],
+          "text": "Watson confronts him about his cocaine habit. He deduces that Watson sent a telegram that morning and reads the history of Watson's brother from an old watch. Mary Morstan calls on him; he examines the letter summoning her to the Lyceum Theatre, and he and Watson agree to go with her that evening."
         }
       ]
     },
@@ -799,8 +817,8 @@
       "replaces": [
         "sis.rel.watson-holmes.2"
       ],
-    "kind": "friendship"
-  },
+      "kind": "friendship"
+    },
     {
       "id": "sof.rel.villard-holmes",
       "src": "le-villard",
@@ -823,8 +841,8 @@
         "ch1.para53",
         "ch1.para55"
       ],
-    "kind": "service"
-  },
+      "kind": "service"
+    },
     {
       "id": "sof.rel.forrester-holmes",
       "src": "mrs-forrester",
@@ -846,8 +864,8 @@
       "evidence": [
         "ch2.para09"
       ],
-    "kind": "family"
-  },
+      "kind": "family"
+    },
     {
       "id": "sof.rel.captain-sholto",
       "src": "captain-morstan",
@@ -869,8 +887,8 @@
       "evidence": [
         "ch2.para17"
       ],
-    "kind": "service"
-  },
+      "kind": "service"
+    },
     {
       "id": "sof.rel.watson-mary",
       "src": "watson",
@@ -881,8 +899,8 @@
       "evidence": [
         "ch2.para32"
       ],
-    "kind": "romance"
-  }
+      "kind": "romance"
+    }
   ],
   "events": [
     {

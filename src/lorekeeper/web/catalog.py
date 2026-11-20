@@ -235,7 +235,7 @@ class Catalog:
             prov = doc.get("provenance", {})
             gen = prov.get("generator") or {}
             stats = {"entities": len(doc.get("entities", [])),
-                     "facts": sum(len(e.get("facets", [])) for e in doc.get("entities", [])),
+                     "facts": sum(1 for e in doc.get("entities", []) for f in e.get("facets", []) if f.get("kind") != "arc"),
                      "events": len(doc.get("events", []))}
             community = installed.get(item["key"])
             v = {"key": item["key"], "source": item["source"], "id": doc.get("id"),

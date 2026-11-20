@@ -84,7 +84,8 @@
           "aliases",
           "facets",
           "history",
-          "profile"
+          "profile",
+          "arcs"
         ],
         "additionalProperties": false,
         "properties": {
@@ -133,6 +134,13 @@
               }
             ],
             "description": "The last visible profile facet, inherited from earlier series books until a later one is visible (SPEC.md \u00a77.3)."
+          },
+          "arcs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/facet"
+            },
+            "description": "For each book with a visible arc of the entity, the last visible one, ordered by the book's rank in the reading order; at most one per book, [] when none (SPEC.md \u00a77.3)."
           }
         }
       }
