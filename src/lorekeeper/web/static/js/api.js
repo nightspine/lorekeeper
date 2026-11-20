@@ -5,8 +5,9 @@
 export function mentionsQuery({ entity, seq, order = null, fin = null }) {
   return `entity=${encodeURIComponent(entity)}&seq=${seq}${order ? `&order=${encodeURIComponent(order)}` : ""}${fin != null ? `&fin=${encodeURIComponent(fin)}` : ""}`;
 }
-/** What a repaint is remembered by: a change in any part asks the server again. */
-export const mentionsSig = (key, id, seq, order = null, fin = null) => `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}`;
+/** What a repaint is remembered by: a change in any part asks the server again. `rev` is the index's `provenance.updated` (every edit and merge changes it). */
+export const mentionsSig = (key, id, seq, order = null, fin = null, rev = "") =>
+  `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}\n${rev ?? ""}`;
 
 async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {

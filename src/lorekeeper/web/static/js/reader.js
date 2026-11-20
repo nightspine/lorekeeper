@@ -8,7 +8,7 @@ import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js
 import { renderConnections } from "./graph.js";
 import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
-import { mentionsSection } from "./mentions.js";
+import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
@@ -138,6 +138,7 @@ export function mountReader(root) {
     if (stale()) return false;
     s.key = key;
     s.doc = doc;
+    forgetMentions();   // an edit or merge reloads the index: counts made for the old one may name what is now hidden
     s.series = null; s.seriesDocs = new Map();
     const sid = preview ? null : s.doc.series?.id;
     if (sid) {
@@ -362,6 +363,12 @@ export function mountReader(root) {
   function currentIndexes() {
     if (!s.series) return [s.doc];
     return [...s.seriesDocs.values()].filter(Boolean);
+  }
+
+  /** The index (and in a series every book's) last-updated stamps: any edit or merge changes one. */
+  function revision() {
+    const docs = s.series ? [...s.seriesDocs.values()] : [s.doc];
+    return docs.map((x) => x?.provenance?.updated || "").join("|");
   }
 
   function finishedSet() {
@@ -1423,7 +1430,7 @@ export function mountReader(root) {
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
       const seq = s.p >= 1 - 1e-12 ? s.map.cum.length - 1 : s.map.seqAt(s.p) - 1;
-      const sec = mentionsSection(s.key, id, seq, { immediate: !refresh, order: s.series ? s.order : null, fin: s.series ? s.finished : null });
+      const sec = mentionsSection(s.key, id, seq, { immediate: !refresh, order: s.series ? s.order : null, fin: s.series ? s.finished : null, rev: revision() });
       const nextSec = body.querySelector('[data-jump="rels"], [data-jump="events"]')
         || [...body.querySelectorAll(".d-sec")].find((d) => /^(Connections|Appears in)/.test(d.querySelector(":scope > .eyebrow")?.textContent || ""))
         || body.querySelector(".drawer-foot");

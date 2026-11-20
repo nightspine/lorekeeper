@@ -35,4 +35,11 @@ test("the memo key tells every difference apart", () => {
   assert.notEqual(mentionsSig("k", "e", 10), mentionsSig("k", "e", 11));
 });
 
+test("the memo key changes when only provenance.updated changes", () => {
+  const a = mentionsSig("k", "e", 10, "p", null, "2026-11-20T10:00:00Z");
+  const b = mentionsSig("k", "e", 10, "p", null, "2026-11-20T10:05:00Z");
+  assert.notEqual(a, b);
+  assert.equal(a, mentionsSig("k", "e", 10, "p", null, "2026-11-20T10:00:00Z"));
+});
+
 process.exit(failed ? 1 : 0);

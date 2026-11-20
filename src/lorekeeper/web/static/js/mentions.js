@@ -9,6 +9,9 @@ let latest = 0;       // the newest section; an answer for an older one is dropp
 let pending = null;   // timers of the section being replaced
 let memo = null;      // { sig, data } so a repaint at the same position doesn't ask again
 
+/** Drop what was counted: the index changed (an edit or a merge), so old counts may name what is now hidden. */
+export const forgetMentions = () => { memo = null; };
+
 const remembered = () => { try { return localStorage.getItem("lk-passages") === "1"; } catch { return false; } };
 const remember = (on) => { try { localStorage.setItem("lk-passages", on ? "1" : "0"); } catch { /* private mode */ } };
 
@@ -88,12 +91,12 @@ export const hasMentions = (data) => Boolean(data && data.chapters?.length && (d
  * server has counts (a 404 without the EPUB, or no mention yet, leaves nothing, not an empty chart).
  * `immediate` skips the 300 ms debounce used when the position is moving.
  */
-export function mentionsSection(key, id, seq, { immediate = false, order = null, fin = null } = {}) {
+export function mentionsSection(key, id, seq, { immediate = false, order = null, fin = null, rev = "" } = {}) {
   const box = h("div.d-sec.mentions", { hidden: true, dataset: { jump: "mentions" } });
   if (pending) pending.forEach(clearTimeout);
   pending = [];
   const mine = ++latest;
-  const sig = mentionsSig(key, id, seq, order, fin);
+  const sig = mentionsSig(key, id, seq, order, fin, rev);
   const paint = (data) => {
     if (mine !== latest || !hasMentions(data)) { if (mine === latest) box.hidden = true; return; }
     const n = data.current?.count ?? 0;
