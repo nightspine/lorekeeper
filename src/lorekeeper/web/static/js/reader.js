@@ -365,7 +365,7 @@ export function mountReader(root) {
     return [...s.seriesDocs.values()].filter(Boolean);
   }
 
-  /** The index (and in a series every book's) last-updated stamps: any edit or merge changes one. */
+  /** The index (and in a series every book's) last-updated stamps: an edit changes one, a merge does not (mentions.js drops its memo on every reload for that). */
   function revision() {
     const docs = s.series ? [...s.seriesDocs.values()] : [s.doc];
     return docs.map((x) => x?.provenance?.updated || "").join("|");

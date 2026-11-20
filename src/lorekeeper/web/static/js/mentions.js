@@ -1,7 +1,7 @@
 // "Where it comes up": the entry drawer's chart of mentions per chapter, gated at the reader's position.
 // The server counts (names visible at the position only, chapters up to the current one, the current one
 // through the position); this file only draws what comes back. Text goes through textContent (h()).
-import { api, mentionsSig, generation } from "./api.js";
+import { api, mentionsSig, generation, loadingMayShow } from "./api.js";
 import { clear, h, icon, tidyTitle } from "./dom.js";
 
 const CHART_H = 96;   // px; keep in step with .mchart in reader.css
@@ -113,11 +113,14 @@ export function mentionsSection(key, id, seq, { immediate = false, order = null,
   if (memo?.sig === sig) { paint(memo.data); return box; }
   if (seq == null || seq < 0) return box;   // nothing has been read yet: nothing to count
   const run = async () => {
-    pending.push(setTimeout(() => {   // a slow answer shows one quiet line
-      if (gen.current(mine) && box.hidden) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
-    }, 300));
+    let settled = false;
+    const slow = setTimeout(() => {   // a slow answer shows one quiet line, never after the answer has come
+      if (loadingMayShow({ current: gen.current(mine), settled, hidden: box.hidden })) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
+    }, 300);
+    pending.push(slow);
     let data = null;
     try { data = await api.mentions(key, id, seq, { order, fin }); } catch { data = null; }
+    settled = true; clearTimeout(slow);   // the answer is here: the loading line must not appear after it
     if (!gen.current(mine)) return;
     memo = { sig, data };
     paint(data);

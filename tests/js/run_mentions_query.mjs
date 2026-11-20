@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { mentionsQuery, mentionsSig, generation } = await import(join(here, "../../src/lorekeeper/web/static/js/api.js"));
+const { mentionsQuery, mentionsSig, generation, loadingMayShow } = await import(join(here, "../../src/lorekeeper/web/static/js/api.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 const parse = (q) => Object.fromEntries(new URLSearchParams(q));
@@ -55,6 +55,13 @@ test("a newer section makes the older one stale", () => {
   const g = generation();
   const a = g.next(), b = g.next();
   assert.ok(!g.current(a) && g.current(b));
+});
+
+test("the loading line shows only while the request is unsettled", () => {
+  assert.equal(loadingMayShow({ current: true, settled: false, hidden: true }), true);
+  assert.equal(loadingMayShow({ current: true, settled: true, hidden: true }), false);   // a fast 404 hid the box
+  assert.equal(loadingMayShow({ current: false, settled: false, hidden: true }), false); // an older section
+  assert.equal(loadingMayShow({ current: true, settled: false, hidden: false }), false); // already painted
 });
 
 process.exit(failed ? 1 : 0);
