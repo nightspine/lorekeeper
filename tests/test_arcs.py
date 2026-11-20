@@ -328,7 +328,7 @@ def test_drop_named_removes_only_the_named_arcs_and_their_references():
     d = _doc(events=EVENTS, recaps=[6, 11])
     arcs.arcs([(d, None)], Fake([GOOD, "Mira follows Oren to the keep."]), log=lambda *_: None)
     a = arc_facets(d)
-    assert arcs.drop_named(d, [f"bk: {a[0]['id']} is revealed later"]) == 1
+    assert arcs.drop_named(d, [f"error: bk: replaces {a[0]['id']!r}, which is revealed later"]) == 1
     left = arc_facets(d)
     assert [f["id"] for f in left] == [a[1]["id"]] and "replaces" not in left[0]
 
@@ -344,3 +344,21 @@ def test_chapter_references_get_one_rewrite_then_are_dropped():
     st = arcs.arcs([(d, None)], Fake(["Mira meets Oren in Chapter XII at the mill.", "Mira meets Oren in chapter 4 at the mill."]), log=lambda *_: None)
     assert not arc_facets(d) and st["dropped: chapter reference"] == 1
     assert not arcs.CHAPTER_REF.search("Mira met a civil man at the chapterhouse and a civil clerk.")
+
+
+def test_drop_named_matches_whole_quoted_ids_not_prefixes():
+    d = _doc(events=EVENTS, recaps=[11])
+    e = d["entities"][0]
+    for n in (1, 10):
+        e["facets"].append({"id": f"bk.mira.arc-{n}", "kind": "arc", "from": f"a{n}", "basis": "stated", "evidence": [f"a{n}"], "text": GOOD})
+    assert arcs.drop_named(d, ["bk: arc 'bk.mira.arc-10' replaces 'x', which is revealed later"]) == 1
+    assert [f["id"] for f in arc_facets(d)] == ["bk.mira.arc-1"]
+
+
+def test_drop_named_finds_the_offending_arc_by_its_position():
+    d = _doc(events=EVENTS, recaps=[6, 11])
+    arcs.arcs([(d, None)], Fake([GOOD, "Mira follows Oren to the keep."]), log=lambda *_: None)
+    a = arc_facets(d)
+    j = next(k for k, f in enumerate(d["entities"][0]["facets"]) if f["id"] == a[1]["id"])
+    msg = f"error: entities[0].facets[{j}]: replaces {a[0]['id']!r}, which is revealed later"
+    assert arcs.drop_named(d, [msg]) == 1 and [f["id"] for f in arc_facets(d)] == [a[0]["id"]]

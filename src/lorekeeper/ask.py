@@ -96,6 +96,7 @@ _POSS = re.compile(r"['’]s\b")
 _DELIM = re.compile(r"<\s*/?\s*notes\s*>", re.IGNORECASE)
 _VOICE = re.compile(r"\bthe (?:reader(?:['’]s)?(?: notes)?|notes|tags)\b", re.IGNORECASE)
 _TAG = re.compile(r"\[(?:e|f|r|ev|ch|a):[^\]\s]+\]|\[recap\]")
+_ARC_LINE = re.compile(r"  In .*?: \[a:")
 _BOOK_N = [re.compile(r"\b(?:book|volume|part)\s+(\w+)\b"),
            re.compile(r"\b(\w+)\s+(?:book|novel|volume|installment)\b")]
 
@@ -477,7 +478,8 @@ def _drop_long_ids(view: dict) -> tuple[dict, dict[str, dict[str, int]]]:
         return len(str(x.get("id", ""))) > MAX_ID
 
     ents_ = view["entities"]
-    if not (any(long(e) or (e["profile"] and long(e["profile"])) or any(long(f) for f in e["facets"]) for e in ents_)
+    if not (any(long(e) or (e["profile"] and long(e["profile"])) or any(long(f) for f in e["facets"])
+                or any(long(a) for a in e.get("arcs", [])) for e in ents_)
             or any(long(x) for k in ("relations", "relationHistory", "events", "chapters") for x in view[k])
             or (view.get("recap") and long(view["recap"]))):
         return view, {}
@@ -501,6 +503,9 @@ def _drop_long_ids(view: dict) -> tuple[dict, dict[str, dict[str, int]]]:
                 e2["facets"].append(f)
         if e["profile"] and long(e["profile"]):
             e2["profile"] = None
+        if any(long(a) for a in e.get("arcs", [])):
+            e2["arcs"] = [a for a in e["arcs"] if not long(a)]
+            note(e["id"], "arcs")
         v["entities"].append(e2)
     for k in ("relations", "relationHistory"):
         v[k] = []
@@ -959,6 +964,14 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     # in the order fill, requested chapters, notes, heads and profiles, recap, header. The delimiters stay.
     size = sum(len(x) + 1 for x in out) - 1
     for t in (FILL, CHAPTERS, NOTES, HEADS, RECAP, HEADER):
+        if t == HEADS:
+            # An entry's book arcs are oldest first: the oldest book's line goes before the newer ones.
+            for i, ln in enumerate(out):
+                if size <= budget_chars:
+                    break
+                if tier[i] == t and ln is not None and _ARC_LINE.match(ln):
+                    size -= len(ln) + 1
+                    out[i] = None
         for i in range(len(out) - 1, -1, -1):
             if size <= budget_chars:
                 break
