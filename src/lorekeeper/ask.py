@@ -24,7 +24,9 @@ DEFAULT_BUDGET = 40_000    # characters of notes for a cloud provider
 OLLAMA_BUDGET = 9_000      # Ollama's default context is small
 MAX_ANSWER = 1_200
 ROSTER_CHARS = 120_000     # a roster of every entry, for a cloud model (Ollama's context cannot hold it)
-MAX_NAMED = 6
+MAX_NAMED = 8              # picks (5) and the word-overlap entries (3) together
+KEEP_OVERLAP = 3
+NOT_CONTENT = {"name", "names", "named", "called", "whose", "whom"}
 NEIGHBOUR_CHARS = 30_000    # roster of the entries around a named one, for "who ...?" questions
 MAX_NEIGHBOUR_PICK = 3
 _WHO = re.compile(r"\b(?:who|whom|whose|which|where|called)\b|\bname\b", re.IGNORECASE)
@@ -122,6 +124,7 @@ class Slice:
     unknown: list[str] = field(default_factory=list)  # names in the question that the view does not hold
     roster: str = ""                                 # when no entry was found: names to pick from
     needs_pick: bool = False
+    has_content: bool = False                        # words besides names and stop words
     asks_who: bool = False                           # the question asks who, which, where or for a name
     nobody: bool = False                             # the question names no entry and none is carried
     unknown_names: list[str] = field(default_factory=list)   # unknown names as the reader wrote them
@@ -403,6 +406,8 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     named = named + [x for x in dict.fromkeys(after or []) if x in ents and x not in named and x not in carried]
     sl.named, sl.carried = named, carried
     sl.asks_who = bool(_WHO.search(question))
+    own = set(text.words(" ".join(n for x in named + carried if x in ents for n in [ents[x]["name"], *ents[x]["aliases"]])))
+    sl.has_content = bool(qwords - own - NOT_CONTENT - set(sl.unknown))
 
     # Nothing named: entries whose notes share words with the question.
     sl.nobody = not named and not carried
@@ -416,7 +421,11 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
                 scored.append((-s, e["id"]))
         scored.sort()
         picks = [x for x in dict.fromkeys(extra or []) if x in ents]      # the model's picks come first
-        sl.named = named = (picks + [i for _s, i in scored[:MAX_PICK] if i not in picks])[:MAX_NAMED]
+        if picks:       # the model's picks, and always the best word-overlap entries beside them
+            named = picks[:MAX_PICK] + [i for _s, i in scored[:KEEP_OVERLAP] if i not in picks[:MAX_PICK]]
+        else:
+            named = [i for _s, i in scored[:MAX_PICK]]
+        sl.named = named = named[:MAX_NAMED]
         if not named:
             sl.needs_pick = True
             counts: dict[str, int] = {}
@@ -820,7 +829,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
         ids = _pick(view, llm, roster(view, roster_chars), question)
         if ids:
             sl = select(view, question, history, budget_chars, books, extra=ids)
-    elif roster_chars > 0 and sl.asks_who and (sl.named or sl.carried):
+    elif roster_chars > 0 and sl.asks_who and sl.has_content and (sl.named or sl.carried):
         # "Which horse does Gabriel ride?": the answer is an entry next to the one named, so the model reads
         # a roster of the neighbourhood only (ties, current or former, and shared events).
         around = neighbours(view, sl.named + sl.carried)

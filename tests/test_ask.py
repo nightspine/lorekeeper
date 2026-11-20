@@ -579,7 +579,9 @@ def test_who_question_with_a_named_entry_picks_from_the_neighbourhood():
 
 @pytest.mark.parametrize("q,hist,rc", [("What did Gabriel do?", [], 10_000),                         # not a who question
                                        ("Who is Gabriel?", [], 0),                                  # off
-                                       ("Who is Faraway?", [], 10_000)])                             # empty neighbourhood
+                                       ("Who is Faraway?", [], 10_000),                                # empty neighbourhood
+                                       ("Who is Gabriel?", [], 10_000),                                # only a name and stop words
+                                       ("Who is Gabriel called?", [], 10_000)])                             # empty neighbourhood
 def test_no_neighbourhood_pick_when_not_asked_off_or_empty(q, hist, rc):
     fake = Fake(reply("Something.", ["e:G", "e:Z"]))
     ask.answer(horse_view(), q, fake, hist, roster_chars=rc)
@@ -598,6 +600,28 @@ def test_neighbourhood_roster_is_capped_most_shared_first():
     rels = [{"id": f"R{i}", "src": "G", "dst": f"N{i}", "label": "knows", "book": "b1"} for i in range(50)]
     evs = [ev(f"V{j}", "Hero meets Friend49.", ["G", "N49"]) for j in range(3)]
     fake = Fake({"ids": []}, reply("x", ["e:G"]))
-    ask.answer(mkview(ents, relations=rels, events=evs), "Who does Hero know?", fake, roster_chars=700)
+    ask.answer(mkview(ents, relations=rels, events=evs), "Who does Hero befriend?", fake, roster_chars=700)
     text_ = fake.calls[0][1]
     assert "N49 |" in text_ and len(text_.split("Question:")[0]) < 800 and "N45 |" not in text_
+
+
+def test_whole_roster_pick_keeps_the_top_overlap_entries_beside_five_picks():
+    ents = [ent(f"N{i}", f"Person{i}") for i in range(6)] + [
+        ent("D", "Draigann", profile=fac("PD", "A vampire who refuses to bow to anybody.")),
+        ent("O1", "Other", profile=fac("PO", "Someone who refuses to bow.")), ent("O2", "Third", facets=[fac("F", "bow")])]
+    v = mkview(ents)
+    fake = Fake({"ids": ["N0", "N1", "N2", "N3", "N4", "N5"]}, reply("Draigann refuses.", ["e:D"]))
+    a = ask.answer(v, "Which vampire refuses to bow to anybody?", fake, roster_chars=10_000)
+    prompt = fake.calls[1][1]
+    assert all(f"[e:N{i}]" in prompt for i in range(5)) and "[e:N5]" not in prompt      # five picks
+    assert "[e:D]" in prompt and "[e:O1]" in prompt and "[e:O2]" in prompt                # three overlap entries
+    assert a.found
+
+
+def test_plain_who_is_question_stays_one_call():
+    fake = Fake(reply("Gabriel is a silver hunter.", ["e:G"]))
+    ask.answer(horse_view(), "Who is Gabriel?", fake, roster_chars=10_000)
+    assert len(fake.calls) == 1
+    fake = Fake({"ids": ["H"]}, reply("Gabriel rides Jezebel.", ["e:H"]))
+    ask.answer(horse_view(), "Which horse does Gabriel ride?", fake, roster_chars=10_000)
+    assert len(fake.calls) == 2
