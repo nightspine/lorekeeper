@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.12.0](https://github.com/nightspine/lorekeeper/compare/v0.11.0...v0.12.0) (2026-11-20)
+
+
+### Features
+
+* a series entry shows who they are, then one card per book ([#75](https://github.com/nightspine/lorekeeper/issues/75)) ([f9088a8](https://github.com/nightspine/lorekeeper/commit/f9088a8220651a0b6a67c5242e1dd86e6ed5d361))
+* Ask, questions about a book answered from the index at your position ([#78](https://github.com/nightspine/lorekeeper/issues/78)) ([1724ef5](https://github.com/nightspine/lorekeeper/commit/1724ef5a1f43e91dc68534f05aedd9c1dd56b47d))
+* book arcs, a short written summary of what happened to each character in each book ([#80](https://github.com/nightspine/lorekeeper/issues/80)) ([a23fa45](https://github.com/nightspine/lorekeeper/commit/a23fa45a6d778cb6df5864f99b640fe2c7e4a1e1))
+* the Chapters and Timeline tabs as a book-by-book timeline with cover banners ([#79](https://github.com/nightspine/lorekeeper/issues/79)) ([66d6d1e](https://github.com/nightspine/lorekeeper/commit/66d6d1edd7b5cbdbd3a10745883d037194b13fc3))
+
+
+### Bug Fixes
+
+* kin and role words are never people, and kin descriptions resolve to the named relative ([#73](https://github.com/nightspine/lorekeeper/issues/73)) ([b25f988](https://github.com/nightspine/lorekeeper/commit/b25f9888b4512e011fedb9a3e9a8dd19dd9f0f7f))
+
 ## [0.11.0](https://github.com/nightspine/lorekeeper/compare/v0.10.1...v0.11.0) (2026-11-20)
 
 
