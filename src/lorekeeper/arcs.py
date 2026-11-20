@@ -58,6 +58,8 @@ Rules:
 Events:
 {events}"""
 
+# "By chapter 61", "in Chapter XII": the arc tells what happened, never where in the book.
+CHAPTER_REF = re.compile(r"\bby chapter\b|\bchapters?\s+(?:\d+|(?-i:[IVXLC]+)\b)", re.IGNORECASE)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -337,6 +339,8 @@ def _problem(text: str) -> str | None:
         return "not a sentence"
     if ABOUT_THE_TEXT.search(text):
         return "about the text"
+    if CHAPTER_REF.search(text):
+        return "chapter reference"
     return None
 
 
@@ -374,6 +378,8 @@ def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | 
         "too long": "It is over 400 characters. Rewrite it shorter, in at most 3 sentences.",
         "too many sentences": "It has more than 3 sentences. Rewrite it in at most 3.",
         "not a sentence": "It has a fragment or a label. Rewrite it as complete sentences.",
+        "chapter reference": "It names a chapter. Drop every chapter reference and any present-tense state "
+                             "(\"stands\", \"is at\"): tell what happened, in the past tense.",
         "about the text": "It talks about the text. Tell what happened to the character instead.",
     }.get(why)
     if advice is None and why:

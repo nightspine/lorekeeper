@@ -530,7 +530,8 @@ def cmd_arcs(args) -> int:
         print("note: no EPUB given for every book, so the 8-word copy check was skipped (pass --epub)", file=sys.stderr)
     drops = ", ".join(f"{v} {k}" for k, v in sorted(stats.items()) if k.startswith(("dropped:", "rewritten:")))
     cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "price unknown"
-    print(f"arcs: {stats.get('arcs', 0)} written, {stats.get('dropped', 0)} dropped"
+    print(f"arcs: {stats.get('arcs', 0)} written ({stats.get('superseded', 0)} superseded by a later one at the same point), "
+          f"{stats.get('dropped', 0)} dropped"
           + (f" ({drops})" if drops else "") + f"; {model.usage.calls} calls, cost {cost}")
     for i, d in enumerate(docs):
         # One bad arc must not sink the book: drop the arcs the new errors name, and keep the rest.

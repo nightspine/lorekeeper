@@ -331,3 +331,16 @@ def test_drop_named_removes_only_the_named_arcs_and_their_references():
     assert arcs.drop_named(d, [f"bk: {a[0]['id']} is revealed later"]) == 1
     left = arc_facets(d)
     assert [f["id"] for f in left] == [a[1]["id"]] and "replaces" not in left[0]
+
+
+def test_chapter_references_get_one_rewrite_then_are_dropped():
+    bad = "Mira meets Oren at the mill. By chapter 3 she stands at his side."
+    d = _doc(events=EVENTS, recaps=[11])
+    m = Fake([bad, GOOD])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert st["rewritten: chapter reference"] == 1 and arc_facets(d)[0]["text"] == GOOD
+    assert "chapter reference" not in m.prompts[0] and "Drop every chapter reference" in m.prompts[1]
+    d = _doc(events=EVENTS, recaps=[11])
+    st = arcs.arcs([(d, None)], Fake(["Mira meets Oren in Chapter XII at the mill.", "Mira meets Oren in chapter 4 at the mill."]), log=lambda *_: None)
+    assert not arc_facets(d) and st["dropped: chapter reference"] == 1
+    assert not arcs.CHAPTER_REF.search("Mira met a civil man at the chapterhouse and a civil clerk.")
