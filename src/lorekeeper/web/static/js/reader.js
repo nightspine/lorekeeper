@@ -1548,7 +1548,7 @@ export function mountReader(root) {
       } } }, icon("layers"), "Same as another entry…")) : null);
     // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
     if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
-      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `${bookShort(a.book)}, ` : ""}Book arc, written for you`))));
+      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `In ${bookShort(a.book)}` : "In this book"}, written by the generator`))));
     // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
