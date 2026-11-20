@@ -373,6 +373,9 @@ class JobManager:
     def _arcs(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Write each person's short arc for this book from the finished index (arcs.py). Needs a cloud
         model key; a failure here keeps the index as the run wrote it."""
+        if (job.config.get("provider") or "ollama") == "ollama":
+            self._emit(job, {"type": "log", "line": "book arcs: skipped for a local run"})
+            return {"skipped": "local run"}
         try:
             model = self.cheap_model(job.config.get("provider"))
             if model is None:
@@ -382,23 +385,24 @@ class JobManager:
             model.cancel = flag.is_set
             out = Path(job.output)
             d = json.loads(out.read_text())
+            before = {str(e) for e in validate.check_index(d) if e.level == "error"}
             book_arcs.clear(d)
 
             def progress(done: int, total: int) -> None:
                 job.progress = {**job.progress, "arcs": [done, total], "last": "arcs"}
                 self._emit(job, {"type": "arcs", "done": done, "total": total})
             stats = book_arcs.arcs([(d, book)], model, log=lambda m: None, prior=prior, progress=progress)
-            errors = [e for e in validate.check_index(d) if e.level == "error"]
+            errors = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before]
             if errors:
                 raise ValueError(f"result would be invalid: {errors[0]}")
             tmp = out.with_suffix(".tmp")
             tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n")
             tmp.replace(out)
         except llm.Cancelled:
-            self._emit(job, {"type": "log", "line": "book arcs: stopped; the index keeps its earlier arcs"})
+            self._emit(job, {"type": "log", "line": "book arcs: stopped; this build has no book arcs"})
             return {"skipped": "stopped"}
         except Exception as e:  # noqa: BLE001 - the index itself is done; don't fail the run over this
-            self._emit(job, {"type": "log", "line": f"book arcs: failed ({type(e).__name__}: {e}); kept the earlier ones"})
+            self._emit(job, {"type": "log", "line": f"book arcs: failed ({type(e).__name__}: {e}); the index is kept without book arcs"})
             return {"failed": str(e)}
         cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "cost unknown"
         self._emit(job, {"type": "log", "line": f"book arcs: {stats.get('arcs', 0)} written ({cost})"})

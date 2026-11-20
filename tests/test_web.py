@@ -465,7 +465,7 @@ def test_finished_runs_write_descriptions_when_a_claude_key_is_set(tmp_path, mon
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["status"] == "done", done["error"]
     assert "portraits" in done["report"] and "failed" not in done["report"]["portraits"]
-    assert asked == ["claude-haiku-5-5"] * 2   # descriptions, then book arcs
+    assert asked == ["claude-haiku-5-5"]   # descriptions only: book arcs skip a local run
 
 
 def test_without_a_cloud_key_descriptions_are_skipped(client, tmp_path):
@@ -854,6 +854,7 @@ def test_a_config_without_chunk_mode_plans_words_parts_on_a_cloud_provider(clien
 def _cloud_app(tmp_path, monkeypatch, describer):
     from lorekeeper.web.secrets import SecretStore
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
+    describer.fake = SlowFake()
     monkeypatch.setattr(llm, "Claude", describer)
     (tmp_path / "data").mkdir(exist_ok=True)
     SecretStore(tmp_path / "data" / "secrets.json").set("anthropic_api_key", "sk-test")
@@ -867,7 +868,12 @@ class _ArcWriter:
     def __init__(self, **kw):
         pass
 
+    fake = None
+    name = "claude-haiku-5-5"
+
     def complete(self, system, prompt, schema, prefix=None):
+        if "text" not in schema.get("properties", {}):
+            return self.fake.complete(system, prompt, schema, prefix)   # the build itself: scripted
         return {"text": "A lighthouse keeper who tends the lamp."}
 
 
@@ -887,7 +893,7 @@ def test_finished_runs_end_with_the_book_arcs_stage(tmp_path, monkeypatch):
     app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         book = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
         events = (tmp_path / "data" / "jobs" / f"{job['id']}.events.jsonl").read_text()
     assert done["status"] == "done", done["error"]
@@ -906,7 +912,7 @@ def test_a_failing_arcs_stage_keeps_the_index(tmp_path, monkeypatch):
     app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         book = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["status"] == "done"
     assert "model fell over" in done["report"]["arcs"]["failed"]
@@ -916,7 +922,7 @@ def test_a_failing_arcs_stage_keeps_the_index(tmp_path, monkeypatch):
 def test_without_a_cloud_key_book_arcs_are_skipped(client, tmp_path):
     book = upload(client, tmp_path)
     job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
-    assert wait_for(client, job["id"], {"done", "failed"})["report"]["arcs"] == {"skipped": "no cloud key"}
+    assert wait_for(client, job["id"], {"done", "failed"})["report"]["arcs"] == {"skipped": "local run"}
 
 
 def test_arcs_get_the_earlier_books_as_prior(tmp_path, monkeypatch):
@@ -938,7 +944,7 @@ def test_arcs_get_the_earlier_books_as_prior(tmp_path, monkeypatch):
                              ch1=[f"Book {i}: Ezra Pike kept the old harbour light alone for twenty winters, and the sea took notice."] * 3)
             ups.append(c.post("/api/books", files={"file": (f"b{i}.epub", path.read_bytes())}).json())
         for up in ups:
-            job = c.post("/api/jobs", json={"config": {"catalog_key": f"up:{up['id']}", "chunk_words": 5000}}).json()
+            job = c.post("/api/jobs", json={"config": {"catalog_key": f"up:{up['id']}", "provider": "claude", "chunk_words": 5000}}).json()
             assert wait_for(c, job["id"], {"done", "failed"})["status"] == "done"
         assert seen[0]["prior"] == [] and len(seen[1]["prior"]) == 1 and seen[1]["prior"][0] != seen[1]["title"]
 
@@ -952,7 +958,7 @@ def test_arcs_are_written_after_recorded_edits_are_applied(tmp_path, monkeypatch
     app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         book = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         assert wait_for(c, job["id"], {"done", "failed"})["status"] == "done"
     assert order == ["edits", "arcs"]
 
@@ -974,7 +980,7 @@ def test_a_failing_arcs_stage_leaves_the_file_untouched(tmp_path, monkeypatch):
     monkeypatch.setattr(jobs_mod.JobManager, "_arcs", snap)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         book = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["status"] == "done" and "failed" in done["report"]["arcs"]
     assert Path(done["output"]).read_bytes() == before["bytes"]
@@ -992,8 +998,41 @@ def test_a_model_that_cannot_be_built_does_not_fail_the_run(tmp_path, monkeypatc
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", cheap)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         book = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["status"] == "done", done["error"]
     assert "not installed" in done["report"]["arcs"]["failed"] and "not installed" in done["report"]["portraits"]["failed"]
     assert len(n) == 2
+
+
+def test_a_local_run_skips_book_arcs_even_with_a_cloud_key(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+    called = []
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", lambda *a, **kw: called.append(1) or {"arcs": 0})
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+    assert done["report"]["arcs"] == {"skipped": "local run"} and not called
+
+
+def test_arcs_only_fail_on_errors_they_introduce(tmp_path, monkeypatch):
+    from lorekeeper import validate as v
+    from lorekeeper.web import jobs as jobs_mod
+    real = v.check_index
+    state = {"broken": True}
+
+    def check(d, *a, **kw):   # the index already had one error before the stage
+        out = list(real(d, *a, **kw))
+        if state["broken"]:
+            out.append(v.Issue("error", "index", "already broken"))
+        return out
+    monkeypatch.setattr(jobs_mod.validate, "check_index", check)
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", lambda *a, **kw: {"arcs": 0})
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+    assert done["report"]["arcs"].get("arcs") == 0, done["report"]["arcs"]
