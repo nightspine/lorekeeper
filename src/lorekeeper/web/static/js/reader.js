@@ -925,7 +925,7 @@ export function mountReader(root) {
       h("span.ent-meta",
         from ? h("span.book-label.ent-from", { title: sleeping ? "Met in an earlier book; not in this one yet" : "Met in an earlier book" }, `from ${bookShort(from)}`) : null,
         e.facets.length ? [h("span.num", String(e.facets.length)), e.facets.length === 1 ? " detail" : " details"] : null,
-        e.history.length ? h("span.hist", { title: `${e.history.length} earlier impression${e.history.length === 1 ? "" : "s"}` }, icon("refresh")) : null));
+        impressionsOf(e).length ? h("span.hist", { title: `${impressionsOf(e).length} earlier impression${impressionsOf(e).length === 1 ? "" : "s"}` }, icon("refresh")) : null));
     if (fresh) rowEl.addEventListener("animationend", () => rowEl.classList.remove("arrive"), { once: true });
     return rowEl;
   }
@@ -1410,6 +1410,8 @@ export function mountReader(root) {
   const isProfile = (f) => factKind(f) === "profile";
   /** Earlier arcs of a book sit in `history` beside earlier profiles; they are replaced text, never an impression. */
   const impressionsOf = (e) => e.history.filter((f) => factKind(f) !== "arc");
+  /** "In this book" for the book being read or a standalone index; another book's arc names its own book. */
+  const arcLabel = (a) => (a.book && a.book !== s.book ? `In ${s.series?.books.find((x) => x.key === a.book)?.title || a.book}` : "In this book");
   /** The arc paragraph, clamped to 4 lines behind "Read more" (shown only while the text is cut off). */
   function arcParagraph(text, eyebrow) {
     const p = h("p.arc-text.clamp", text);
@@ -1532,7 +1534,7 @@ export function mountReader(root) {
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         cards && e.profile.book ? h("span.book-label", `From ${s.series.books.find((x) => x.key === e.profile.book)?.title || e.profile.book}`) : bookLabel(e.profile.book)) : null,
-      inThisBookArc ? h("div.d-sec", { dataset: { jump: "arc" } }, arcParagraph(inThisBookArc.text, "In this book")) : null,
+      inThisBookArc ? h("div.d-sec", { dataset: { jump: "arc" } }, arcParagraph(inThisBookArc.text, arcLabel(inThisBookArc))) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
       cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", cards.count ? h("span.n", String(cards.count)) : null),
         h("div.series-rail.newest.arc-rail", cards.nodes))
@@ -1548,7 +1550,7 @@ export function mountReader(root) {
       } } }, icon("layers"), "Same as another entry…")) : null);
     // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
     if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
-      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `In ${bookShort(a.book)}` : "In this book"}, written by the generator`))));
+      ...e.arcs.map((a) => arcParagraph(a.text, `${arcLabel(a)}, written by the generator`))));
     // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
