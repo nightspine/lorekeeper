@@ -212,12 +212,6 @@ def test_no_setting_or_place_link_for_a_future_event(scarlet, series):
 
 
 # ---- book arcs (SPEC §4.2, §7.3 rule 5) ---------------------------------------------------------
-# The gating rule lands with the core-engineer; until then these fail, and strict xfail makes the
-# first green run say so, so the marker comes off in the same change.
-
-_arcs_pending = pytest.mark.xfail(strict=True, reason="§7.3 rule 5 (arcs) not yet in gating.py")
-
-
 def _arc_ids(v, eid):
     e = _ent(v, eid)
     return [(a["id"], a["book"]) for a in e["arcs"]] if e else []
@@ -230,7 +224,6 @@ def _all_ids(v, eid):
     return {f["id"] for k in ("facets", "history", "arcs") for f in e[k]} | ({e["profile"]["id"]} if e["profile"] else set())
 
 
-@_arcs_pending
 def test_an_arc_past_the_position_is_invisible(scarlet, series):
     at = lambda a: view([scarlet], Position("study-in-scarlet", a), series)  # noqa: E731
     assert _arc_ids(at("ch1.para58"), "holmes") == []                      # met, but no arc yet
@@ -240,7 +233,6 @@ def test_an_arc_past_the_position_is_invisible(scarlet, series):
     assert "sis.holmes.a2" not in _all_ids(between, "holmes")              # not in arcs, facets or history
 
 
-@_arcs_pending
 def test_an_unfinished_earlier_books_arc_is_invisible(scarlet, four, series):
     unread = view([scarlet, four], Position("sign-of-four", "ch2.para40"), series, finished=set())
     assert _arc_ids(unread, "holmes") == [("sof.holmes.a1", "sign-of-four")]
@@ -249,7 +241,6 @@ def test_an_unfinished_earlier_books_arc_is_invisible(scarlet, four, series):
     assert _arc_ids(before, "holmes") == []
 
 
-@_arcs_pending
 def test_only_the_latest_visible_arc_of_a_book_is_current(scarlet, four, series):
     v = view([scarlet], Position("study-in-scarlet", "ch2.para28"), series)
     holmes = _ent(v, "holmes")
@@ -263,14 +254,12 @@ def test_only_the_latest_visible_arc_of_a_book_is_current(scarlet, four, series)
     assert _arc_ids(early, "holmes") == [("sis.holmes.a2", "study-in-scarlet")]
 
 
-@_arcs_pending
 def test_every_view_entity_has_arcs(scarlet, series):
     v = view([scarlet], Position("study-in-scarlet", "ch2.para51"), series)
     assert all(isinstance(e["arcs"], list) for e in v["entities"])
     assert _ent(v, "watson")["arcs"] == []
 
 
-@_arcs_pending
 def test_a_standalone_index_has_at_most_one_arc_with_no_book():
     from pathlib import Path
     ix = json.loads((Path(__file__).resolve().parents[1] / "conformance/fixtures/standalone-arcs.json").read_text())
