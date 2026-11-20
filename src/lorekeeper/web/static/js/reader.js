@@ -1266,7 +1266,7 @@ export function mountReader(root) {
     // position ("Van Helsing" becomes "Abraham Van Helsing"), so a later name must not stay on screen either.
     const others = [...new Set([...rels.flatMap((r) => [r.src, r.dst]), ...evs.flatMap((ev) => ev.entities)])].filter((x) => x !== e.id);
     return [`name:${e.name}`, ...e.aliases.map((a) => `name:${a}`), e.profile ? `p:${e.profile.id}` : null,
-      ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`),
+      ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`), ...(e.arcs || []).map((a) => `a:${a.id}`),
       ...rels.map((r) => `r:${r.id}`), ...evs.map((ev) => `e:${ev.id}`),
       ...others.map((x) => `other:${x}:${nameOf(x)?.name ?? ""}`)].filter(Boolean);
   }
@@ -1397,15 +1397,37 @@ export function mountReader(root) {
    *  the facet's own book (its facets, plus the current book's carried entries, which stand in for an origin document that is missing). Safe because it is only asked about facets the view
    *  already shows, whose books are the current one or finished ones; no other book's document is ever opened, and
    *  nothing but the kind of an id already on screen is taken from it. */
-  function isProfile(f) {
+  function factKind(f) {
     if (!s.profileIds) s.profileIds = new Map();
     if (!s.profileIds.has(f.book)) {
-      const ids = new Set();
-      const d = f.book === s.book ? s.doc : s.seriesDocs.get(f.book);
-      for (const en of [...(d?.entities || []), ...(d?.carried || []), ...(s.doc?.carried || [])]) for (const x of en.facets || []) if (x.kind === "profile") ids.add(x.id);
-      s.profileIds.set(f.book, ids);
+      const kinds = new Map();
+      const d = !f.book || f.book === s.book ? s.doc : s.seriesDocs.get(f.book);
+      for (const en of [...(d?.entities || []), ...(d?.carried || []), ...(s.doc?.carried || [])]) for (const x of en.facets || []) if (x.kind === "profile" || x.kind === "arc") kinds.set(x.id, x.kind);
+      s.profileIds.set(f.book, kinds);
     }
-    return s.profileIds.get(f.book).has(f.id);
+    return s.profileIds.get(f.book).get(f.id) || "";
+  }
+  const isProfile = (f) => factKind(f) === "profile";
+  /** Earlier arcs of a book sit in `history` beside earlier profiles; they are replaced text, never an impression. */
+  const impressionsOf = (e) => e.history.filter((f) => factKind(f) !== "arc");
+  /** The arc paragraph, clamped to 4 lines behind "Read more" (shown only while the text is cut off). */
+  function arcParagraph(text, eyebrow) {
+    const p = h("p.arc-text.clamp", text);
+    const more = h("button.linkish.arc-more", { type: "button", "aria-expanded": "false", on: { click: () => {
+      const open = p.classList.toggle("clamp") === false;
+      more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Show less" : "Read more"; } } }, "Read more");
+    // The width changes (pane, drawer, rotation), so it is measured again whenever the paragraph is resized, and the
+    // watcher goes when the card leaves the page.
+    if (typeof ResizeObserver === "function") {
+      let seen = false;
+      const ro = new ResizeObserver(() => {
+        if (!p.isConnected) { if (seen) ro.disconnect(); return; }
+        seen = true;
+        if (p.classList.contains("clamp")) more.hidden = p.scrollHeight <= p.clientHeight + 1;
+      });
+      ro.observe(p);
+    }
+    return h("div.arc-desc", eyebrow ? h("span.eyebrow", eyebrow) : null, p, more);
   }
 
   /** The cards of an entry that spans books, newest first (the book being read on top), as `{ nodes, count }` (the
@@ -1415,7 +1437,7 @@ export function mountReader(root) {
     if (!s.series) return null;
     const order = s.series.orders[s.order] || [];
     const evIn = (b) => evs.filter((ev) => ev.book === b);
-    const present = new Set([...e.facets, ...e.history, ...evs, ...(e.profile ? [e.profile] : [])].map((x) => x.book).filter(Boolean));
+    const present = new Set([...e.facets, ...e.history, ...(e.arcs || []), ...evs, ...(e.profile ? [e.profile] : [])].map((x) => x.book).filter(Boolean));
     const asleep = dormant(e);
     if (!asleep && ![...present].some((b) => b !== s.book)) return null;
     const rank = (b) => { const i = order.indexOf(b); return i < 0 ? order.length : i; };
@@ -1439,31 +1461,15 @@ export function mountReader(root) {
     // Profiles of this book, in view order. The latest one overall is already shown under "Who they are".
     const profiles = [...e.history.filter((f) => f.book === b && isProfile(f)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
     const ending = !now && profiles.length && profiles[profiles.length - 1] !== e.profile ? profiles[profiles.length - 1] : null;
-    const impressions = [...e.history.filter((f) => f.book === b && f !== ending)];
+    const impressions = impressionsOf(e).filter((f) => f.book === b && f !== ending);
     const details = e.facets.filter((f) => f.book === b);
     const cardFact = (f) => h("li", f.text, f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null);
     const list = (xs) => foldList(xs.map(cardFact), (nodes) => h("ul.fact-list", nodes), { show: 6, noun: "details" });
 
-    // The slot for a model-written arc of the book (step 2) goes here, first in the card.
-    let desc = null;
-    if (ending) {
-      const p = h("p.arc-text.clamp", ending.text);
-      const more = h("button.linkish.arc-more", { type: "button", "aria-expanded": "false", on: { click: () => {
-        const open = p.classList.toggle("clamp") === false;
-        more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Show less" : "Read more"; } } }, "Read more");
-      desc = h("div.arc-desc", h("span.eyebrow", `At the end of ${full}`), p, more);
-      // The control shows only while the text is actually cut off; the width changes (pane, drawer, rotation), so it is
-      // measured again whenever the paragraph is resized, and the watcher goes when the card leaves the page.
-      if (typeof ResizeObserver === "function") {
-        let seen = false;
-        const ro = new ResizeObserver(() => {
-          if (!p.isConnected) { if (seen) ro.disconnect(); return; }
-          seen = true;
-          if (p.classList.contains("clamp")) more.hidden = p.scrollHeight <= p.clientHeight + 1;
-        });
-        ro.observe(p);
-      }
-    }
+    // The book's arc (written from the index) comes first; then, for a finished book, how its last profile ended.
+    const arc = (e.arcs || []).find((a) => a.book === b);
+    const arcNode = arc ? arcParagraph(arc.text) : null;
+    const desc = ending ? arcParagraph(ending.text, `At the end of ${full}`) : null;
 
     // Main events: turning points first (up to 4), then the latest ordinary ones; small moments sit behind the fold.
     const kinds = bookEvents.some((ev) => ev.kind);
@@ -1473,10 +1479,10 @@ export function mountReader(root) {
     const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
     const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
-    if (!desc && !bookEvents.length && !details.length && !impressions.length) return null;
+    if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length) return null;
     return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full },
       h("div.book-head", h("h3.book-title", { title: full }, heading)),
-      desc, eventsNode,
+      arcNode, desc, eventsNode,
       details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${full}`), list(details)) : null,
       impressions.length ? h("details.history", h("summary", `Earlier impressions (${impressions.length})`), list(impressions)) : null);
   }
@@ -1516,19 +1522,23 @@ export function mountReader(root) {
     const facts = (list, show = 4) => foldList(list.map(factNode), (nodes) => h("ul.fact-list", nodes), { show, noun: "details" });
     const eyebrow = (label, n) => h("span.eyebrow", label, n > 1 ? h("span.n", String(n)) : null);
     const cards = s.edit ? null : arcCards(e, evs);
+    // A standalone book's arc sits under the profile as "In this book", unless it only repeats it. (Hand-read on the Sherlock
+    // example: the profile says who he is, the arc what happens to him, so it is kept.)
+    const inThisBookArc = !s.series && (e.arcs || [])[0] && !(e.profile && e.profile.text.includes(e.arcs[0].text)) ? e.arcs[0] : null;
     const connections = rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
       foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
       currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null;
-    const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
+    const body = s.edit ? editor.drawerBody({ ...e, history: impressionsOf(e) }, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         cards && e.profile.book ? h("span.book-label", `From ${s.series.books.find((x) => x.key === e.profile.book)?.title || e.profile.book}`) : bookLabel(e.profile.book)) : null,
+      inThisBookArc ? h("div.d-sec", { dataset: { jump: "arc" } }, arcParagraph(inThisBookArc.text, "In this book")) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
       cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", cards.count ? h("span.n", String(cards.count)) : null),
         h("div.series-rail.newest.arc-rail", cards.nodes))
         : [h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
           e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
-        e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null],
+        impressionsOf(e).length ? h("details.history", h("summary", `Earlier impressions (${impressionsOf(e).length})`), facts(impressionsOf(e), 6)) : null],
       connections,
       cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
@@ -1536,6 +1546,9 @@ export function mountReader(root) {
         closeDrawer({ focus: false });
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
+    // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
+    if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
+      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `${bookShort(a.book)}, ` : ""}Book arc, written for you`))));
     // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
