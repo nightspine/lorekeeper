@@ -130,3 +130,16 @@ def test_event_setting_rules(scarlet, four, series):
     later = copy.deepcopy(four)
     later["events"][0]["setting"] = {"text": "Baker Street", "place": "baker-street"}
     assert errors(later, [scarlet]) == []
+
+
+def test_a_repeated_fingerprint_is_warned(monkeypatch):
+    from lorekeeper import text
+    texts = ["One two three four five six seven", "One two three four five six seven", "Eight nine ten eleven twelve thirteen"]
+    blocks = [epub.Block(i, 0, text.words(t), t) for i, t in enumerate(texts)]
+    fp = [text.fingerprint(b.words) for b in blocks]
+    assert fp[0] == fp[1]
+    ed = {"textHash": text.text_hash(b.words for b in blocks), "builtFrom": True}
+    index = {"anchors": [{"id": "a0", "fp": fp[0], "seq": 0}, {"id": "a2", "fp": fp[2], "seq": 2}],
+             "editions": [ed], "entities": [], "relations": [], "events": [], "recaps": []}
+    got = [(i.level, i.where, i.message) for i in validate.check_against_book(index, blocks)]
+    assert got == [("warning", "anchors[0]", "fingerprint is not unique in this edition")]
