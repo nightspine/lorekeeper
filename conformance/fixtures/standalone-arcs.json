@@ -74,7 +74,6 @@
           "from": "p2",
           "basis": "stated",
           "evidence": [
-            "p1",
             "p2"
           ],
           "text": "She loses her ferry in a storm."
@@ -85,7 +84,6 @@
           "from": "p3",
           "basis": "stated",
           "evidence": [
-            "p1",
             "p2",
             "p3"
           ],

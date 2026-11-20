@@ -629,11 +629,9 @@
           "evidence": [
             "ch1.para34",
             "ch1.para35",
-            "ch1.para37",
-            "ch1.para56",
             "ch1.para60"
           ],
-          "text": "Stamford brings Watson to meet him in the chemical laboratory at Barts, where he startles Watson by knowing he has served in Afghanistan. After warning Watson about his habits, he agrees to share rooms with him."
+          "text": "Stamford introduces him to Watson at Barts, and the two soon agree to share rooms."
         },
         {
           "id": "sis.holmes.3",
@@ -776,16 +774,18 @@
           "from": "ch2.para28",
           "basis": "stated",
           "evidence": [
+            "ch1.para34",
             "ch1.para35",
             "ch1.para60",
             "ch2.para01",
+            "ch2.para23",
             "ch2.para24",
             "ch2.para28"
           ],
           "replaces": [
             "sis.holmes.a1"
           ],
-          "text": "Stamford introduces him to Watson at Barts, and the two take rooms together at 221B Baker Street. There he admits writing the article on observation that Watson mocked, and says he earns his living as a consulting detective."
+          "text": "Stamford introduces him to Watson at Barts, and the two agree to share rooms and move into 221B Baker Street. There he reveals that he wrote \"The Book of Life\" and explains that he is a consulting detective."
         },
         {
           "id": "sis.holmes.15",

@@ -279,3 +279,16 @@ def test_a_standalone_index_has_at_most_one_arc_with_no_book():
     assert _arc_ids(at("p3"), "ada") == [("x.ada.a2", None)]
     assert "x.ada.a3" not in _all_ids(at("p3"), "ada")
     assert _arc_ids(at("p4"), "ada") == [("x.ada.a3", None)]
+
+
+@_arcs_pending
+def test_the_latest_arc_of_a_book_wins_even_without_replaces(scarlet, series):
+    # §7.3 rule 5 follows position, not the replaced set: drop `replaces` and the result is the same.
+    holmes = next(e for e in scarlet["entities"] if e["id"] == "holmes")
+    for f in holmes["facets"]:
+        if f.get("kind") == "arc":
+            f.pop("replaces", None)
+    v = view([scarlet], Position("study-in-scarlet", "ch2.para28"), series)
+    assert _arc_ids(v, "holmes") == [("sis.holmes.a2", "study-in-scarlet")]
+    assert "sis.holmes.a1" in [f["id"] for f in _ent(v, "holmes")["history"]]
+    assert not any(f["id"].startswith("sis.holmes.a") for f in _ent(v, "holmes")["facets"])
