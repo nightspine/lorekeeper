@@ -1507,7 +1507,7 @@ export function mountReader(root) {
     const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
     if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length) return null;
-    return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full },
+    return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full, dataset: { book: b } },
       h("div.book-head", h("h3.book-title", { title: full }, heading)),
       arcNode, desc, eventsNode,
       details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${full}`), list(details)) : null,
@@ -1669,8 +1669,11 @@ export function mountReader(root) {
     if (c.kind === "relation") { const r = s.view.relations.find((x) => x.id === c.id); return r && nameOf(r.src) ? r.src : null; }
     if (c.kind === "facet") return s.view.entities.find((e) => e.profile?.id === c.id || e.facets.some((f) => f.id === c.id) || e.history.some((f) => f.id === c.id))?.id ?? null;
     if (c.kind === "entity") return nameOf(c.id) ? c.id : null;
+    if (c.kind === "arc") return arcEntity(c.id);
     return null;
   };
+  /** The entity whose current view carries this arc (an arc replaced since, or past the position, is not there). */
+  const arcEntity = (id) => { const e = s.view.entities.find((x) => (x.arcs || []).some((a) => a.id === id)); return e && nameOf(e.id) ? e.id : null; };
   /** A source is a link only while the item is in the view on screen. */
   function canOpenCite(c) {
     if (disposed || !s.view) return false;
@@ -1702,6 +1705,14 @@ export function mountReader(root) {
       s.tab = "chapters"; saveUrl(); paintTabs();
       const story = el.panel.querySelector(".story-now");
       story?.scrollIntoView({ block: "start" });
+    } else if (c.kind === "arc") {
+      const id = arcEntity(c.id);
+      const arc = s.view.entities.find((x) => x.id === id).arcs.find((a) => a.id === c.id);
+      openDrawer(id, { from: document.activeElement });
+      // The book's card, or "In this book" in the flat view.
+      const box = host();
+      const target = (arc.book && [...(box?.querySelectorAll(".arc-card[data-book]") || [])].find((n) => n.dataset.book === arc.book)) || box?.querySelector('[data-jump="arc"]');
+      target?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     } else openDrawer(entryOfCite(c), { from: document.activeElement });
   }
   /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */
