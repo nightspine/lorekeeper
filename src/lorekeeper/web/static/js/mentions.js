@@ -1,7 +1,7 @@
 // "Where it comes up": the entry drawer's chart of mentions per chapter, gated at the reader's position.
 // The server counts (names visible at the position only, chapters up to the current one, the current one
 // through the position); this file only draws what comes back. Text goes through textContent (h()).
-import { api } from "./api.js";
+import { api, mentionsSig } from "./api.js";
 import { clear, h, icon, tidyTitle } from "./dom.js";
 
 const CHART_H = 96;   // px; keep in step with .mchart in reader.css
@@ -31,15 +31,17 @@ export function axisNumbers(total) {
 
 function chart(data) {
   const total = Math.max(data.total || 0, data.chapters.length);
-  const here = data.current?.n ?? data.chapters.at(-1).n;
+  const placed = Boolean(data.current);   // null: the position is in a non-story section; only the listed chapters are drawn
+  const here = placed ? data.current.n : Infinity;
   const counts = new Map(data.chapters.map((c) => [c.n, c.count]));
-  counts.set(here, data.current?.count ?? counts.get(here) ?? 0);
+  if (placed) counts.set(here, data.current.count ?? 0);
   const max = Math.max(1, ...counts.values());
   const barH = (n) => `${Math.max(2, Math.round((n / max) * (CHART_H - 12)))}px`;
   const cols = [];
   for (let c = 1; c <= total; c++) {
     let inner;
-    if (c < here) inner = counts.get(c) ? h("div.m-bar", { style: { height: barH(counts.get(c)) } }) : h("div.m-bar.m-none");
+    if (c < here && (placed || counts.has(c))) inner = counts.get(c) ? h("div.m-bar", { style: { height: barH(counts.get(c)) } }) : h("div.m-bar.m-none");
+    else if (!placed) inner = h("div.m-dot");
     else if (c === here) inner = h("div.m-track", h("div.m-bar", { style: { height: counts.get(c) ? barH(counts.get(c)) : "0px" } }));
     else inner = h("div.m-dot");
     cols.push(h("div.m-col", c === here ? { "aria-current": "true" } : {}, inner));
@@ -48,9 +50,9 @@ function chart(data) {
   const nums = axisNumbers(total);
   const axis = h("div.maxis", nums.map((c) => h(`span${c === 1 ? ".first" : c === total ? ".last" : ""}`,
     { style: { left: `${c === 1 ? 0 : c === total ? 100 : at(c)}%` } }, String(c))));
-  const x = at(here);
-  const you = h("div.mhere", h(`span${x < 9 ? ".start" : x > 91 ? ".end" : ""}`, { style: { left: `${x}%` } }, "You're here"));
-  const label = `Mentions per chapter. ${counts.get(here)} so far in chapter ${here}.`;
+  const x = placed ? at(here) : 0;
+  const you = !placed ? null : h("div.mhere", h(`span${x < 9 ? ".start" : x > 91 ? ".end" : ""}`, { style: { left: `${x}%` } }, "You're here"));
+  const label = placed ? `Mentions per chapter. ${counts.get(here)} so far in chapter ${here}.` : "Mentions per chapter.";
   const mchart = h("div.mchart", cols);
   mchart.style.setProperty("--cols", String(total));
   return h("div", { role: "img", "aria-label": label }, mchart, axis, you);
@@ -61,7 +63,8 @@ function passages(list) {
   const items = list.map((sn) => {
     const t = sn.text || "";
     const a = Math.max(0, Math.min(t.length, sn.start ?? 0)), b = Math.max(a, Math.min(t.length, sn.end ?? a));
-    return h("li", h("span", t.slice(0, a), b > a ? h("b", t.slice(a, b)) : null, t.slice(b)), h("span.para", `Paragraph ${sn.seq}`));
+    // start/end are UTF-16 offsets (what String.slice uses); para counts within the chapter.
+    return h("li", h("span", t.slice(0, a), b > a ? h("b", t.slice(a, b)) : null, t.slice(b)), h("span.para", `Paragraph ${sn.para ?? sn.seq}`));
   });
   const det = h("details.passages", h("summary", icon("chevron"), "Passages"), h("ul.snips", items));
   det.open = remembered();
@@ -85,17 +88,17 @@ export const hasMentions = (data) => Boolean(data && data.chapters?.length && (d
  * server has counts (a 404 without the EPUB, or no mention yet, leaves nothing, not an empty chart).
  * `immediate` skips the 300 ms debounce used when the position is moving.
  */
-export function mentionsSection(key, id, seq, { immediate = false } = {}) {
+export function mentionsSection(key, id, seq, { immediate = false, order = null, fin = null } = {}) {
   const box = h("div.d-sec.mentions", { hidden: true, dataset: { jump: "mentions" } });
   if (pending) pending.forEach(clearTimeout);
   pending = [];
   const mine = ++latest;
-  const sig = `${key}\n${id}\n${seq}`;
+  const sig = mentionsSig(key, id, seq, order, fin);
   const paint = (data) => {
     if (mine !== latest || !hasMentions(data)) { if (mine === latest) box.hidden = true; return; }
     const n = data.current?.count ?? 0;
     clear(box, h("span.eyebrow", "Where it comes up"), chart(data),
-      h("p.msent", n === 0 ? "Not mentioned in this chapter yet." : n === 1 ? "Mentioned once in this chapter so far." : `Mentioned ${n} times in this chapter so far.`),
+      !data.current ? null : h("p.msent", n === 0 ? "Not mentioned in this chapter yet." : n === 1 ? "Mentioned once in this chapter so far." : `Mentioned ${n} times in this chapter so far.`),
       passages(data.current?.snippets), rows(data));
     box.hidden = false;
   };
@@ -106,7 +109,7 @@ export function mentionsSection(key, id, seq, { immediate = false } = {}) {
       if (mine === latest && box.hidden) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
     }, 300));
     let data = null;
-    try { data = await api.mentions(key, id, seq); } catch { data = null; }
+    try { data = await api.mentions(key, id, seq, { order, fin }); } catch { data = null; }
     if (mine !== latest) return;
     memo = { sig, data };
     paint(data);

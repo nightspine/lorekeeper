@@ -1,3 +1,13 @@
+/**
+ * The query string of a mentions request. `fin` is the Reader's own value: null means its URL has no `fin` (the
+ * default, earlier books finished), "" means none finished and is sent as `fin=`, never left out.
+ */
+export function mentionsQuery({ entity, seq, order = null, fin = null }) {
+  return `entity=${encodeURIComponent(entity)}&seq=${seq}${order ? `&order=${encodeURIComponent(order)}` : ""}${fin != null ? `&fin=${encodeURIComponent(fin)}` : ""}`;
+}
+/** What a repaint is remembered by: a change in any part asks the server again. */
+export const mentionsSig = (key, id, seq, order = null, fin = null) => `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}`;
+
 async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {
     method,
@@ -102,8 +112,9 @@ export const api = {
   blocks: (hash, seq, before = 2, after = 2, indexKey = null) =>
     request("GET", `/api/editions/${encodeURIComponent(hash)}/blocks?seq=${seq}&before=${before}&after=${after}${indexKey ? `&i=${encodeURIComponent(indexKey)}` : ""}`),
   /** Mentions of one entry per chapter, up to block `seq` (finished). Null when the server has nothing to count (no EPUB, older server, entry not visible). */
-  mentions: async (key, entity, seq) => {
-    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?entity=${encodeURIComponent(entity)}&seq=${seq}`);
+  mentions: async (key, entity, seq, { order = null, fin = null } = {}) => {
+    // order and fin are the Reader's own URL values, so the server gates with the view the drawer shows.
+    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?${mentionsQuery({ entity, seq, order, fin })}`);
     if (!res.ok) return null;
     return res.json();
   },

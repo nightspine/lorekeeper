@@ -1423,7 +1423,7 @@ export function mountReader(root) {
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
       const seq = s.p >= 1 - 1e-12 ? s.map.cum.length - 1 : s.map.seqAt(s.p) - 1;
-      const sec = mentionsSection(s.key, id, seq, { immediate: !refresh });
+      const sec = mentionsSection(s.key, id, seq, { immediate: !refresh, order: s.series ? s.order : null, fin: s.series ? s.finished : null });
       const nextSec = body.querySelector('[data-jump="rels"], [data-jump="events"]')
         || [...body.querySelectorAll(".d-sec")].find((d) => /^(Connections|Appears in)/.test(d.querySelector(":scope > .eyebrow")?.textContent || ""))
         || body.querySelector(".drawer-foot");
