@@ -1524,7 +1524,7 @@ export function mountReader(root) {
     const cards = s.edit ? null : arcCards(e, evs);
     // A standalone book's arc sits under the profile as "In this book", unless it only repeats it. (Hand-read on the Sherlock
     // example: the profile says who he is, the arc what happens to him, so it is kept.)
-    const inThisBookArc = !s.series && (e.arcs || [])[0] && !(e.profile && e.profile.text.includes(e.arcs[0].text)) ? e.arcs[0] : null;
+    const inThisBookArc = !cards && (e.arcs || [])[0] && !(e.profile && e.profile.text.includes(e.arcs[0].text)) ? e.arcs[0] : null;
     const connections = rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
       foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
       currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null;
@@ -1548,7 +1548,7 @@ export function mountReader(root) {
       } } }, icon("layers"), "Same as another entry…")) : null);
     // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
     if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
-      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `${bookShort(a.book)}, ` : ""}Book arc, written for you`))));
+      ...e.arcs.map((a) => arcParagraph(a.text, `${e.arcs.length > 1 && a.book ? `In ${bookShort(a.book)}` : "In this book"}, written by the generator`))));
     // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {

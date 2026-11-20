@@ -226,6 +226,7 @@ ol.chapter-list > li + li { border-top: 1px solid var(--edge); }
 .arc-desc { display: grid; gap: 4px; justify-items: start; }
 .arc-text { margin: 0; font-size: var(--text-base); line-height: 1.55; color: var(--text-2); }
 .arc-text.clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; line-clamp: 4; overflow: hidden; }
+.arc-desc + .arc-desc { margin-top: 10px; }
 .arc-more { font-size: var(--text-xs); }
 .arc-card .timeline { border: 0; }
 .arc-card .timeline li { padding-right: 0; }
