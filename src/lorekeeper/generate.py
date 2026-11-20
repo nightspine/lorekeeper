@@ -250,6 +250,11 @@ def kin_modifiers_agree(described: list[str], tie: list[str]) -> bool:
     return not (age(described) and age(tie) and age(described) != age(tie)) and not (age(described) and not age(tie))
 
 
+def identity_modifiers(mods: list[str]) -> frozenset:
+    """The modifiers that change who a kin word names (step, half, in-law...): what groups descriptions."""
+    return frozenset(m for m in mods if m not in _AGE and m not in _STATUS_MODS)
+
+
 def kin_ties(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[tuple[str, dict]]:
     """(entity, relation) for each entity the relations already tie to `owner` as the `parsed` kin word says
     ("father of Gabriel", or "Gabriel son of ...", seen from the other end), among those `usable(id)` accepts.
@@ -259,13 +264,19 @@ def kin_ties(relations: list[dict], owner: str, parsed: dict, sex, usable) -> li
     want, back = parsed["role"], kinship.ROLES.get(parsed["role"], parsed["role"])
     word, hits = _gender(parsed["word"]), []
     for r in relations:
-        if r["id"] in replaced or not (p := kinship.parse(r["label"])) or not kin_modifiers_agree(parsed["modifiers"], p["modifiers"]):
+        if r["id"] in replaced or not (p := kinship.parse(r["label"])):
             continue
+        mods = p["modifiers"]
         if r["dst"] == owner and p["role"] == want:
             other, g = r["src"], _gender(p["word"])    # "<other> father of <owner>": the word is about `other`
         elif r["src"] == owner and p["role"] == back:
             other, g = r["dst"], None                  # "<owner> son of <other>": nothing said about `other`
+            # An age word then describes the owner, so `other` is the opposite ("Gabriel elder brother of Celene").
+            mods = [{"elder": "younger", "eldest": "youngest", "older": "younger", "younger": "older",
+                     "youngest": "eldest"}.get(m, m) for m in mods]
         else:
+            continue
+        if not kin_modifiers_agree(parsed["modifiers"], mods):
             continue
         if other == owner or not usable(other) or (word and (g or sex(other)) not in (None, word)):
             continue
@@ -293,7 +304,7 @@ def kin_description(name: str) -> tuple[str, dict] | None:
     if not m:
         return None
     parsed = kinship.parse(m["rest"].strip())
-    return (m["owner"], parsed) if parsed and parsed["role"] not in ("related",) and "in-law" not in parsed["modifiers"] else None
+    return (m["owner"], parsed) if parsed and parsed["role"] not in ("related",) else None
 
 
 def names_two_people(name: str, own: list[str], texts) -> bool:
@@ -933,9 +944,10 @@ class Generator:
                 continue
             for n in self._names(eid):
                 if (kd := kin_description(n)) and (owner := self.match_known(kd[0], "person")) and self._named(owner):
-                    groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"])), []).append((eid, kd[1]))
+                    groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"]), identity_modifiers(kd[1]["modifiers"])),
+                                      []).append((eid, kd[1]))
                     break
-        for (owner, _, _), found in groups.items():
+        for (owner, *_), found in groups.items():
             if len(found) != 1:
                 continue
             desc, parsed = found[0]
@@ -1428,7 +1440,7 @@ class Generator:
         proposals.sort(key=lambda ne: bool(kin_description(clean_name(ne.get("name", "")))))
         for i, ne in enumerate(proposals):
             proposed = clean_name(ne.get("name", ""))
-            if ne.get("type") in ("person", "group") and bare_kin_word(proposed):
+            if ne.get("type") in ("person", "group") and bare_kin_word(ne.get("name", "")):   # raw: a note may name them
                 self.stats[KIN_NOT_NAME] += 1   # "Father", "Mama", "the boy": never a person of their own
                 continue
             verdict, value = triage_name(ne.get("name", ""), ne.get("type"),
@@ -1524,7 +1536,7 @@ class Generator:
         for nn in raw.get("names", []):
             at = seq(nn.get("p"))
             eid = resolve(nn.get("id", ""), at)
-            if nn.get("name") and bare_kin_word(clean_name(nn["name"])):
+            if nn.get("name") and bare_kin_word(nn["name"]):
                 self.stats[KIN_NOT_NAME] += 1   # "Mama" is a different person to each character
                 continue
             if nn.get("name"):

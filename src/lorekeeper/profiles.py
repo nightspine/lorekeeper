@@ -20,6 +20,7 @@ from collections import Counter
 from . import merge
 from .generate import (_POSSESSIVE, HINDSIGHT, MOMENTARY, SYSTEM, bare_kin_word, hidden_identity, is_description,
                        kin_description, kin_ties, sex_of, triage_name)
+from .generate import _gender, identity_modifiers
 
 
 def generate_possessive(name: str) -> bool:
@@ -122,7 +123,10 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
     Returns (description, named, changed doc positions)."""
     rels = [r for d in docs for r in d.get("relations", [])]
     events = [ev for d in docs for ev in d.get("events", [])]
-    facets = {e["id"]: [f["text"] for f in e.get("facets", [])] for d in docs for e in d.get("entities", [])}
+    facets: dict[str, list[str]] = {}
+    for d in docs:   # every book's facts: a hint that the identity is held back may sit in an earlier one
+        for e in d.get("entities", []):
+            facets.setdefault(e["id"], []).extend(f["text"] for f in e.get("facets", []))
     ords = [{a["id"]: n for n, a in enumerate(d.get("anchors", []))} for d in docs]
     first: dict[str, tuple[int, int]] = {}
     for i, d in enumerate(docs):
@@ -139,10 +143,11 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
             kd = kin_description(n)
             owner = known(kd[0], etype, eid) if kd else None
             if owner and named(owner):
-                groups.setdefault((owner, kd[1]["role"], kd[1]["word"]), []).append((eid, kd[1]))
+                groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"]), identity_modifiers(kd[1]["modifiers"])),
+                                  []).append((eid, kd[1]))
                 break
     out = []
-    for (owner, _, _), found in groups.items():
+    for (owner, *_), found in groups.items():
         if len(found) != 1:
             continue
         eid, parsed = found[0]

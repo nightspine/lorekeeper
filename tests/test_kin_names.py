@@ -335,3 +335,70 @@ def test_tidy_keeps_no_name_in_the_ids_and_obeys_the_order_and_turning_point_rul
     doc["events"] = [{"id": "ev1", "from": "a5", "summary": "Amelie is shown to be the girl Gabriel left behind.",
                       "kind": "turn", "entities": ["amelie", "gabriels-sister"], "evidence": ["a5"]}]
     assert profiles.tidy([doc])["kin_folded"] == []
+
+
+# ---- review round 2 -------------------------------------------------------------------------------
+
+def _gen(book):
+    return generate.Generator(epub.read(book), tg.FakeLLM(), generate.Options(), book, lambda m: None)
+
+
+def _person(g, eid, name, seq):
+    g.entities[eid] = {"id": eid, "type": "person", "from": g.anchor(seq), "facets": [],
+                       "names": [{"value": name, "kind": "primary", "from": g.anchor(seq)}]}
+    g.entity_from[eid] = seq
+
+
+def test_age_words_read_from_the_right_end(book):
+    g = _gen(book)
+    _person(g, "gabriel", "Gabriel de Leon", 1)
+    _person(g, "celene", "Celene de Leon", 2)
+    g.relations.append({"id": "r1", "src": "gabriel", "dst": "celene", "label": "elder brother of"})   # Celene is the younger
+    ask = lambda w: g.kin_relatives("gabriel", generate.kin_description(f"Gabriel's {w}")[1])  # noqa: E731
+    assert ask("younger sister") == ["celene"] and ask("elder sister") == [] and ask("sister") == ["celene"]
+    g.relations[:] = [{"id": "r2", "src": "celene", "dst": "gabriel", "label": "elder sister of"}]      # direct: she is the elder
+    assert ask("elder sister") == ["celene"] and ask("younger sister") == []
+
+
+def test_in_law_descriptions_match_in_law_ties(book):
+    g = _gen(book)
+    _person(g, "gabriel", "Gabriel de Leon", 1)
+    _person(g, "ezra", "Ezra Pike", 2)
+    g.relations.append({"id": "r1", "src": "ezra", "dst": "gabriel", "label": "brother-in-law of"})
+    assert g.kin_match("Gabriel's brother-in-law") == ("one", ["ezra"])
+    assert g.kin_match("Gabriel's brother")[0] == "unknown"
+
+
+def test_a_kin_word_with_a_name_in_a_note_is_not_dropped_before_triage(tmp_path, monkeypatch):
+    monkeypatch.setattr(tg, "CH2", CH2)
+    book = tg.make_epub(tmp_path / "mama.epub", ch1=[*CH1, "Mama, whom the others called Auriel, rocked the cradle by the fire."])
+    ch1 = _resp(new=[GABRIEL, _new("Mama (Auriel)", 6)],
+                updates=[{"id": "Auriel", "p": 6, "desc": "Rocks the cradle by the fire in the kitchen."}])
+    ix, report = run(book, tmp_path, ch1)
+    assert "auriel" in names(ix) and not report["stats"].get(generate.KIN_NOT_NAME)
+
+
+def test_a_sister_and_a_stepsister_each_fold_to_their_own_match(book):
+    g = _gen(book)
+    _person(g, "gabriel", "Gabriel de Leon", 1)
+    _person(g, "d-sister", "Gabriel's sister", 2)
+    _person(g, "d-step", "Gabriel's stepsister", 3)
+    _person(g, "amelie", "Amelie de Leon", 5)
+    _person(g, "celene", "Celene de Leon", 6)
+    for i, (src, label) in enumerate([("amelie", "sister of"), ("celene", "stepsister of")]):
+        g.relations.append({"id": f"r{i}", "src": src, "dst": "gabriel", "label": label})
+        g.item_seq[f"r{i}"] = 5 + i
+    g._fold_kin_descriptions()
+    assert set(g.entities) == {"gabriel", "d-sister", "d-step"}
+    assert g.entities["d-sister"]["names"][-1]["value"] == "Amelie de Leon"
+    assert g.entities["d-step"]["names"][-1]["value"] == "Celene de Leon"
+
+
+def test_tidy_remembers_a_hidden_identity_from_an_earlier_book():
+    from .test_profiles import _doc, _e
+    one = tg_doc()
+    next(e for e in one["entities"] if e["id"] == "gabriels-sister")["facets"].append(
+        {"id": "one.gabriels-sister.x", "from": "a3", "basis": "stated", "evidence": ["a3"],
+         "text": "An unidentified woman who follows Gabriel."})
+    two = _doc("two", [_e("gabriels-sister", ["Gabriel's sister"], [("a2", "Waits at the inn.")], frm="a2")])
+    assert profiles.tidy([one, two])["kin_folded"] == []
