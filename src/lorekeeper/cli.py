@@ -508,6 +508,48 @@ def cmd_portraits(args) -> int:
     return 0
 
 
+def cmd_arcs(args) -> int:
+    """Write a short arc per entity per book from the index's own events (series reading order), in place."""
+    import shutil
+    import time
+
+    from . import arcs, epub, llm
+    paths = [Path(x) for x in args.index]
+    docs = [json.loads(p.read_text()) for p in paths]
+    books = [epub.read(Path(args.epub[i])) if args.epub and i < len(args.epub) else None for i in range(len(docs))]
+    before = {i: {str(e) for e in validate.check_index(d) if e.level == "error"} for i, d in enumerate(docs)}
+    if args.redo:
+        print(f"redo: removed {sum(arcs.clear(d) for d in docs)} existing arcs")
+    model = _make_model(args, args.model or (llm.PROVIDERS[args.provider]["cheap"] if args.provider in llm.PROVIDERS else None))
+    prior = [json.loads(Path(x).read_text()) for x in args.prior or []]
+    stats = arcs.arcs(list(zip(docs, books)), model, log=lambda m: print(m, file=sys.stderr), prior=prior)
+    drops = ", ".join(f"{v} {k}" for k, v in sorted(stats.items()) if k.startswith(("dropped:", "rewritten:")))
+    cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "price unknown"
+    print(f"arcs: {stats.get('arcs', 0)} written, {stats.get('dropped', 0)} dropped"
+          + (f" ({drops})" if drops else "") + f"; {model.usage.calls} calls, cost {cost}")
+    for i, d in enumerate(docs):
+        errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
+        if errs:
+            print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
+            return 1
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        for p, d in zip(paths, docs):
+            (out / p.name).write_text(_dump(d))
+        print(f"wrote {len(docs)} file(s) to {out}")
+        return 0
+    backup = Path(args.backup) / time.strftime("%Y%m%d-%H%M%S")
+    backup.mkdir(parents=True, exist_ok=True)
+    for p, d in zip(paths, docs):
+        shutil.copy2(p, backup / p.name)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(_dump(d))
+        tmp.replace(p)
+    print(f"wrote {len(docs)} file(s); originals in {backup}")
+    return 0
+
+
 def cmd_conformance(args) -> int:
     failed = 0
     for path in conformance.cases(args.dir):
@@ -716,6 +758,17 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write the results to this directory instead of in place")
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_portraits)
+
+    s = sub.add_parser("arcs", help="write a short arc per entity per book from the index's events (a cloud model)")
+    s.add_argument("index", nargs="+", help="index files, in series reading order")
+    s.add_argument("--epub", action="append", help="each index's EPUB, in the same order, for exact chapter ends (default: the index's chapter recaps)")
+    _add_provider_args(s, "claude")
+    s.add_argument("--model", default=None, help="model name (default: the provider's cheap model)")
+    s.add_argument("--prior", action="append", help="an earlier series book's index, read only (repeatable, reading order)")
+    s.add_argument("--redo", action="store_true", help="remove existing arcs first")
+    s.add_argument("--out", help="write the results to this directory instead of in place")
+    s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
+    s.set_defaults(fn=cmd_arcs)
 
     s = sub.add_parser("conformance", help="run (or regenerate) conformance cases")
     s.add_argument("dir", nargs="?", default="conformance")
