@@ -117,7 +117,17 @@ def _mentions_case(book: epub.Book) -> dict:
         positions.append({"seq": seq, "names": names, "current": m.current, "counts": m.counts,
                           "spans": {k: [list(s) for s in v] for k, v in m.spans.items()}})
     return {"blocks": [{"seq": b.seq, "raw": b.raw} for b in book.blocks],
-            "chapters": [{"title": c.title, "start": c.start} for c in book.chapters], "positions": positions}
+            "chapters": [{"title": c.title, "start": c.start} for c in book.chapters], "positions": positions,
+            "guard": _guard_rows()}
+
+
+def _guard_rows() -> list[dict]:
+    """Whole-word guard rows: a name after an opening quote counts, one inside a word (o'Brien) does not."""
+    out = []
+    for raw in ("'Lucy, come here,' said the Count", "o'Brien", "Lucy's", "\"Lucy", "\u2018Lucy\u2019", "d\u2019Lucy", "xLucy"):
+        mt = mentions.Matcher({"l": ["Lucy"], "b": ["Brien"]})
+        out.append({"raw": raw, "found": [[s, e, o] for s, e, o in mt.find(raw)]})
+    return out
 
 
 def write(outdir: Path) -> None:
