@@ -155,7 +155,7 @@ export function createAsk(ctx) {
 
   // ---- the thread --------------------------------------------------------------------------------
 
-  function citeLinks(cites) {
+  function citeLinks(cites, reg) {
     const seen = new Set();
     const list = (cites || []).filter((c) => { const k = `${c.kind}:${c.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
     if (!list.length) return null;
@@ -164,11 +164,13 @@ export function createAsk(ctx) {
       const plain = () => h("span.ask-cite", { title: label(c) }, label(c));
       if (!ctx.canOpen(c)) return h("li", plain());
       const li = h("li");
-      const btn = h("button.linkish.ask-cite", { type: "button", title: label(c), on: { click: () => {
+      let btn;
+      btn = h("button.linkish.ask-cite", { type: "button", title: label(c), on: { click: () => {
         if (ctx.canOpen(c)) ctx.open(c);
         else btn.replaceWith(plain());   // no longer in the view on screen
       } } }, label(c));
       li.append(btn);
+      reg.push({ btn, c, plain });
       return li;
     });
     return h("div.ask-from", h("span.ask-from-lbl", "From:"), h("ul.ask-cites", items));
@@ -183,7 +185,7 @@ export function createAsk(ctx) {
       body.push(h("p.ask-err", { role: "alert" }, t.err, " ",
         h("button.linkish", { type: "button", on: { click: () => retry(t) } }, "Try again")));
     } else {
-      body.push(h("p.ask-a", t.a.answer), t.a.found ? citeLinks(t.a.cites) : null);
+      body.push(h("p.ask-a", t.a.answer), t.a.found ? citeLinks(t.a.cites, t.links = []) : null);
     }
     if (!t.el) { t.el = h("div.ask-turn"); log.append(t.el); }
     t.el.dataset.state = t.state;
@@ -290,7 +292,11 @@ export function createAsk(ctx) {
     /** Called on every Reader repaint: the thread goes when the view no longer holds what it was asked at. */
     check() {
       const snaps = [...turns.map((t) => t.at), busy?.at, draft].filter(Boolean);
-      if (snaps.length && anyRevealsLess(snaps, ctx.view(), ctx.position())) reset();
+      if (snaps.length && anyRevealsLess(snaps, ctx.view(), ctx.position())) { reset(); return; }
+      // The thread stays: a source whose item has left the view (a replaced recap, an edit) becomes plain text now.
+      for (const t of turns) for (const x of t.links || []) {
+        if (x.btn.isConnected && document.activeElement !== x.btn && !ctx.canOpen(x.c)) x.btn.replaceWith(x.plain());
+      }
     },
     reset,
     /** Type a question into the field without sending it, and focus it. */
