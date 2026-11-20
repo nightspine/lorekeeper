@@ -767,3 +767,80 @@ def test_shared_events_are_charged_once():
         return sum(1 for i in range(200) if f"[ev:V{i}]" in ask.select(v, q, [], 4_000).text)
     both, one = shown("What happened to Alice and Bob?"), shown("What happened to Alice?")
     assert one > 40 and both >= one * 0.85          # the second entry's head costs a little; a double charge would halve it
+
+
+# ---- round 7: names through the common list, short names, hyphens, mandatory chapters, Unicode
+
+@pytest.mark.parametrize("bad", ["Renfield later meets Hunter.", "Hunter arrives at dusk.", "Renfield meets Walker.",
+                                 "Renfield is seen by Black-Bird.", "Renfield fears Li.", "Renfield is helped by Jo."])
+def test_common_words_do_not_excuse_names(bad):
+    a = ask.answer(small(), "Who is Renfield?", Fake(reply(bad, ["e:E4"])))
+    assert a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge"
+
+
+@pytest.mark.parametrize("good", ["However, he eats flies.", "Renfield is in Book 2.", "On Monday Renfield eats flies.",
+                                  "In March, Renfield is calm.", "Renfield is a patient. Chapter 3 says so."])
+def test_sentence_openers_and_the_fixed_list_pass(good):
+    a = ask.answer(small(), "Who is Renfield?", Fake(reply(good, ["e:E4"])))
+    assert a.found and a.note is None
+
+
+def test_a_name_the_notes_hold_is_fine_anywhere():
+    v = mkview([ent("E1", "Hunter", facets=[fac("F1", "A tracker.")]), ent("E2", "Black-Bird")])
+    a = ask.answer(v, "Who are Hunter and Black-Bird?", Fake(reply("Hunter later meets Black-Bird.", ["e:E1"])))
+    assert a.found and a.note is None
+
+
+def test_hyphenated_name_passes_when_every_part_is_in_the_notes():
+    v = mkview([ent("E1", "Keylan", ["O'Brien", "Smith"], profile=fac("P1", "A chief."))])
+    assert ask.answer(v, "Who is Keylan?", Fake(reply("Keylan is O'Brien-Smith.", ["e:E1"]))).note is None
+    v = mkview([ent("E1", "Keylan", ["Black", "Bird"], profile=fac("P1", "A chief."))])      # parts are in the notes
+    assert ask.answer(v, "Who is Keylan?", Fake(reply("Keylan is Black-Bird.", ["e:E1"]))).note is None
+    # "black" and "bird" are common English, but that is not the notes: an absent Black-Bird is refused
+    assert ask.answer(small(), "Who is Renfield?", Fake(reply("Renfield meets Black-Bird.", ["e:E4"]))).note \
+        == "refused: outside knowledge"
+
+
+def test_two_letter_names_are_unknown_names():
+    fake = Fake(reply("She does.", ["e:E4"]))
+    a = ask.answer(small(), "Does Li eat flies?", fake)
+    assert fake.calls == [] and a.note == "unknown name" and a.answer == ask.NOT_SAID
+    hist = [ask.Turn("Does Li come back?", "x", ["e:E4"])]
+    fake = Fake(reply("Renfield eats flies.", ["e:E4"]))
+    ask.answer(small(), "What does he eat?", fake, hist)
+    assert "Reader: Does … come back?" in fake.calls[0][1] and "Li" not in fake.calls[0][1].split("Reader's question")[0]
+    sl = ask.select(small(), "Is Renfield a friend of Jo?", [], 10_000)
+    assert sl.unknown_names == ["Jo"]
+    assert ask.select(small(), "who is li", [], 10_000).unknown_names == []     # lowercase two-letter words stay exempt
+
+
+def test_a_nine_part_chapter_keeps_every_part():
+    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} of the chapter " + "goes on and on. " * 60, "book": "b1"}
+          for i in range(9)]
+    v = mkview([ent("E1", "Hero")], chapters=ch + [{"id": "X", "title": "CHAPTER VI", "text": "Next.", "book": "b1"}])
+    sl = ask.select(v, "What happened in chapter 5?", [], 6_000)
+    assert all(f"[ch:P{i}]" in sl.text for i in range(9)) and "[ch:X]" not in sl.text
+    assert sl.chars <= 6_000
+    sl = ask.select(v, "What happened in chapter 5?", [], 40_000)
+    assert all(f"Part {i} of the chapter" in sl.text for i in range(9)) and sl.chars <= 40_000
+
+
+def test_a_named_book_without_recaps_is_not_answered_from_another_book():
+    ch = [{"id": "C5", "title": "CHAPTER V", "text": "Current book five.", "book": "b2"}]
+    v = mkview([ent("E1", "Hero")], chapters=ch)
+    v["position"] = {"book": "b2", "anchor": "a1"}
+    books = {"b1": {"title": "First Tale", "number": 1}, "b2": {"title": "Second Tale", "number": 2}}
+    sl = ask.select(v, "What happened in chapter 5 of the first book?", [], 10_000, books)
+    assert "Current book five" not in sl.text and "The index has no chapter recaps for Book 1." in sl.text
+    sl = ask.select(v, "What happened in chapter 5?", [], 10_000, books)
+    assert "Current book five" in sl.text and "no chapter recaps" not in sl.text
+    sl = ask.select(v, "What happened in the last chapter of the first book?", [], 10_000, books)
+    assert "Current book five" not in sl.text
+
+
+def test_unicode_names_are_one_name_as_written():
+    fake = Fake(reply("Renfield is a patient.", ["e:E4"]))
+    a = ask.answer(small(), "Is Renfield friends with Émile Zola?", fake)
+    assert a.answer.endswith("The index has nothing on Émile Zola up to where you are.")
+    sl = ask.select(mkview([ent("E1", "Émile Zola")]), "Who is Émile Zola?", [], 10_000)
+    assert sl.named == ["E1"] and sl.unknown_names == []

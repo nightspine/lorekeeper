@@ -19,7 +19,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import generate, merge, text
-from .common_words import COMMON
+from .common_words import COMMON, SENTENCE_FIRST
 
 DEFAULT_BUDGET = 40_000    # characters of notes for a cloud provider
 OLLAMA_BUDGET = 9_000      # Ollama's default context is small
@@ -87,9 +87,9 @@ ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth
             "ninth": 9, "tenth": 10, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
             "eight": 8, "nine": 9, "ten": 10, "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5}
 
-_PROPER = re.compile(r"(?<![.!?:;\"“(]\s)(?<!^)(?<![\w'’-])[A-Z][a-z]{2,}\b")   # as portraits._PROPER
 _TOKEN = re.compile(r"[^\W_][\w'’-]*")
-_RUN = re.compile(r"[A-Z][\w'’.-]*(?:\s+(?:(?:de|del|della|di|da|van|von|der|den|la|le|du|des|of|the)\s+)*[A-Z][\w'’.-]*)+")
+_WORD = re.compile(r"[^\W\d_][\w'’.-]*")
+_PARTICLE = {"de", "del", "della", "di", "da", "van", "von", "der", "den", "la", "le", "du", "des", "of", "the"}
 _POSS = re.compile(r"['’]s\b")
 _DELIM = re.compile(r"<\s*/?\s*notes\s*>", re.IGNORECASE)
 _VOICE = re.compile(r"\bthe (?:reader(?:['’]s)?(?: notes)?|notes|tags)\b", re.IGNORECASE)
@@ -148,6 +148,9 @@ def _norm(word: str) -> str:
     return w[0] if w else ""
 
 
+CAPITALISED_OK = {"book", "chapter", "part", "volume", "monday", "tuesday", "wednesday", "thursday", "friday",
+                  "saturday", "sunday", "january", "february", "march", "april", "may", "june", "july", "august",
+                  "september", "october", "november", "december"}      # English capitalises these without naming anything
 ABBREV = {"mr", "mrs", "ms", "dr", "st", "prof", "capt", "col", "sgt", "rev", "fr", "mme", "m", "lt", "gen", "hon",
           "sr", "jr"}
 TITLES = ABBREV | {"lord", "lady", "sir", "miss", "madame", "monsieur", "professor", "captain", "colonel", "sergeant",
@@ -208,6 +211,27 @@ def _vocab(view: dict) -> set[str]:
     return set(text.words(_POSS.sub("", " ".join(bits))))
 
 
+def _cap_runs(q: str) -> list[str]:
+    """Runs of two or more adjacent capitalised words (Unicode-aware; particles allowed inside), as written."""
+    runs, cur, last_end, pend = [], [], 0, []
+    for m in _WORD.finditer(q):
+        w = m.group(0)
+        adjacent = cur and q[last_end:m.start()].strip() == ""
+        if w[:1].isupper() and (adjacent or not cur):
+            cur += pend + [w] if adjacent else [w]
+            pend = []
+        elif w.lower() in _PARTICLE and adjacent:
+            pend.append(w)
+        else:
+            if len(cur) >= 2:
+                runs.append(" ".join(cur))
+            cur, pend = ([w] if w[:1].isupper() else []), []
+        last_end = m.end()
+    if len(cur) >= 2:
+        runs.append(" ".join(cur))
+    return runs
+
+
 def _unknown_word(w: str, vocab: set[str]) -> bool:
     """A normalised word that is neither in the view's text nor ordinary English."""
     return not (w in vocab or w in COMMON or w in STOP or w in ORDINALS or w + "s" in vocab
@@ -239,8 +263,8 @@ class _Names:
         """Runs of adjacent capitalised words in the question (particles allowed inside), as
         (text, first word index, last word index): each is one proposed name."""
         out = []
-        for m in _RUN.finditer(_POSS.sub("", q)):
-            parts = m.group(0).split()
+        for run in _cap_runs(_POSS.sub("", q)):
+            parts = run.split()
             while parts and _norm(parts[0]) in STOP:        # "What Quincey Morris" → "Quincey Morris"
                 parts.pop(0)
             if len(parts) < 2:
@@ -395,17 +419,19 @@ def _number(tok: str) -> int | None:
     return total
 
 
-def chapter_matches(view: dict, question: str, books_named: set[str], cur_book: str | None) -> list[int]:
+def chapter_matches(view: dict, question: str, books_named: set[str], cur_book: str | None) -> tuple[list[int], list[str]]:
     """Indexes (into view["chapters"]) of the chapter recaps the question asks about: "chapter 12" / "chapter XII"
     against the numbers in recap titles, a recap title written out in the question, "the last / this / current
     chapter" (the newest) and "the previous chapter", within the book named or else the current one. All
-    parts of a chapter come together, in order."""
+    parts of a chapter come together, in order. Returns (indexes, books the question is about that have no
+    visible chapter recap): there is never a fallback to another book."""
     chapters = view["chapters"]
-    if not chapters:
-        return []
     low = question.lower()
     target = books_named or ({cur_book} if cur_book else set())
-    pool = [i for i, c in enumerate(chapters) if not target or c.get("book") in target] or list(range(len(chapters)))
+    pool = [i for i, c in enumerate(chapters) if not target or c.get("book") in target]
+    if not pool:
+        asked = re.search(r"\bchapters?\b", low) and target
+        return [], (sorted(target) if asked else [])
     groups: list[list[int]] = []                       # consecutive recaps with one title are one chapter
     for i in pool:
         if groups and chapters[groups[-1][-1]].get("title") == chapters[i].get("title"):
@@ -430,8 +456,7 @@ def chapter_matches(view: dict, question: str, books_named: set[str], cur_book: 
         if len(" ".join(tw)) >= 4 and not all(_number(w) is not None for w in tw):
             if any(qw[i:i + len(tw)] == tw for i in range(len(qw) - len(tw) + 1)) and g not in hit:
                 hit.append(g)
-    out = sorted(i for g in hit for i in g)
-    return out[-8:]
+    return sorted(i for g in hit for i in g), []
 
 
 def select(view: dict, question: str, history: list[Turn] = (), budget_chars: int = DEFAULT_BUDGET,
@@ -450,7 +475,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     raw = _raw_tokens(question)
     sl.unknown, name_idx = [], []
     for i, (rw, w, cap, start, after_title) in enumerate(raw):
-        if i in used or len(w) < 3 or not _unknown_word(w, vocab) or _numeral(rw, raw[i - 1][1] if i else None):
+        if i in used or len(w) < 2 or (len(w) < 3 and not cap) or not _unknown_word(w, vocab) or _numeral(rw, raw[i - 1][1] if i else None):
             continue
         if w not in sl.unknown:
             sl.unknown.append(w)
@@ -698,11 +723,20 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         hits = ev_hits(ev["summary"])
         if tag not in seen_ev and (hits >= 2 or (hits and ev.get("book") in bnames)):
             add(4.5, -hits * 100, tag, "event", ev, ev_line(ev), "ev")
-    for i in chapter_matches(view, question, bnames, cur_book):      # asked for by number, title or "the last chapter"
-        c = view["chapters"][i]
-        add(0.7, i, f"[ch:{c['id']}]", "chapter", c,
-            f"  Chapter: [ch:{c['id']}]{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: {_clean(c['text'], 900)}",
-            "chm", None, i)
+    chm_idx, no_recaps = chapter_matches(view, question, bnames, cur_book)
+    for bk in no_recaps:
+        n = (books or {}).get(bk, {}).get("number")
+        sl.notes.append(f"Note: The index has no chapter recaps for {f'Book {n}' if n else _clean((books or {}).get(bk, {}).get('title') or bk, 60)}.")
+    chm: list[tuple[float, float, str, str, str, int]] = []      # asked for: placed before the fill loop
+    if chm_idx:       # every part of the chapter; over half the budget, each part's text is shortened evenly
+        per = max(80, min(900, (budget_chars // 2 - 300) // len(chm_idx) - 140))
+        for i in chm_idx:
+            c = view["chapters"][i]
+            tag = f"[ch:{c['id']}]"
+            tags[tag] = {"kind": "chapter", "id": c["id"], "entity": None, "book": c.get("book"),
+                         "label": _label("chapter", c, ents)}
+            chm.append((0.7, i, tag, f"  Chapter: {tag}{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: "
+                                     f"{_clean(c['text'], per)}", "chm", i))
     for i, c in enumerate(view["chapters"]):
         hits = ev_hits((c.get("title") or "") + " " + c["text"])
         named_book = c.get("book") in bnames
@@ -724,8 +758,9 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     used_chars = sum(len(x) + 1 for x in head_text) + fixed + len(CLOSE) + sum(len(x) + 1 for x in tail) + 200 * (len(focus) + 1)   # room for the "not shown" lines
     ch_cap = budget_chars // 4 if focus else budget_chars // 2
     ch_used = 0
-    keep: list[tuple[float, float, str, str, str, int]] = []
-    in_keep: set[str] = set()
+    keep: list[tuple[float, float, str, str, str, int]] = list(chm)
+    in_keep: set[str] = {c[2] for c in chm}
+    used_chars += sum(len(c[3]) + 1 for c in chm)
     for c in sorted(cands, key=lambda c: (c[0], c[1])):
         if c[2] in in_keep:                  # an event or connection shared by two entries is charged and printed once
             continue
@@ -788,10 +823,8 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     return sl
 
 
-def _known(n: str, vocab: set[str]) -> bool:
-    """A normalised word the slice holds or ordinary English holds (also without a plural s)."""
-    return (n in vocab or n in COMMON or n.removesuffix("s") in vocab or n.removesuffix("s") in COMMON
-            or n + "s" in vocab or n.removesuffix("es") in COMMON)
+def _in_slice(n: str, vocab: set[str]) -> bool:
+    return n in vocab or n.removesuffix("s") in vocab or n + "s" in vocab
 
 
 def _slice_vocab(sl: Slice) -> set[str]:
@@ -803,21 +836,27 @@ def _slice_vocab(sl: Slice) -> set[str]:
 
 def _outside(answer: str, vocab: set[str], banned: list[str] = ()) -> list[str]:
     """Words of the answer that may not be there: a banned word (the question's unknown words, in any case),
-    or a name-like word (an uppercase letter anywhere in it, wherever it stands) that neither the notes nor
-    ordinary English holds. Apostrophes and hyphens stay inside a word."""
+    or a name-like word (an uppercase letter anywhere in it, two letters or more, wherever it stands) that the
+    notes do not hold. Ordinary English excuses a name-like word only as the first word of a sentence, and
+    only if it is not itself name-like (hunter, baker...); Book, Chapter, Part, Volume, days and months are
+    excused anywhere. A hyphenated word passes if the whole is in the notes or each part is. The comparison
+    is on normalised forms, so apostrophes and hyphens stay inside a word."""
     banned_ = set(banned)
     out: list[str] = []
-    for m in _TOKEN.finditer(answer):
-        raw = m.group(0).rstrip("'’-")
-        n = _norm(raw)
+    for raw, n, _cap, start, _t in _raw_tokens(answer):
         if len(n) < 2 or raw in out:
             continue
         if n in banned_ or n.removesuffix("s") in banned_:
             out.append(raw)
-        elif any(c.isupper() for c in raw) and not _known(n, vocab):
-            parts = [_norm(x) for x in re.split(r"['’-]", raw) if x]
-            if not (len(parts) > 1 and all(len(x) < 2 or _known(x, vocab) for x in parts)):
-                out.append(raw)
+        elif not any(c.isupper() for c in raw) or _in_slice(n, vocab) or n in CAPITALISED_OK:
+            continue
+        elif start and (n in SENTENCE_FIRST or n.removesuffix("s") in SENTENCE_FIRST):
+            continue
+        else:
+            parts = [_norm(x) for x in raw.split("-") if x]
+            if len(parts) > 1 and all(len(x) < 2 or _in_slice(x, vocab) for x in parts):
+                continue
+            out.append(raw)
     return out
 
 
@@ -868,7 +907,7 @@ def _mask(q: str, vocab: set[str]) -> str:
     def sub(m: re.Match) -> str:
         raw = m.group(0).rstrip("'’-")
         w = _norm(raw)
-        return "…" if len(w) >= 3 and _unknown_word(w, vocab) and not _numeral(raw, None) else m.group(0)
+        return "…" if (len(w) >= 3 or len(w) == 2 and raw[:1].isupper()) and _unknown_word(w, vocab) and not _numeral(raw, None) else m.group(0)
     return _TOKEN.sub(sub, q)
 
 
