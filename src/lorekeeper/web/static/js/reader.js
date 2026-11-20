@@ -164,7 +164,7 @@ export function mountReader(root) {
     // Another book of the series: the position last set for it, else its start.
     if (!keepPosition) s.p = readingList().find((e) => e.key === key)?.p ?? 0;
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
-    s.reveals = null; s.docOrds = null;
+    s.reveals = null; s.docOrds = null; s.profileIds = null;
     s.sync = { on: false, override: false, ahead: false, wantAhead: null };
     if (preview) {
       // The horizon the preview starts at: the end of the third story chapter. Past it needs a deliberate "Show me anyway".
@@ -1081,10 +1081,10 @@ export function mountReader(root) {
     return runs;
   }
   /** One timeline row: turning points stand out, small moments stay quiet. */
-  function eventRow(ev, { chips = true } = {}) {
+  function eventRow(ev, { chips = true, book = true } = {}) {
     const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`);
     clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
-      chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : bookLabel(ev.book),
+      chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : book ? bookLabel(ev.book) : null,
       s.edit ? editor.eventRowActions(ev, li) : null);
     return li;
   }
@@ -1378,6 +1378,92 @@ export function mountReader(root) {
     (target.querySelector("[data-dirty='1'] textarea, [data-dirty='1'] input") || target.querySelector("#drawer-title"))?.focus({ preventScroll: true });
   }
 
+
+  // ---- an entry across a series: who they are, then one card per book -----------------------------
+
+  /** Ids of the facets that are profiles (the view does not say which history items are). Only asked about ids the view already shows. */
+  function isProfile(id) {
+    if (!s.profileIds) {
+      s.profileIds = new Set();
+      for (const d of s.seriesDocs.size ? s.seriesDocs.values() : [s.doc]) {
+        for (const en of d?.entities || []) for (const f of en.facets || []) if (f.kind === "profile") s.profileIds.add(f.id);
+      }
+    }
+    return s.profileIds.has(id);
+  }
+
+  /** The cards of an entry that spans books, newest first (the book being read on top), or null when the entry
+   *  is shown as before: not a series, or everything it shows comes from this book. Built only from the view. */
+  function arcCards(e, evs) {
+    if (!s.series) return null;
+    const order = s.series.orders[s.order] || [];
+    const evIn = (b) => evs.filter((ev) => ev.book === b);
+    const items = (b) => [e.profile, ...e.history, ...e.facets].filter((x) => x && x.book === b).length + evIn(b).length;
+    const present = new Set([...e.facets, ...e.history, ...evs, ...(e.profile ? [e.profile] : [])].map((x) => x.book).filter(Boolean));
+    if (!carried(e.id) && present.size < 2) return null;
+    const rank = (b) => { const i = order.indexOf(b); return i < 0 ? order.length : i; };
+    const asleep = dormant(e);
+    const books = [...present].filter((b) => b !== s.book).sort((a, b) => rank(b) - rank(a));
+    const withCurrent = items(s.book) ? [s.book, ...books] : books;
+    const cards = withCurrent.map((b) => buildCard(e, b, evIn(b), order));
+    if (asleep) cards.unshift(h("section.book-block.arc-card.current.quiet", { "aria-label": s.series.books.find((x) => x.key === s.book)?.title || s.book },
+      h("div.book-head", h("span.book-title", { title: s.series.books.find((x) => x.key === s.book)?.title || s.book },
+        `${bookNumber(s.book, order)}${s.series.books.find((x) => x.key === s.book)?.title || s.book}: not in this book yet.`))));
+    return cards.length ? cards : null;
+  }
+  const bookNumber = (b, order) => (order.indexOf(b) >= 0 ? `Book ${order.indexOf(b) + 1}, ` : "");
+
+  function buildCard(e, b, bookEvents, order) {
+    const now = b === s.book;
+    const full = s.series.books.find((x) => x.key === b)?.title || b;
+    const short = bookShort(b);
+    const heading = `${bookNumber(b, order)}${full}${now ? ", so far" : ""}`;
+    // Profiles of this book, in view order. The latest one overall is already shown under "Who they are".
+    const profiles = [...e.history.filter((f) => f.book === b && isProfile(f.id)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
+    const ending = !now && profiles.length && profiles[profiles.length - 1] !== e.profile ? profiles[profiles.length - 1] : null;
+    const impressions = [...e.history.filter((f) => f.book === b && f !== ending)];
+    const details = e.facets.filter((f) => f.book === b);
+    const cardFact = (f) => h("li", f.text, f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null);
+    const list = (xs) => foldList(xs.map(cardFact), (nodes) => h("ul.fact-list", nodes), { show: 6, noun: "details" });
+
+    // The slot for a model-written arc of the book (step 2) goes here, first in the card.
+    let desc = null;
+    if (ending) {
+      const p = h("p.arc-text.clamp", ending.text);
+      const more = h("button.linkish.arc-more", { type: "button", "aria-expanded": "false", on: { click: () => {
+        const open = p.classList.toggle("clamp") === false;
+        more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Show less" : "Read more"; } } }, "Read more");
+      desc = h("div.arc-desc", h("span.eyebrow", `At the end of ${short}`), p, more);
+      // A short text needs no control; the clamp is measured once the card is in the page.
+      queueMicrotask(() => requestAnimationFrame(() => { if (p.isConnected && p.scrollHeight <= p.clientHeight + 1) more.hidden = true; }));
+    }
+
+    // Main events: turning points first (up to 4), then the latest ordinary ones; small moments sit behind the fold.
+    const kinds = bookEvents.some((ev) => ev.kind);
+    const main = bookEvents.filter((ev) => !kinds || ev.kind !== "minor");
+    const turns = main.filter((ev) => ev.kind === "turn").slice(-4);
+    const shownEv = turns.length >= 4 ? new Set(turns) : new Set([...turns, ...main.filter((ev) => ev.kind !== "turn").slice(-(4 - turns.length))]);
+    const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
+    const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${short}`) : null;
+
+    return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full },
+      h("div.book-head", h("h3.book-title", { title: full }, heading)),
+      desc, eventsNode,
+      details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${short}`), list(details)) : null,
+      impressions.length ? h("details.history", h("summary", `Earlier impressions (${impressions.length})`), list(impressions)) : null);
+  }
+
+  /** A list of event rows with some hidden behind one control; with nothing to hide it is just the list. */
+  function eventFold(rows, visible, label) {
+    const make = (all) => h("ol.timeline", rows.filter((r, i) => all || visible[i]));
+    if (visible.every(Boolean)) return make(true);
+    const wrap = h("div.fold");
+    const paint = (all) => clear(wrap, visible.some(Boolean) || all ? make(all) : null,
+      h("button.linkish.fold-more", { type: "button", "aria-expanded": String(all), on: { click: () => paint(!all) } }, all ? "Show fewer" : label));
+    paint(false);
+    return wrap;
+  }
+
   function openDrawer(id, { from = null, refresh = false, discard = false, keepFocus = false } = {}) {
     // Opening another entry with unsaved text in the open one asks first.
     if (!refresh && !discard && host() && drawerDirty()) {
@@ -1401,18 +1487,23 @@ export function mountReader(root) {
       bookLabel(f.book) && h("span", " ", bookLabel(f.book)));
     const facts = (list, show = 4) => foldList(list.map(factNode), (nodes) => h("ul.fact-list", nodes), { show, noun: "details" });
     const eyebrow = (label, n) => h("span.eyebrow", label, n > 1 ? h("span.n", String(n)) : null);
+    const cards = s.edit ? null : arcCards(e, evs);
+    const connections = rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
+      foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
+      currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null;
     const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         bookLabel(e.profile.book)) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
-      h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
-        e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
-      e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null,
-      rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
-        foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
-        currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null,
-      evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
+      cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", h("span.n", String(cards.length))),
+        h("div.series-rail.newest.arc-rail", cards))
+        : [h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
+          e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
+        e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null],
+      // "Where it comes up" (the mentions feature) goes here once it is merged, before Connections.
+      connections,
+      cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
       s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
         closeDrawer({ focus: false });
@@ -1420,7 +1511,8 @@ export function mountReader(root) {
       } } }, icon("layers"), "Same as another entry…")) : null);
     const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
     // Jump links under the name, so a long entry (most of them, on a phone) is one tap from each section.
-    const jumps = [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]].filter((j) => j[2]);
+    const jumps = (cards ? [["books", "Books", cards.length], ["rels", "Connections", rels.length]]
+      : [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]]).filter((j) => j[2]);
     const jumpNav = !s.edit && jumps.length > 1 ? h("nav.d-jumps", { "aria-label": "Sections" }, jumps.map(([k, label, n]) =>
       h("button.linkish", { type: "button", on: { click: () => body.querySelector(`[data-jump="${k}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) } },
         label, h("span.n", String(n))))) : null;
