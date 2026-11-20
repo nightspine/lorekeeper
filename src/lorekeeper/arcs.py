@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from . import anchors as anchors_, epub
 from .generate import ABOUT_THE_TEXT, MIN_SENTENCE_WORDS
-from .portraits import KINDS, WORKERS, _CAPS, _checked, name_of
+from .portraits import KINDS, WORKERS, _CAPS, _checked
 
 SCHEMA = {"type": "object", "required": ["text", "told"],
           "properties": {"text": {"type": "string"}, "told": {"type": "array", "items": {"type": "integer"}}}}
@@ -163,7 +163,8 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
 
     # Where an earlier run left off: the entity's last arc in this book.
     written: dict[str, list[dict]] = {}
-    covered: dict[str, int] = {}
+    covered: dict[str, int] = {}     # events up to this anchor were told by an earlier run
+    told_ids: dict[str, set[str]] = {}   # events this run's arcs told
     for eid, e in ents.items():
         mine = sorted((f for f in e.get("facets", []) if f.get("kind") == "arc" and f["from"] in ords),
                       key=lambda f: ords[f["from"]])
@@ -181,7 +182,7 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
         due = []
         for eid, evs in by_ent.items():
             vis = [ev for ev in evs if ords[ev["from"]] <= mark]
-            new = [ev for ev in vis if ords[ev["from"]] > covered.get(eid, -1)]
+            new = [ev for ev in vis if ords[ev["from"]] > covered.get(eid, -1) and ev["id"] not in told_ids.get(eid, ())]
             if not new or ords.get(ents[eid]["from"], 1 << 30) > mark:
                 continue
             turns = [ev for ev in new if ev.get("kind") == "turn"]
@@ -249,7 +250,7 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
                 facet["replaces"] = [prev_arc[-1]["id"]]
             e.setdefault("facets", []).append(facet)
             written.setdefault(eid, []).append(facet)
-            covered[eid] = max(ords[ev["from"]] for ev in picked)
+            told_ids.setdefault(eid, set()).update(ev["id"] for ev in told)   # prompted but untold events stay new
             stats["arcs"] += 1
         log(f"  {title}: through {label(mark)}, {stats['arcs']} arcs")
     if progress:
@@ -282,7 +283,10 @@ def _ties(d: dict, eid: str, ents: dict, ords: dict, upto: int, names_at) -> lis
     for r in rels:
         if r["id"] in gone or r["src"] not in ents or r["dst"] not in ents:
             continue
-        a, b = (name_of(ents[x], names_at(ents[x], upto)) for x in (r["src"], r["dst"]))
+        ends = [names_at(ents[x], upto) for x in (r["src"], r["dst"])]
+        if not all(ends):   # an end with no name visible yet cannot be shown
+            continue
+        a, b = ends[0][0], ends[1][0]
         out.append(f"{a}, {r['label']}, {b}")
     return out[-8:]
 
