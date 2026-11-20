@@ -1,3 +1,26 @@
+/**
+ * The query string of a mentions request. `fin` is the Reader's own value: null means its URL has no `fin` (the
+ * default, earlier books finished), "" means none finished and is sent as `fin=`, never left out.
+ */
+export function mentionsQuery({ entity, seq, order = null, fin = null }) {
+  return `entity=${encodeURIComponent(entity)}&seq=${seq}${order ? `&order=${encodeURIComponent(order)}` : ""}${fin != null ? `&fin=${encodeURIComponent(fin)}` : ""}`;
+}
+/** What a repaint is remembered by: a change in any part asks the server again. `rev` is the index's `provenance.updated` (an edit changes it; a merge does not, which is why `generation()` below also exists). */
+export const mentionsSig = (key, id, seq, order = null, fin = null, rev = "") =>
+  `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}\n${rev ?? ""}`;
+
+/** May the "Counting mentions…" line show? Only for the newest section whose request has not settled and whose box is still hidden. */
+export const loadingMayShow = ({ current, settled, hidden }) => Boolean(current && !settled && hidden);
+
+/**
+ * Which mentions request is the newest. `next()` starts one; `invalidate()` (an edit or merge reloaded the index)
+ * makes every request still pending or in flight stale, so its answer is neither painted nor remembered.
+ */
+export function generation() {
+  let n = 0;
+  return { next: () => ++n, invalidate: () => { n++; }, current: (g) => g === n };
+}
+
 async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {
     method,
@@ -105,6 +128,13 @@ export const api = {
   /** Paragraphs around `seq` in an edition on disk, for choosing a reveal point. */
   blocks: (hash, seq, before = 2, after = 2, indexKey = null) =>
     request("GET", `/api/editions/${encodeURIComponent(hash)}/blocks?seq=${seq}&before=${before}&after=${after}${indexKey ? `&i=${encodeURIComponent(indexKey)}` : ""}`),
+  /** Mentions of one entry per chapter, up to block `seq` (finished). Null when the server has nothing to count (no EPUB, older server, entry not visible). */
+  mentions: async (key, entity, seq, { order = null, fin = null } = {}) => {
+    // order and fin are the Reader's own URL values, so the server gates with the view the drawer shows.
+    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?${mentionsQuery({ entity, seq, order, fin })}`);
+    if (!res.ok) return null;
+    return res.json();
+  },
   /** Start an empty index for a library book, to write by hand. */
   handmade: (catalogKey, license = null) => request("POST", `/api/catalog/books/${encodeURIComponent(catalogKey)}/handmade`, license ? { license } : {}),
   /** Book Orbit's reading position for this index. A 404 means an older server: treated as "not synced", no message. */

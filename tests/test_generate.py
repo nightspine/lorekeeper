@@ -24,24 +24,29 @@ CH2 = [
 ]
 
 
-def make_epub(path, title="The Lighthouse", ch1=None, series_meta="", cover=None):
+def make_epub(path, title="The Lighthouse", ch1=None, series_meta="", cover=None, ch2=None, front=None, mid=None):
+    """`front`: (title, paragraphs) of a table-of-contents entry before chapter one (front matter).
+    `mid`: the same, between chapters one and two (a part title)."""
     ch1 = ch1 or CH1
+    ch2 = ch2 or CH2
     def doc(title, paras, cid):
         body = "".join(f"<p>{p}</p>" for p in paras)
         return (f'<html xmlns="http://www.w3.org/1999/xhtml"><head><title>{title}</title></head>'
                 f'<body><h2 id="{cid}">{title}</h2>{body}</body></html>')
     nav = ('<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>'
-           '<nav epub:type="toc"><ol><li><a href="c1.xhtml#h1">Chapter One</a></li>'
-           '<li><a href="c2.xhtml#h2">Chapter Two</a></li></ol></nav></body></html>')
+           '<nav epub:type="toc"><ol>' + (f'<li><a href="c0.xhtml#h0">{front[0]}</a></li>' if front else '') + '<li><a href="c1.xhtml#h1">Chapter One</a></li>' +
+           (f'<li><a href="cm.xhtml#hm">{mid[0]}</a></li>' if mid else '') + '<li><a href="c2.xhtml#h2">Chapter Two</a></li></ol></nav></body></html>')
     opf = ('<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata '
            f'xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>{title}</dc:title>'
            f'<dc:creator>A. Writer</dc:creator><dc:language>en</dc:language>{series_meta}</metadata><manifest>'
            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+           + ('<item id="c0" href="c0.xhtml" media-type="application/xhtml+xml"/>' if front else '') +
            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/>'
+           + ('<item id="cm" href="cm.xhtml" media-type="application/xhtml+xml"/>' if mid else '') +
            '<item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/>'
            + ('<item id="img" href="images/front.jpg" media-type="image/jpeg" properties="cover-image"/>' if cover else '')
            + '</manifest>'
-           '<spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>')
+           '<spine>' + ('<itemref idref="c0"/>' if front else '') + '<itemref idref="c1"/>' + ('<itemref idref="cm"/>' if mid else '') + '<itemref idref="c2"/></spine></package>')
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("mimetype", "application/epub+zip")
         z.writestr("META-INF/container.xml",
@@ -49,8 +54,12 @@ def make_epub(path, title="The Lighthouse", ch1=None, series_meta="", cover=None
                    '<rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
         z.writestr("OEBPS/content.opf", opf)
         z.writestr("OEBPS/nav.xhtml", nav)
+        if front:
+            z.writestr("OEBPS/c0.xhtml", doc(front[0], front[1], "h0"))
         z.writestr("OEBPS/c1.xhtml", doc("Chapter One", ch1, "h1"))
-        z.writestr("OEBPS/c2.xhtml", doc("Chapter Two", CH2, "h2"))
+        if mid:
+            z.writestr("OEBPS/cm.xhtml", doc(mid[0], mid[1], "hm"))
+        z.writestr("OEBPS/c2.xhtml", doc("Chapter Two", ch2, "h2"))
         if cover:
             z.writestr("OEBPS/images/front.jpg", cover)
     return path

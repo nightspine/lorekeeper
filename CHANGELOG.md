@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/nightspine/lorekeeper/compare/v0.10.1...v0.11.0) (2026-11-20)
+
+
+### Features
+
+* Where it comes up, a per-chapter mention chart in the Reader's entry, gated at the position ([#70](https://github.com/nightspine/lorekeeper/issues/70)) ([0bfd732](https://github.com/nightspine/lorekeeper/commit/0bfd732086e085048ba9c1896630f83c5333e8bd))
+
 ## [0.10.1](https://github.com/nightspine/lorekeeper/compare/v0.10.0...v0.10.1) (2026-11-18)
 
 

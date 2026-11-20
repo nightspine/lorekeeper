@@ -29,4 +29,4 @@ Write `<brief folder>/handoff-<role>.md` (the brief folder is where the brief li
 
 ## The review loop
 
-A reviewer reads your branch and writes `<brief folder>/review-<n>.md`. If it requests changes, you get a new message naming it: fix every blocking finding, add a **Round n** section to your handoff saying what you changed for each one, commit, and summarise again. Disagree in the handoff with a reason, not by ignoring a finding.
+A reviewer reads your part of the branch in a pane beside yours, and the lead files its review as `<brief folder>/review-<role>-<n>.md`. If it requests changes, you get a new message naming it: fix every blocking finding, add a **Round n** section to your handoff saying what you changed for each one, commit, and summarise again. Disagree in the handoff with a reason, not by ignoring a finding.

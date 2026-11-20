@@ -856,7 +856,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if item is None or item["doc"].get("kind") != "index":
                     return ask_error(404, "not-found", "no such index")
                 sref = item["doc"].get("series")
-                indexes, series = protocol.series_indexes(scan, item)
+                manifest, siblings = proto.series_parts(item, scan)
+                series = manifest["doc"] if manifest else None
+                indexes = [item["doc"]] + [c["doc"] for c in siblings]
                 if book is not None and sref and sref["book"] != book:
                     return ask_error(422, "bad-position", "That index is not the book being read.")
                 if series and order is not None and order not in series["orders"]:
@@ -956,6 +958,110 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return {"synced": False, "reason": "no-progress"}
         return {"synced": True, "source": "bookorbit", "updatedAt": entry.get("updatedAt"),
                 "percentage": entry.get("percentage"), **got}
+
+    # ---- mentions of an entry, per chapter, gated at the position ----------------------------------
+
+    mention_views: dict[tuple, tuple[float, dict]] = {}   # (key, anchor, order, fin, mtime) → (time, the gated view); a minute
+    story_flags: dict[tuple, list[bool]] = {}              # (epub path, mtime) → story flag per section, for books with no stored meta
+
+    def sections_story(p: Path, book) -> list[bool]:
+        """Which of the book's sections are story: the stored book meta's flags (`jobs.describe`, what the build form
+        shows), else worked out once for an EPUB the store does not hold (Book Orbit's)."""
+        if p.parent == books.root:
+            try:
+                meta = books.get(p.stem)
+            except (OSError, ValueError, KeyError):
+                meta = None
+            if meta and len(meta.get("chapters", [])) == len(book.chapters):
+                return [bool(c.get("story")) for c in meta["chapters"]]
+        k = (str(p), p.stat().st_mtime)
+        if k not in story_flags:
+            from .jobs import mark_story
+            ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+            secs = [{"title": c.title or f"Section {i + 1}",
+                     "words": sum(len(b.words) for b in book.blocks[c.start:end])}
+                    for i, (c, end) in enumerate(zip(book.chapters, ends))]
+            mark_story(secs)
+            story_flags[k] = [c["story"] for c in secs]
+        return story_flags[k]
+
+    def mentions_body(book, flags: list[bool], m, eid: str) -> dict:
+        """Chapters are the story chapters, numbered 1..N in reading order. A section between two story chapters that
+        is not story (a part title, an interlude) is counted in the column of the story chapter before it."""
+        from .. import mentions
+        story = [i for i, f in enumerate(flags) if f]                 # section index of story chapter n = story[n - 1]
+        body = {"total": len(story), "chapters": [], "current": None,
+                "first": None, "busiest": None, "latest": None}
+        cur = m.current
+        if cur is None or not story or cur < story[0]:                # front matter: nothing to chart yet
+            return body
+        counts = m.counts.get(eid) or [0] * (cur + 1)
+        chapters = []
+        for n, i in enumerate(story):
+            if i > cur:
+                break
+            # up to the next story chapter; after the last one, only its own section (back matter is not folded in)
+            end = story[n + 1] if n + 1 < len(story) else i + 1
+            chapters.append({"n": n + 1, "title": book.chapters[i].title or f"Section {i + 1}",
+                             "count": sum(counts[i:min(end, cur + 1)])})
+        body["chapters"] = chapters
+        seen = [c for c in chapters if c["count"]]
+        if not seen:
+            return body
+        busiest = max(seen, key=lambda c: (c["count"], -c["n"]))
+        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
+        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
+        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
+        if flags[cur]:                                                # an interlude or back matter has no current chapter
+            first = book.chapters[cur].start
+            u16 = lambda t, i: len(t[:i].encode("utf-16-le")) // 2   # noqa: E731
+            sn = mentions.snippets(book.blocks, m.spans.get(eid, []))
+            body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
+                               "snippets": [{**x, "para": x["seq"] - first + 1,
+                                             "start": u16(x["text"], x["start"]), "end": u16(x["text"], x["end"])}
+                                            for x in sn]}
+        return body
+
+    @app.get("/api/library/{key}/mentions")
+    def library_mentions(key: str, entity: str, seq: int, order: str | None = None, fin: str | None = None):
+        """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`
+        (the last finished block, counted: names are gated inclusively there).
+        Names are the ones the Reader's view shows at that position, gated by the same helpers as `/v0` and the
+        Reader (`protocol.locate_anchor`, `gated_view`) under its reading order `order` and the comma-separated
+        finished books `fin` (absent: the Reader's defaults), and chapters after it are not even titled.
+        Snippets carry `para` (1-based paragraph within the chapter) and `start`/`end` as UTF-16 code-unit
+        offsets into `text`, since the consumer is JavaScript."""
+        from .. import mentions
+        scan = library.scan()
+        item = scan.get(key)
+        if item is None or item["doc"].get("kind") != "index":
+            raise HTTPException(404, "no such index")
+        ed = next((ed for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
+                   and library.edition_path(ed.get("textHash", ""))), None)
+        if ed is None:
+            raise HTTPException(404, "book file for this index not found")
+        p = library.edition_path(ed["textHash"])
+        book = parsed(p)
+        if not 0 <= seq < len(book.blocks):
+            raise HTTPException(422, "seq is outside the book")
+        pos = protocol.make_position(block=str(seq), textHash=ed["textHash"], inclusive="true",
+                                     order=order, finished=fin)
+        try:
+            anchor, _ = proto.locate_anchor(item, pos, True)
+            manifest, siblings = proto.series_parts(item, scan)   # every document the view reads is in the key
+            deps = tuple((str(i["path"]), i["path"].stat().st_mtime) for i in [item, *([manifest] if manifest else []), *siblings])
+            vk = (key, anchor, order, fin, deps)
+            hit = mention_views.get(vk)
+            if hit is None or time.time() - hit[0] > 60:
+                if len(mention_views) > 64:
+                    mention_views.clear()
+                mention_views[vk] = hit = (time.time(), proto.gated_view(item, anchor, pos, scan, lenient=True))
+        except protocol.Problem as e:
+            raise HTTPException(e.status, e.detail or e.title) from e
+        names = mentions.visible_names(hit[1])
+        if entity not in names:
+            raise HTTPException(404, "no such entry at this position")
+        return mentions_body(book, sections_story(p, book), mentions.count(book.blocks, book.chapters, names, seq), entity)
 
     # ---- duplicate entities ----------------------------------------------------------------------
 
@@ -1175,5 +1281,5 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return Response(data, media_type="application/json",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
-    protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
+    proto = protocol.install(app, library, parsed, api_token_value=api_token)   # /v0 and /.well-known/lorekeeper, see protocol.py
     return app

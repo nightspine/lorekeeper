@@ -8,6 +8,7 @@ import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js
 import { renderConnections } from "./graph.js";
 import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
+import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
 
@@ -148,6 +149,7 @@ export function mountReader(root) {
     if (stale()) return false;
     s.key = key;
     s.doc = doc;
+    forgetMentions();   // an edit or merge reloads the index: counts made for the old one may name what is now hidden
     s.series = null; s.seriesDocs = new Map();
     const sid = preview ? null : s.doc.series?.id;
     if (sid) {
@@ -373,6 +375,12 @@ export function mountReader(root) {
   function currentIndexes() {
     if (!s.series) return [s.doc];
     return [...s.seriesDocs.values()].filter(Boolean);
+  }
+
+  /** The index (and in a series every book's) last-updated stamps: an edit changes one, a merge does not (mentions.js drops its memo on every reload for that). */
+  function revision() {
+    const docs = s.series ? [...s.seriesDocs.values()] : [s.doc];
+    return docs.map((x) => x?.provenance?.updated || "").join("|");
   }
 
   function finishedSet() {
@@ -1443,6 +1451,16 @@ export function mountReader(root) {
         closeDrawer({ focus: false });
         mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
       } } }, icon("layers"), "Same as another entry…")) : null);
+    // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
+    // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
+    if (s.map?.cum) {
+      const seq = s.p >= 1 - 1e-12 ? s.map.cum.length - 1 : s.map.seqAt(s.p) - 1;
+      const sec = mentionsSection(s.key, id, seq, { immediate: !refresh, order: s.series ? s.order : null, fin: s.series ? s.finished : null, rev: revision() });
+      const nextSec = body.querySelector('[data-jump="rels"], [data-jump="events"]')
+        || [...body.querySelectorAll(".d-sec")].find((d) => /^(Connections|Appears in)/.test(d.querySelector(":scope > .eyebrow")?.textContent || ""))
+        || body.querySelector(".drawer-foot");
+      if (nextSec) nextSec.before(sec); else body.append(sec);
+    }
     const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
     // Jump links under the name, so a long entry (most of them, on a phone) is one tap from each section.
     const jumps = [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]].filter((j) => j[2]);

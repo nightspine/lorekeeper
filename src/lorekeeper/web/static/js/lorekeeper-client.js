@@ -600,6 +600,138 @@ export function locate(edition, locator) {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Mentions of an entity per chapter (SPEC §11 question 3), a port of mentions.py.
+//
+// `names` must be the names visible at the reader's position (`visibleNames(index.view(locator))`):
+// a name revealed later must not be counted earlier. Whole words, case-sensitive as spelled, longest
+// name first, a pronoun is never a name; a name shared by two entities counts for both.
+
+// merge.HONORIFICS and merge.PARTICLES
+const HONORIFICS = new Set(("mr mrs miss ms dr doctor sir lady lord captain major colonel sergeant inspector professor "
+  + "young old the brother sister father mother frere pere abbot abbess saint st prior king queen prince princess dame "
+  + "master mistress madame monsieur mademoiselle uncle aunt lieutenant general commander chevalier capitaine captaine "
+  + "marquis marquise viscount viscontessa baron baroness duke duchess count countess emperor empress prioress seraph "
+  + "forgemaster").split(" "));
+const PARTICLES = new Set(("de del della di da van von der den la le du des of the al el bin ibn ben st á y e ter ten "
+  + "zu af").split(" "));
+
+const NOTE_RE = /\([^)]*\)/g;
+const plain = (w) => w.normalize("NFKD").replace(/\p{M}/gu, "");
+const mentionTokens = (name) => name.replace(NOTE_RE, " ").split(/\s+/).filter(Boolean);
+const isTitle = (tok) => HONORIFICS.has(plain(casefold(tok.replace(/[.,]+$/, ""))));
+const isUpperFirst = (s) => /^\p{Lu}/u.test(s);
+const cpLen = (s) => [...s].length;
+
+/** Extra forms for the visible people and creatures (mentions.derive). `entities`: [{id, type, names}]. */
+export function deriveNames(entities) {
+  const wordsOf = new Map();
+  const spelled = new Set();
+  for (const e of entities) {
+    for (const n of e.names) {
+      spelled.add(mentionTokens(n).join(" "));
+      const set = wordsOf.get(e.id) ?? new Set();
+      for (const t of mentionTokens(n)) set.add(t.replace(/[.,]+$/, ""));
+      wordsOf.set(e.id, set);
+    }
+  }
+  const people = new Set(entities.filter((x) => x.type === "person" || x.type === "creature").map((x) => x.id));
+  const out = {};
+  for (const e of entities) {
+    if (e.type !== "person" && e.type !== "creature") continue;
+    const others = new Set();
+    for (const [k, ws] of wordsOf) if (k !== e.id && people.has(k)) for (const w of ws) others.add(w);
+    const forms = [];
+    for (const n of e.names) {
+      let t = mentionTokens(n);
+      while (t.length > 1 && isTitle(t[0])) t = t.slice(1);
+      if (!t.length || !isUpperFirst(t[0]) || (t.length === 1 && isTitle(t[0]))) continue;
+      const cands = [t.join(" ")];
+      if (t.length > 1) cands.push(t[0], t[t.length - 1]);
+      for (const c of cands) {
+        const w = c.replace(/[.,]+$/, "");
+        const ok = c.includes(" ") || t.length === 1
+          || (cpLen(w) >= 3 && isUpperFirst(w) && !isTitle(w) && !PARTICLES.has(casefold(w)));
+        if (ok && !spelled.has(c) && !forms.includes(c) && !c.split(/\s+/).filter(Boolean).some((x) => others.has(x))) forms.push(c);
+      }
+    }
+    if (forms.length) out[e.id] = forms;
+  }
+  return out;
+}
+
+/** Entity id → every name the gated view shows for it (display name first), then the derived forms. */
+export function visibleNames(view) {
+  const ents = view.entities.map((e) => ({ id: e.id, type: e.type, names: [e.name, ...(e.aliases ?? [])] }));
+  const extra = deriveNames(ents);
+  return Object.fromEntries(ents.map((e) => [e.id, [...e.names, ...(extra[e.id] ?? [])]]));
+}
+
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+
+/** One compiled alternation over all visible names, longest first. */
+export class MentionMatcher {
+  constructor(names) {
+    this.owners = new Map();
+    for (const [eid, ns] of Object.entries(names)) {
+      for (const raw of ns) {
+        const n = raw.replace(NOTE_RE, " ").split(/\s+/).filter(Boolean).join(" ");
+        if (n && words(n).length) {
+          const owned = this.owners.get(n) ?? [];
+          if (!owned.includes(eid)) owned.push(eid);
+          this.owners.set(n, owned);
+        }
+      }
+    }
+    const forms = [...this.owners.keys()].sort((a, b) => cpLen(b) - cpLen(a) || (a < b ? -1 : a > b ? 1 : 0));
+    this.pattern = forms.length
+      ? new RegExp(String.raw`(?<![\p{L}\p{N}_])(?<![\p{L}\p{N}_]['’])(?:${forms.map(escapeRe).join("|")})(?![\p{L}\p{N}_])`, "gu") : null;
+  }
+
+  /** Non-overlapping [start, end, ownerIds] matches in one block, left to right (UTF-16 offsets). */
+  find(raw) {
+    if (!this.pattern) return [];
+    return [...raw.matchAll(this.pattern)].map((m) => [m.index, m.index + m[0].length, this.owners.get(m[0])]);
+  }
+}
+
+/**
+ * Mentions per entity and chapter through block `uptoSeq` (inclusive).
+ * @param {{seq: number, raw: string}[]} blocks  in reading order (the raw text of each block)
+ * @param {{start: number}[]} chapters  in reading order; `start` is the seq of a chapter's first block
+ * @param {Object<string,string[]>|MentionMatcher} names  visible names per entity id
+ * @returns {{current: number|null, counts: Object<string,number[]>, spans: Object<string,[number,number,number][]>}}
+ *   `counts[id]` has one entry per chapter 0..current (empty before the first chapter); `spans[id]` is
+ *   [seq, start, end] for the current chapter only.
+ */
+export function mentions(blocks, chapters, names, uptoSeq) {
+  const matcher = names instanceof MentionMatcher ? names : new MentionMatcher(names);
+  const ids = new Set();
+  for (const owned of matcher.owners.values()) for (const id of owned) ids.add(id);
+  if (!(names instanceof MentionMatcher)) for (const id of Object.keys(names)) ids.add(id);
+  const starts = chapters.map((c) => c.start);
+  const chapterOf = (seq) => { let n = -1; for (let i = 0; i < starts.length && starts[i] <= seq; i++) n = i; return n; };
+  const cur = chapterOf(uptoSeq);
+  const out = { current: cur >= 0 ? cur : null, counts: {}, spans: {} };
+  if (cur < 0) {
+    for (const id of ids) out.counts[id] = [];
+    return out;
+  }
+  for (const id of ids) { out.counts[id] = new Array(cur + 1).fill(0); out.spans[id] = []; }
+  for (const b of blocks) {
+    if (b.seq > uptoSeq) break;
+    const ch = chapterOf(b.seq);
+    if (ch < 0) continue;
+    for (const [s, e, owners] of matcher.find(b.raw)) {
+      for (const id of owners) {
+        out.counts[id][ch] += 1;
+        if (ch === cur) out.spans[id].push([b.seq, s, e]);
+      }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
 // The four-call integration
 
 const fold = (s) => casefold(String(s).normalize("NFKC")).split(/\s+/).filter(Boolean).join(" ");
