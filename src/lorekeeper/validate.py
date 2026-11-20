@@ -181,6 +181,9 @@ def check_index(index: dict, prior: list[dict] | None = None) -> list[Issue]:
                                     f"references {pid!r} before it is revealed"))
         is_arc = kind == "facet" and item.get("kind") == "arc"
         for r in item.get("replaces", []):
+            if r == item["id"]:
+                issues.append(Issue("error", where, "an item cannot replace itself"))
+                continue
             if kind == "facet" and (is_arc or r in own_arcs or r in prior_arcs):
                 problem = _arc_replacement(r, owner[item["id"]], is_arc, own_arcs, prior_arcs,
                                            r in item_kind or r in prior_items)
