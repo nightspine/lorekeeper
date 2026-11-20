@@ -102,8 +102,10 @@ export const api = {
   blocks: (hash, seq, before = 2, after = 2, indexKey = null) =>
     request("GET", `/api/editions/${encodeURIComponent(hash)}/blocks?seq=${seq}&before=${before}&after=${after}${indexKey ? `&i=${encodeURIComponent(indexKey)}` : ""}`),
   /** Mentions of one entry per chapter, up to block `seq` (finished). Null when the server has nothing to count (no EPUB, older server, entry not visible). */
-  mentions: async (key, entity, seq) => {
-    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?entity=${encodeURIComponent(entity)}&seq=${seq}`);
+  mentions: async (key, entity, seq, { order = null, fin = null } = {}) => {
+    // order and fin are the Reader's own URL values, so the server gates with the view the drawer shows.
+    const q = `entity=${encodeURIComponent(entity)}&seq=${seq}${order ? `&order=${encodeURIComponent(order)}` : ""}${fin != null ? `&fin=${encodeURIComponent(fin)}` : ""}`;
+    const res = await fetch(`/api/library/${encodeURIComponent(key)}/mentions?${q}`);
     if (!res.ok) return null;
     return res.json();
   },
