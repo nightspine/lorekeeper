@@ -177,7 +177,7 @@ BARE_WORDS = frozenset({
     "parents", "brother", "sister", "son", "daughter", "child", "baby", "uncle", "aunt", "auntie", "cousin", "nephew",
     "niece", "grandmother", "grandfather", "grandparent", "gran", "granny", "grandma", "grandpa", "wife", "husband",
     "boy", "girl", "man", "woman", "lad", "lass", "stranger", "guard", "soldier", "servant", "maid", "voice",
-    "figure", "visitor", "messenger", "boatman", "driver", "coachman", "porter"})
+    "frere", "pere", "mere", "soeur", "maman", "figure", "visitor", "messenger", "boatman", "driver", "coachman", "porter"})
 _BARE_LEAD = {"the", "a", "an", "my", "his", "her", "their", "our", "your", "its", "this", "that", "old", "young", "little",
               "poor", "dead", "late", "elder", "older", "younger", "eldest", "youngest", "big", "tall", "dark", "strange",
               "other", "new"}

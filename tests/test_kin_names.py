@@ -77,7 +77,7 @@ GABRIEL = _new("Gabriel de Leon", 2)
 
 
 def test_bare_kin_and_role_words():
-    for bad in ("Father", "Mama", "mother", "my mother", "the boy", "His father", "the old man", "Guards", "Papa", "the voice"):
+    for bad in ("Father", "Mama", "mother", "my mother", "the boy", "His father", "the old man", "Guards", "Papa", "the voice", "Frère", "Maman"):
         assert generate.bare_kin_word(bad), bad
     for ok in ("Uncle Vernon", "Father Brown", "Mother Superior", "Aunt Petunia", "Gabriel's father", "Mina", "Mr. Holmwood"):
         assert not generate.bare_kin_word(ok), ok
