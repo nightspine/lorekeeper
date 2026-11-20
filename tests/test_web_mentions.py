@@ -106,12 +106,13 @@ def test_not_found_cases(client, tmp_path):
 PAD = " The wind came off the water and the gulls wheeled over the rocks until the light began to fade at last."
 
 
-def book_with(client, tmp_path, front):
+def book_with(client, tmp_path, front, mid=None):
     """The Lighthouse with chapter two long enough to count as story, and optionally a front-matter entry first."""
     from .test_generate import CH2, make_epub
     path = make_epub(tmp_path / "front.epub", ch2=[CH2[0] + PAD * 2, CH2[1]],
                      front=("Title Page", ["The Lighthouse, a novel in two chapters by A. Writer, printed for the first time.",
-                                           "All rights reserved by the author and the publisher of this edition."]) if front else None)
+                                           "All rights reserved by the author and the publisher of this edition."]) if front else None,
+                     mid=mid)
     r = client.post("/api/books", files={"file": ("front.epub", path.read_bytes(), "application/epub+zip")})
     assert r.status_code == 200, r.text
     r = client.post(f"/api/catalog/books/up:{r.json()['id']}/handmade", json={"license": "CC-BY-4.0"})
@@ -234,3 +235,73 @@ def test_series_names_follow_the_readers_finished_books(tmp_path):
         assert total() == total(fin="study-in-scarlet") == expect({"study-in-scarlet"})
         assert total(fin="") < total()
         assert total(order="nope") == total()                              # an unknown order is the default one
+
+
+def test_a_part_heading_between_chapters_folds_into_the_chapter_before_it(client, tmp_path):
+    # seq 0-5 chapter one, then "Part Two" (heading 6, one paragraph 7, 8 words), then chapter two from seq 8.
+    mid = ("Part Two", ["Alice Marlow waits."])
+    key = book_with(client, tmp_path, front=False, mid=mid)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A young woman who arrives at a lighthouse.")
+    quiet = get(client, key, "alice-marlow", 5).json()
+    assert [c["n"] for c in quiet["chapters"]] == [1] and quiet["total"] == 2
+    inside = get(client, key, "alice-marlow", 7).json()            # inside the part heading's section
+    assert inside["current"] is None
+    assert [(c["n"], c["title"]) for c in inside["chapters"]] == [(1, "Chapter One")]
+    assert inside["chapters"][0]["count"] == quiet["chapters"][0]["count"] + 1    # the mention in the part page
+    assert inside["latest"]["n"] == 1 and inside["busiest"]["n"] == 1
+    after = get(client, key, "alice-marlow", 9).json()
+    assert [c["n"] for c in after["chapters"]] == [1, 2]
+    assert after["chapters"][0]["count"] == inside["chapters"][0]["count"]      # folded counts stay put
+    assert after["current"]["n"] == 2
+
+
+@pytest.mark.skipif(not CORPUS.is_dir(), reason="needs corpus/pg244 and pg2097")
+def test_series_view_takes_the_same_source_sibling_and_follows_its_changes(tmp_path):
+    import json
+    import os
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from lorekeeper import epub, gating, locators, mentions
+    from lorekeeper.web import app as web_app
+
+    if not (CORPUS / "pg244" / "pg244.epub").exists() or not (CORPUS / "pg2097" / "pg2097.epub").exists():
+        pytest.skip("needs corpus/pg244 and pg2097")
+    src = EXAMPLES
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+    for f in ("series.json", "study-in-scarlet.json"):
+        shutil.copy(src / f, a / f)
+    for f in ("series.json", "study-in-scarlet.json", "sign-of-four.json"):
+        shutil.copy(src / f, b / f)
+
+    def add_alias(path, value):
+        d = json.loads(path.read_text())
+        next(e for e in d["entities"] if e["id"] == "watson")["names"].append(
+            {"value": value, "kind": "alias", "from": "pt1.note"})
+        path.write_text(json.dumps(d))
+    add_alias(a / "study-in-scarlet.json", "Morstan")     # source a's Scarlet (scanned first) is the wrong sibling
+    app = web_app.create_app(tmp_path / "data", [("a", a), ("b", b)], [CORPUS / "pg244", CORPUS / "pg2097"],
+                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    book = epub.read(CORPUS / "pg2097" / "pg2097.epub")
+
+    def expect(scarlet_path):
+        docs = [json.loads((b / "sign-of-four.json").read_text()), json.loads(scarlet_path.read_text())]
+        series = json.loads((b / "series.json").read_text())
+        anchor = locators.position(docs[0]["anchors"], locators.resolve_edition(docs[0], book), 600, inclusive=True)
+        v = gating.view(docs, gating.Position("sign-of-four", anchor), series, None, None)
+        return sum(mentions.count(book.blocks, book.chapters, mentions.visible_names(v), 600).counts["watson"])
+
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        def total():
+            r = c.get("/api/library/b--sign-of-four/mentions", params={"entity": "watson", "seq": 600})
+            assert r.status_code == 200, r.text
+            return sum(ch["count"] for ch in r.json()["chapters"])
+        right = expect(b / "study-in-scarlet.json")
+        assert expect(a / "study-in-scarlet.json") > right        # the wrong sibling would show
+        assert total() == right                                   # same source wins, not the first candidate
+        # A sibling rewritten within the cache's minute changes the view at once.
+        add_alias(b / "study-in-scarlet.json", "Morstan")
+        os.utime(b / "study-in-scarlet.json", (1e9, os.stat(b / "study-in-scarlet.json").st_mtime + 10))
+        assert total() == expect(b / "study-in-scarlet.json") > right
