@@ -1240,7 +1240,7 @@ export function mountReader(root) {
     });
     const blocks = s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock];
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
-      all.length || rows.length ? h("div.book-stack", blocks.filter(Boolean))
+      blocks.some(Boolean) ? h("div.book-stack", blocks.filter(Boolean))
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }
 
