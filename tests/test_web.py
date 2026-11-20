@@ -465,7 +465,7 @@ def test_finished_runs_write_descriptions_when_a_claude_key_is_set(tmp_path, mon
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["status"] == "done", done["error"]
     assert "portraits" in done["report"] and "failed" not in done["report"]["portraits"]
-    assert asked == ["claude-haiku-5-5"]
+    assert asked == ["claude-haiku-5-5"] * 2   # descriptions, then book arcs
 
 
 def test_without_a_cloud_key_descriptions_are_skipped(client, tmp_path):
@@ -849,3 +849,71 @@ def test_a_config_without_chunk_mode_plans_words_parts_on_a_cloud_provider(clien
     assert "chunk_mode" not in r.json()["config"]
     assert seen and seen[-1] == "words"
     assert generate.default_chunk_mode("claude") == "chapter"
+
+
+def _cloud_app(tmp_path, monkeypatch, describer):
+    from lorekeeper.web.secrets import SecretStore
+    monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
+    monkeypatch.setattr(llm, "Claude", describer)
+    (tmp_path / "data").mkdir(exist_ok=True)
+    SecretStore(tmp_path / "data" / "secrets.json").set("anthropic_api_key", "sk-test")
+    return web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+
+
+class _ArcWriter:
+    usage = llm.Usage()
+    cancel = None
+
+    def __init__(self, **kw):
+        pass
+
+    def complete(self, system, prompt, schema, prefix=None):
+        return {"text": "A lighthouse keeper who tends the lamp."}
+
+
+def test_finished_runs_end_with_the_book_arcs_stage(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+    called = []
+
+    def fake_arcs(docs, model, log=print, prior=(), progress=None):
+        d, _ = docs[0]
+        called.append(len(prior))
+        progress(1, 1)
+        ent = d["entities"][0]
+        ent["facets"].append({"id": f"{d['entities'][0]['id']}.arc-1", "kind": "arc", "from": ent["from"], "basis": "stated",
+                              "evidence": [ent["from"]], "text": "Arrives at the lighthouse and meets the keeper."})
+        return {"arcs": 1}
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", fake_arcs)
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+        events = (tmp_path / "data" / "jobs" / f"{job['id']}.events.jsonl").read_text()
+    assert done["status"] == "done", done["error"]
+    assert done["report"]["arcs"]["arcs"] == 1 and called == [0]
+    assert events.index('"phase": "portraits"') < events.index('"phase": "arcs"') < events.rindex('"type": "done"')
+    doc = json.loads(Path(done["output"]).read_text())
+    assert [f["kind"] for e in doc["entities"] for f in e["facets"] if f.get("kind") == "arc"] == ["arc"]
+
+
+def test_a_failing_arcs_stage_keeps_the_index(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+
+    def boom(*a, **kw):
+        raise RuntimeError("model fell over")
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", boom)
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+    assert done["status"] == "done"
+    assert "model fell over" in done["report"]["arcs"]["failed"]
+    assert json.loads(Path(done["output"]).read_text())["entities"]
+
+
+def test_without_a_cloud_key_book_arcs_are_skipped(client, tmp_path):
+    book = upload(client, tmp_path)
+    job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+    assert wait_for(client, job["id"], {"done", "failed"})["report"]["arcs"] == {"skipped": "no cloud key"}

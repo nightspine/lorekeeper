@@ -338,3 +338,18 @@ def test_editing_an_event_keeps_a_place_link_the_editor_could_not_make(client, t
     assert byid()[ev["id"]]["setting"] == {"text": "the lighthouse", "place": "from-an-earlier-book"}
     edit(client, key, op="edit-event", id=ev["id"], setting="a boat")      # changed text re-resolves
     assert byid()[ev["id"]]["setting"] == {"text": "a boat"}
+
+
+def test_book_arcs_are_read_only_in_edit_mode(client, tmp_path):
+    _, key = handmade(client, tmp_path)
+    edit(client, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A visitor to the lighthouse.")
+    path = next((tmp_path / "data" / "indexes").glob("*.lore.json"))
+    d = json.loads(path.read_text())
+    ent = d["entities"][0]
+    ent["facets"].append({"id": "alice.arc-1", "kind": "arc", "from": ent["from"], "basis": "stated",
+                          "evidence": [ent["from"]], "text": "Alice arrives at the lighthouse and meets the keeper."})
+    path.write_text(json.dumps(d))
+    for op in ({"op": "edit-facet", "id": "alice.arc-1", "text": "Changed."}, {"op": "delete-facet", "id": "alice.arc-1"},
+               {"op": "add-facet", "entity": "alice-marlow", "kind": "arc", "text": "Arrives.", "seq": 2}):
+        assert "arcs" in refuse(client, key, 400, **op)["detail"]
+    assert [f["id"] for f in doc_of(client, key)["entities"][0]["facets"] if f.get("kind") == "arc"] == ["alice.arc-1"]
