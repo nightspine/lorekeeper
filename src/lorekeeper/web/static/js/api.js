@@ -5,8 +5,21 @@
 export function mentionsQuery({ entity, seq, order = null, fin = null }) {
   return `entity=${encodeURIComponent(entity)}&seq=${seq}${order ? `&order=${encodeURIComponent(order)}` : ""}${fin != null ? `&fin=${encodeURIComponent(fin)}` : ""}`;
 }
-/** What a repaint is remembered by: a change in any part asks the server again. */
-export const mentionsSig = (key, id, seq, order = null, fin = null) => `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}`;
+/** What a repaint is remembered by: a change in any part asks the server again. `rev` is the index's `provenance.updated` (an edit changes it; a merge does not, which is why `generation()` below also exists). */
+export const mentionsSig = (key, id, seq, order = null, fin = null, rev = "") =>
+  `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin == null ? "-" : `fin:${fin}`}\n${rev ?? ""}`;
+
+/** May the "Counting mentions…" line show? Only for the newest section whose request has not settled and whose box is still hidden. */
+export const loadingMayShow = ({ current, settled, hidden }) => Boolean(current && !settled && hidden);
+
+/**
+ * Which mentions request is the newest. `next()` starts one; `invalidate()` (an edit or merge reloaded the index)
+ * makes every request still pending or in flight stale, so its answer is neither painted nor remembered.
+ */
+export function generation() {
+  let n = 0;
+  return { next: () => ++n, invalidate: () => { n++; }, current: (g) => g === n };
+}
 
 async function request(method, url, body, opts = {}) {
   const res = await fetch(url, {

@@ -1,13 +1,21 @@
 // "Where it comes up": the entry drawer's chart of mentions per chapter, gated at the reader's position.
 // The server counts (names visible at the position only, chapters up to the current one, the current one
 // through the position); this file only draws what comes back. Text goes through textContent (h()).
-import { api, mentionsSig } from "./api.js";
+import { api, mentionsSig, generation, loadingMayShow } from "./api.js";
 import { clear, h, icon, tidyTitle } from "./dom.js";
 
 const CHART_H = 96;   // px; keep in step with .mchart in reader.css
-let latest = 0;       // the newest section; an answer for an older one is dropped
+const gen = generation();   // the newest section; an answer for an older one (or from before an invalidation) is dropped
 let pending = null;   // timers of the section being replaced
 let memo = null;      // { sig, data } so a repaint at the same position doesn't ask again
+
+/** Drop what was counted: the index changed (an edit or a merge), so old counts may name what is now hidden. */
+export const forgetMentions = () => {
+  memo = null;
+  gen.invalidate();   // a request already running must not write the memo when it comes back
+  if (pending) pending.forEach(clearTimeout);
+  pending = [];
+};
 
 const remembered = () => { try { return localStorage.getItem("lk-passages") === "1"; } catch { return false; } };
 const remember = (on) => { try { localStorage.setItem("lk-passages", on ? "1" : "0"); } catch { /* private mode */ } };
@@ -88,14 +96,14 @@ export const hasMentions = (data) => Boolean(data && data.chapters?.length && (d
  * server has counts (a 404 without the EPUB, or no mention yet, leaves nothing, not an empty chart).
  * `immediate` skips the 300 ms debounce used when the position is moving.
  */
-export function mentionsSection(key, id, seq, { immediate = false, order = null, fin = null } = {}) {
+export function mentionsSection(key, id, seq, { immediate = false, order = null, fin = null, rev = "" } = {}) {
   const box = h("div.d-sec.mentions", { hidden: true, dataset: { jump: "mentions" } });
   if (pending) pending.forEach(clearTimeout);
   pending = [];
-  const mine = ++latest;
-  const sig = mentionsSig(key, id, seq, order, fin);
+  const mine = gen.next();
+  const sig = mentionsSig(key, id, seq, order, fin, rev);
   const paint = (data) => {
-    if (mine !== latest || !hasMentions(data)) { if (mine === latest) box.hidden = true; return; }
+    if (!gen.current(mine) || !hasMentions(data)) { if (gen.current(mine)) box.hidden = true; return; }
     const n = data.current?.count ?? 0;
     clear(box, h("span.eyebrow", "Where it comes up"), chart(data),
       !data.current ? null : h("p.msent", n === 0 ? "Not mentioned in this chapter yet." : n === 1 ? "Mentioned once in this chapter so far." : `Mentioned ${n} times in this chapter so far.`),
@@ -105,12 +113,15 @@ export function mentionsSection(key, id, seq, { immediate = false, order = null,
   if (memo?.sig === sig) { paint(memo.data); return box; }
   if (seq == null || seq < 0) return box;   // nothing has been read yet: nothing to count
   const run = async () => {
-    pending.push(setTimeout(() => {   // a slow answer shows one quiet line
-      if (mine === latest && box.hidden) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
-    }, 300));
+    let settled = false;
+    const slow = setTimeout(() => {   // a slow answer shows one quiet line, never after the answer has come
+      if (loadingMayShow({ current: gen.current(mine), settled, hidden: box.hidden })) { clear(box, h("span.eyebrow", "Where it comes up"), h("p.msent.muted", "Counting mentions…")); box.hidden = false; }
+    }, 300);
+    pending.push(slow);
     let data = null;
     try { data = await api.mentions(key, id, seq, { order, fin }); } catch { data = null; }
-    if (mine !== latest) return;
+    settled = true; clearTimeout(slow);   // the answer is here: the loading line must not appear after it
+    if (!gen.current(mine)) return;
     memo = { sig, data };
     paint(data);
   };
