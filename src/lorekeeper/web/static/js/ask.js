@@ -62,6 +62,14 @@ export function draftAfterInput(draft, text, take) {
 /** True when any snapshot (answers, the pending question, the draft) shows more than the view does now. */
 export const anyRevealsLess = (snaps, view, pos) => snaps.filter(Boolean).some((x) => revealsLess(x, view, pos));
 
+/** The turns sent as history: answered ones, the last `keep`. A question the server refused for a name the reader has not
+ *  met (`unknown name`, `refused: outside knowledge`) stays on screen but is never sent again. */
+const NOT_SENT = new Set(["unknown name", "refused: outside knowledge"]);
+export function historyFor(turns, keep = KEEP_TURNS) {
+  return turns.filter((t) => t.state === "ok" && !NOT_SENT.has(t.a?.note)).slice(-keep)
+    .map((t) => ({ question: t.q, answer: t.a.answer, cites: (t.a.cites || []).map((c) => c.id) }));
+}
+
 /**
  * ctx: key() the library key; position() { anchor, finished, order, key, book, rank, ord } the view on screen was computed with;
  * view() the gated view; examples() three question strings; canOpen(cite), open(cite) for the sources.
@@ -213,8 +221,7 @@ export function createAsk(ctx) {
     const at = snapshot(ctx.view(), pos);
     const key = ctx.key();
     draft = null;
-    const history = turns.filter((t) => t.state === "ok").slice(-KEEP_TURNS)
-      .map((t) => ({ question: t.q, answer: t.a.answer, cites: (t.a.cites || []).map((c) => c.id) }));
+    const history = historyFor(turns);
     clearedLine = ""; clear(cleared);
     const turn = { q, state: "pending", a: null, err: "", el: null, at };
     turns.push(turn);
@@ -225,7 +232,7 @@ export function createAsk(ctx) {
     paintEmpty();
     setBusy(true);
     let res = null, failure = null;
-    try { res = await api.ask(key, { question: q, anchor: pos.anchor ?? null, finished: pos.finished ?? null, order: pos.order ?? null, history }, controller.signal); }
+    try { res = await api.ask(key, { question: q, anchor: pos.anchor ?? null, book: pos.book ?? null, finished: pos.finished ?? null, order: pos.order ?? null, history }, controller.signal); }
     catch (e) { failure = e; }
     if (disposed || mine.cancelled || busy !== mine) return;
     busy = null;
@@ -248,7 +255,7 @@ export function createAsk(ctx) {
       paintTurn(turn);
     } else {
       turn.state = "ok";
-      turn.a = { answer: String(res.answer || ""), found: Boolean(res.found), cites: Array.isArray(res.cites) ? res.cites : [] };
+      turn.a = { answer: String(res.answer || ""), found: Boolean(res.found), cites: Array.isArray(res.cites) ? res.cites : [], note: res.note ?? null };
       paintTurn(turn);
     }
     if (document.activeElement === document.body || root.contains(document.activeElement) || !document.activeElement) field.focus();
