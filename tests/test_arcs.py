@@ -34,7 +34,10 @@ class Fake:
         self.prompts.append(prompt)
         name = re.search(r"that involve (\w+)", prompt).group(1)
         q = self.replies.get(name)
-        return {"text": q.pop(0) if q else self.default}
+        text = q.pop(0) if q else self.default
+        if isinstance(text, dict):
+            return text
+        return {"text": text, "told": [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]}
 
 
 GOOD = "Mira walks to the mill and meets Oren. She learns the secret of her birth."
@@ -131,12 +134,76 @@ def test_length_sentences_and_talk_about_the_text_are_dropped():
     assert st["dropped: about the text"] == 1
 
 
-def test_names_come_from_earlier_books_and_the_profile_is_context_only():
+def test_an_earlier_books_profile_is_context_not_support():
     prior = _doc(book="b0", profile="Mira is a miller's ward from Brook End.")
     d = _doc(events=EVENTS, recaps=[11])
-    m = Fake(["Mira walks home to Brook End and meets Oren at the mill."])
+    m = Fake(["Mira walks home to Brook End and meets Oren at the mill.", "Mira returns to Brook End to meet Oren."])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None, prior=[prior])
+    assert "Brook End" in m.prompts[0]          # shown as context
+    assert not arc_facets(d) and st["dropped: unknown name"] == 1   # but an arc may not tell it
+    d = _doc(events=EVENTS, recaps=[11])
+    arcs.arcs([(d, None)], Fake(["Mira meets Oren at the mill and learns her secret."]), log=lambda *_: None, prior=[prior])
+    assert arc_facets(d)
+
+
+def test_a_name_first_given_after_the_mark_is_never_shown():
+    d = _doc(events=EVENTS, recaps=[11])
+    d["entities"][0]["names"][0]["from"] = "a10"   # Mira's only name appears after every event
+    d["entities"][0]["from"] = "a10"
+    m = Fake([])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert not [p for p in m.prompts if "Mira" in p.split("Events:")[0]] and not arc_facets(d)
+    # inherited from an earlier book, it has a name already
+    prior = _doc(book="b0")
+    d = _doc(events=EVENTS, recaps=[11])
+    d["entities"][0]["names"][0] = {"value": "Mira Dane", "kind": "alias", "from": "a10"}
+    d["entities"][0]["from"] = "a0"
+    m = Fake({"Mira": ["Mira meets Oren at the mill."]})
     arcs.arcs([(d, None)], m, log=lambda *_: None, prior=[prior])
-    assert "Brook End" in m.prompts[0] and arc_facets(d)   # the earlier book's description is context and its names are known
+    assert arc_facets(d) and "Mira Dane" not in m.prompts[0]
+
+
+def test_a_group_gets_an_arc():
+    d = _doc(events=[(1, "The guild shuts the mill gates.", ["guild"], None), (4, "The guild takes the miller's grain.", ["guild"], None)], recaps=[11])
+    d["entities"].append({"id": "guild", "type": "group", "from": "a0", "names": [{"value": "the Guild", "kind": "primary", "from": "a0"}], "facets": []})
+    arcs.arcs([(d, None)], Fake({"the": ["The Guild shuts the mill gates and takes the grain."]}), log=lambda *_: None)
+    assert arc_facets(d, "guild")
+
+
+def test_evidence_is_exactly_what_the_told_events_cite():
+    d = _doc(events=EVENTS, recaps=[11])
+    m = Fake([{"text": GOOD, "told": [2, 3]}])
+    arcs.arcs([(d, None)], m, log=lambda *_: None)
+    f = arc_facets(d)[0]
+    assert f["evidence"] == ["a2", "a5"] and f["from"] == "a5"   # events 2 and 3 (the turning point), nothing else
+    # more than 12 anchors are kept
+    many = [(i, f"Mira does thing number {i} at the mill.", ["mira"], None) for i in range(1, 15)]
+    d = _doc(n=20, events=many, recaps=[15])
+    arcs.arcs([(d, None)], Fake(["Mira does thing after thing at the mill."]), log=lambda *_: None)
+    assert len(arc_facets(d)[0]["evidence"]) == 14
+
+
+def test_no_valid_told_list_gets_one_rewrite_then_counts_every_event():
+    d = _doc(events=EVENTS, recaps=[11])
+    m = Fake([{"text": GOOD}, {"text": GOOD, "told": [99]}])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None)
+    f = arc_facets(d)[0]
+    mine = [p for p in m.prompts if "involve Mira" in p]
+    assert st["rewritten: no list of told events"] == 1 and len(mine) == 2 and "Also return" in mine[1]
+    assert f["evidence"] == ["a1", "a2", "a5", "a8", "a9"]
+
+
+def test_epub_chapter_ends_work_for_anchors_without_seq():
+    from lorekeeper import epub, text
+    paras = [f"Mira walked to the mill with her basket number {i} and waited by the gate." for i in range(10)]
+    blocks = [epub.Block(seq=i, spine=0, words=text.words(p), raw=p) for i, p in enumerate(paras)]
+    book = epub.Book(blocks=blocks, chapters=[epub.Chapter(title="One", start=0), epub.Chapter(title="Two", start=5)])
+    d = _doc(n=10, events=[])
+    d["anchors"] = [{"id": f"a{i}", "fp": blocks[i].fingerprint} for i in range(10)]
+    d["coverage"] = {"through": "a9"}
+    assert arcs.marks_for(d, book) == [4, 9]
+    d["anchors"][4]["fp"] = "0" * 16   # one that does not resolve takes the next one's place
+    assert arcs.marks_for(d, book) == [3, 9]
 
 
 def test_arcs_are_not_details_for_the_other_stages():

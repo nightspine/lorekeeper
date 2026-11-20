@@ -20,18 +20,19 @@ from bisect import bisect_left
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-from . import epub
+from . import anchors as anchors_, epub
 from .generate import ABOUT_THE_TEXT, MIN_SENTENCE_WORDS
-from .portraits import KINDS, SCHEMA, WORKERS, _CAPS, _checked, name_of
+from .portraits import KINDS, WORKERS, _CAPS, _checked, name_of
 
+SCHEMA = {"type": "object", "required": ["text", "told"],
+          "properties": {"text": {"type": "string"}, "told": {"type": "array", "items": {"type": "integer"}}}}
 MAX_CHARS = 400        # SPEC §6.3 limit for an arc facet
 MAX_SENTENCES = 3
 MIN_EVENTS = 2         # non-minor events naming an entity before its first arc (one turning point is enough)
 NEW_EVENTS = 2         # new non-minor events since its last arc that earn a rewrite (a turning point always does)
 MAX_EVENTS = 40        # events sent per arc, sampled evenly, first and last always kept
-MAX_EVIDENCE = 12
 FALLBACK_MARKS = 12    # chapter ends to use when the index has no chapter recaps and no EPUB is given
-TYPES = ("person", "creature", "organization")
+TYPES = ("person", "creature", "group")
 DEFAULT_MODEL = "claude-haiku-5-5"
 
 SYSTEM = """You keep a spoiler-free reader's companion for a novel. You are given the checked events of one book that
@@ -51,6 +52,7 @@ Rules:
 - What characters merely claim or suspect is told as such. Name others as the events do.
 - State a tie (wife, brother, heir...) ONLY if the events or notes say it. Do not upgrade a connection.
 - Never mention events, notes, passages, chapters or "the book". Do not list; compress.
+- Also return "told": the numbers of the events below that your text tells (every event whose substance it states).
 
 Events:
 {events}"""
@@ -82,9 +84,10 @@ def marks_for(d: dict, book: epub.Book | None = None) -> list[int]:
     ords = _ord(d)
     last = len(d["anchors"]) - 1
     if book is not None:
-        seqs = [a["seq"] for a in d["anchors"]]
-        starts = sorted(c.start for c in book.chapters if d["anchors"][0]["seq"] < c.start)
-        found = {bisect_left(seqs, s) - 1 for s in starts}
+        # Where each anchor sits in this edition (§3.6: an unresolved one takes the next resolved one's place);
+        # a chapter ends at the last anchor before its first block. `seq` is only a hint and may be absent.
+        eff = anchors_.effective_locations(d["anchors"], anchors_.resolve(d["anchors"], book.blocks))
+        found = {bisect_left(eff, c.start) - 1 for c in book.chapters}
         marks = {m for m in found if 0 <= m < last}
     else:
         marks, prev = set(), None
@@ -106,24 +109,21 @@ def _words(*texts: str) -> set[str]:
     return {w for t in texts for w in _CAPS.findall(t)}
 
 
-def _prior_context(prior: list[dict]) -> tuple[set[str], dict[str, str]]:
-    """Capitalised words of the earlier books (all finished before this one) and each entity's last profile."""
-    known: set[str] = set()
+def _prior_context(prior: list[dict]) -> tuple[dict[str, list[str]], dict[str, str]]:
+    """Each entity's names from the earlier books (all finished before this one, so visible) and its last profile.
+    The profile is context for the prompt only; it never counts as support for what an arc says."""
+    names: dict[str, list[str]] = {}
     profile: dict[str, str] = {}
     for d in prior:
         ords = _ord(d)
         for e in d["entities"]:
-            known |= _words(*(n["value"] for n in e.get("names", [])))
+            have = names.setdefault(e["id"], [])
+            have += [n["value"] for n in e.get("names", []) if n["value"] not in have]
             ps = sorted((f for f in e.get("facets", []) if f.get("kind") == "profile" and f["from"] in ords),
                         key=lambda f: ords[f["from"]])
             if ps:
                 profile[e["id"]] = ps[-1]["text"]
-                known |= _words(ps[-1]["text"])
-        for ev in d.get("events", []):
-            known |= _words(ev.get("summary", ""))
-        for r in d.get("recaps", []):
-            known |= _words(r.get("text", ""))
-    return known, profile
+    return names, profile
 
 
 def arcs(docs: list[tuple[dict, epub.Book | None]], model, log=print, prior: list[dict] = (), progress=None) -> dict:
@@ -145,10 +145,12 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
     marks = marks_for(d, book)
     title = d["work"]["title"]
     ents = {e["id"]: e for e in d["entities"]}
-    prior_known, prior_profile = _prior_context(prior)
+    prior_names, prior_profile = _prior_context(prior)
 
     def names_at(e: dict, upto: int) -> list[str]:
-        return [n["value"] for n in e["names"] if ords.get(n["from"], 1 << 30) <= upto]
+        """Names visible at `upto`: this book's up to there, and those of earlier books."""
+        mine = [n["value"] for n in e["names"] if ords.get(n["from"], 1 << 30) <= upto]
+        return [n for n in prior_names.get(e["id"], []) if n not in mine] + mine
 
     events = sorted((ev for ev in d.get("events", []) if ev.get("from") in ords), key=lambda ev: ords[ev["from"]])
     by_ent: dict[str, list[dict]] = {}
@@ -176,11 +178,6 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
     for step, mark in enumerate(marks, 1):
         if progress:
             progress(step - 1, len(marks))
-        known = set(prior_known)
-        for e in d["entities"]:
-            known |= _words(*names_at(e, mark))
-        known |= _words(*(ev.get("summary", "") for ev in events if ords[ev["from"]] <= mark))
-        known |= _words(*(r.get("text", "") for r in d.get("recaps", []) if ords.get(r.get("from"), 1 << 30) <= mark))
         due = []
         for eid, evs in by_ent.items():
             vis = [ev for ev in evs if ords[ev["from"]] <= mark]
@@ -203,12 +200,14 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
             picked = _sample(vis, MAX_EVENTS)
             last = max(ords[ev["from"]] for ev in picked)
             names = names_at(e, last)
-            shown = name_of(e, names)
+            if not names:
+                return eid, picked, last, (None, "skipped: no name yet", [])
+            shown = names[0]
             prev = written[eid][-1]["text"] if eid in written else None
             profile = _profile(e, ords, last) or prior_profile.get(eid)
             ties = _ties(d, eid, ents, ords, last, names_at)
-            lines = [f"- ({label(ords[ev['from']])}{', turning point' if ev.get('kind') == 'turn' else ''}) {ev['summary']}"
-                     for ev in picked]
+            lines = [f"{i}. ({label(ords[ev['from']])}{', turning point' if ev.get('kind') == 'turn' else ''}) {ev['summary']}"
+                     for i, ev in enumerate(picked, 1)]
             prompt = ARC.format(
                 book=title, name=shown, kind=KINDS.get(e["type"], e["type"]), where=label(mark),
                 also=f"Also called: {', '.join(names[1:6])}.\n" if len(names) > 1 else "",
@@ -216,26 +215,29 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
                 ties=f"\nTies that came up in this book: {'; '.join(ties)}\n" if ties else "",
                 previous=f"\nYour summary from earlier in this book (keep what still matters, add what happened since):\n{prev}\n" if prev else "",
                 events="\n".join(lines))
-            source = "\n".join([ev["summary"] for ev in picked] + ties + [profile or "", prev or ""]
-                               + [f["text"] for f in e.get("facets", []) if f.get("kind") != "arc" and ords.get(f["from"], 1 << 30) <= last])
-            got = _write(model, prompt, known, source)
+            got = _write(model, prompt, picked, ties, prev, names, lambda ev: [
+                n for x in ev.get("entities", []) if x in ents for n in names_at(ents[x], last)])
             return eid, picked, last, got
 
         with ThreadPoolExecutor(WORKERS) as pool:
             results = list(pool.map(one, due))
-        for eid, picked, last, (t, why) in results:
+        for eid, picked, last, (t, why, told) in results:
             if t is not None and why:
                 stats[why] += 1
+            if t is None and why.startswith("skipped"):
+                stats[why] += 1
+                continue
             if t is None:
                 stats["dropped"] += 1
                 stats[f"dropped: {why.split(':')[0]}"] += 1
                 log(f"    dropped {ents[eid]['names'][0]['value']}: {why}")
                 continue
             e = ents[eid]
-            # Never before the entity or the names the prompt gave it are themselves revealed.
-            at = max([last, ords.get(e["from"], 0)] + [ords[n["from"]] for n in e["names"] if ords.get(n["from"], 1 << 30) <= last])
-            evid = sorted({a for ev in picked for a in ev.get("evidence", [ev["from"]]) if ords.get(a, 1 << 30) <= at}
-                          | {anchors[at]["id"]}, key=ords.get)[-MAX_EVIDENCE:]
+            # Never before the entity, or a name the prompt gave it, is itself revealed.
+            # `from` is the latest event told; evidence is exactly what the told events cite (SPEC §4.2).
+            evid = sorted({a for ev in told for a in (ev.get("evidence") or [ev["from"]]) if a in ords}, key=ords.get)
+            at = max([ords[ev["from"]] for ev in told] + [ords.get(e["from"], 0)]
+                     + [ords[n["from"]] for n in e["names"] if ords.get(n["from"], 1 << 30) <= last])
             prev_arc = written.get(eid, [])
             if prev_arc and prev_arc[-1]["from"] == anchors[at]["id"]:
                 stats["superseded"] += 1   # the same reveal point: the rewrite stands in for the earlier one
@@ -295,19 +297,35 @@ def _problem(text: str) -> str | None:
     return None
 
 
-def _write(model, prompt: str, known: set[str], source: str) -> tuple[str | None, str]:
-    """(text, "") or (text, "rewritten: ...") if usable, else (None, reason). One rewrite for a failed check."""
-    def check(out) -> tuple[str | None, str]:
-        t = str((out or {}).get("text", ""))
-        got = _checked(t, known, source, None, limit=MAX_CHARS)
+def _told(out, picked: list[dict]) -> list[dict] | None:
+    """The events the model says it told, from their numbers in the prompt; None when the reply has no valid list."""
+    nums = (out or {}).get("told")
+    if not isinstance(nums, list) or not nums or not all(isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(picked) for n in nums):
+        return None
+    return [picked[n - 1] for n in sorted(set(nums))]
+
+
+def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | None, names: list[str],
+           names_of) -> tuple[str | None, str, list[dict]]:
+    """(text, "" or "rewritten: ...", told events) if usable, else (None, reason, []). One rewrite for a failed check
+    or a reply without a valid list of told events. Support for names and ties is only this book's told events, the
+    entity's visible names, its ties here and its previous arc; the description and earlier books are context."""
+    def check(out) -> tuple[tuple[str | None, str], list[dict] | None]:
+        told = _told(out, picked)
+        events = told or picked
+        source = "\n".join([ev["summary"] for ev in events] + ties + names + [prev or ""])
+        known = _words(source, *(n for ev in events for n in names_of(ev)))
+        got = _checked(str((out or {}).get("text", "")), known, source, None, limit=MAX_CHARS)
         if got[0] and (why := _problem(got[0])):
-            return None, why
-        return got
+            return (None, why), told
+        return got, told
 
     out = model.complete(SYSTEM, prompt, SCHEMA)
-    got = check(out)
-    if got[0] or got[1] == "empty":
-        return got
+    got, told = check(out)
+    if got[0] and told:
+        return got[0], "", told
+    if got[1] == "empty":
+        return None, "empty", []
     why = got[1]
     advice = {
         "too long": "It is over 400 characters. Rewrite it shorter, in at most 3 sentences.",
@@ -315,17 +333,22 @@ def _write(model, prompt: str, known: set[str], source: str) -> tuple[str | None
         "not a sentence": "It has a fragment or a label. Rewrite it as complete sentences.",
         "about the text": "It talks about the text. Tell what happened to the character instead.",
     }.get(why)
-    if advice is None:
+    if advice is None and why:
         kind = why.split(":")[0]
         word = why.split(": ", 1)[1] if ": " in why else ""
         advice = {
             "tie not in the text": f'No event says "{word}". Rewrite it without that tie, stating only what the events show.',
             "wording": f'It used "{word}". Rewrite it as plain past events without that wording.',
-            "unknown name": f'"{word}" is not named in the events. Rewrite it without that name.',
+            "unknown name": f'"{word}" is not in the events you tell. Rewrite it without that name, using only the events you list in "told".',
             "copies the book": "Rewrite it in your own words.",
         }.get(kind)
-    if advice is None:
-        return got
+    if advice is None and got[0] is None:
+        return None, why, []
+    if not told:
+        advice = (advice + " " if advice else "") + 'Also return "told": the numbers of the events your text tells.'
     again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{(out or {}).get("text", "")}"\n{advice}', SCHEMA)
-    retry = check(again)
-    return (retry[0], f"rewritten: {why.split(':')[0]}") if retry[0] else retry
+    got2, told2 = check(again)
+    if not got2[0]:
+        return None, got2[1], []
+    note = f"rewritten: {why.split(':')[0]}" if why else "rewritten: no list of told events"
+    return got2[0], note, told2 or picked
