@@ -39,7 +39,7 @@ LIMITS = {"detail": (280, "a detail"), "profile": (800, "a description"), "event
 MAX_PASSAGE = 60   # paragraphs either side in one passage request
 
 
-ARC_READ_ONLY = "book arcs are written from the events and can't be edited by hand; change the events they tell instead, or rebuild the arcs with lorekeeper arcs"
+ARC_READ_ONLY = "book arcs are written from the events and can't be edited by hand; edit the events and rebuild, or run lorekeeper arcs"
 
 
 class EditError(ValueError):
