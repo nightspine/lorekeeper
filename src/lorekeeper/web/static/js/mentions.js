@@ -1,7 +1,7 @@
 // "Where it comes up": the entry drawer's chart of mentions per chapter, gated at the reader's position.
 // The server counts (names visible at the position only, chapters up to the current one, the current one
 // through the position); this file only draws what comes back. Text goes through textContent (h()).
-import { api } from "./api.js";
+import { api, mentionsSig } from "./api.js";
 import { clear, h, icon, tidyTitle } from "./dom.js";
 
 const CHART_H = 96;   // px; keep in step with .mchart in reader.css
@@ -93,7 +93,7 @@ export function mentionsSection(key, id, seq, { immediate = false, order = null,
   if (pending) pending.forEach(clearTimeout);
   pending = [];
   const mine = ++latest;
-  const sig = `${key}\n${id}\n${seq}\n${order ?? ""}\n${fin ?? "-"}`;
+  const sig = mentionsSig(key, id, seq, order, fin);
   const paint = (data) => {
     if (mine !== latest || !hasMentions(data)) { if (mine === latest) box.hidden = true; return; }
     const n = data.current?.count ?? 0;
