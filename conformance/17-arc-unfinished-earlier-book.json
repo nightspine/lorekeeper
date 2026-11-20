@@ -11,5 +11,524 @@
     "book": "sign-of-four",
     "anchor": "ch2.para40"
   },
-  "expect": null
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": "sign-of-four",
+      "anchor": "ch2.para40"
+    },
+    "coverage": {
+      "complete": false,
+      "through": "ch2.para40",
+      "exhausted": true
+    },
+    "entities": [
+      {
+        "id": "holmes",
+        "type": "person",
+        "name": "Sherlock Holmes",
+        "aliases": [],
+        "profile": {
+          "id": "sof.holmes.p1",
+          "text": "Watson's companion of several years in Baker Street, who calls himself the only unofficial consulting detective and turns to cocaine when he has no problem to work on.",
+          "basis": "stated",
+          "book": "sign-of-four"
+        },
+        "arcs": [
+          {
+            "id": "sof.holmes.a1",
+            "text": "Bored without a case, he has been injecting cocaine, to Watson's alarm. He shows off his method by reading Watson's morning and the life of Watson's late brother from an old watch. When Mary Morstan brings him a puzzling letter, he and Watson agree to go with her that evening.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "facets": [
+          {
+            "id": "sof.holmes.1",
+            "text": "Has been injecting cocaine several times a day for months when he has no case, which alarms Watson.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.2",
+            "text": "Calls himself the only unofficial consulting detective, the last resort of official detectives such as Gregson, Lestrade and Athelney Jones; he wants no public credit.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.3",
+            "text": "Thinks Watson's written account of their first case was spoiled by romance, since detection should be treated as an exact science.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.4",
+            "text": "Has written technical monographs, including one that tells apart 140 kinds of tobacco ash.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.5",
+            "text": "Shows the difference between observation and deduction by working out that Watson went to the Wigmore Street post office to send a telegram.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.6",
+            "text": "From an old watch alone, deduces the unhappy life of Watson's late elder brother. Watson is hurt until Holmes shows his reasoning.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.holmes.7",
+            "text": "Insists that a client is only a factor in a problem and that personal feelings must never colour his judgment.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "watson",
+        "type": "person",
+        "name": "Watson",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.watson.1",
+            "text": "His health has still not recovered from the Afghan campaign.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.2",
+            "text": "Has written up the Jefferson Hope case as a short book titled \"A Study in Scarlet\".",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.3",
+            "text": "Has now lived with Holmes in Baker Street for years.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.4",
+            "text": "Had an elder brother, now dead, who threw away his prospects and took to drink; the subject is painful to Watson.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.5",
+            "text": "Describes himself as an army surgeon with a weak leg and very little money, and limps when upset.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.watson.6",
+            "text": "Is strongly drawn to Mary Morstan but tells himself he has no right to hope.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "lestrade",
+        "type": "person",
+        "name": "Lestrade",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.lestrade.1",
+            "text": "Named by Holmes as one of the official detectives who come to him when out of their depth.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "gregson",
+        "type": "person",
+        "name": "Gregson",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.gregson.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "athelney-jones",
+        "type": "person",
+        "name": "Athelney Jones",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.jones.1",
+            "text": "An official detective Holmes names among those who bring him cases.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "le-villard",
+        "type": "person",
+        "name": "François Le Villard",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.villard.1",
+            "text": "A rising French detective who recently consulted Holmes and is translating Holmes's monographs into French.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "mrs-hudson",
+        "type": "person",
+        "name": "Mrs. Hudson",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.hudson.1",
+            "text": "The landlady at Baker Street, who shows visitors up to Holmes.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "mary-morstan",
+        "type": "person",
+        "name": "Mary Morstan",
+        "aliases": [
+          "Miss Morstan"
+        ],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.morstan.1",
+            "text": "A young woman who calls on Holmes; he does not recognise her name.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.morstan.2",
+            "text": "Blonde, small and composed, dressed tastefully but plainly in a way that hints at limited means.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.morstan.4",
+            "text": "Her mother died when she was young; she grew up at a boarding school in Edinburgh while her father served in India. He vanished in London in 1878, soon after coming home on leave.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.morstan.5",
+            "text": "Has been governess in the household of Mrs. Cecil Forrester since 1882.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.morstan.6",
+            "text": "Since 1882 she has received a valuable pearl by post every year from an unknown sender, after answering a newspaper advertisement that asked for her address.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.morstan.7",
+            "text": "Has just received an unsigned letter telling her to come to the Lyceum Theatre tonight, with two friends and no police, and promising her justice.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": [
+          {
+            "id": "sof.morstan.3",
+            "text": "Employed by Mrs. Cecil Forrester, whom Holmes once helped.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ]
+      },
+      {
+        "id": "mrs-forrester",
+        "type": "person",
+        "name": "Mrs. Cecil Forrester",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.forrester.1",
+            "text": "Mary Morstan's employer and a former client of Holmes, whose problem he remembers as a simple one.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "captain-morstan",
+        "type": "person",
+        "name": "Captain Morstan",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.capt.1",
+            "text": "Mary's father, senior captain of an Indian regiment, who disappeared from the Langham Hotel in London on 3 December 1878 and was never heard of again.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          },
+          {
+            "id": "sof.capt.2",
+            "text": "Had served as an officer of the convict guard on the Andaman Islands; his abandoned luggage held curiosities from there.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "andaman-islands",
+        "type": "place",
+        "name": "Andaman Islands",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.andaman.1",
+            "text": "Islands where Captain Morstan helped guard convicts.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "major-sholto",
+        "type": "person",
+        "name": "Major Sholto",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.sholto.1",
+            "text": "Captain Morstan's only known friend in London: a retired officer of his regiment living at Upper Norwood, who said he had not known Morstan was in England.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "pearls",
+        "type": "object",
+        "name": "Mary Morstan's pearls",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.pearls.1",
+            "text": "Six rare, valuable pearls, one posted to Mary each year since 1882 with no note or sender.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      },
+      {
+        "id": "lyceum",
+        "type": "place",
+        "name": "Lyceum Theatre",
+        "aliases": [],
+        "profile": null,
+        "arcs": [],
+        "facets": [
+          {
+            "id": "sof.lyceum.1",
+            "text": "London theatre where the letter tells Mary to wait at a particular pillar at seven o'clock tonight.",
+            "basis": "stated",
+            "book": "sign-of-four"
+          }
+        ],
+        "history": []
+      }
+    ],
+    "relations": [
+      {
+        "id": "sof.rel.watson-holmes",
+        "src": "watson",
+        "dst": "holmes",
+        "label": "longtime companion and fellow lodger of",
+        "book": "sign-of-four",
+        "kind": "friendship"
+      },
+      {
+        "id": "sof.rel.villard-holmes",
+        "src": "le-villard",
+        "dst": "holmes",
+        "label": "recently consulted",
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.rel.hudson-holmes",
+        "src": "mrs-hudson",
+        "dst": "holmes",
+        "label": "landlady of",
+        "book": "sign-of-four",
+        "kind": "service"
+      },
+      {
+        "id": "sof.rel.forrester-holmes",
+        "src": "mrs-forrester",
+        "dst": "holmes",
+        "label": "former client of",
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.rel.mary-captain",
+        "src": "mary-morstan",
+        "dst": "captain-morstan",
+        "label": "daughter of",
+        "book": "sign-of-four",
+        "kind": "family"
+      },
+      {
+        "id": "sof.rel.captain-sholto",
+        "src": "captain-morstan",
+        "dst": "major-sholto",
+        "label": "fellow officer and friend of",
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.rel.mary-forrester",
+        "src": "mary-morstan",
+        "dst": "mrs-forrester",
+        "label": "governess to",
+        "book": "sign-of-four",
+        "kind": "service"
+      },
+      {
+        "id": "sof.rel.watson-mary",
+        "src": "watson",
+        "dst": "mary-morstan",
+        "label": "attracted to",
+        "book": "sign-of-four",
+        "kind": "romance"
+      }
+    ],
+    "relationHistory": [],
+    "events": [
+      {
+        "id": "sof.ev.cocaine",
+        "summary": "Watson confronts Holmes about his cocaine habit.",
+        "entities": [
+          "watson",
+          "holmes"
+        ],
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.ev.telegram",
+        "summary": "Holmes deduces that Watson sent a telegram that morning.",
+        "entities": [
+          "holmes",
+          "watson"
+        ],
+        "book": "sign-of-four",
+        "setting": {
+          "text": "Holmes's rooms"
+        }
+      },
+      {
+        "id": "sof.ev.watch",
+        "summary": "Holmes reads the history of Watson's brother from an old watch.",
+        "entities": [
+          "holmes",
+          "watson"
+        ],
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.ev.visitor",
+        "summary": "Mary Morstan calls on Holmes.",
+        "entities": [
+          "mary-morstan",
+          "holmes",
+          "mrs-hudson"
+        ],
+        "book": "sign-of-four",
+        "setting": {
+          "text": "Holmes's rooms"
+        }
+      },
+      {
+        "id": "sof.ev.father",
+        "summary": "Mary explains how her father disappeared in 1878.",
+        "entities": [
+          "mary-morstan",
+          "captain-morstan"
+        ],
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.ev.letter",
+        "summary": "Holmes examines the letter summoning Mary to the Lyceum Theatre.",
+        "entities": [
+          "holmes",
+          "mary-morstan",
+          "lyceum"
+        ],
+        "book": "sign-of-four"
+      },
+      {
+        "id": "sof.ev.agree",
+        "summary": "Holmes and Watson agree to go with Mary that evening.",
+        "entities": [
+          "holmes",
+          "watson",
+          "mary-morstan"
+        ],
+        "book": "sign-of-four"
+      }
+    ],
+    "recap": {
+      "id": "sof.recap.ch2",
+      "text": "Mary Morstan's father vanished in London in 1878. Since 1882 someone has sent her a pearl every year, and today a letter summoned her to the Lyceum Theatre tonight. Holmes and Watson agree to go with her. Watson is captivated by her but thinks himself unworthy.",
+      "book": "sign-of-four"
+    },
+    "chapters": []
+  }
 }

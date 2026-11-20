@@ -29,6 +29,7 @@
         "name": "John H. Watson",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.watson.1",
@@ -51,6 +52,7 @@
         "name": "Murray",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.murray.1",
@@ -67,6 +69,7 @@
         "name": "Maiwand",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.maiwand.1",

@@ -35,6 +35,7 @@
           "basis": "stated",
           "book": "sign-of-four"
         },
+        "arcs": [],
         "facets": [
           {
             "id": "sof.holmes.1",
@@ -63,6 +64,7 @@
         "name": "Watson",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.watson.1",
@@ -91,6 +93,7 @@
         "name": "Lestrade",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.lestrade.1",
@@ -107,6 +110,7 @@
         "name": "Gregson",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.gregson.1",
@@ -123,6 +127,7 @@
         "name": "Athelney Jones",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sof.jones.1",
