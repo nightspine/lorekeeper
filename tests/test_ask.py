@@ -891,3 +891,12 @@ def test_many_chapter_parts_never_exceed_the_budget_and_keep_the_ends(n, budget)
     shown = sum(1 for i in range(n) if f"[ch:P{i}]" in sl.text)
     if shown < n:
         assert f"{n - shown} parts of this chapter are not shown" in sl.text
+
+
+def test_parts_that_fit_in_half_the_budget_go_in_whole():
+    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} " + "x" * 1_000 + f" END{i}", "book": "b1"} for i in range(4)]
+    v = mkview([ent("E1", "Hero")], chapters=ch)
+    total = sum(len(c["text"]) for c in ch)
+    assert 4_000 < total < ask.OLLAMA_BUDGET // 2 - 100
+    sl = ask.select(v, "What happened in chapter 5?", [], ask.OLLAMA_BUDGET)
+    assert all(f"END{i}" in sl.text for i in range(4)) and sl.chars <= ask.OLLAMA_BUDGET

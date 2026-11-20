@@ -739,7 +739,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     if chm_idx:
         # Whole when together they fit in half the budget; else each part's text is shortened evenly to what
         # fits; if even 80 characters a part cannot fit, the first and last parts and as many between as fit.
-        room = max(400, budget_chars // 2 - 250)
+        room = budget_chars // 2        # the gap lines come out of the fill that follows, not out of the chapter
 
         def chapter_line(i: int, limit: int) -> tuple[str, str]:
             c = view["chapters"][i]
