@@ -36,27 +36,44 @@
 <ul>
 <li><strong>Only what you have read.</strong> The question is answered from the view at your position, the same view the other tabs show. In a series, the books you have marked finished count. Nothing later is sent to the model.</li>
 <li><strong>Only what the index says.</strong> If the index has nothing, the answer is "The index doesn't say, up to where you are." The model is told not to use what it remembers about the book, and the app drops an answer that names someone the index does not mention.</li>
-<li><strong>People you have not met yet.</strong> Ask about a name the index does not show yet and the app says so without calling a model. If you name one you know and one you do not, the answer leaves the second out and ends with a line saying the index has nothing on them.</li>
+<li><strong>People you have not met yet.</strong> Ask about a name the index does not show yet and the app says so without calling a model. If you name one you know and one you do not, the answer leaves the second out and ends with a sentence such as "The index has nothing on Moriarty up to where you are." The model is told not to mention them, and an answer that does is replaced by "The index doesn't say, up to where you are."</li>
 <li><strong>Only as good as the index.</strong> A thin or wrong entry gives a thin or wrong answer. Long-lived detail is in the profile and details; a small moment the model skipped when building is not there. For a very long series, the answer may use only part of an entry's history. It says so when it cuts ("17 more connections not shown") and a narrower question brings the rest.</li>
 </ul>
-<p>If you move the ruler back, or untick a Finished box, the conversation is cleared with a note, because earlier answers may mention things you are no longer meant to know. Moving forward keeps it.</p>
+<p>Earlier answers are never sent back to the model. A follow-up carries your earlier questions and the names of the entries those answers were about, checked against the view you have now, so an answer written at a later position cannot leak into a question asked at an earlier one.</p>
+<h3 id="clearing">When the conversation clears</h3>
+<p>The thread and anything typed in the field are cleared, with the line "Cleared, because your position moved back.", when the view shows less than an answer used. That happens when you:</p>
+<ul>
+<li>move to an earlier position in the same book, even by one paragraph that changes what is shown;</li>
+<li>untick a Finished box, or switch to an earlier book or another reading order;</li>
+<li>open another index;</li>
+<li>edit or merge an entry so that one an answer used no longer exists.</li>
+</ul>
+<p>Moving forward keeps the thread, and so does a step that leaves the view as it was. The line appears only when something was cleared. An answer that arrives after you moved back is discarded.</p>
 
 <h2 id="sent">What is sent where</h2>
-<p>The model gets your question, up to your last few questions, and a selection of index text: the entries the question is about, their profiles, details, connections and events, the chapter recaps near the topic, and the story so far. It never gets the book's text, and not the author. A series book's title is included so that "the second book" can be matched. The notes are capped at about 40,000 characters for a cloud model and 9,000 for Ollama.</p>
+<p>The model gets your question, your last few questions, and a selection of index text: the entries the question is about, their profiles, details, connections and events, the chapter recaps near the topic, and the story so far. It never gets the book's text, and not the author. A series book's title is included so that "the second book" can be matched. The notes are capped at about 40,000 characters for a cloud model and 9,000 for Ollama.</p>
 <p>With a cloud model, that text goes to the provider whose key you saved. The Reader says so under each answer. With Ollama, nothing leaves your computer.</p>
+
+<h3 id="picks">When the model first chooses entries</h3>
+<p>With a cloud model, two kinds of question make one extra small call before the answer. The extra call sends a list of entries, one line each with the name, the type and the first 140 characters or so of its description, and gets back at most five ids. It is a list of what the index shows at your position, never the book.</p>
+<ul>
+<li><strong>A question that names nobody</strong>, such as "Which vampire refuses to bow to anybody?". The list is every entry in your view, up to about 120,000 characters. Over that, descriptions are shortened and then the entries with the least written about them are left out.</li>
+<li><strong>A "who", "whom", "whose", "which", "where" or "called" question about someone named</strong>, such as "Which horse does Gabriel ride?". The list is only the entries tied to that person or sharing an event with them, up to about 30,000 characters. The plain "Who is Phoebe?" does not need it.</li>
+</ul>
+<p>Neither call is made with Ollama. A small local model gets too little room for the list, so a question that names nobody is matched against the words of the entries instead.</p>
 
 <h2 id="model">Which model answers</h2>
 <p>The same small model that tidies names after a build: the cheap model of the first cloud provider with a key (Claude first), else Ollama with the default model. If neither is available the Ask tab is hidden. Opened by its address, it says to add a key under <strong>Settings</strong>. Ollama is not used while it is busy with a build.</p>
 <p>No setting changed for this feature.</p>
 
 <h2 id="cost">What it costs</h2>
-<p>One question sends about 9,000 to 19,000 tokens. On Claude Haiku that is 0.1 to 0.2 cents, so a hundred questions cost 10 to 20 cents. A local model costs nothing but time. Some questions that name nobody make one extra small call to choose entries, and a question may be retried once if the first answer breaks a rule. At most two questions are answered at the same time per server.</p>
+<p>One question that names someone sends about 9,000 to 19,000 tokens. On Claude Haiku that is 0.1 to 0.2 cents. A question that names nobody, where the model first picks from the list of entries, costs about 0.6 cents because the list is sent too. A "who" or "which" question about a named person adds a smaller list, roughly 4,000 to 7,000 tokens. A local model costs nothing but time. A question is retried once at most if the first answer breaks a rule, and the answer says nothing about it. At most two questions are answered at the same time per server.</p>
 
 <h2 id="saved">What is saved</h2>
 <p>Nothing. The conversation lives in the page and is gone when you reload or leave. The server keeps no questions, answers or logs of them.</p>
 
 <h2 id="api">For developers</h2>
-<p>The Ask routes belong to the web app, not to the <a href="protocol.html">/v0 protocol</a>, and they need a session when sign-in is on. <code>GET /api/ask</code> says whether a model is available. <code>POST /api/library/{key}/ask</code> takes <code>question</code>, the reader's <code>anchor</code> and optional <code>finished</code>, <code>order</code> and <code>history</code>, and returns <code>answer</code>, <code>found</code> and <code>cites</code>. It builds the view with the gating rule, so nothing past the anchor reaches the model. Errors carry a <code>code</code>: <code>bad-question</code>, <code>bad-position</code>, <code>no-model</code>, <code>ollama-busy</code>, <code>busy</code> or <code>model-failed</code>. A reader app that wants the same feature can fetch the gated view over <code>/v0</code> and ask its own model.</p>
+<p>The Ask routes belong to the web app, not to the <a href="protocol.html">/v0 protocol</a>, and they need a session when sign-in is on. <code>GET /api/ask</code> says whether a model is available. <code>POST /api/library/{key}/ask</code> takes <code>question</code>, the reader's <code>anchor</code> and optional <code>finished</code>, <code>order</code> and <code>history</code>, and returns <code>answer</code>, <code>found</code> (false when the index does not say), <code>cites</code> (the entries, details, connections, events and recaps it used, each with an id and a label), <code>note</code> (why an answer was refused or changed, or null), <code>provider</code>, <code>model</code>, <code>local</code> (true for Ollama) and <code>usage</code> (calls, tokens and cost, when the provider reports them). <code>history</code> is the last six turns as <code>question</code>, <code>answer</code> and <code>cites</code>; the server uses the questions and the cite ids, not the answers. It builds the view with the gating rule, so nothing past the anchor reaches the model. Errors carry a <code>code</code>: <code>bad-question</code>, <code>bad-position</code>, <code>no-model</code>, <code>ollama-busy</code>, <code>busy</code> or <code>model-failed</code>. A reader app that wants the same feature can fetch the gated view over <code>/v0</code> and ask its own model.</p>
 
 </main>
 </div>
