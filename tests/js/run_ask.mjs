@@ -1,6 +1,6 @@
 // The Ask tab's rule for when a thread must go: revealsLess(snapshot, view, position). Run by tests/test_js_ask.py.
 import assert from "node:assert/strict";
-import { revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
+import { anyRevealsLess, draftAfterInput, revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
 
 const ent = (id, name, aliases = [], extra = {}) => ({ id, name, aliases, profile: null, facets: [], history: [], ...extra });
 const view = (o = {}) => ({ entities: [ent("E1", "Holmes")], relations: [], relationHistory: [], events: [{ id: "V1" }], chapters: [{ id: "C1" }], recap: { id: "R1" }, ...o });
@@ -43,3 +43,25 @@ t("an earlier book clears, a later one keeps", () => {
   assert.equal(revealsLess(at, view(), pos({ rank: 2, book: "b2", ord: 0 })), false);
 });
 t("nothing to compare keeps", () => assert.equal(revealsLess(null, view(), pos()), false));
+
+// The draft: text typed by hand gets a snapshot when the field goes from empty to non-empty.
+const take = (view_, pos_) => () => snapshot(view_, pos_);
+t("typed, then moved back, is cleared", () => {
+  const withAlias = view({ entities: [ent("E1", "Holmes", ["Sherlock"])] });
+  const draft = draftAfterInput(null, "Who is Sherlock?", take(withAlias, pos()));
+  assert.ok(draft);
+  assert.equal(anyRevealsLess([draft], view(), pos({ ord: 4 })), true);
+});
+t("typed, then moved forward, is kept", () => {
+  const draft = draftAfterInput(null, "Who is Holmes?", take(view(), pos()));
+  assert.equal(anyRevealsLess([draft], view({ recap: { id: "R2" } }), pos({ ord: 9 })), false);
+});
+t("the snapshot is taken once, at the first character", () => {
+  const first = draftAfterInput(null, "W", take(view(), pos()));
+  assert.equal(draftAfterInput(first, "Wh", () => { throw new Error("taken again"); }), first);
+});
+t("emptied by hand leaves nothing to clear", () => {
+  const draft = draftAfterInput(null, "Who", take(view(), pos()));
+  assert.equal(draftAfterInput(draft, "  ", take(view(), pos())), null);
+  assert.equal(anyRevealsLess([null], view(), pos({ ord: 0 })), false);
+});

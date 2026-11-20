@@ -53,6 +53,15 @@ export function revealsLess(old, view, pos) {
   return !covers(viewIds(view), old.ids);
 }
 
+/** The draft's snapshot after the field changed: taken when it goes from empty to non-empty (typed by hand, prefilled
+ *  or restored), kept while text stays, dropped when the field is emptied. `take` makes a snapshot of the view now. */
+export function draftAfterInput(draft, text, take) {
+  if (!String(text || "").trim()) return null;
+  return draft || take();
+}
+/** True when any snapshot (answers, the pending question, the draft) shows more than the view does now. */
+export const anyRevealsLess = (snaps, view, pos) => snaps.filter(Boolean).some((x) => revealsLess(x, view, pos));
+
 /**
  * ctx: key() the library key; position() { anchor, finished, order, key, book, rank, ord } the view on screen was computed with;
  * view() the gated view; examples() three question strings; canOpen(cite), open(cite) for the sources.
@@ -86,7 +95,7 @@ export function createAsk(ctx) {
     field.style.height = `${Math.min(field.scrollHeight + pad, line * 4 + 16)}px`;
     count.textContent = field.value.length >= 420 ? `${MAX_Q - field.value.length} left` : "";
   }
-  field.addEventListener("input", () => { if (!field.value) draft = null; grow(); });
+  field.addEventListener("input", () => { draft = draftAfterInput(draft, field.value, () => snapshot(ctx.view(), ctx.position())); grow(); });
   field.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); ask(field.value); }
   });
@@ -272,9 +281,7 @@ export function createAsk(ctx) {
     /** Called on every Reader repaint: the thread goes when the view no longer holds what it was asked at. */
     check() {
       const snaps = [...turns.map((t) => t.at), busy?.at, draft].filter(Boolean);
-      if (!snaps.length) return;
-      const view = ctx.view(), pos = ctx.position();
-      if (snaps.some((x) => revealsLess(x, view, pos))) reset();
+      if (snaps.length && anyRevealsLess(snaps, ctx.view(), ctx.position())) reset();
     },
     reset,
     /** Type a question into the field without sending it, and focus it. */
