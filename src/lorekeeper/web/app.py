@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 import urllib.request
 import uuid
@@ -24,7 +25,8 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from .. import epub, llm, text
+from .. import ask as askmod
+from .. import epub, gating, llm, text
 from ..generate import slug
 from . import auth as authmod
 from . import bookorbit, position, protocol
@@ -154,24 +156,33 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             gid = f"generated--{rel.replace('/', '--')}"
         return identity.distinct(gid)
 
-    def judge_model(tier: str = "cheap"):
-        """For proposing pairs from the whole cast: the first configured cloud provider's cheap model
-        (Claude first), else local Ollama if it's up."""
+    def pick_model(tier: str = "cheap") -> dict:
+        """The model for small jobs over the whole cast (pairs, questions): the first configured cloud
+        provider's `tier` model (Claude first), else local Ollama with the default model unless a build
+        is using it. {"model": backend or None, "provider", "name", "local", "reason"}."""
         for p in jobs.configured():
             spec = llm.PROVIDERS[p]
             name = keys.config(p).get("model") if p == "custom" else spec[tier]
             if name:
-                return jobs.cloud_model(p, name)
+                return {"model": jobs.cloud_model(p, name), "provider": p, "name": name, "local": False, "reason": None}
+        none = {"model": None, "provider": None, "name": None, "local": False, "reason": "no-model"}
         try:
             with urllib.request.urlopen(f"{ollama_url}/api/tags", timeout=2) as r:
                 models = [m["name"] for m in json.loads(r.read()).get("models", [])]
         except (OSError, ValueError):
-            return None
+            return none
+        if llm.DEFAULT_MODEL not in models:
+            return none
         busy = any(j.status in ("running", "stopping") and j.config.get("provider") in (None, "ollama")
                    for j in jobs.jobs.values())
-        if busy or llm.DEFAULT_MODEL not in models:
-            return None   # one Ollama model at a time: don't compete with a running build
-        return llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url)
+        # one Ollama model at a time: don't compete with a running build
+        return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
+                "provider": "ollama", "name": llm.DEFAULT_MODEL, "local": True,
+                "reason": "ollama-busy" if busy else None}
+
+    def judge_model(tier: str = "cheap"):
+        """For proposing pairs from the whole cast: see `pick_model`."""
+        return pick_model(tier)["model"]
 
     def strong_judge_model():
         """The strong model of the same provider judges the pairs (a few hundred short pairs cost cents
@@ -253,6 +264,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return jobs.submit(local, config)
     app = FastAPI(title="Lorekeeper", docs_url="/api/docs", redoc_url=None)
     app.state.auth = accounts
+    app.state.jobs = jobs
     app.mount("/static", Revalidated(directory=STATIC), name="static")
     # The docs site (static/docs) links ../css, ../fonts and ../vendor so that it works unchanged when
     # `lorekeeper docs export` copies it to a static host. Serve those folders at the root to match.
@@ -788,6 +800,83 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if item is None:
             raise HTTPException(404, "no such index")
         return item["doc"]
+
+    # ---- Ask: questions answered from the gated view's notes (ask.py) -----------------------------
+
+    ask_slots = {"n": 0}
+    ask_lock = threading.Lock()
+    MAX_ASKS = 2
+
+    def ask_error(status: int, code: str, detail: str) -> JSONResponse:
+        return JSONResponse({"detail": detail, "code": code}, status_code=status)
+
+    def ask_info(c: dict) -> dict:
+        spec = llm.PROVIDERS.get(c["provider"]) if c["provider"] != "ollama" else None
+        known = next((m for m in spec["models"] if m["id"] == c["name"]), None) if spec else None
+        return {"provider": c["provider"], "label": spec["label"] if spec else ("Ollama" if c["provider"] else None),
+                "model": c["name"], "modelLabel": known["label"] if known else c["name"], "local": c["local"]}
+
+    @app.get("/api/ask")
+    def ask_status():
+        c = pick_model("cheap")
+        return {"available": c["model"] is not None, **ask_info(c), "reason": c["reason"]}
+
+    @app.post("/api/library/{key}/ask")
+    async def ask_book(key: str, request: Request):
+        body = await json_body(request)
+        item = library.scan().get(key)
+        if item is None or item["doc"].get("kind") != "index":
+            return ask_error(404, "not-found", "no such index")
+        question = body.get("question")
+        question = " ".join(question.split()) if isinstance(question, str) else ""
+        if not question or len(question) > 500:
+            return ask_error(422, "bad-question", "Ask a question of 1 to 500 characters.")
+        turns = []
+        for t in (body.get("history") if isinstance(body.get("history"), list) else [])[-6:]:
+            if not isinstance(t, dict):
+                continue
+            cites = t.get("cites") if isinstance(t.get("cites"), list) else []
+            turns.append(askmod.Turn(str(t.get("question") or "")[:500], str(t.get("answer") or "")[:1500],
+                                     [c for c in cites if isinstance(c, str)][:40]))
+        anchor, order, finished = body.get("anchor"), body.get("order"), body.get("finished")
+        if (anchor is not None and not isinstance(anchor, str)) or (order is not None and not isinstance(order, str)) \
+                or (finished is not None and not (isinstance(finished, list) and all(isinstance(k, str) for k in finished))):
+            return ask_error(422, "bad-position", "The position is not understood.")
+        indexes, series = protocol.series_indexes(library.scan(), item)
+        sref = item["doc"].get("series")
+        if series and order is not None and order not in series["orders"]:
+            return ask_error(422, "bad-position", "That reading order does not exist.")
+        try:
+            view = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor),
+                               series, order, None if finished is None else set(finished))
+        except ValueError as e:
+            return ask_error(422, "bad-position", str(e))
+        titles = None
+        if series:
+            names = {b["key"]: b.get("title") for b in series["books"]}
+            titles = {k: {"title": names.get(k) or k, "number": n}
+                      for n, k in enumerate(series["orders"][order or series["defaultOrder"]], 1)}
+        c = pick_model("cheap")
+        if c["model"] is None:
+            return ask_error(409, c["reason"] or "no-model", "The local model is busy building an index."
+                             if c["reason"] == "ollama-busy" else "No model is set up to answer. Add a key in Settings.")
+        with ask_lock:
+            if ask_slots["n"] >= MAX_ASKS:
+                return ask_error(429, "busy", "Two questions are already being answered. Try again in a moment.")
+            ask_slots["n"] += 1
+        try:
+            budget = askmod.OLLAMA_BUDGET if c["local"] else askmod.DEFAULT_BUDGET
+            got = await asyncio.to_thread(askmod.answer, view, question, c["model"], turns, budget, titles)
+        except llm.ProviderError as e:
+            return ask_error(502, "model-failed", str(e)[:200])
+        except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key
+            return ask_error(502, "model-failed", f"The model could not answer ({type(e).__name__}).")
+        finally:
+            with ask_lock:
+                ask_slots["n"] -= 1
+        info = ask_info(c)
+        return {"answer": got.answer, "found": got.found, "cites": got.cites, "note": got.note,
+                "provider": info["provider"], "model": info["model"], "local": info["local"], "usage": got.usage}
 
     # ---- reading position from Book Orbit ---------------------------------------------------------
 

@@ -176,6 +176,28 @@ def _etag_matches(header: str | None, digest: str) -> bool:
     return False
 
 
+def series_indexes(scan: dict, item: dict) -> tuple[list[dict], dict | None]:
+    """The index documents a view of `item` is computed from (its own first, then the other books of
+    its series, from the same source when there is a choice) and the series manifest, or None."""
+    doc = item["doc"]
+    sref = doc.get("series")
+    indexes, series = [doc], None
+    mans = [i for i in scan.values() if sref and i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
+    manifest = next((m for m in mans if m["source"] == item["source"]), mans[0] if mans else None)
+    if manifest:
+        series = manifest["doc"]
+        for b in series["books"]:
+            if b["key"] == sref["book"]:
+                continue
+            cands = [i for i in scan.values() if i["doc"].get("kind") == "index"
+                     and (i["doc"].get("series") or {}).get("id") == sref["id"]
+                     and i["doc"]["series"]["book"] == b["key"]]
+            choice = next((c for c in cands if c["source"] == item["source"]), cands[0] if cands else None)
+            if choice:
+                indexes.append(choice["doc"])
+    return indexes, series
+
+
 def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None = None) -> APIRouter:
     router = APIRouter(tags=["Protocol"])
     file_hashes: dict[Path, tuple[float, int, str]] = {}      # epub → (mtime, size, sha256)
@@ -258,29 +280,13 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
 
     def gated_view(item: dict, anchor: str | None, p: Position) -> dict:
         doc = item["doc"]
-        scan = library.scan()
         sref = doc.get("series")
-        manifest = None
-        if sref:
-            mans = [i for i in scan.values() if i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
-            manifest = next((m for m in mans if m["source"] == item["source"]), mans[0] if mans else None)
-        indexes, series = [doc], None
-        if manifest:
-            series = manifest["doc"]
-            for b in series["books"]:
-                if b["key"] == sref["book"]:
-                    continue
-                cands = [i for i in scan.values() if i["doc"].get("kind") == "index"
-                         and (i["doc"].get("series") or {}).get("id") == sref["id"]
-                         and i["doc"]["series"]["book"] == b["key"]]
-                choice = next((c for c in cands if c["source"] == item["source"]), cands[0] if cands else None)
-                if choice:
-                    indexes.append(choice["doc"])
-            if p.order is not None and p.order not in series["orders"]:
-                raise _bad(f"unknown reading order {p.order!r}")
+        indexes, series = series_indexes(library.scan(), item)
+        if series and p.order is not None and p.order not in series["orders"]:
+            raise _bad(f"unknown reading order {p.order!r}")
         fin = None if p.finished is None else {k for k in p.finished.split(",") if k}
         try:
-            return gating.view(indexes, gating.Position(sref["book"] if manifest else None, anchor),
+            return gating.view(indexes, gating.Position(sref["book"] if series else None, anchor),
                                series, p.order, fin)
         except ValueError as e:
             raise _bad(str(e)) from e
