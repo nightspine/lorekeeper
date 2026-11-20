@@ -280,7 +280,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
                   if t[1] and not t[2] and i not in used and t[0] not in STOP and t[0] not in vocab
                   and t[0] + "s" not in vocab and t[0].removesuffix("s") not in vocab and len(t[0]) >= 3]
 
-    qwords = {w for w, _c, _s in toks if w not in STOP and len(w) > 2}
+    qwords = {w for w, _c, _s in toks if w not in STOP and w not in ORDINALS and len(w) > 2}
     pronoun = any(w in PRONOUNS for w, _c, _s in toks)
     carried: list[str] = []
     if history and (pronoun or not named):
