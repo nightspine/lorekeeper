@@ -85,7 +85,8 @@ console.log(index.lookup(&quot;Holmes&quot;, { cfi }));</code></pre>
       &quot;profile&quot;: null,
       &quot;facets&quot;: [{ &quot;id&quot;: &quot;sis.holmes.1&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;book&quot;: &quot;study-in-scarlet&quot;,
                    &quot;text&quot;: &quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, who is looking for someone to split the cost of a set of rooms.&quot; }],
-      &quot;history&quot;: []
+      &quot;history&quot;: [],
+      &quot;arcs&quot;: []
     },
     &quot;facets&quot;: [ ...the same facets array... ],
     &quot;relations&quot;: [],
@@ -161,7 +162,7 @@ curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-
 {&quot;position&quot;:&quot;ch1.para06&quot;,
  &quot;entities&quot;:[{&quot;id&quot;:&quot;watson&quot;,&quot;type&quot;:&quot;person&quot;,&quot;name&quot;:&quot;John H. Watson&quot;,&quot;aliases&quot;:[&quot;Watson&quot;],
    &quot;profile&quot;:null,&quot;facets&quot;:[{&quot;id&quot;:&quot;sis.watson.1&quot;,&quot;basis&quot;:&quot;stated&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;,&quot;text&quot;:&quot;The narrator. Qualified as a doctor ...&quot;}, ...],
-   &quot;history&quot;:[],&quot;relations&quot;:[...],&quot;events&quot;:[...]}],
+   &quot;history&quot;:[],&quot;arcs&quot;:[],&quot;relations&quot;:[...],&quot;events&quot;:[...]}],
  &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para06&quot;,&quot;seq&quot;:36,&quot;basis&quot;:&quot;xpointer&quot;,&quot;exact&quot;:true}}
 
 # a spine document and a word offset
