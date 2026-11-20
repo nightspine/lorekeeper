@@ -174,3 +174,12 @@ def test_an_arc_longer_than_400_characters_is_refused(scarlet):
     assert validate.check_index(scarlet)
     _facet(scarlet, "sis.holmes.a2")["text"] = "x" * 400
     assert _errors(validate.check_index(scarlet)) == []
+
+
+def test_an_item_cannot_replace_itself(scarlet):
+    _facet(scarlet, "sis.holmes.a2")["replaces"] = ["sis.holmes.a2"]
+    assert any("cannot replace itself" in e for e in _errors(validate.check_index(scarlet)))
+    _facet(scarlet, "sis.holmes.a2")["replaces"] = ["sis.holmes.a1"]
+    rel = scarlet["relations"][0]
+    rel["replaces"] = [rel["id"]]
+    assert any("cannot replace itself" in e for e in _errors(validate.check_index(scarlet)))
