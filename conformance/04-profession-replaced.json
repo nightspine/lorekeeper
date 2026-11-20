@@ -37,6 +37,7 @@
           "basis": "stated",
           "book": "study-in-scarlet"
         },
+        "arcs": [],
         "facets": [
           {
             "id": "sis.watson.1",
@@ -83,6 +84,7 @@
         "name": "Murray",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.murray.1",
@@ -99,6 +101,7 @@
         "name": "Maiwand",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.maiwand.1",
@@ -115,6 +118,7 @@
         "name": "Stamford",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.stamford.1",
@@ -137,6 +141,7 @@
         "name": "Barts",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.barts.1",
@@ -159,6 +164,7 @@
         "name": "Criterion Bar",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.criterion.1",
@@ -182,6 +188,14 @@
           "basis": "stated",
           "book": "study-in-scarlet"
         },
+        "arcs": [
+          {
+            "id": "sis.holmes.a2",
+            "text": "Stamford introduces him to Watson at Barts, and the two take rooms together at 221B Baker Street. There he admits writing the article on observation that Watson mocked, and says he earns his living as a consulting detective.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          }
+        ],
         "facets": [
           {
             "id": "sis.holmes.1",
@@ -270,6 +284,12 @@
             "book": "study-in-scarlet"
           },
           {
+            "id": "sis.holmes.a1",
+            "text": "Stamford brings Watson to meet him in the chemical laboratory at Barts, where he startles Watson by knowing he has served in Afghanistan. After warning Watson about his habits, he agrees to share rooms with him.",
+            "basis": "stated",
+            "book": "study-in-scarlet"
+          },
+          {
             "id": "sis.holmes.8",
             "text": "His profession is a mystery to Watson: he is not studying medicine or working toward any degree, yet his knowledge in certain areas is deep and exact.",
             "basis": "stated",
@@ -283,6 +303,7 @@
         "name": "Holmes's bloodstain test",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bloodtest.1",
@@ -301,6 +322,7 @@
           "Baker Street"
         ],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bakerst.1",
@@ -323,6 +345,7 @@
         "name": "Lestrade",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.lestrade.1",
@@ -345,6 +368,7 @@
         "name": "The Book of Life",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [
           {
             "id": "sis.bookoflife.1",
@@ -373,6 +397,7 @@
         "name": "consulting detective",
         "aliases": [],
         "profile": null,
+        "arcs": [],
         "facets": [],
         "history": []
       }

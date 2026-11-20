@@ -143,3 +143,34 @@ def test_a_repeated_fingerprint_is_warned(monkeypatch):
              "editions": [ed], "entities": [], "relations": [], "events": [], "recaps": []}
     got = [(i.level, i.where, i.message) for i in validate.check_against_book(index, blocks)]
     assert got == [("warning", "anchors[0]", "fingerprint is not unique in this edition")]
+
+
+def _arc_errors(issues):
+    return [e for e in _errors(issues) if "arc" in e]
+
+
+def test_an_arc_replaces_only_an_arc_of_the_same_entity_and_book(scarlet, four, series):
+    # The examples' own chain (sis.holmes.a2 replaces a1) is fine.
+    assert _arc_errors(validate.check_index(scarlet)) == []
+    # Another book's arc: each book keeps its own.
+    _facet(four, "sof.holmes.a1")["replaces"] = ["sis.holmes.a2"]
+    assert any("arc of another book" in e for e in _errors(validate.check_series(series, [scarlet, four])))
+    # Another entity's arc.
+    stamford = _facet(scarlet, "sis.stamford.2")
+    stamford.update(kind="arc", replaces=["sis.holmes.a1"], **{"from": "ch2.para28"})
+    assert any("arc of another entity" in e for e in _errors(validate.check_index(scarlet)))
+
+
+def test_an_arc_may_not_replace_a_detail_nor_a_detail_an_arc(scarlet):
+    _facet(scarlet, "sis.holmes.a1")["replaces"] = ["sis.holmes.1"]
+    assert any("can replace only arcs" in e for e in _errors(validate.check_index(scarlet)))
+    _facet(scarlet, "sis.holmes.a1").pop("replaces")
+    _facet(scarlet, "sis.holmes.a2")["kind"] = "profile"       # a profile now replaces the arc a1
+    assert any("only an arc can replace" in e for e in _errors(validate.check_index(scarlet)))
+
+
+def test_an_arc_longer_than_400_characters_is_refused(scarlet):
+    _facet(scarlet, "sis.holmes.a2")["text"] = "x" * 401
+    assert validate.check_index(scarlet)
+    _facet(scarlet, "sis.holmes.a2")["text"] = "x" * 400
+    assert _errors(validate.check_index(scarlet)) == []
