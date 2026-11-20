@@ -1,0 +1,15 @@
+{
+  "description": "Holmes carries one arc per book, in reading order: the latest of A Study in Scarlet (finished) and the one of The Sign of Four at the position; the earlier Study in Scarlet arc is history.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json",
+    "../examples/sherlock-holmes/sign-of-four.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "sign-of-four",
+    "anchor": "ch2.para24"
+  },
+  "expect": null
+}

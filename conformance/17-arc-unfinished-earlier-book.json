@@ -1,0 +1,15 @@
+{
+  "description": "The reader has not finished A Study in Scarlet: none of its arcs (nor anything else from it) is visible; only The Sign of Four's arc.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json",
+    "../examples/sherlock-holmes/sign-of-four.json"
+  ],
+  "order": null,
+  "finished": [],
+  "position": {
+    "book": "sign-of-four",
+    "anchor": "ch2.para40"
+  },
+  "expect": null
+}

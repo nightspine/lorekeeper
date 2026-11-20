@@ -1,0 +1,14 @@
+{
+  "description": "Between the two Study in Scarlet arcs: sis.holmes.a1 is the arc; sis.holmes.a2 lies past the position and appears nowhere, not even in history.",
+  "series": "../examples/sherlock-holmes/series.json",
+  "indexes": [
+    "../examples/sherlock-holmes/study-in-scarlet.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": "study-in-scarlet",
+    "anchor": "ch2.para24"
+  },
+  "expect": null
+}

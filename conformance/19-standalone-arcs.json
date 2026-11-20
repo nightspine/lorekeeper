@@ -1,0 +1,13 @@
+{
+  "description": "A standalone index: arcs holds one item with book null, the latest visible arc; the earlier one is history and the one past the position is invisible.",
+  "indexes": [
+    "fixtures/standalone-arcs.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": null,
+    "anchor": "p3"
+  },
+  "expect": null
+}
