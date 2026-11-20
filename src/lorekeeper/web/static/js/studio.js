@@ -11,6 +11,7 @@ const PHASES = [
   { key: "verify", label: "Fact-checking", icon: "shield" },
   { key: "recap", label: "Writing recap", icon: "feather" },
   { key: "portraits", label: "Writing descriptions", icon: "person" },
+  { key: "arcs", label: "Writing book arcs", icon: "layers" },
 ];
 const DROP_COLORS = ["var(--t-person)", "var(--t-group)", "var(--t-concept)", "var(--t-object)", "var(--t-term)",
   "var(--t-place)", "var(--rose)", "var(--text-3)"];
@@ -657,12 +658,14 @@ export function mountStudio(root) {
       const elapsed = m.runStart ? (m.status === "running" ? Date.now() / 1000 - m.runStart : m.runSeconds) : 0;
       const cur = m.current;
       const describing = m.status === "running" && m.phase === "portraits" && m.portraits;
+      const arcing = m.status === "running" && m.phase === "arcs" && m.arcs;
       clear(el.where,
         h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
         describing && h("span", "Describing the cast ", h("b.num", `${m.portraits[0]} / ${m.portraits[1]}`), " chapters"),
-        cur && m.status === "running" && !describing && h("span", "Reading ", h("b", cur.chapter)),
+        arcing && h("span", "Writing book arcs ", h("b.num", `${m.arcs[0]} / ${m.arcs[1]}`), " chapters"),
+        cur && m.status === "running" && !describing && !arcing && h("span", "Reading ", h("b", cur.chapter)),
         h("span", "Elapsed ", h("b.num", fmtDuration(elapsed))),
-        m.status === "running" && !describing && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
+        m.status === "running" && !describing && !arcing && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
         rate ? h("span", h("b.num", `${Math.round(rate * 60)}`), " words/min") : null,
         m.usage && m.usage.seconds ? h("span", h("b.num", `${(m.usage.output_tokens / m.usage.seconds).toFixed(1)}`), " tokens/s") : null,
         m.usage && m.usage.cost_usd ? h("span", h("b.num", `$${m.usage.cost_usd.toFixed(m.usage.cost_usd < 1 ? 3 : 2)}`), " spent") : null,
@@ -728,6 +731,7 @@ export function mountStudio(root) {
         case "chunk": m.current = e; m.phase = "extract"; break;
         case "phase": m.phase = e.phase; break;
         case "portraits": m.phase = "portraits"; m.portraits = [e.done, e.total]; break;
+        case "arcs": m.phase = "arcs"; m.arcs = [e.done, e.total]; break;
         case "chunk_done":
           m.wordsDone += e.words; m.runWords += e.words; m.runSeconds += e.seconds; m.chunkTimes.push(e.seconds);
           m.stats = e.stats; m.lastDelta = e.delta || {}; m.usage = e.usage;
