@@ -1381,15 +1381,19 @@ export function mountReader(root) {
 
   // ---- an entry across a series: who they are, then one card per book -----------------------------
 
-  /** Ids of the facets that are profiles (the view does not say which history items are). Only asked about ids the view already shows. */
-  function isProfile(id) {
-    if (!s.profileIds) {
-      s.profileIds = new Set();
-      for (const d of s.seriesDocs.size ? s.seriesDocs.values() : [s.doc]) {
-        for (const en of d?.entities || []) for (const f of en.facets || []) if (f.kind === "profile") s.profileIds.add(f.id);
-      }
+  /** Is this facet a profile? The view does not say which history items are, so the kind is read from the document of
+   *  the facet's own book (its facets, plus the current book's carried entries, which stand in for an origin document that is missing). Safe because it is only asked about facets the view
+   *  already shows, whose books are the current one or finished ones; no other book's document is ever opened, and
+   *  nothing but the kind of an id already on screen is taken from it. */
+  function isProfile(f) {
+    if (!s.profileIds) s.profileIds = new Map();
+    if (!s.profileIds.has(f.book)) {
+      const ids = new Set();
+      const d = f.book === s.book ? s.doc : s.seriesDocs.get(f.book);
+      for (const en of [...(d?.entities || []), ...(d?.carried || []), ...(s.doc?.carried || [])]) for (const x of en.facets || []) if (x.kind === "profile") ids.add(x.id);
+      s.profileIds.set(f.book, ids);
     }
-    return s.profileIds.has(id);
+    return s.profileIds.get(f.book).has(f.id);
   }
 
   /** The cards of an entry that spans books, newest first (the book being read on top), or null when the entry
@@ -1418,7 +1422,7 @@ export function mountReader(root) {
     const full = s.series.books.find((x) => x.key === b)?.title || b;
     const heading = `${bookNumber(b, order)}${full}${now ? ", so far" : ""}`;
     // Profiles of this book, in view order. The latest one overall is already shown under "Who they are".
-    const profiles = [...e.history.filter((f) => f.book === b && isProfile(f.id)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
+    const profiles = [...e.history.filter((f) => f.book === b && isProfile(f)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
     const ending = !now && profiles.length && profiles[profiles.length - 1] !== e.profile ? profiles[profiles.length - 1] : null;
     const impressions = [...e.history.filter((f) => f.book === b && f !== ending)];
     const details = e.facets.filter((f) => f.book === b);
@@ -1493,7 +1497,7 @@ export function mountReader(root) {
     const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
-        bookLabel(e.profile.book)) : null,
+        cards && e.profile.book ? h("span.book-label", `From ${s.series.books.find((x) => x.key === e.profile.book)?.title || e.profile.book}`) : bookLabel(e.profile.book)) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
       cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", h("span.n", String(cards.length))),
         h("div.series-rail.newest.arc-rail", cards))
