@@ -59,19 +59,19 @@ def test_nothing_before_the_first_mention(client, tmp_path):
     _, key = setup(client, tmp_path)
     r = get(client, key, "alice-marlow", 7).json()                     # fine: she was named in chapter one
     assert r["first"]["n"] == 1
-    # Before Ezra's own first block nobody can ask about him.
-    assert get(client, key, "ezra-pike", 3).status_code == 404
-    r = get(client, key, "ezra-pike", 4).json()
+    # Before Ezra's own first block nobody can ask about him; the block that introduces him already opens it.
+    assert get(client, key, "ezra-pike", 2).status_code == 404
+    r = get(client, key, "ezra-pike", 3).json()
     assert r["total"] == 2 and r["first"]["n"] == 1
 
 
 def test_a_name_revealed_later_is_not_counted_earlier(client, tmp_path):
     _, key = setup(client, tmp_path)
     # "keeper" is a name of the entity from seq 5 (a hidden identity): its use in block 3 must not count while hidden.
-    before = get(client, key, "ezra-pike", 5).json()
+    before = get(client, key, "ezra-pike", 4).json()
     assert before["chapters"] == [{"n": 1, "title": "Chapter One", "count": 1}]
     assert [s["text"][s["start"]:s["end"]] for s in before["current"]["snippets"]] == ["Ezra Pike"]
-    after = get(client, key, "ezra-pike", 6).json()                    # block 5 is now finished: "keeper" is visible
+    after = get(client, key, "ezra-pike", 5).json()                    # block 5 is the last finished: "keeper" is visible
     assert after["chapters"][0]["count"] == 2
     # "Pike" is the surname of the display name "Ezra Pike", visible from the start: a derived form, so block 7 counts
     # at seq 7 (inclusive) although the alias "Pike" is only revealed after block 7.
@@ -83,10 +83,10 @@ def test_an_entry_whose_every_form_is_revealed_later_is_never_counted_before_the
     # A stranger known only as "keeper"; the name "Ezra Pike" (block 3, same block) is revealed at block 5.
     e = edit(client, key, op="add-entity", name="keeper", type="person", seq=3)
     edit(client, key, op="add-name", entity=e["id"], value="Ezra Pike", kind="alias", seq=5)
-    r = get(client, key, e["id"], 5).json()
+    r = get(client, key, e["id"], 4).json()
     assert r["chapters"][0]["count"] == 1
     assert [s["text"][s["start"]:s["end"]] for s in r["current"]["snippets"]] == ["keeper"]   # never "Ezra Pike", "Pike", "Ezra"
-    r = get(client, key, e["id"], 6).json()                            # revealed: both names, and their forms, count
+    r = get(client, key, e["id"], 5).json()                            # revealed at block 5: both names, and their forms, count
     assert r["chapters"][0]["count"] >= 2
 
 
@@ -171,3 +171,66 @@ def test_study_in_scarlet_is_numbered_from_chapter_one(tmp_path):
         assert body["total"] == len(story)
         assert body["chapters"][0]["n"] == 1 and body["chapters"][0]["title"].startswith("CHAPTER I.")
         assert [ch["n"] for ch in body["chapters"]] == list(range(1, len(body["chapters"]) + 1))
+
+
+def test_a_name_revealed_by_the_last_finished_block_counts(client, tmp_path):
+    _, key = setup(client, tmp_path)
+    e = edit(client, key, op="add-entity", name="keeper", type="person", seq=3)
+    edit(client, key, op="add-name", entity=e["id"], value="Pike", kind="alias", seq=7)
+    assert [c["count"] for c in get(client, key, e["id"], 6).json()["chapters"]] == [1, 0]
+    r = get(client, key, e["id"], 7).json()                            # block 7 uses "Pike" and reveals it
+    assert [c["count"] for c in r["chapters"]] == [1, 1]
+    assert [s["seq"] for s in r["current"]["snippets"]] == [7]
+
+
+def test_paragraph_number_and_utf16_offsets(client, tmp_path):
+    from lorekeeper import epub
+    from .test_generate import CH2, make_epub
+    path = make_epub(tmp_path / "astral.epub", ch2=["\U0001F600 Pike admitted the letter was his, and said nothing more about it for a long while. " * 8, CH2[1]])
+    r = client.post("/api/books", files={"file": ("astral.epub", path.read_bytes(), "application/epub+zip")})
+    key = client.post(f"/api/catalog/books/up:{r.json()['id']}/handmade", json={"license": "CC-BY-4.0"}).json()["key"]
+    edit(client, key, op="add-entity", name="Ezra Pike", type="person", seq=3, desc="The keeper of the lighthouse.")
+    edit(client, key, op="add-name", entity="ezra-pike", value="Pike", kind="alias", seq=3)
+    book = epub.read(next((tmp_path / "data").rglob("*.epub")))
+    seq = next(b.seq for b in book.blocks if "\U0001F600" in b.raw)
+    sn = get(client, key, "ezra-pike", seq).json()["current"]["snippets"]
+    hit = next(s for s in sn if s["seq"] == seq)
+    ch = max((c for c in book.chapters if c.start <= seq), key=lambda c: c.start)
+    assert hit["para"] == seq - ch.start + 1
+    u16 = hit["text"].encode("utf-16-le")
+    assert u16[hit["start"] * 2:hit["end"] * 2].decode("utf-16-le") == "Pike"
+    assert hit["text"].index("Pike") + 1 == hit["start"]               # the emoji counts as two units, one code point
+
+
+@pytest.mark.skipif(not CORPUS.is_dir(), reason="needs corpus/pg244 and pg2097")
+def test_series_names_follow_the_readers_finished_books(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from lorekeeper import gating, mentions
+    from lorekeeper.web import app as web_app
+
+    if not (CORPUS / "pg244" / "pg244.epub").exists() or not (CORPUS / "pg2097" / "pg2097.epub").exists():
+        pytest.skip("needs corpus/pg244 and pg2097")
+    app = web_app.create_app(tmp_path / "data", [("examples", EXAMPLES.parent)], [CORPUS / "pg244", CORPUS / "pg2097"],
+                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        key = "examples--sherlock-holmes--sign-of-four"
+        def total(**q):
+            r = c.get(f"/api/library/{key}/mentions", params={"entity": "watson", "seq": 600, **q})
+            assert r.status_code == 200, r.text
+            return sum(ch["count"] for ch in r.json()["chapters"])
+        # Same names the Reader's view shows: Scarlet unfinished leaves Watson only the names this book gives him.
+        sp = EXAMPLES
+        import json
+        docs = [json.loads((sp / f).read_text()) for f in ("sign-of-four.json", "study-in-scarlet.json")]
+        series = json.loads((sp / "series.json").read_text())
+        from lorekeeper import epub, locators
+        book = epub.read(CORPUS / "pg2097" / "pg2097.epub")
+        anchor = locators.position(docs[0]["anchors"], locators.resolve_edition(docs[0], book), 600, inclusive=True)
+        def expect(fin):
+            v = gating.view(docs, gating.Position("sign-of-four", anchor), series, None, fin)
+            return sum(mentions.count(book.blocks, book.chapters, mentions.visible_names(v), 600).counts["watson"])
+        assert total(fin="") == expect(set())
+        assert total() == total(fin="study-in-scarlet") == expect({"study-in-scarlet"})
+        assert total(fin="") < total()
+        assert total(order="nope") == total()                              # an unknown order is the default one

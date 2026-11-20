@@ -855,8 +855,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     mention_names: dict[tuple, tuple[float, dict]] = {}   # (key, anchor) → (time, the gated view); kept a minute
 
-    def gated_for_mentions(item: dict, p: Path, seq: int) -> tuple[dict, str | None]:
-        """The Reader's view at block `seq` (the block being read does not count, §3.7) and its anchor."""
+    def gated_for_mentions(item: dict, p: Path, seq: int, order: str | None = None,
+                           fin: str | None = None) -> tuple[dict, str | None]:
+        """The Reader's view with block `seq` finished (inclusive, §3.7) under the reader's own reading order and
+        finished books (`order`, `fin` as the Reader's URL carries them), and its anchor."""
         from .. import gating, locators
         doc = item["doc"]
         book = parsed(p)
@@ -864,8 +866,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if ck not in mention_names:
             mention_names[ck] = (time.time(), locators.resolve_edition(doc, book))
         resolved = mention_names[ck][1]
-        anchor = locators.position(doc["anchors"], resolved, seq)
-        vk = ("view", item["key"], anchor, item["path"].stat().st_mtime)
+        anchor = locators.position(doc["anchors"], resolved, seq, inclusive=True)
+        vk = ("view", item["key"], anchor, item["path"].stat().st_mtime, order, fin)
         hit = mention_names.get(vk)
         if hit is None or time.time() - hit[0] > 60:
             sref = doc.get("series")
@@ -882,7 +884,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                       and i["doc"]["series"]["book"] == b["key"]), None)
                             if c:
                                 indexes.append(c["doc"])
-            v = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor), series, None, None)
+            finished = chosen_order = None
+            if series:
+                chosen_order = order if order in series["orders"] and sref["book"] in series["orders"][order] \
+                    else series["defaultOrder"]
+                before = series["orders"][chosen_order]
+                before = before[:before.index(sref["book"])] if sref["book"] in before else []
+                if fin is None:
+                    finished = set(before)
+                else:
+                    finished = set(before) & {k for k in fin.split(",") if k}
+            v = gating.view(indexes, gating.Position(sref["book"] if series else None, anchor), series,
+                            chosen_order, finished)
             if len(mention_names) > 64:
                 mention_names.clear()
             mention_names[vk] = hit = (time.time(), v)
@@ -915,14 +928,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
         body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
         if cur in story:                                              # a position in back matter has no current chapter
+            first = book.chapters[cur].start
+            u16 = lambda t, i: len(t[:i].encode("utf-16-le")) // 2   # noqa: E731
+            sn = mentions.snippets({b.seq: b for b in book.blocks}, m.spans.get(eid, []))
             body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
-                               "snippets": mentions.snippets({b.seq: b for b in book.blocks}, m.spans.get(eid, []))}
+                               "snippets": [{**x, "para": x["seq"] - first + 1,
+                                             "start": u16(x["text"], x["start"]), "end": u16(x["text"], x["end"])}
+                                            for x in sn]}
         return body
 
     @app.get("/api/library/{key}/mentions")
-    def library_mentions(key: str, entity: str, seq: int):
-        """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`.
-        Names are the ones the gated view shows at that position, and chapters after it are not even titled."""
+    def library_mentions(key: str, entity: str, seq: int, order: str | None = None, fin: str | None = None):
+        """Where an entry comes up, chapter by chapter, counted from the book's text and only up to block `seq`
+        (the last finished block, counted: names are gated inclusively there).
+        Names are the ones the Reader's view shows at that position, under its reading order `order` and the
+        comma-separated finished books `fin` (absent: the Reader's defaults), and chapters after it are not even titled.
+        Snippets carry `para` (1-based paragraph within the chapter) and `start`/`end` as UTF-16 code-unit
+        offsets into `text`, since the consumer is JavaScript."""
         from .. import mentions
         item = library.scan().get(key)
         if item is None or item["doc"].get("kind") != "index":
@@ -934,7 +956,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         book = parsed(p)
         if not 0 <= seq < len(book.blocks):
             raise HTTPException(422, "seq is outside the book")
-        view, _ = gated_for_mentions(item, p, seq)
+        view, _ = gated_for_mentions(item, p, seq, order, fin)
         names = mentions.visible_names(view)
         if entity not in names:
             raise HTTPException(404, "no such entry at this position")
