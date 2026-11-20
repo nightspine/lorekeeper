@@ -844,3 +844,50 @@ def test_unicode_names_are_one_name_as_written():
     assert a.answer.endswith("The index has nothing on Émile Zola up to where you are.")
     sl = ask.select(mkview([ent("E1", "Émile Zola")]), "Who is Émile Zola?", [], 10_000)
     assert sl.named == ["E1"] and sl.unknown_names == []
+
+
+# ---- round 8: capitalised name-like question words, whole chapter parts
+
+def test_capitalised_name_like_question_word_is_an_unknown_name():
+    fake = Fake(reply("She does.", ["e:E4"]))
+    a = ask.answer(small(), "Does Hunter eat flies?", fake)           # "flies" overlaps Renfield's notes
+    assert fake.calls == [] and a.note == "unknown name" and a.answer == ask.NOT_SAID
+    sl = ask.select(small(), "Does Hunter eat flies?", [], 10_000)
+    assert sl.unknown_names == ["Hunter"]
+    hist = [ask.Turn("Does Hunter come back?", "x", ["e:E4"])]
+    fake = Fake(reply("Renfield eats flies.", ["e:E4"]))
+    ask.answer(small(), "What does he eat?", fake, hist)
+    assert "Reader: Does … come back?" in fake.calls[0][1] and "Hunter" not in fake.calls[0][1].split("Reader's question")[0]
+
+
+def test_lowercase_name_like_word_stays_ordinary_and_known_ones_are_known():
+    sl = ask.select(small(), "Who is the baker?", [], 10_000)
+    assert sl.unknown == [] and sl.unknown_names == []
+    sl = ask.select(small(), "Who is the baker?", [ask.Turn("Is there a hunter?", "x", [])], 10_000)
+    assert sl.unknown == []
+    v = mkview([ent("E1", "Hunter", facets=[fac("F1", "A tracker.")])])
+    assert ask.select(v, "Does Hunter eat flies?", [], 10_000).unknown_names == []
+    v = mkview([ent("E1", "Greyhand", profile=fac("P1", "An old hunter."))])
+    assert ask.select(v, "Is Hunter kind?", [], 10_000).unknown_names == []      # the view uses the word
+
+
+def test_a_long_requested_chapter_part_goes_in_whole():
+    text_ = "Opening lines. " + "The tale goes on. " * 85 + "At the very end the bell tolls for Hero."
+    assert len(text_) > 1_400
+    v = mkview([ent("E1", "Hero")], chapters=[{"id": "C1", "title": "CHAPTER I", "text": text_, "book": "b1"}])
+    sl = ask.select(v, "What happened in chapter 1?", [], 10_000)
+    assert "the bell tolls for Hero." in sl.text and sl.chars <= 10_000
+    fake = Fake(reply("At the end the bell tolls for Hero.", ["ch:C1"]))
+    assert ask.answer(v, "What happened at the end of chapter 1?", fake).found
+
+
+@pytest.mark.parametrize("n,budget", [(9, ask.OLLAMA_BUDGET), (40, ask.OLLAMA_BUDGET), (40, 40_000), (200, ask.OLLAMA_BUDGET)])
+def test_many_chapter_parts_never_exceed_the_budget_and_keep_the_ends(n, budget):
+    ch = [{"id": f"P{i}", "title": "CHAPTER V", "text": f"Part {i} " + "goes on and on. " * 60, "book": "b1"} for i in range(n)]
+    v = mkview([ent("E1", "Hero")], chapters=ch, events=[ev("V1", "Hero sets out.", ["E1"])])
+    sl = ask.select(v, "What happened in chapter 5? And Hero?", [], budget)
+    assert sl.chars <= budget
+    assert "[ch:P0]" in sl.text and f"[ch:P{n - 1}]" in sl.text
+    shown = sum(1 for i in range(n) if f"[ch:P{i}]" in sl.text)
+    if shown < n:
+        assert f"{n - shown} parts of this chapter are not shown" in sl.text
