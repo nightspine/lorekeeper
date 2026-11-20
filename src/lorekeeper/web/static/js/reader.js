@@ -1629,7 +1629,7 @@ export function mountReader(root) {
     const anchor = s.map.frontier(s.p);
     const order = s.series ? s.series.orders[s.order] : null;
     const finished = s.series ? finishedSet() : null;
-    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book,
+    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
       rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
   }
   // ---- Ask: examples, sources, entry points -----------------------------------------------------
@@ -1661,7 +1661,7 @@ export function mountReader(root) {
     if (disposed || !s.view) return false;
     if (c.kind === "event") return s.view.events.some((ev) => ev.id === c.id);
     if (c.kind === "chapter") return chapterGroups().some((g) => g.ids.includes(c.id));
-    if (c.kind === "recap") return Boolean(s.view.recap);
+    if (c.kind === "recap") return s.view.recap?.id === c.id;   // the recap is replaced as the story goes on: the old one is plain text
     return entryOfCite(c) != null;
   }
   async function openCite(c) {
