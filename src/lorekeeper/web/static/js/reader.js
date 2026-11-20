@@ -946,7 +946,11 @@ export function mountReader(root) {
     for (const c of s.view.chapters || []) {
       const last = out[out.length - 1];
       const ch = chapterOf(c);
-      const same = last && last.title === c.title && last.book === c.book && (!ch || !last.ch || ch.start === last.ch.start);
+      // With a chapter map, parts join only inside one mapped chapter; a recap that has no position there is a row of
+      // its own. Without one (an earlier book, or no book file) nothing can tell parts of "Interlude" from two
+      // chapters called "Interlude", so consecutive same-title recaps are parts of one chapter.
+      const mapped = !(s.series && c.book && c.book !== s.book) && (s.map.chapters || []).length > 0;
+      const same = last && last.title === c.title && last.book === c.book && (!mapped || (ch && last.ch && ch.start === last.ch.start));
       if (same) { last.parts.push(c.text); last.ids.push(c.id); last.ch ||= ch; }
       else out.push({ key: c.id, title: c.title || "Untitled section", book: c.book, parts: [c.text], ids: [c.id], ch });
     }
@@ -1043,8 +1047,6 @@ export function mountReader(root) {
     const forChapter = (ch) => {
       const r = byKey.get(`c${ch.start}`);
       if (r) return r;
-      const loose = rows.find((x) => !x.ch && x.title === ch.title);   // a recap whose anchor has no position here
-      if (loose) { byKey.set(`c${ch.start}`, loose); loose.ch = ch; return loose; }
       return create(`c${ch.start}`, ch.title, ch);
     };
     for (const g of groups) {
@@ -1061,8 +1063,14 @@ export function mountReader(root) {
       else (rows.loose ||= []).push(ev);
     }
     const chapters = s.map.chapters || [];
-    const idx = (r) => (r.ch ? chapters.findIndex((c) => c.start === r.ch.start) : -1);
-    if (rows.every((r) => idx(r) >= 0)) rows.sort((a, b) => idx(a) - idx(b));
+    // Book order by chapter; a recap with no position there follows the nearest row before it.
+    let prev = -0.5;
+    const key = new Map(rows.map((r) => {
+      const i = r.ch ? chapters.findIndex((c) => c.start === r.ch.start) : -1;
+      if (i >= 0) prev = i; else if (r.ch) prev = Infinity; else prev += 1e-3;
+      return [r, r.ch && i < 0 ? Infinity : prev];
+    }));
+    if (chapters.length) rows.sort((a, b) => key.get(a) - key.get(b));
     return rows;
   }
 
