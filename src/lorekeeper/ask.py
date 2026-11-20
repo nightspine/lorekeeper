@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import generate, merge, text
+from .common_words import COMMON
 
 DEFAULT_BUDGET = 40_000    # characters of notes for a cloud provider
 OLLAMA_BUDGET = 9_000      # Ollama's default context is small
@@ -121,13 +122,13 @@ class Slice:
     named: list[str] = field(default_factory=list)   # entity ids the question names
     carried: list[str] = field(default_factory=list)  # entity ids carried over from the last turn
     ambiguous: list[list[str]] = field(default_factory=list)   # groups of ids sharing a name asked about
-    unknown: list[str] = field(default_factory=list)  # names in the question that the view does not hold
+    unknown: list[str] = field(default_factory=list)  # words of the question the view never uses (banned from the answer)
     roster: str = ""                                 # when no entry was found: names to pick from
     needs_pick: bool = False
     has_content: bool = False                        # words besides names and stop words
     asks_who: bool = False                           # the question asks who, which, where or for a name
     nobody: bool = False                             # the question names no entry and none is carried
-    banned_initial: list[str] = field(default_factory=list)   # capitalised sentence-initial words the view never uses
+    view_vocab: set = field(default_factory=set)     # every word the view holds
     unknown_names: list[str] = field(default_factory=list)   # unknown names as the reader wrote them
     omitted: int = 0
     notes: list[str] = field(default_factory=list)   # guidance lines for the model
@@ -147,19 +148,46 @@ def _norm(word: str) -> str:
     return w[0] if w else ""
 
 
-def _tokens(q: str) -> list[tuple[str, bool, bool]]:
-    """(normalised word, capitalised, starts a sentence) for each word of the question."""
-    out, start, pos = [], True, 0
+ABBREV = {"mr", "mrs", "ms", "dr", "st", "prof", "capt", "col", "sgt", "rev", "fr", "mme", "m", "lt", "gen", "hon",
+          "sr", "jr"}
+TITLES = ABBREV | {"lord", "lady", "sir", "miss", "madame", "monsieur", "professor", "captain", "colonel", "sergeant",
+                   "father", "doctor", "count", "countess", "duke", "duchess", "baron", "baroness", "prince", "princess"}
+_ROMAN = re.compile(r"^(?=[ivxlcdm])m{0,3}(?:cm|cd|d?c{0,3})(?:xc|xl|l?x{0,3})(?:ix|iv|v?i{0,3})$")
+
+
+def _raw_tokens(q: str) -> list[tuple[str, str, bool, bool, bool]]:
+    """(as written, normalised, capitalised, starts a sentence, follows a title) for each word. A period
+    after an abbreviation or an initial ("Dr. Seward", "J. Smith") does not end a sentence."""
+    out, start, pos, prev = [], True, 0, None
     for m in _TOKEN.finditer(q):
         gap = q[pos:m.start()]
-        if re.search(r"[.!?:;]", gap) or pos == 0 and not out:
+        ends = re.search(r"[.!?:;]", gap)
+        if ends and prev and gap.strip() == "." and (prev[1] in ABBREV or len(prev[0]) == 1):
+            ends = None
+        if ends or pos == 0 and not out:
             start = True
-        w = _norm(m.group(0))
+        raw = m.group(0).rstrip("'’-")
+        w = _norm(raw)
         if w:
-            out.append((w, m.group(0)[:1].isupper(), start))
+            after_title = bool(prev and prev[1] in TITLES and not re.search(r"[!?;:]", gap) and not start)
+            out.append((raw, w, raw[:1].isupper(), start, after_title))
+            prev = (raw, w)
         start = False
         pos = m.end()
     return out
+
+
+def _tokens(q: str) -> list[tuple[str, bool, bool]]:
+    """(normalised word, capitalised, starts a sentence) for each word of the question."""
+    return [(w, cap, start) for _raw, w, cap, start, _t in _raw_tokens(q)]
+
+
+def _numeral(raw: str, prev: str | None) -> bool:
+    """Roman numerals and number words are never unknown names: "chapter XII", "Part IV"."""
+    w = raw.lower()
+    if not _ROMAN.match(w):
+        return False
+    return raw.isupper() or prev in ("chapter", "part", "book", "volume")
 
 
 def _vocab(view: dict) -> set[str]:
@@ -178,6 +206,12 @@ def _vocab(view: dict) -> set[str]:
     if view.get("recap"):
         bits.append(view["recap"]["text"])
     return set(text.words(_POSS.sub("", " ".join(bits))))
+
+
+def _unknown_word(w: str, vocab: set[str]) -> bool:
+    """A normalised word that is neither in the view's text nor ordinary English."""
+    return not (w in vocab or w in COMMON or w in STOP or w in ORDINALS or w + "s" in vocab
+                or w.removesuffix("s") in vocab or w.removesuffix("s") in COMMON or w.removesuffix("es") in COMMON)
 
 
 class _Names:
@@ -214,7 +248,7 @@ class _Names:
             ws = [w for p_ in parts for w in [_norm(p_)] if w]
             for i in range(len(words) - len(ws) + 1):
                 if words[i:i + len(ws)] == ws:
-                    out.append((" ".join(parts), i, i + len(ws) - 1))
+                    out.append((" ".join(parts).rstrip(".,;:!?"), i, i + len(ws) - 1))
                     break
         return out
 
@@ -342,6 +376,64 @@ def _header(view: dict, books: dict[str, dict] | None, present: set[str], cur: s
     return ["One book" + (f", {where}" if where else "") + ".", order]
 
 
+_ROMAN_VAL = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
+_CH_NUM = re.compile(r"\bchapters?\s+(\d+|[ivxlcdm]+)\b", re.IGNORECASE)
+_TITLE_NUM = re.compile(r"^\s*(?:chapter\s+|ch\.?\s*)?(\d+|[ivxlcdm]+)\b", re.IGNORECASE)
+
+
+def _number(tok: str) -> int | None:
+    """12 or XII → 12 (arabic and roman numerals are the same chapter)."""
+    if tok.isdigit():
+        return int(tok)
+    t = tok.lower()
+    if not _ROMAN.match(t):
+        return None
+    total = 0
+    for a, b in zip(t, t[1:] + " "):
+        v = _ROMAN_VAL[a]
+        total += -v if b in _ROMAN_VAL and _ROMAN_VAL[b] > v else v
+    return total
+
+
+def chapter_matches(view: dict, question: str, books_named: set[str], cur_book: str | None) -> list[int]:
+    """Indexes (into view["chapters"]) of the chapter recaps the question asks about: "chapter 12" / "chapter XII"
+    against the numbers in recap titles, a recap title written out in the question, "the last / this / current
+    chapter" (the newest) and "the previous chapter", within the book named or else the current one. All
+    parts of a chapter come together, in order."""
+    chapters = view["chapters"]
+    if not chapters:
+        return []
+    low = question.lower()
+    target = books_named or ({cur_book} if cur_book else set())
+    pool = [i for i, c in enumerate(chapters) if not target or c.get("book") in target] or list(range(len(chapters)))
+    groups: list[list[int]] = []                       # consecutive recaps with one title are one chapter
+    for i in pool:
+        if groups and chapters[groups[-1][-1]].get("title") == chapters[i].get("title"):
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    hit: list[list[int]] = []
+    qw = [w for w, _c, _s in _tokens(question)]
+    if re.search(r"\b(?:previous|prior|preceding)\s+chapter\b", low):
+        hit = groups[-2:-1]
+    elif re.search(r"\b(?:last|latest|newest|current|this|recent)\s+chapter\b", low):
+        hit = groups[-1:]
+    for m in _CH_NUM.finditer(question):
+        n = _number(m.group(1))
+        if n is not None:
+            for g in groups:
+                t = _TITLE_NUM.match(chapters[g[0]].get("title") or "")
+                if t and _number(t.group(1)) == n and g not in hit:
+                    hit.append(g)
+    for g in groups:                                    # a title written out in the question
+        tw = text.words(_POSS.sub("", chapters[g[0]].get("title") or ""))
+        if len(" ".join(tw)) >= 4 and not all(_number(w) is not None for w in tw):
+            if any(qw[i:i + len(tw)] == tw for i in range(len(qw) - len(tw) + 1)) and g not in hit:
+                hit.append(g)
+    out = sorted(i for g in hit for i in g)
+    return out[-8:]
+
+
 def select(view: dict, question: str, history: list[Turn] = (), budget_chars: int = DEFAULT_BUDGET,
            books: dict[str, dict] | None = None, extra: list[str] | None = None,
            after: list[str] | None = None) -> Slice:
@@ -351,27 +443,30 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     sl = Slice()
     names = _Names(view["entities"])
     named, sl.ambiguous, used = names.find(toks, question)
-    # Names in the question that the view does not hold at all.
-    vocab = _vocab(view)
-    sl.unknown = [t[0] for i, t in enumerate(toks)
-                  if t[1] and not t[2] and i not in used and t[0] not in STOP and t[0] not in vocab
-                  and t[0] + "s" not in vocab and t[0].removesuffix("s") not in vocab and len(t[0]) >= 3]
-    # A sentence-initial word is not reported as a name ("Summarise"), but if the view never uses it the
-    # answer may not either: the one-word question "Moriarty?" must not get a description of Moriarty.
-    sl.banned_initial = [t[0] for i, t in enumerate(toks)
-                         if t[1] and t[2] and i not in used and t[0] not in STOP and t[0] not in vocab
-                         and t[0] + "s" not in vocab and t[0].removesuffix("s") not in vocab and len(t[0]) >= 3]
+    # Words of the question that the view never uses (and that are not ordinary English): none of them may
+    # appear in the answer. Those written as names (capitalised mid-sentence, or after a title) are unknown
+    # *names*; a lowercase or sentence-initial one ("who is moriarty?", "Moriarty?") is banned but may be a rare word.
+    sl.view_vocab = vocab = _vocab(view)
+    raw = _raw_tokens(question)
+    sl.unknown, name_idx = [], []
+    for i, (rw, w, cap, start, after_title) in enumerate(raw):
+        if i in used or len(w) < 3 or not _unknown_word(w, vocab) or _numeral(rw, raw[i - 1][1] if i else None):
+            continue
+        if w not in sl.unknown:
+            sl.unknown.append(w)
+        if (cap and not start) or after_title:
+            name_idx.append(i)
     # As the reader wrote them: "John Smith" is one name (the capitalised runs), not "John" and "Smith".
-    left = set(sl.unknown)
+    left = {raw[i][1] for i in name_idx}
     for run_text, ri, rj in names.runs(question, [t[0] for t in toks]):
         mine = [toks[k][0] for k in range(ri, rj + 1) if toks[k][0] in left]
         if mine:
             sl.unknown_names.append(run_text)
             left -= set(mine)
-    for w in sl.unknown:
-        if w in left:
-            m = re.search(r"\b" + re.escape(w) + r"\b", question, re.IGNORECASE)
-            sl.unknown_names.append(m.group(0) if m else w.capitalize())
+    for i in name_idx:
+        if raw[i][1] in left:
+            sl.unknown_names.append(raw[i][0])
+            left.discard(raw[i][1])
 
     qwords = {w for w, _c, _s in toks if w not in STOP and w not in ORDINALS and len(w) > 2}
     pronoun = any(w in PRONOUNS for w, _c, _s in toks)
@@ -413,7 +508,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     sl.named, sl.carried = named, carried
     sl.asks_who = bool(_WHO.search(question))
     own = set(text.words(" ".join(n for x in named + carried if x in ents for n in [ents[x]["name"], *ents[x]["aliases"]])))
-    sl.has_content = bool(qwords - own - NOT_CONTENT - set(sl.unknown))
+    sl.has_content = bool(qwords - own - NOT_CONTENT - {_norm(w) for n in sl.unknown_names for w in n.split()})
 
     # Nothing named: entries whose notes share words with the question.
     sl.nobody = not named and not carried
@@ -603,6 +698,11 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         hits = ev_hits(ev["summary"])
         if tag not in seen_ev and (hits >= 2 or (hits and ev.get("book") in bnames)):
             add(4.5, -hits * 100, tag, "event", ev, ev_line(ev), "ev")
+    for i in chapter_matches(view, question, bnames, cur_book):      # asked for by number, title or "the last chapter"
+        c = view["chapters"][i]
+        add(0.7, i, f"[ch:{c['id']}]", "chapter", c,
+            f"  Chapter: [ch:{c['id']}]{where(c.get('book'))} {_clean(c.get('title') or '', 80)}: {_clean(c['text'], 900)}",
+            "chm", None, i)
     for i, c in enumerate(view["chapters"]):
         hits = ev_hits((c.get("title") or "") + " " + c["text"])
         named_book = c.get("book") in bnames
@@ -625,11 +725,15 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     ch_cap = budget_chars // 4 if focus else budget_chars // 2
     ch_used = 0
     keep: list[tuple[float, float, str, str, str, int]] = []
+    in_keep: set[str] = set()
     for c in sorted(cands, key=lambda c: (c[0], c[1])):
+        if c[2] in in_keep:                  # an event or connection shared by two entries is charged and printed once
+            continue
         if c[4] == "ch" and ch_used + len(c[3]) + 1 > ch_cap:
             continue
         if used_chars + len(c[3]) + 1 <= budget_chars:
             keep.append(c)
+            in_keep.add(c[2])
             used_chars += len(c[3]) + 1
             if c[4] == "ch":
                 ch_used += len(c[3]) + 1
@@ -672,7 +776,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     if rest_ev:
         out.append("Other events:")
         out.extend(c[3] for c in sorted(rest_ev, key=lambda c: order.get(c[2], 0)))
-    rest_ch = [c for c in keep if c[4] == "ch"]
+    rest_ch = [c for c in keep if c[4] in ("ch", "chm")]
     if rest_ch:
         out.append("Chapter recaps:")
         out.extend(c[3] for c in sorted(rest_ch, key=lambda c: c[5]))
@@ -684,13 +788,37 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     return sl
 
 
-def _unknown_words(answer: str, allowed: set[str], banned: list[str] = ()) -> list[str]:
-    bad = [m.group(0) for w in banned for m in [re.search(r"\b" + re.escape(w) + r"\b", answer, re.IGNORECASE)] if m]
-    for m in _PROPER.finditer(answer):
-        w = _norm(m.group(0))
-        if w and w not in allowed and w + "s" not in allowed and w.removesuffix("s") not in allowed and w not in bad:
-            bad.append(m.group(0))
-    return bad
+def _known(n: str, vocab: set[str]) -> bool:
+    """A normalised word the slice holds or ordinary English holds (also without a plural s)."""
+    return (n in vocab or n in COMMON or n.removesuffix("s") in vocab or n.removesuffix("s") in COMMON
+            or n + "s" in vocab or n.removesuffix("es") in COMMON)
+
+
+def _slice_vocab(sl: Slice) -> set[str]:
+    """Every word of the notes sent to the model. The question's and the history's words are not in it."""
+    v = {_norm(m.group(0).rstrip("'’-")) for m in _TOKEN.finditer(sl.text)}
+    v.discard("")
+    return v - set(sl.unknown)
+
+
+def _outside(answer: str, vocab: set[str], banned: list[str] = ()) -> list[str]:
+    """Words of the answer that may not be there: a banned word (the question's unknown words, in any case),
+    or a name-like word (an uppercase letter anywhere in it, wherever it stands) that neither the notes nor
+    ordinary English holds. Apostrophes and hyphens stay inside a word."""
+    banned_ = set(banned)
+    out: list[str] = []
+    for m in _TOKEN.finditer(answer):
+        raw = m.group(0).rstrip("'’-")
+        n = _norm(raw)
+        if len(n) < 2 or raw in out:
+            continue
+        if n in banned_ or n.removesuffix("s") in banned_:
+            out.append(raw)
+        elif any(c.isupper() for c in raw) and not _known(n, vocab):
+            parts = [_norm(x) for x in re.split(r"['’-]", raw) if x]
+            if not (len(parts) > 1 and all(len(x) < 2 or _known(x, vocab) for x in parts)):
+                out.append(raw)
+    return out
 
 
 def _truncate(s: str, limit: int = MAX_ANSWER) -> str:
@@ -734,6 +862,16 @@ def _delta(before: dict | None, after: dict | None) -> dict | None:
     return {k: round(v - b.get(k, 0), 6) if isinstance(v, float) else v - b.get(k, 0) for k, v in after.items()}
 
 
+def _mask(q: str, vocab: set[str]) -> str:
+    """An earlier question with every word the view does not hold replaced by "…": a name the reader has
+    not met must not come back through the history."""
+    def sub(m: re.Match) -> str:
+        raw = m.group(0).rstrip("'’-")
+        w = _norm(raw)
+        return "…" if len(w) >= 3 and _unknown_word(w, vocab) and not _numeral(raw, None) else m.group(0)
+    return _TOKEN.sub(sub, q)
+
+
 def _prompt(view: dict, question: str, sl: Slice, history: list[Turn]) -> str:
     """Earlier answers are client text and are never sent: only the reader's earlier questions, and for each a
     line built here from the current view (the entries that answer cited, if this view still shows them)."""
@@ -743,12 +881,12 @@ def _prompt(view: dict, question: str, sl: Slice, history: list[Turn]) -> str:
         parts.append("Earlier in this conversation:")
         for t in history[-3:]:
             names = list(dict.fromkeys(ents[x] for tag in t.cites for x in _entity_ids_of(view, str(tag)) if x in ents))
-            parts.append(f"Reader: {_clean(t.question, 300)}")
+            parts.append(f"Reader: {_mask(_clean(t.question, 300), sl.view_vocab)}")
             if names:
                 parts.append("That answer was about: " + ", ".join(_clean(n, 60) for n in names[:5]))
         parts.append("")
     parts += [sl.text, "", f"Reader's question: {_clean(question, 600)}"]
-    if sl.unknown:
+    if sl.unknown_names:
         parts.append(f"The index has nothing on {', '.join(sl.unknown_names)}. Do not mention them or say anything about them.")
     return "\n".join(parts)
 
@@ -827,7 +965,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
         return Answer(a, found, cites, note, sl.chars, _delta(before, _usage(llm)))
 
     # A question about someone the view does not hold, and nobody it does: never ask the model.
-    if sl.unknown and not sl.named and not sl.carried:
+    if sl.unknown_names and sl.nobody:
         return done(NOT_SAID, False, [], "unknown name")
 
     if sl.nobody and roster_chars > 0:
@@ -851,8 +989,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
         sl.needs_pick = False
 
     base = _prompt(view, question, sl, history)
-    allowed = set(text.words(_POSS.sub("", sl.text + " " + question + " " +
-                                        " ".join(t.question for t in history)))) - set(sl.unknown) - set(sl.banned_initial)
+    vocab = _slice_vocab(sl)
 
     def ask(extra: str = "") -> dict:
         r = llm.complete(SYSTEM, base + extra, SCHEMA)
@@ -868,7 +1005,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
     if not a:
         return done(NOT_SAID, False, [], "no answer")
     # Every problem is fixed by the same one retry (a single extra call per question).
-    bad = _unknown_words(a, allowed, sl.unknown + sl.banned_initial)
+    bad = _outside(a, vocab, sl.unknown)
     problems = []
     if found and not cites:
         problems.append("Your last answer cited no note. List the tag of every note you used in cites, "
@@ -887,7 +1024,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
             note = "no sources"
         elif bad:
             note = "rewritten: outside knowledge"
-    if _unknown_words(a, allowed, sl.unknown + sl.banned_initial):        # whatever is about to be returned, first try or retry
+    if _outside(a, vocab, sl.unknown):        # whatever is about to be returned, first try or retry
         return done(NOT_SAID, False, [], "refused: outside knowledge")
     a = _voice(a)
     out = [dict(sl.tags[c]) for c in cites]

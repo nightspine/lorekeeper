@@ -69,7 +69,8 @@ def main() -> None:
         books = {k: {"title": titles.get(k, k), "number": i + 1} for i, k in enumerate(order)}
     model = None
     if a.provider:
-        model = llm.make(a.provider, a.model, api_key=None)
+        model = (llm.make("ollama", a.model) if a.provider == "ollama"
+                 else llm.make(a.provider, a.model, api_key=llm.env_key(a.provider)))      # as cli._make_model
     budget = a.budget or (ask.OLLAMA_BUDGET if a.provider == "ollama" else ask.DEFAULT_BUDGET)
     print(f"view at {anchor}: {len(v['entities'])} entries, {len(v['relations'])} connections, "
           f"{len(v['events'])} events, {len(v['chapters'])} chapter recaps", file=sys.stderr)

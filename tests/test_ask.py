@@ -635,7 +635,7 @@ def test_one_word_unknown_question_may_not_describe_the_person():
     assert a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge" and not a.found
     assert len(fake.calls) == 3                       # the small pick (nothing scores), the answer, one retry
     sl = ask.select(small(), "Moriarty?", [], 10_000)
-    assert sl.unknown == [] and sl.unknown_names == [] and sl.banned_initial == ["moriarty"]
+    assert sl.unknown == ["moriarty"] and sl.unknown_names == []
 
 
 def test_sentence_initial_verb_is_banned_but_never_reported_as_a_name():
@@ -643,3 +643,127 @@ def test_sentence_initial_verb_is_banned_but_never_reported_as_a_name():
     a = ask.answer(small(), "Summarise the last chapter", fake)
     assert a.found and a.note is None and "nothing on" not in a.answer and len(fake.calls) == 2      # pick + answer
     assert ask.select(small(), "Summarise the last chapter", [], 10_000).unknown_names == []
+
+
+# ---- round 6: one vocabulary rule, unknown words, history, chapters, shared events
+
+@pytest.mark.parametrize("bad", ["Renfield is later killed by León in the cellar.",
+                                 "He meets Dr. Seward and Mr. Hyde. Seward dies.",
+                                 "Renfield is watched by Fabién.", "Renfield is hunted by McGonagall.",
+                                 "Renfield is friends with O'Brien.", "Renfield is guarded by HAL.",
+                                 "Renfield is afraid. León arrives."])
+def test_name_like_words_outside_the_notes_are_refused_wherever_they_stand(bad):
+    fake = Fake(reply(bad, ["e:E4"]))
+    a = ask.answer(small(), "Who is Renfield?", fake)
+    assert a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge" and len(fake.calls) == 2
+
+
+@pytest.mark.parametrize("good", ["However, Renfield escapes.", "Meanwhile Renfield eats flies.",
+                                  "Afterwards, Renfield is calm.", "Renfield is a patient who eats flies.",
+                                  "Later, Mr. Renfield is moved."])
+def test_openers_and_entry_names_pass(good):
+    fake = Fake(reply(good, ["e:E4"]))
+    a = ask.answer(small(), "Who is Renfield?", fake)
+    assert a.found and a.note is None and len(fake.calls) == 1
+
+
+def test_apostrophe_name_in_the_notes_passes():
+    v = mkview([ent("E1", "Keylan", ["O'Brien-Smith"], profile=fac("P1", "Called De'Faene by the Fire-eater clan."))])
+    a = ask.answer(v, "Who is Keylan?", Fake(reply("Keylan, also O'Brien-Smith, is De'Faene to the Fire-eater clan.", ["e:E1"])))
+    assert a.found and a.note is None
+
+
+def test_unknown_name_with_an_overlap_entry_is_still_refused_without_a_call():
+    fake = Fake(reply("x"))
+    a = ask.answer(small(), "Does Moriarty eat flies?", fake)       # "flies" overlaps Renfield's notes
+    assert fake.calls == [] and a.answer == ask.NOT_SAID and a.note == "unknown name"
+
+
+def test_titles_make_a_name_and_abbreviation_periods_do_not_end_sentences():
+    sl = ask.select(small(), "Is Dr. Seward kind? Ask about J. Moriarty.", [], 10_000)
+    assert sl.unknown_names == ["Dr. Seward", "J. Moriarty"]
+    sl = ask.select(small(), "Is dr. moriarty a doctor?", [], 10_000)
+    assert sl.unknown_names == ["moriarty"]                          # lowercase after a title still counts
+    sl = ask.select(small(), "who is moriarty?", [], 10_000)
+    assert sl.unknown == ["moriarty"] and sl.unknown_names == []     # banned, not reported as a name
+
+
+def test_unknown_name_is_shown_as_written_and_banned_in_any_case():
+    fake = Fake(reply("Renfield is a patient.", ["e:E4"]))
+    a = ask.answer(small(), "Is Renfield friends with O'Brien?", fake)
+    assert a.answer.endswith("The index has nothing on O'Brien up to where you are.")
+    fake = Fake(reply("Renfield knows obrien well.", ["e:E4"]))
+    assert ask.answer(small(), "Is Renfield friends with O'Brien?", fake).note == "refused: outside knowledge"
+
+
+def test_numerals_are_not_unknown_names():
+    sl = ask.select(small(), "What happened in Chapter XII?", [], 10_000)
+    assert sl.unknown_names == [] and "xii" not in sl.unknown
+
+
+def test_history_cannot_carry_an_unknown_name_forward():
+    hist = [ask.Turn("Does Moriarty come back?", "x", ["e:E4"])]
+    fake = Fake(reply("You learn that Moriarty wants Renfield dead.", ["e:E4"]))
+    a = ask.answer(small(), "What does he want with Renfield?", fake, hist)
+    assert a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge"
+    assert all("Moriarty" not in c[1].split("Reader's question")[0] for c in fake.calls)
+    assert "Reader: Does … come back?" in fake.calls[0][1]
+
+
+def chapter_view():
+    ch = [{"id": f"C{i}", "title": t, "text": f"Text of {t}.", "book": "b1"} for i, t in
+          enumerate(["Opening", "CHAPTER I Journal", "CHAPTER II Journal—continued", "CHAPTER II Journal—continued",
+                     "VI: One Perfect Moment", "CHAPTER XII Another Place"])]
+    return mkview([ent("E1", "Hero")], chapters=ch)
+
+
+@pytest.mark.parametrize("q,want,not_want", [
+    ("What happened in Chapter 12?", ["C5"], ["C1", "C2"]),
+    ("Summarize chapter xii", ["C5"], ["C4"]),
+    ("what happened in chapter XII?", ["C5"], []),
+    ("What happened in chapter 2?", ["C2", "C3"], ["C1"]),
+    ("What happened in the last chapter?", ["C5"], ["C4"]),
+    ("What happened in the previous chapter?", ["C4"], ["C5"]),
+    ("What happened in chapter 6?", ["C4"], ["C5"]),
+    ("What happened in CHAPTER II Journal—continued?", ["C2", "C3"], []),
+])
+def test_chapter_questions_find_the_recaps_whatever_the_numerals(q, want, not_want):
+    sl = ask.select(chapter_view(), q, [], 10_000)
+    for c in want:
+        assert f"[ch:{c}]" in sl.text, (q, c)
+    for c in not_want:
+        assert f"[ch:{c}]" not in sl.text, (q, c)
+    assert sl.unknown_names == []
+
+
+def test_chapter_recaps_asked_for_beat_the_quarter_cap():
+    ch = [{"id": f"C{i}", "title": f"CHAPTER {i + 1}", "text": "Hero " + "went on and on. " * 40, "book": "b1"} for i in range(30)]
+    sl = ask.select(mkview([ent("E1", "Hero")], chapters=ch), "What did Hero do in chapter 3 and the last chapter?", [], 4_000)
+    assert "[ch:C2]" in sl.text and "[ch:C29]" in sl.text and sl.chars <= 4_000
+
+
+def test_dracula_chapter_questions():
+    d = json.loads((Path(__file__).resolve().parents[1] / "examples" / "dracula" / "dracula.json").read_text())
+    v = view([d], Position(None, d["anchors"][len(d["anchors"]) // 3]["id"]), None)
+    titles = [c["title"] for c in v["chapters"]]
+    last = titles[-1]
+    for q, title in [("What happened in the last chapter?", last), ("What happened in chapter V?", "CHAPTER V"),
+                     ("What happened in chapter 3?", titles[4]), (f"What happened in {last}?", last),
+                     ("What happened in chapter V?", "CHAPTER V")]:
+        sl = ask.select(v, q, [], 40_000)
+        mine = [c for c in v["chapters"] if c["title"].startswith(title.split("—")[0]) and f"[ch:{c['id']}]" in sl.text]
+        assert mine, (q, title)
+        assert sl.unknown_names == [] and sl.unknown == [], (q, sl.unknown)
+    fake = Fake(reply("Mina writes in her journal.", ["recap"]))
+    a = ask.answer(v, "What happened in chapter V?", fake, books=None)
+    assert a.found and a.note is None
+
+
+def test_shared_events_are_charged_once():
+    evs = [ev(f"V{i}", f"Alice and Bob do thing{i} together.", ["A", "B"]) for i in range(200)]
+    v = mkview([ent("A", "Alice"), ent("B", "Bob")], events=evs)
+
+    def shown(q):
+        return sum(1 for i in range(200) if f"[ev:V{i}]" in ask.select(v, q, [], 4_000).text)
+    both, one = shown("What happened to Alice and Bob?"), shown("What happened to Alice?")
+    assert one > 40 and both >= one * 0.85          # the second entry's head costs a little; a double charge would halve it
