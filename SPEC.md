@@ -231,9 +231,9 @@ groups; an index without them is valid, and clients show arcs as one per book
 
 ```json
 { "id": "sis.holmes.a2", "kind": "arc", "from": "ch2.para28", "basis": "stated",
-  "evidence": ["ch1.para35", "ch1.para60", "ch2.para01", "ch2.para24", "ch2.para28"],
+  "evidence": ["ch1.para34", "ch1.para35", "ch1.para60", "ch2.para01", "ch2.para23", "ch2.para24", "ch2.para28"],
   "replaces": ["sis.holmes.a1"],
-  "text": "Stamford introduces him to Watson at Barts, and the two take rooms together at 221B Baker Street. There he admits writing the article on observation that Watson mocked, and says he earns his living as a consulting detective." }
+  "text": "Stamford introduces him to Watson at Barts, and the two agree to share rooms and move into 221B Baker Street. There he reveals that he wrote \"The Book of Life\" and explains that he is a consulting detective." }
 ```
 
 ### 4.3 Relations
