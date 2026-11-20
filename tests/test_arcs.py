@@ -175,7 +175,7 @@ def test_evidence_is_exactly_what_the_told_events_cite():
     m = Fake([{"text": GOOD, "told": [2, 3]}])
     arcs.arcs([(d, None)], m, log=lambda *_: None)
     f = arc_facets(d)[0]
-    assert f["evidence"] == ["a2", "a5"] and f["from"] == "a5"   # events 2 and 3 (the turning point), nothing else
+    assert f["evidence"] == ["a2", "a5"] and f["from"] == "a9"   # events 2 and 3 (the turning point) cited, nothing else
     # more than 12 anchors are kept
     many = [(i, f"Mira does thing number {i} at the mill.", ["mira"], None) for i in range(1, 15)]
     d = _doc(n=20, events=many, recaps=[15])
@@ -265,4 +265,82 @@ def test_events_prompted_but_not_told_stay_new():
     m = Fake({"Mira": [{"text": "Mira walks to the mill with her basket.", "told": [1]},
                        {"text": "Mira walks to the mill, meets Oren and is robbed on the road.", "told": [1, 2, 3]}]})
     arcs.arcs([(d, None)], m, log=lambda *_: None)
-    assert [f["from"] for f in arc_facets(d)][:2] == ["a1", "a4"]
+    assert [f["from"] for f in arc_facets(d)][:2] == ["a2", "a4"]
+
+
+def test_from_is_the_newest_event_given_not_the_newest_told():
+    d = _doc(events=EVENTS, recaps=[11])
+    arcs.arcs([(d, None)], Fake([{"text": "Mira walks to the mill with her basket.", "told": [1]}]), log=lambda *_: None)
+    f = arc_facets(d)[0]
+    assert f["evidence"] == ["a1"] and f["from"] == "a9"   # everything the prompt held is visible at a9
+
+
+def test_a_new_arc_is_never_before_the_arc_it_replaces():
+    d = _doc(events=EVENTS, recaps=[6, 11])
+    m = Fake([GOOD, {"text": "Mira follows Oren to the keep.", "told": [1, 2]}])
+    arcs.arcs([(d, None)], m, log=lambda *_: None)
+    a = arc_facets(d)
+    assert len(a) == 2 and a[1]["replaces"] == [a[0]["id"]] and int(a[1]["from"][1:]) >= int(a[0]["from"][1:])
+
+
+def test_abbreviations_and_initials_do_not_split_sentences():
+    assert arcs.sentences("Mr. Harker meets Dr. Seward at St. Mary's. J. Harker leaves.") == [
+        "Mr. Harker meets Dr. Seward at St. Mary's.", "J. Harker leaves."]
+    d = _doc(events=EVENTS, recaps=[11])
+    st = arcs.arcs([(d, None)], Fake(["Mira meets Mr. Oren at the mill. She learns her secret from Dr. Oren."]), log=lambda *_: None)
+    assert arc_facets(d) and not st.get("dropped")
+
+
+def test_a_rerun_without_redo_never_repeats_an_id():
+    d = _doc(events=EVENTS, recaps=[6, 11])
+    arcs.arcs([(d, None)], Fake([GOOD]), log=lambda *_: None)
+    d["events"] += [{"id": "e9", "from": "a10", "summary": "Mira sails away from the keep.", "entities": ["mira"], "evidence": ["a10"], "kind": "turn"}]
+    d["coverage"]["through"] = "a11"
+    arcs.arcs([(d, None)], Fake(["Mira follows Oren to the keep and sails away."]), log=lambda *_: None)
+    ids = [f["id"] for f in arc_facets(d)]
+    assert len(ids) == len(set(ids)) >= 2
+
+
+def test_the_copy_rule_applies_when_a_book_is_given():
+    from lorekeeper import epub, text
+    paras = [f"Mira walked to the mill with her basket number {i} and waited by the gate." for i in range(12)]
+    blocks = [epub.Block(seq=i, spine=0, words=text.words(p), raw=p) for i, p in enumerate(paras)]
+    book = epub.Book(blocks=blocks, chapters=[epub.Chapter(title="One", start=0)])
+    d = _doc(events=EVENTS, recaps=[11])
+    d["anchors"] = [{"id": f"a{i}", "seq": i, "fp": blocks[i].fingerprint} for i in range(12)]
+    copy = "Mira walked to the mill with her basket number 3 and waited by the gate."
+    st = arcs.arcs([(d, book)], Fake([copy, copy]), log=lambda *_: None)
+    assert not arc_facets(d) and st["dropped: copies the book"] == 1
+    d = _doc(events=EVENTS, recaps=[11])
+    arcs.arcs([(d, None)], Fake([copy]), log=lambda *_: None)   # no book: the check is skipped
+    assert arc_facets(d)
+
+
+def test_a_valid_first_reply_survives_a_failed_rewrite_for_the_missing_told_list():
+    d = _doc(events=EVENTS, recaps=[11])
+    m = Fake([{"text": GOOD}, {"text": "Mira meets Zelda at the mill."}])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None)
+    f = arc_facets(d)[0]
+    assert f["text"] == GOOD and f["evidence"] == ["a1", "a2", "a5", "a8", "a9"]
+
+
+def test_drop_named_removes_only_the_named_arcs_and_their_references():
+    d = _doc(events=EVENTS, recaps=[6, 11])
+    arcs.arcs([(d, None)], Fake([GOOD, "Mira follows Oren to the keep."]), log=lambda *_: None)
+    a = arc_facets(d)
+    assert arcs.drop_named(d, [f"bk: {a[0]['id']} is revealed later"]) == 1
+    left = arc_facets(d)
+    assert [f["id"] for f in left] == [a[1]["id"]] and "replaces" not in left[0]
+
+
+def test_chapter_references_get_one_rewrite_then_are_dropped():
+    bad = "Mira meets Oren at the mill. By chapter 3 she stands at his side."
+    d = _doc(events=EVENTS, recaps=[11])
+    m = Fake([bad, GOOD])
+    st = arcs.arcs([(d, None)], m, log=lambda *_: None)
+    assert st["rewritten: chapter reference"] == 1 and arc_facets(d)[0]["text"] == GOOD
+    assert "chapter reference" not in m.prompts[0] and "Drop every chapter reference" in m.prompts[1]
+    d = _doc(events=EVENTS, recaps=[11])
+    st = arcs.arcs([(d, None)], Fake(["Mira meets Oren in Chapter XII at the mill.", "Mira meets Oren in chapter 4 at the mill."]), log=lambda *_: None)
+    assert not arc_facets(d) and st["dropped: chapter reference"] == 1
+    assert not arcs.CHAPTER_REF.search("Mira met a civil man at the chapterhouse and a civil clerk.")

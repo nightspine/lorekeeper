@@ -20,8 +20,8 @@ from bisect import bisect_left
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-from . import anchors as anchors_, epub
-from .generate import ABOUT_THE_TEXT, MIN_SENTENCE_WORDS
+from . import anchors as anchors_, epub, text as text_
+from .generate import ABOUT_THE_TEXT, MAX_COPY, MIN_SENTENCE_WORDS
 from .portraits import KINDS, WORKERS, _CAPS, _checked
 
 SCHEMA = {"type": "object", "required": ["text", "told"],
@@ -42,9 +42,10 @@ Describe things as a careful reader understands them at this point: no hindsight
 
 ARC = """These are the events of {book}, in order, that involve {name} ({kind}), up to the end of {where}.
 {also}{profile}{ties}{previous}
-Write what has happened to {name} in this book, as a reader who has read this far knows it: 1 to 3 sentences, at most
-60 words, plain and general. Keep the main events that happened to {name}: what {name} did, what was done to {name}, and
-where things stand, in the order they happened.
+Write what has happened to {name} in this book, as a reader who has read this far knows it. Limits: at most 3
+sentences and 45 words, under 300 characters (a hard limit is 400). Write 2 sentences unless the events gave {name} a lot to
+do. Plain and general: keep the main events that happened to {name} (what {name} did, what was done to {name}, where
+things stand), in the order they happened.
 
 Rules:
 - Use ONLY the events below. The description is context for who {name} is; do not repeat it or events of earlier books.
@@ -57,6 +58,8 @@ Rules:
 Events:
 {events}"""
 
+# "By chapter 61", "in Chapter XII": the arc tells what happened, never where in the book.
+CHAPTER_REF = re.compile(r"\bby chapter\b|\bchapters?\s+(?:\d+|(?-i:[IVXLC]+)\b)", re.IGNORECASE)
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -64,8 +67,23 @@ def _ord(d: dict) -> dict[str, int]:
     return {a["id"]: i for i, a in enumerate(d["anchors"])}
 
 
+# A full stop after these (or after a lone capital: an initial) does not end a sentence.
+_ABBREVIATIONS = {"mr", "mrs", "ms", "dr", "st", "prof", "sr", "jr", "mt"}
+
+
 def sentences(text: str) -> list[str]:
-    return [s for s in _SENTENCE.split(text.strip()) if s]
+    """Sentences, not splitting after "Mr.", "Dr.", "St." and the like or after an initial ("J. Harker")."""
+    out: list[str] = []
+    for part in _SENTENCE.split(text.strip()):
+        if not part:
+            continue
+        last = out[-1].split()[-1].rstrip(".").lower() if out else ""
+        raw = out[-1].split()[-1] if out else ""
+        if out and out[-1].endswith(".") and (last in _ABBREVIATIONS or (len(raw) == 2 and raw[0].isupper())):
+            out[-1] += " " + part
+        else:
+            out.append(part)
+    return out
 
 
 def clear(d: dict) -> int:
@@ -76,6 +94,20 @@ def clear(d: dict) -> int:
         n += len(e.get("facets", [])) - len(keep)
         e["facets"] = keep
     return n
+
+
+def drop_named(d: dict, messages: list[str]) -> int:
+    """Remove the arcs whose ids the validator messages name (and any reference to them in `replaces`); returns how many."""
+    arcs_ = {f["id"] for e in d["entities"] for f in e.get("facets", []) if f.get("kind") == "arc"}
+    bad = {i for i in arcs_ if any(i in m for m in messages)}
+    for e in d["entities"]:
+        e["facets"] = [f for f in e.get("facets", []) if f["id"] not in bad]
+        for f in e["facets"]:
+            if f.get("replaces"):
+                f["replaces"] = [r for r in f["replaces"] if r not in bad]
+                if not f["replaces"]:
+                    del f["replaces"]
+    return len(bad)
 
 
 def marks_for(d: dict, book: epub.Book | None = None) -> list[int]:
@@ -171,7 +203,14 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
         if mine:
             written[eid] = mine
             covered[eid] = ords[mine[-1]["from"]]
-    count = Counter({eid: len(v) for eid, v in written.items()})
+    # Ids continue after the highest existing suffix, so a rerun without --redo never repeats one.
+    count = Counter()
+    for eid, e in ents.items():
+        for f in e.get("facets", []):
+            m = re.search(r"\.arc-(\d+)$", f["id"])
+            if f.get("kind") == "arc" and m:
+                count[eid] = max(count[eid], int(m.group(1)))
+    shingles = text_.shingles([w for b in book.blocks for w in b.words], MAX_COPY) if book is not None else None
 
     def label(ordinal: int) -> str:
         return f"chapter {bisect_left(marks, ordinal) + 1}"
@@ -216,7 +255,7 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
                 ties=f"\nTies that came up in this book: {'; '.join(ties)}\n" if ties else "",
                 previous=f"\nYour summary from earlier in this book (keep what still matters, add what happened since):\n{prev}\n" if prev else "",
                 events="\n".join(lines))
-            got = _write(model, prompt, picked, ties, prev, names, lambda ev: [
+            got = _write(model, prompt, picked, ties, prev, names, shingles, lambda ev: [
                 n for x in ev.get("entities", []) if x in ents for n in names_at(ents[x], last)])
             return eid, picked, last, got
 
@@ -237,9 +276,11 @@ def _doc(d: dict, book: epub.Book | None, model, prior: list[dict], log, progres
             # Never before the entity, or a name the prompt gave it, is itself revealed.
             # `from` is the latest event told; evidence is exactly what the told events cite (SPEC §4.2).
             evid = sorted({a for ev in told for a in (ev.get("evidence") or [ev["from"]]) if a in ords}, key=ords.get)
-            at = max([ords[ev["from"]] for ev in told] + [ords.get(e["from"], 0)]
-                     + [ords[n["from"]] for n in e["names"] if ords.get(n["from"], 1 << 30) <= last])
+            # Everything the prompt held (names, ties, the previous arc) is visible at `last`, so that is the earliest
+            # the arc may be revealed, as well as the entity's own `from` and the arc it replaces.
             prev_arc = written.get(eid, [])
+            at = max([last, ords.get(e["from"], 0)] + [ords[a["from"]] for a in prev_arc[-1:]]
+                     + [ords[n["from"]] for n in e["names"] if ords.get(n["from"], 1 << 30) <= last])
             if prev_arc and prev_arc[-1]["from"] == anchors[at]["id"]:
                 stats["superseded"] += 1   # the same reveal point: the rewrite stands in for the earlier one
                 _remove(e, prev_arc.pop())
@@ -298,6 +339,8 @@ def _problem(text: str) -> str | None:
         return "not a sentence"
     if ABOUT_THE_TEXT.search(text):
         return "about the text"
+    if CHAPTER_REF.search(text):
+        return "chapter reference"
     return None
 
 
@@ -310,7 +353,7 @@ def _told(out, picked: list[dict]) -> list[dict] | None:
 
 
 def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | None, names: list[str],
-           names_of) -> tuple[str | None, str, list[dict]]:
+           shingles, names_of) -> tuple[str | None, str, list[dict]]:
     """(text, "" or "rewritten: ...", told events) if usable, else (None, reason, []). One rewrite for a failed check
     or a reply without a valid list of told events. Support for names and ties is only this book's told events, the
     entity's visible names, its ties here and its previous arc; the description and earlier books are context."""
@@ -319,7 +362,7 @@ def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | 
         events = told or picked
         source = "\n".join([ev["summary"] for ev in events] + ties + names + [prev or ""])
         known = _words(source, *(n for ev in events for n in names_of(ev)))
-        got = _checked(str((out or {}).get("text", "")), known, source, None, limit=MAX_CHARS)
+        got = _checked(str((out or {}).get("text", "")), known, source, shingles, limit=MAX_CHARS)
         if got[0] and (why := _problem(got[0])):
             return (None, why), told
         return got, told
@@ -335,6 +378,8 @@ def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | 
         "too long": "It is over 400 characters. Rewrite it shorter, in at most 3 sentences.",
         "too many sentences": "It has more than 3 sentences. Rewrite it in at most 3.",
         "not a sentence": "It has a fragment or a label. Rewrite it as complete sentences.",
+        "chapter reference": "It names a chapter. Drop every chapter reference and any present-tense state "
+                             "(\"stands\", \"is at\"): tell what happened, in the past tense.",
         "about the text": "It talks about the text. Tell what happened to the character instead.",
     }.get(why)
     if advice is None and why:
@@ -353,6 +398,8 @@ def _write(model, prompt: str, picked: list[dict], ties: list[str], prev: str | 
     again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{(out or {}).get("text", "")}"\n{advice}', SCHEMA)
     got2, told2 = check(again)
     if not got2[0]:
+        if got[0]:   # the first text was fine and only its list of told events was missing: keep it, every event told
+            return got[0], "", picked
         return None, got2[1], []
     note = f"rewritten: {why.split(':')[0]}" if why else "rewritten: no list of told events"
     return got2[0], note, told2 or picked

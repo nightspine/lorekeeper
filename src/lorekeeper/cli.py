@@ -526,15 +526,24 @@ def cmd_arcs(args) -> int:
     model = _make_model(args, args.model or (llm.PROVIDERS[args.provider]["cheap"] if args.provider in llm.PROVIDERS else None))
     prior = [json.loads(Path(x).read_text()) for x in args.prior or []]
     stats = arcs.arcs(list(zip(docs, books)), model, log=lambda m: print(m, file=sys.stderr), prior=prior)
+    if any(b is None for b in books):
+        print("note: no EPUB given for every book, so the 8-word copy check was skipped (pass --epub)", file=sys.stderr)
     drops = ", ".join(f"{v} {k}" for k, v in sorted(stats.items()) if k.startswith(("dropped:", "rewritten:")))
     cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "price unknown"
-    print(f"arcs: {stats.get('arcs', 0)} written, {stats.get('dropped', 0)} dropped"
+    print(f"arcs: {stats.get('arcs', 0)} written ({stats.get('superseded', 0)} superseded by a later one at the same point), "
+          f"{stats.get('dropped', 0)} dropped"
           + (f" ({drops})" if drops else "") + f"; {model.usage.calls} calls, cost {cost}")
     for i, d in enumerate(docs):
-        errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
-        if errs:
-            print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
-            return 1
+        # One bad arc must not sink the book: drop the arcs the new errors name, and keep the rest.
+        for _ in range(5):
+            errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
+            if not errs:
+                break
+            gone = arcs.drop_named(d, [str(e) for e in errs])
+            if not gone:
+                print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
+                return 1
+            print(f"note: {paths[i].name}: dropped {gone} arc(s) the validator refused", file=sys.stderr)
     if args.out:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
