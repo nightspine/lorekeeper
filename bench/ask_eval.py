@@ -3,7 +3,11 @@
     uv run python bench/ask_eval.py examples/sherlock-holmes/*-*.json --series examples/sherlock-holmes/series.json \
         --book sign-of-four --at 0.5 --provider ollama "Who is Watson?" "What happened in the first book?"
 
---at is a fraction of the way through the book's anchors (default 1.0, the end). With no --provider
+A cloud provider needs its extra: `uv run --extra claude python bench/ask_eval.py ... --provider claude --model claude-haiku-5-5`
+(the key comes from ANTHROPIC_API_KEY or the provider's variable; never pass it on the command line).
+
+Each question after the first is a follow-up of the previous one (its answer and cites are the history);
+--fresh asks every question with no history. --at is a fraction of the way through the book's anchors (default 1.0, the end). With no --provider
 only the slice is built and printed (no model call). Keys come from the provider's environment variable.
 """
 
@@ -28,6 +32,7 @@ def main() -> None:
     ap.add_argument("--model")
     ap.add_argument("--budget", type=int)
     ap.add_argument("--show-slice", action="store_true")
+    ap.add_argument("--fresh", action="store_true", help="no history between questions")
     ap.add_argument("questions", nargs="*")
     a = ap.parse_args()
     idx = [json.loads(p.read_text()) for p in a.index]
@@ -58,9 +63,11 @@ def main() -> None:
             if a.show_slice:
                 print(sl.text)
             continue
+        if a.fresh:
+            history = []
         r = ask.answer(v, q, model, history, budget, books)
         print(r.answer)
-        print(f"  found={r.found} note={r.note} slice={r.context_chars} chars usage={r.usage}")
+        print(f"  found={r.found} note={r.note!r} slice={r.context_chars} chars usage={r.usage}")
         for c in r.cites:
             print(f"  [{c['kind']}] {c['id']}: {c['label']}")
         history.append(ask.Turn(q, r.answer, [c["id"] for c in r.cites]))
