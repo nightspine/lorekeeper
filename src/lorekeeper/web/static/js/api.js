@@ -27,6 +27,7 @@ async function request(method, url, body, opts = {}) {
     // Required on every change; other websites can't send it (CSRF protection on the server).
     headers: { "X-Lorekeeper": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
+    signal: opts.signal,
   });
   if (!res.ok) {
     let detail = res.statusText, code = "";
@@ -111,6 +112,9 @@ export const api = {
   syncBookOrbit: () => request("POST", "/api/sources/bookorbit/sync"),
   bookorbitLibraries: (ids) => request("PUT", "/api/sources/bookorbit/libraries", { ids }),
   disconnectBookOrbit: () => request("DELETE", "/api/sources/bookorbit"),
+  askStatus: () => request("GET", "/api/ask"),
+  /** One question, answered from the index's gated view; `signal` lets the person cancel the wait. */
+  ask: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/ask`, body, { signal }),
   index: (key) => request("GET", `/api/library/${encodeURIComponent(key)}`),
   duplicates: (key) => request("GET", `/api/library/${encodeURIComponent(key)}/duplicates`),
   checkDuplicates: (key) => request("POST", `/api/library/${encodeURIComponent(key)}/duplicates/check`),
