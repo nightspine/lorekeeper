@@ -171,7 +171,7 @@ sixth seventh eighth ninth tenth half double triple
 monday tuesday wednesday thursday friday saturday sunday january february march april june july august september
 october november december christmas easter
 mr mrs ms dr st
-ok okay ah eh hi ha yo hometown homeland homes homeless whilst amongst thereafter thereby therein thereof thence hereby herein hereafter forthwith nonetheless notwithstanding
+storyteller storytelling swordsman lioness trainee villager townsfolk ok okay ah eh hi ha yo hometown homeland homes homeless whilst amongst thereafter thereby therein thereof thence hereby herein hereafter forthwith nonetheless notwithstanding
 moreover furthermore consequently accordingly subsequently previously eventually ultimately immediately instantly
 initially originally apparently presumably evidently obviously clearly certainly definitely possibly probably
 perhaps merely simply solely partly mostly mainly largely entirely completely totally absolutely utterly fully
