@@ -940,7 +940,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                      order=order, finished=fin)
         try:
             anchor, _ = proto.locate_anchor(item, pos, True)
-            vk = (key, anchor, order, fin, item["path"].stat().st_mtime)
+            manifest, siblings = proto.series_parts(item, scan)   # every document the view reads is in the key
+            deps = tuple((str(i["path"]), i["path"].stat().st_mtime) for i in [item, *([manifest] if manifest else []), *siblings])
+            vk = (key, anchor, order, fin, deps)
             hit = mention_views.get(vk)
             if hit is None or time.time() - hit[0] > 60:
                 if len(mention_views) > 64:

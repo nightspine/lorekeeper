@@ -256,21 +256,16 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
         anchor = locators.position(anchors, resolved_cache[key], located.seq, inclusive=inclusive)
         return anchor, {"seq": located.seq, "basis": located.basis, "exact": bool(located.exact)}
 
-    def gated_view(item: dict, anchor: str | None, p: Position, scan: dict | None = None,
-                   lenient: bool = False) -> dict:
-        """The gated view at `anchor`. `lenient` is the Reader's own tolerance for its URL: an unknown reading order
-        is the series' default, and only books before this one in the order can be finished."""
-        doc = item["doc"]
-        scan = scan if scan is not None else library.scan()
-        sref = doc.get("series")
-        manifest = None
-        if sref:
-            mans = [i for i in scan.values() if i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
-            manifest = next((m for m in mans if m["source"] == item["source"]), mans[0] if mans else None)
-        indexes, series = [doc], None
+    def series_parts(item: dict, scan: dict) -> tuple[dict | None, list[dict]]:
+        """The series manifest and the sibling index items a view of `item` reads (same source preferred)."""
+        sref = item["doc"].get("series")
+        if not sref:
+            return None, []
+        mans = [i for i in scan.values() if i["doc"].get("kind") == "series" and i["doc"].get("id") == sref["id"]]
+        manifest = next((m for m in mans if m["source"] == item["source"]), mans[0] if mans else None)
+        siblings = []
         if manifest:
-            series = manifest["doc"]
-            for b in series["books"]:
+            for b in manifest["doc"]["books"]:
                 if b["key"] == sref["book"]:
                     continue
                 cands = [i for i in scan.values() if i["doc"].get("kind") == "index"
@@ -278,7 +273,20 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
                          and i["doc"]["series"]["book"] == b["key"]]
                 choice = next((c for c in cands if c["source"] == item["source"]), cands[0] if cands else None)
                 if choice:
-                    indexes.append(choice["doc"])
+                    siblings.append(choice)
+        return manifest, siblings
+
+    def gated_view(item: dict, anchor: str | None, p: Position, scan: dict | None = None,
+                   lenient: bool = False) -> dict:
+        """The gated view at `anchor`. `lenient` is the Reader's own tolerance for its URL: an unknown reading order
+        is the series' default, and only books before this one in the order can be finished."""
+        doc = item["doc"]
+        scan = scan if scan is not None else library.scan()
+        sref = doc.get("series")
+        manifest, siblings = series_parts(item, scan)
+        indexes, series = [doc] + [c["doc"] for c in siblings], None
+        if manifest:
+            series = manifest["doc"]
             if p.order is not None and p.order not in series["orders"] and not lenient:
                 raise _bad(f"unknown reading order {p.order!r}")
         order = p.order
@@ -448,7 +456,7 @@ def build_router(library, parsed: Callable[[Path], epub.Book], token: str | None
             body["locator"] = {"position": anchor, **located}
         return body
 
-    router.locate_anchor, router.gated_view = locate_anchor, gated_view   # the app's own routes gate through these
+    router.locate_anchor, router.gated_view, router.series_parts = locate_anchor, gated_view, series_parts   # the app's own routes gate through these
     return router
 
 

@@ -253,3 +253,55 @@ def test_a_part_heading_between_chapters_folds_into_the_chapter_before_it(client
     assert [c["n"] for c in after["chapters"]] == [1, 2]
     assert after["chapters"][0]["count"] == inside["chapters"][0]["count"]      # folded counts stay put
     assert after["current"]["n"] == 2
+
+
+@pytest.mark.skipif(not CORPUS.is_dir(), reason="needs corpus/pg244 and pg2097")
+def test_series_view_takes_the_same_source_sibling_and_follows_its_changes(tmp_path):
+    import json
+    import os
+    import shutil
+
+    from fastapi.testclient import TestClient
+
+    from lorekeeper import epub, gating, locators, mentions
+    from lorekeeper.web import app as web_app
+
+    if not (CORPUS / "pg244" / "pg244.epub").exists() or not (CORPUS / "pg2097" / "pg2097.epub").exists():
+        pytest.skip("needs corpus/pg244 and pg2097")
+    src = EXAMPLES
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir(), b.mkdir()
+    for f in ("series.json", "study-in-scarlet.json"):
+        shutil.copy(src / f, a / f)
+    for f in ("series.json", "study-in-scarlet.json", "sign-of-four.json"):
+        shutil.copy(src / f, b / f)
+
+    def add_alias(path, value):
+        d = json.loads(path.read_text())
+        next(e for e in d["entities"] if e["id"] == "watson")["names"].append(
+            {"value": value, "kind": "alias", "from": "pt1.note"})
+        path.write_text(json.dumps(d))
+    add_alias(a / "study-in-scarlet.json", "Morstan")     # source a's Scarlet (scanned first) is the wrong sibling
+    app = web_app.create_app(tmp_path / "data", [("a", a), ("b", b)], [CORPUS / "pg244", CORPUS / "pg2097"],
+                             ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    book = epub.read(CORPUS / "pg2097" / "pg2097.epub")
+
+    def expect(scarlet_path):
+        docs = [json.loads((b / "sign-of-four.json").read_text()), json.loads(scarlet_path.read_text())]
+        series = json.loads((b / "series.json").read_text())
+        anchor = locators.position(docs[0]["anchors"], locators.resolve_edition(docs[0], book), 600, inclusive=True)
+        v = gating.view(docs, gating.Position("sign-of-four", anchor), series, None, None)
+        return sum(mentions.count(book.blocks, book.chapters, mentions.visible_names(v), 600).counts["watson"])
+
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        def total():
+            r = c.get("/api/library/b--sign-of-four/mentions", params={"entity": "watson", "seq": 600})
+            assert r.status_code == 200, r.text
+            return sum(ch["count"] for ch in r.json()["chapters"])
+        right = expect(b / "study-in-scarlet.json")
+        assert expect(a / "study-in-scarlet.json") > right        # the wrong sibling would show
+        assert total() == right                                   # same source wins, not the first candidate
+        # A sibling rewritten within the cache's minute changes the view at once.
+        add_alias(b / "study-in-scarlet.json", "Morstan")
+        os.utime(b / "study-in-scarlet.json", (1e9, os.stat(b / "study-in-scarlet.json").st_mtime + 10))
+        assert total() == expect(b / "study-in-scarlet.json") > right
