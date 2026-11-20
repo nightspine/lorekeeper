@@ -76,3 +76,18 @@ t("history skips refused turns and keeps the rest", () => {
 t("history keeps the last six", () => {
   assert.equal(historyFor(Array.from({ length: 9 }, (_, i) => turn(`q${i}`))).length, 6);
 });
+
+// Each book of a series has its own library key.
+const bookView = (ids) => view({ events: ids.map((id) => ({ id })) });
+const s2 = snapshot(bookView(["a1", "a2"]), pos({ key: "k2", series: "S", book: "b2", rank: 1, ord: 5, finished: ["b1"] }));
+const p3 = (o = {}) => pos({ key: "k3", series: "S", book: "b3", rank: 2, ord: 0, finished: ["b1", "b2"], ...o });
+t("book 2 to book 3 with book 2 finished keeps", () => assert.equal(revealsLess(s2, bookView(["a1", "a2", "c1"]), p3()), false));
+t("book 3 back to book 2 clears", () => {
+  const s3 = snapshot(bookView(["a1", "a2", "c1"]), p3());
+  assert.equal(revealsLess(s3, bookView(["a1", "a2"]), pos({ key: "k2", series: "S", book: "b2", rank: 1, ord: 5, finished: ["b1"] })), true);
+});
+t("book 2 to book 3 with book 2 not finished clears (its items left the view)", () => assert.equal(revealsLess(s2, bookView(["c1"]), p3({ finished: ["b1"] })), true));
+t("another series or a standalone index clears", () => {
+  assert.equal(revealsLess(s2, bookView(["a1", "a2"]), p3({ series: "T" })), true);
+  assert.equal(revealsLess(s2, bookView(["a1", "a2"]), pos({ key: "solo", series: null })), true);
+});

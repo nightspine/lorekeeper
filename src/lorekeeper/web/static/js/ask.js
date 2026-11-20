@@ -35,7 +35,7 @@ const covers = (now, then) => { for (const id of then) if (!now.has(id)) return 
 /** What was on screen when something was asked or typed: the ids above and where the view was computed.
  *  pos: { key, book, rank (the book's place in the reading order used), ord (the anchor's ordinal in that book), order, finished: [book keys] }. */
 export function snapshot(view, pos) {
-  return { ids: viewIds(view), key: pos.key ?? null, book: pos.book ?? null, rank: pos.rank ?? 0, ord: pos.ord ?? -1,
+  return { ids: viewIds(view), key: pos.key ?? null, series: pos.series ?? null, book: pos.book ?? null, rank: pos.rank ?? 0, ord: pos.ord ?? -1,
     order: pos.order ?? null, finished: [...(pos.finished || [])] };
 }
 
@@ -44,7 +44,9 @@ export function snapshot(view, pos) {
  *  Moving forward only adds, so it keeps the thread. */
 export function revealsLess(old, view, pos) {
   if (!old) return false;
-  if (old.key !== (pos.key ?? null) || old.order !== (pos.order ?? null)) return true;
+  // Each book of a series has its own key, so a different key clears only outside one series; inside it the rules below decide.
+  const sameSeries = old.series != null && old.series === (pos.series ?? null);
+  if ((old.key !== (pos.key ?? null) && !sameSeries) || old.order !== (pos.order ?? null)) return true;
   const rank = pos.rank ?? 0, ord = pos.ord ?? -1;
   if (rank < old.rank) return true;
   if (rank === old.rank && (pos.book ?? null) === old.book && ord < old.ord) return true;
