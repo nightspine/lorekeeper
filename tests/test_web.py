@@ -917,3 +917,83 @@ def test_without_a_cloud_key_book_arcs_are_skipped(client, tmp_path):
     book = upload(client, tmp_path)
     job = client.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
     assert wait_for(client, job["id"], {"done", "failed"})["report"]["arcs"] == {"skipped": "no cloud key"}
+
+
+def test_arcs_get_the_earlier_books_as_prior(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+    seen = []
+
+    def spy(docs, model, log=print, prior=(), progress=None):
+        d, _ = docs[0]
+        seen.append({"title": d["work"]["title"], "prior": [p["work"]["title"] for p in prior],
+                     "events": [e["id"] for e in d.get("events", [])]})
+        return {"arcs": 0}
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", spy)
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        ups = []
+        for i, title in enumerate(["Lights One", "Lights Two"], 1):
+            meta = f'<meta name="calibre:series" content="Lights"/><meta name="calibre:series_index" content="{i}"/>'
+            path = make_epub(tmp_path / f"b{i}.epub", title=title, series_meta=meta,
+                             ch1=[f"Book {i}: Ezra Pike kept the old harbour light alone for twenty winters, and the sea took notice."] * 3)
+            ups.append(c.post("/api/books", files={"file": (f"b{i}.epub", path.read_bytes())}).json())
+        for up in ups:
+            job = c.post("/api/jobs", json={"config": {"catalog_key": f"up:{up['id']}", "chunk_words": 5000}}).json()
+            assert wait_for(c, job["id"], {"done", "failed"})["status"] == "done"
+        assert seen[0]["prior"] == [] and len(seen[1]["prior"]) == 1 and seen[1]["prior"][0] != seen[1]["title"]
+
+
+def test_arcs_are_written_after_recorded_edits_are_applied(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+    order = []
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", lambda *a, **kw: order.append("arcs") or {"arcs": 0})
+    real = jobs_mod.JobManager._reapply_edits
+    monkeypatch.setattr(jobs_mod.JobManager, "_reapply_edits", lambda self, job: order.append("edits") or real(self, job))
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        assert wait_for(c, job["id"], {"done", "failed"})["status"] == "done"
+    assert order == ["edits", "arcs"]
+
+
+def test_a_failing_arcs_stage_leaves_the_file_untouched(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+
+    def boom(docs, *a, **kw):
+        docs[0][0]["entities"].clear()   # half-way through, then it fails
+        raise RuntimeError("model fell over")
+    monkeypatch.setattr(jobs_mod.book_arcs, "arcs", boom)
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    before = {}
+    real = jobs_mod.JobManager._arcs
+
+    def snap(self, job, book, prior, flag):
+        before["bytes"] = Path(job.output).read_bytes()
+        return real(self, job, book, prior, flag)
+    monkeypatch.setattr(jobs_mod.JobManager, "_arcs", snap)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+    assert done["status"] == "done" and "failed" in done["report"]["arcs"]
+    assert Path(done["output"]).read_bytes() == before["bytes"]
+
+
+def test_a_model_that_cannot_be_built_does_not_fail_the_run(tmp_path, monkeypatch):
+    from lorekeeper.web import jobs as jobs_mod
+    app = _cloud_app(tmp_path, monkeypatch, _ArcWriter)
+    n = []
+    real = jobs_mod.JobManager.cheap_model
+
+    def cheap(self, provider):
+        n.append(1)
+        raise ImportError("anthropic is not installed")
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", cheap)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        book = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"chunk_words": 5000}}).json()
+        done = wait_for(c, job["id"], {"done", "failed"})
+    assert done["status"] == "done", done["error"]
+    assert "not installed" in done["report"]["arcs"]["failed"] and "not installed" in done["report"]["portraits"]["failed"]
+    assert len(n) == 2

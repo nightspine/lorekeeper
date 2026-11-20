@@ -339,13 +339,13 @@ class JobManager:
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Rewrite the finished index's profiles from every passage mentioning each entity
         (portraits.py). Needs a cloud model key; a failure here keeps the index as the run wrote it."""
-        model = self.cheap_model(job.config.get("provider"))
-        if model is None:
-            self._emit(job, {"type": "log", "line": "descriptions: skipped (add a cloud model key in Settings to write them)"})
-            return {"skipped": "no cloud key"}
-        self._emit(job, {"type": "phase", "phase": "portraits"})
-        model.cancel = flag.is_set
         try:
+            model = self.cheap_model(job.config.get("provider"))
+            if model is None:
+                self._emit(job, {"type": "log", "line": "descriptions: skipped (add a cloud model key in Settings to write them)"})
+                return {"skipped": "no cloud key"}
+            self._emit(job, {"type": "phase", "phase": "portraits"})
+            model.cancel = flag.is_set
             out = Path(job.output)
             d = json.loads(out.read_text())
             portraits.clear(d)
@@ -373,13 +373,13 @@ class JobManager:
     def _arcs(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Write each person's short arc for this book from the finished index (arcs.py). Needs a cloud
         model key; a failure here keeps the index as the run wrote it."""
-        model = self.cheap_model(job.config.get("provider"))
-        if model is None:
-            self._emit(job, {"type": "log", "line": "book arcs: skipped (add a cloud model key in Settings to write them)"})
-            return {"skipped": "no cloud key"}
-        self._emit(job, {"type": "phase", "phase": "arcs"})
-        model.cancel = flag.is_set
         try:
+            model = self.cheap_model(job.config.get("provider"))
+            if model is None:
+                self._emit(job, {"type": "log", "line": "book arcs: skipped (add a cloud model key in Settings to write them)"})
+                return {"skipped": "no cloud key"}
+            self._emit(job, {"type": "phase", "phase": "arcs"})
+            model.cancel = flag.is_set
             out = Path(job.output)
             d = json.loads(out.read_text())
             book_arcs.clear(d)
@@ -467,10 +467,10 @@ class JobManager:
                                   on_event=on_event, should_stop=flag.is_set)
             if not report.get("stopped") and c.get("portraits", True):
                 report["portraits"] = self._portraits(job, book, opts.prior, flag)
-            if not report.get("stopped") and c.get("arcs", True):
-                report["arcs"] = self._arcs(job, book, opts.prior, flag)
             if not report.get("stopped") and self.after_run is not None:
                 report["edits"] = self._reapply_edits(job)
+            if not report.get("stopped") and c.get("arcs", True):   # last: arcs tell the events as the person edited them
+                report["arcs"] = self._arcs(job, book, opts.prior, flag)
             job.report = report
             job.status = "stopped" if report.get("stopped") else "done"
             self._emit(job, {"type": job.status, "report": report})
