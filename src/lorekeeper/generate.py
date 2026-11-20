@@ -234,15 +234,32 @@ def sex_of(names: list[str], relations: list[dict], eid: str) -> str | None:
     return None
 
 
-def kin_relatives(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[str]:
-    """The entities the relations already tie to `owner` as the `parsed` kin word says ("father of Gabriel", or
-    "Gabriel son of ...", seen from the other end), among those `usable(id)` accepts. A kin word with a sex
-    ("sister") excludes one known (`sex(id)`) to be the other sex."""
+_AGE = {"elder": "older", "older": "older", "eldest": "older", "younger": "younger", "youngest": "younger"}
+_STATUS_MODS = {"late"}   # "his late father" says how things stand, not who he is
+
+
+def kin_modifiers_agree(described: list[str], tie: list[str]) -> bool:
+    """Whether a description's modifiers fit a tie's. Everything that changes who the person is (step, half,
+    in-law, foster, adoptive, great, ex...) must be the same on both sides, so an unmodified "father" never
+    matches "stepfather of". An age word ("elder", "younger") must agree with the tie's if the tie has one; an
+    unmodified description matches a tie that carries only an age word ("sister" may be "elder sister of")."""
+    strict = lambda mods: {m for m in mods if m not in _AGE and m not in _STATUS_MODS}  # noqa: E731
+    age = lambda mods: {_AGE[m] for m in mods if m in _AGE}  # noqa: E731
+    if strict(described) != strict(tie):
+        return False
+    return not (age(described) and age(tie) and age(described) != age(tie)) and not (age(described) and not age(tie))
+
+
+def kin_ties(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[tuple[str, dict]]:
+    """(entity, relation) for each entity the relations already tie to `owner` as the `parsed` kin word says
+    ("father of Gabriel", or "Gabriel son of ...", seen from the other end), among those `usable(id)` accepts.
+    Modifiers must agree (`kin_modifiers_agree`); a kin word with a sex ("sister") excludes one known
+    (`sex(id)`) to be the other sex."""
     replaced = {x for r in relations for x in r.get("replaces", [])}
     want, back = parsed["role"], kinship.ROLES.get(parsed["role"], parsed["role"])
     word, hits = _gender(parsed["word"]), []
     for r in relations:
-        if r["id"] in replaced or not (p := kinship.parse(r["label"])):
+        if r["id"] in replaced or not (p := kinship.parse(r["label"])) or not kin_modifiers_agree(parsed["modifiers"], p["modifiers"]):
             continue
         if r["dst"] == owner and p["role"] == want:
             other, g = r["src"], _gender(p["word"])    # "<other> father of <owner>": the word is about `other`
@@ -252,8 +269,21 @@ def kin_relatives(relations: list[dict], owner: str, parsed: dict, sex, usable) 
             continue
         if other == owner or not usable(other) or (word and (g or sex(other)) not in (None, word)):
             continue
-        hits.append(other)
-    return list(dict.fromkeys(hits))
+        hits.append((other, r))
+    return hits
+
+
+def kin_relatives(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[str]:
+    """The entities `kin_ties` finds, once each."""
+    return list(dict.fromkeys(x for x, _ in kin_ties(relations, owner, parsed, sex, usable)))
+
+
+def hidden_identity(texts, events, a: str, b: str) -> bool:
+    """The text keeps who a description is a mystery: its own notes (`texts`) say so, or a turning point
+    (among `events`, dicts with `kind` and `entities`) names both a and b, the revelation itself. Folding
+    then would show the answer early. The generator and `profiles --tidy` share this test."""
+    return any(HIDDEN_IDENTITY.search(t) for t in texts) or any(
+        ev.get("kind") == "turn" and a in ev["entities"] and b in ev["entities"] for ev in events)
 
 
 def kin_description(name: str) -> tuple[str, dict] | None:
@@ -651,6 +681,7 @@ class Generator:
         # corrections; an entity enters THIS book's index only once this book mentions it.
         self.prior: dict[str, dict] = {}           # id → {"type", "names", "facets": [{"id", "text"}]}
         self.prior_items: dict[str, str] = {}      # facet/relation id → kind
+        self.prior_relations: list[dict] = []      # earlier books' ties, for matching kin descriptions
         self._load_prior(opts.prior)
 
     def _load_prior(self, indexes: list[dict]) -> None:
@@ -667,6 +698,8 @@ class Generator:
                     replaced.update(f.get("replaces", []))
             for r in ix.get("relations", []):
                 self.prior_items[r["id"]] = "relation"
+                self.prior_relations.append({k: r[k] for k in ("id", "src", "dst", "label") if k in r} | (
+                    {"replaces": r["replaces"]} if r.get("replaces") else {}))
                 replaced.update(r.get("replaces", []))
             story = [rc for rc in ix.get("recaps", []) if rc.get("scope", "story") == "story"]
             if story:
@@ -852,16 +885,23 @@ class Generator:
 
     # ---- kin descriptions ("Gabriel's sister") -----------------------------------------------
 
+    def _all_relations(self) -> list[dict]:
+        """This book's ties and the earlier books' (a book-two "Darrow's mother" is the mother book one named)."""
+        return [*self.prior_relations, *self.relations]
+
     def _sex(self, eid: str) -> str | None:
-        return sex_of(self._names(eid), self.relations, eid)
+        return sex_of(self._names(eid), self._all_relations(), eid)
 
     def _named(self, eid: str) -> bool:
         """The entity has a name of its own, not only descriptions and kin words."""
         return any(not is_description(n) and not bare_kin_word(n) for n in self._names(eid))
 
+    def kin_ties(self, owner: str, parsed: dict) -> list[tuple[str, dict]]:
+        """The named people the companion already ties to `owner` as the kin word says (`kin_ties`)."""
+        return kin_ties(self._all_relations(), owner, parsed, self._sex, lambda x: x in self._ids() and self._named(x))
+
     def kin_relatives(self, owner: str, parsed: dict) -> list[str]:
-        """The named people the companion already ties to `owner` as the kin word says (`kin_relatives`)."""
-        return kin_relatives(self.relations, owner, parsed, self._sex, lambda x: x in self._ids() and self._named(x))
+        return list(dict.fromkeys(x for x, _ in self.kin_ties(owner, parsed)))
 
     def kin_match(self, name: str, known=None) -> tuple[str, list[str]]:
         """What a possessive kin description ("Gabriel's sister") stands for: ("none", []) when it is not one,
@@ -876,19 +916,17 @@ class Generator:
         hits = self.kin_relatives(owner, kd[1])
         return ("one" if len(hits) == 1 else "several" if hits else "unknown"), hits
 
-    def _hidden_identity(self, desc: str, named: str) -> bool:
-        """The text keeps who the description is a mystery: the description's own notes say so, or a turning point
-        names both (the revelation itself). Folding then would show the answer early or merge a disguise."""
-        if any(HIDDEN_IDENTITY.search(f["text"]) for f in self.entities[desc]["facets"]):
-            return True
-        return any(ev.get("kind") == "turn" and desc in ev["entities"] and named in ev["entities"] for ev in self.events)
-
     def _fold_kin_descriptions(self) -> None:
         """A tie that makes a named person "<X>'s <kin>" settles an earlier description entity ("Gabriel's sister")
-        as that person: fold the description into the named entity when exactly one description of this kind
-        exists for X and exactly one named person fits (`kin_relatives`), `_may_merge` allows it and the text does
-        not treat the identity as a secret. Names and facets keep their own `from`, so the description shows
-        from where it was first used and the name from where the book gives it."""
+        as that person: the named entity is folded into the description (which keeps its id, so no id ever carries
+        a name the reader has not reached) when
+        - exactly one description of this kind exists for X and exactly one named person fits (`kin_ties`);
+        - the named person is this book's own, not an earlier book's (those files are not rewritten);
+        - the tie that identifies them was revealed at or before the named person's own first appearance, so no
+          position shows both names without the tie (a tie stated chapters later is a twist, not a fold);
+        - `_may_merge` allows it and the text does not keep the identity back (`hidden_identity`).
+        Names and facets keep their own `from`, so the description shows from where it was first used and the
+        name from where the book gives it."""
         groups: dict[tuple, list[tuple[str, dict]]] = {}
         for eid, e in list(self.entities.items()):
             if e["type"] != "person" or eid in self.prior or self._named(eid):
@@ -901,10 +939,18 @@ class Generator:
             if len(found) != 1:
                 continue
             desc, parsed = found[0]
-            named = [x for x in self.kin_relatives(owner, parsed) if x != desc and x in self.entities]
-            if len(named) != 1 or not self._may_merge([named[0], desc]) or self._hidden_identity(desc, named[0]):
+            ties = [(x, r) for x, r in self.kin_ties(owner, parsed) if x != desc]
+            fits = list(dict.fromkeys(x for x, _ in ties))
+            if len(fits) != 1 or fits[0] not in self.entities or fits[0] in self.prior:
                 continue
-            self._merge_entities(named[0], desc)
+            named = fits[0]
+            first = min((self.item_seq.get(r["id"], 1 << 30) for x, r in ties), default=1 << 30)
+            if first > self.entity_from.get(named, -1):
+                continue   # the tie came after the person did: showing both names would give the twist away
+            if not self._may_merge([named, desc]) or hidden_identity(
+                    [f["text"] for f in self.entities[desc]["facets"]], self.events, desc, named):
+                continue
+            self._merge_entities(desc, named)
             self.stats["merged: kin description into the named relative"] += 1
 
     # ---- names that fit more than one entity -----------------------------------------------

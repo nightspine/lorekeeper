@@ -173,19 +173,19 @@ def _description_then_name(ch1_extra=None, ch2_extra=None):
 
 def test_the_description_folds_into_the_relative_named_later(book, tmp_path):
     ix, report = run(book, tmp_path, *_description_then_name())
-    assert list(names(ix)) == ["gabriel-de-leon", "amelie-de-leon"]
+    assert list(names(ix)) == ["gabriel-de-leon", "gabriels-sister"]       # the description keeps its id
     assert report["stats"]["merged: kin description into the named relative"] == 1
-    amelie = next(e for e in ix["entities"] if e["id"] == "amelie-de-leon")
+    amelie = next(e for e in ix["entities"] if e["id"] == "gabriels-sister")
     assert {n["value"] for n in amelie["names"]} == {"Gabriel's sister", "Amelie de Leon"}
     assert next(n["value"] for n in amelie["names"] if n["kind"] == "primary") == "Amelie de Leon"
     assert any("Waits for Gabriel" in f["text"] for f in amelie["facets"])
     # Spoiler rule: before the book names her she is still only "Gabriel's sister".
     at = lambda seq: [a["id"] for a in ix["anchors"] if a["seq"] <= seq][-1]  # noqa: E731
     early = view([ix], Position(None, at(4)))
-    sister = next(e for e in early["entities"] if e["id"] == "amelie-de-leon")
-    assert sister["name"] == "Gabriel's sister" and "Amelie" not in str(early)
+    sister = next(e for e in early["entities"] if e["id"] == "gabriels-sister")
+    assert sister["name"] == "Gabriel's sister" and "amelie" not in str(early).casefold()   # no id, name or slug
     late = view([ix], Position(None, ix["coverage"]["through"]))
-    assert next(e for e in late["entities"] if e["id"] == "amelie-de-leon")["name"] == "Amelie de Leon"
+    assert next(e for e in late["entities"] if e["id"] == "gabriels-sister")["name"] == "Amelie de Leon"
 
 
 def test_no_fold_when_two_named_relatives_fit(book, tmp_path):
@@ -207,12 +207,14 @@ def test_no_fold_when_two_descriptions_stand_for_the_kin(book, tmp_path):
     person("amelie", "Amelie de Leon", 5)
     person("sister-a", "Gabriel's sister", 2)
     g.relations.append({"id": "r1", "src": "amelie", "dst": "gabriel", "label": "sister of"})
+    g.item_seq["r1"] = 5
     g._fold_kin_descriptions()
-    assert "sister-a" not in g.entities and g.entities["amelie"]["names"][-1]["value"] == "Gabriel's sister"   # one: folds
+    assert "amelie" not in g.entities and g.entities["sister-a"]["names"][-1]["value"] == "Amelie de Leon"   # one: folds
     person("sister-b", "Gabriel's sister", 3)
     person("sister-c", "Gabriel's elder sister", 4)
     person("celene", "Celene de Leon", 6)
     g.relations.append({"id": "r2", "src": "celene", "dst": "gabriel", "label": "sister of"})
+    g.item_seq["r2"] = 6
     g._fold_kin_descriptions()
     assert {"sister-b", "sister-c", "celene"} <= set(g.entities)                                                # two descriptions: none
 
@@ -243,11 +245,12 @@ def test_the_prompt_is_selective_about_people(book, tmp_path):
 def test_tidy_removes_bare_kin_entities_and_folds_kin_descriptions():
     doc = tg_doc()
     t = profiles.tidy([doc])
-    assert [e["id"] for e in doc["entities"]] == ["gabriel", "amelie", "gabriels-cousin", "uncle-vernon"]
+    assert [e["id"] for e in doc["entities"]] == ["gabriel", "gabriels-sister", "gabriels-cousin", "uncle-vernon"]
     assert "Mama" in t["removed"] and "Father" in t["removed"]
     assert t["kin_folded"] == [("Gabriel's sister", "Amelie")]
-    amelie = next(e for e in doc["entities"] if e["id"] == "amelie")
+    amelie = next(e for e in doc["entities"] if e["id"] == "gabriels-sister")      # the description's id stays
     assert {n["value"] for n in amelie["names"]} == {"Amelie", "Gabriel's sister"}
+    assert next(r for r in doc["relations"] if r["id"] == "r1")["src"] == "gabriels-sister"
     assert [r for r in doc["relations"] if "mama" in (r["src"], r["dst"])] == []
     assert not [e for e in validate.check_index(doc) if e.level == "error"]
 
@@ -278,3 +281,57 @@ def test_tidy_does_not_fold_a_kin_description_when_two_relatives_fit():
                              "from": "a4", "basis": "stated", "evidence": ["a4"]})
     t = profiles.tidy([doc])
     assert t["kin_folded"] == [] and "gabriels-sister" in [e["id"] for e in doc["entities"]]
+
+
+# ---- review round 1 -------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("described,tie,ok", [
+    ("father", "father of", True), ("father", "stepfather of", False), ("stepfather", "father of", False),
+    ("half-sister", "sister of", False), ("elder sister", "younger sister of", False),
+    ("elder sister", "elder sister of", True), ("elder sister", "sister of", False), ("sister", "elder sister of", True),
+    ("sister", "foster sister of", False), ("late father", "father of", True)])
+def test_modifiers_must_agree(described, tie, ok):
+    from lorekeeper import kinship
+    a, b = kinship.parse(described), kinship.parse(tie)
+    assert generate.kin_modifiers_agree(a["modifiers"], b["modifiers"]) is ok
+
+
+def test_a_step_tie_is_not_the_father(book_a, tmp_path):
+    first = _resp(new=[GABRIEL, _new("Amelie de Leon", 6)], relations=[
+        {"a": "Amelie de Leon", "label": "stepfather of", "b": "Gabriel de Leon", "p": 6, "kind": "family"}])
+    _, report = run(book_a, tmp_path, first, _resp(new=[_new("Gabriel's father", 2)]))
+    assert not report["stats"].get("kin descriptions matched to a known relative")
+
+
+def test_a_tie_stated_after_the_person_appears_is_no_fold(book, tmp_path):
+    """The tie arrives chapters after the person: folding would show both names before the book connects them."""
+    ch1 = _resp(new=[GABRIEL, _new("Gabriel's sister", 3)], updates=[
+        {"id": "Gabriel's sister", "p": 3, "desc": "Waits for Gabriel at the inn in Aveline."}])
+    ch2 = _resp(new=[_new("Amelie de Leon", 2), _new("Uncle Vernon", 3)],
+                updates=[{"id": "Amelie de Leon", "p": 2, "desc": "A woman who greets Gabriel in the courtyard of the keep."}],
+                relations=[{"a": "Amelie de Leon", "label": "sister of", "b": "Gabriel de Leon", "p": 3, "kind": "family"}])
+    ix, report = run(book, tmp_path, ch1, ch2)
+    assert not report["stats"].get("merged: kin description into the named relative")
+    assert {"gabriels-sister", "amelie-de-leon"} <= set(names(ix))
+
+
+def test_book_two_resolves_a_description_through_book_ones_ties(book, tmp_path):
+    prior = {"entities": [
+        {"id": "gabriel-de-leon", "type": "person", "names": [{"value": "Gabriel de Leon"}], "facets": []},
+        {"id": "amelie-de-leon", "type": "person", "names": [{"value": "Amelie de Leon"}], "facets": []}],
+        "relations": [{"id": "one.rel.1", "src": "amelie-de-leon", "dst": "gabriel-de-leon", "label": "sister of"}]}
+    g = generate.Generator(epub.read(book), tg.FakeLLM(), generate.Options(prior=[prior], series_id="s", book_key="two"),
+                           book, lambda m: None)
+    assert g.kin_match("Gabriel's sister") == ("one", ["amelie-de-leon"])
+    assert g.kin_match("Gabriel's stepsister")[0] == "unknown"
+
+
+def test_tidy_keeps_no_name_in_the_ids_and_obeys_the_order_and_turning_point_rules():
+    doc = tg_doc()
+    doc["relations"][0]["from"] = "a5"      # the tie arrives after Amelie (a4) does: a twist
+    doc["relations"][0]["evidence"] = ["a5"]
+    assert profiles.tidy([doc])["kin_folded"] == []
+    doc = tg_doc()
+    doc["events"] = [{"id": "ev1", "from": "a5", "summary": "Amelie is shown to be the girl Gabriel left behind.",
+                      "kind": "turn", "entities": ["amelie", "gabriels-sister"], "evidence": ["a5"]}]
+    assert profiles.tidy([doc])["kin_folded"] == []

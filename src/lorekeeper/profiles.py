@@ -3,7 +3,7 @@
 `tidy` removes entities that are descriptions rather than names ("Gabriel's straight razor") or only
 a kin or role word ("Mama", "Father"), and folds descriptions of a known entity ("Celene's brother
 Gabriel", and "Gabriel's sister" when one named person is tied to Gabriel as his sister) into it, using
-the same rules the generator now applies (`generate.triage_name`, `bare_kin_word`, `kin_relatives`).
+the same rules the generator now applies (`generate.triage_name`, `bare_kin_word`, `kin_ties`).
 
 `backfill` writes profile facets (SPEC.md §4.2) from the facts an index already has. Between two
 recaps, each entity that gained facts gets a profile written from only the facts revealed up to that
@@ -18,8 +18,8 @@ from __future__ import annotations
 from collections import Counter
 
 from . import merge
-from .generate import (_POSSESSIVE, HIDDEN_IDENTITY, HINDSIGHT, MOMENTARY, SYSTEM, bare_kin_word, is_description,
-                       kin_description, kin_relatives, sex_of, triage_name)
+from .generate import (_POSSESSIVE, HINDSIGHT, MOMENTARY, SYSTEM, bare_kin_word, hidden_identity, is_description,
+                       kin_description, kin_ties, sex_of, triage_name)
 
 
 def generate_possessive(name: str) -> bool:
@@ -111,11 +111,24 @@ def tidy(docs: list[dict]) -> dict:
 
 
 def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple[str, str, list[int]]]:
-    """Fold a person known only as "X's <kin>" into the one named person the relations tie to X that way, when
-    exactly one such description exists for X and one named person fits, nothing ties the two together and the
-    description's notes do not keep its identity back. Returns (description, named, changed doc positions)."""
+    """Fold the one named person the relations tie to X as his <kin> into the person known only as "X's <kin>"
+    (the description keeps its id, so no id carries a name the reader has not reached), when
+    - exactly one such description exists for X and exactly one named person fits (`kin_ties`, modifiers agreeing);
+    - the named person does not first appear in an earlier book than the description (those files are not rewritten
+      by a fold into a later one's entry);
+    - the tie that identifies them comes at or before the named person's first appearance (anchor order within a
+      book, series order across books), so no position shows both names without the tie;
+    - nothing ties the two together and the text keeps no identity back (`hidden_identity`).
+    Returns (description, named, changed doc positions)."""
     rels = [r for d in docs for r in d.get("relations", [])]
+    events = [ev for d in docs for ev in d.get("events", [])]
     facets = {e["id"]: [f["text"] for f in e.get("facets", [])] for d in docs for e in d.get("entities", [])}
+    ords = [{a["id"]: n for n, a in enumerate(d.get("anchors", []))} for d in docs]
+    first: dict[str, tuple[int, int]] = {}
+    for i, d in enumerate(docs):
+        for e in d.get("entities", []):
+            first.setdefault(e["id"], (i, ords[i].get(e.get("from"), 0)))
+    tie_at = {r["id"]: (i, ords[i].get(r.get("from"), 0)) for i, d in enumerate(docs) for r in d.get("relations", [])}
     named = lambda x: x in ents and any(not is_description(n) and not bare_kin_word(n) for n in ents[x][1])  # noqa: E731
     sex = lambda x: sex_of(ents[x][1] if x in ents else [], rels, x)  # noqa: E731
     groups: dict[tuple, list[tuple[str, dict]]] = {}
@@ -133,16 +146,22 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
         if len(found) != 1:
             continue
         eid, parsed = found[0]
-        fits = [x for x in kin_relatives(rels, owner, parsed, sex, named) if x != eid]
-        if len(fits) != 1 or any({r["src"], r["dst"]} == {fits[0], eid} for r in rels) \
-                or any(HIDDEN_IDENTITY.search(t) for t in facets.get(eid, [])):
+        ties = [(x, r) for x, r in kin_ties(rels, owner, parsed, sex, named) if x != eid]
+        fits = list(dict.fromkeys(x for x, _ in ties))
+        if len(fits) != 1:
             continue
-        label = ents[eid][1][0]
-        changed = merge.merge(docs, fits[0], eid, None, counts)
-        out.append((label, ents[fits[0]][1][0], changed))
-        ents[fits[0]][1].extend(n for n in ents[eid][1] if n not in ents[fits[0]][1])
-        forget(eid)
-        ents.pop(eid, None)
+        target = fits[0]
+        if first.get(target, (0, 0))[0] < first.get(eid, (0, 0))[0] \
+                or min(tie_at.get(r["id"], (1 << 30, 0)) for _, r in ties) > first.get(target, (-1, -1)) \
+                or any({r["src"], r["dst"]} == {target, eid} for r in rels) \
+                or hidden_identity(facets.get(eid, []), events, eid, target):
+            continue
+        label, keep_label = ents[eid][1][0], ents[target][1][0]
+        changed = merge.merge(docs, eid, target, None, counts)
+        out.append((label, keep_label, changed))
+        ents[eid][1].extend(n for n in ents[target][1] if n not in ents[eid][1])
+        forget(target)
+        ents.pop(target, None)
     return out
 
 
