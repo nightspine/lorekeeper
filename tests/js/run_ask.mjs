@@ -1,6 +1,6 @@
 // The Ask tab's rule for when a thread must go: revealsLess(snapshot, view, position). Run by tests/test_js_ask.py.
 import assert from "node:assert/strict";
-import { anyRevealsLess, draftAfterInput, revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
+import { anyRevealsLess, draftAfterInput, historyFor, revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
 
 const ent = (id, name, aliases = [], extra = {}) => ({ id, name, aliases, profile: null, facets: [], history: [], ...extra });
 const view = (o = {}) => ({ entities: [ent("E1", "Holmes")], relations: [], relationHistory: [], events: [{ id: "V1" }], chapters: [{ id: "C1" }], recap: { id: "R1" }, ...o });
@@ -64,4 +64,15 @@ t("emptied by hand leaves nothing to clear", () => {
   const draft = draftAfterInput(null, "Who", take(view(), pos()));
   assert.equal(draftAfterInput(draft, "  ", take(view(), pos())), null);
   assert.equal(anyRevealsLess([null], view(), pos({ ord: 0 })), false);
+});
+
+const turn = (q, note = null, state = "ok") => ({ q, state, a: { answer: `A ${q}`, cites: [{ id: "E1" }], note } });
+t("history skips refused turns and keeps the rest", () => {
+  const h = historyFor([turn("one"), turn("Does Moriarty come back?", "unknown name"), turn("two", "refused: outside knowledge"),
+    turn("three", "rewritten: outside knowledge"), turn("bad", null, "error"), turn("four")]);
+  assert.deepEqual(h.map((x) => x.question), ["one", "three", "four"]);
+  assert.deepEqual(h[0], { question: "one", answer: "A one", cites: ["E1"] });
+});
+t("history keeps the last six", () => {
+  assert.equal(historyFor(Array.from({ length: 9 }, (_, i) => turn(`q${i}`))).length, 6);
 });
