@@ -77,9 +77,9 @@ GABRIEL = _new("Gabriel de Leon", 2)
 
 
 def test_bare_kin_and_role_words():
-    for bad in ("Father", "Mama", "mother", "my mother", "the boy", "His father", "the old man", "Guards", "Papa", "the voice", "Frère", "Maman"):
+    for bad in ("Father", "Mama", "mother", "my mother", "the boy", "His father", "the old man", "Papa", "the boy", "Frère", "Maman"):
         assert generate.bare_kin_word(bad), bad
-    for ok in ("Uncle Vernon", "Father Brown", "Mother Superior", "Aunt Petunia", "Gabriel's father", "Mina", "Mr. Holmwood"):
+    for ok in ("Uncle Vernon", "Father Brown", "Mother Superior", "Aunt Petunia", "Gabriel's father", "Mina", "Mr. Holmwood", "Big Brother", "Porter", "The Stranger", "the Guards", "the driver", "Mama (Auriél)"):
         assert not generate.bare_kin_word(ok), ok
 
 
@@ -159,7 +159,8 @@ def test_an_unnamed_relative_needs_a_part_and_a_named_owner(book, tmp_path):
     ix, report = run(book, tmp_path, ch1)
     assert sorted(names(ix)) == ["gabriel-de-leon", "gabriels-sister"]
     stats = report["stats"]
-    assert stats["dropped: unnamed relative with no part"] == 3          # father, cousin, old priest
+    assert stats["dropped: unnamed relative with no part"] == 2          # father, cousin
+    assert stats["dropped: unnamed person with no part"] == 1            # the old priest
     assert stats["dropped: unnamed relative of no one known"] == 1       # Dior is nobody yet
 
 
@@ -289,7 +290,7 @@ def test_tidy_does_not_fold_a_kin_description_when_two_relatives_fit():
     ("father", "father of", True), ("father", "stepfather of", False), ("stepfather", "father of", False),
     ("half-sister", "sister of", False), ("elder sister", "younger sister of", False),
     ("elder sister", "elder sister of", True), ("elder sister", "sister of", False), ("sister", "elder sister of", True),
-    ("sister", "foster sister of", False), ("late father", "father of", True)])
+    ("sister", "foster sister of", False), ("late father", "father of", False), ("late wife", "late wife of", True)])
 def test_modifiers_must_agree(described, tie, ok):
     from lorekeeper import kinship
     a, b = kinship.parse(described), kinship.parse(tie)
@@ -402,3 +403,74 @@ def test_tidy_remembers_a_hidden_identity_from_an_earlier_book():
          "text": "An unidentified woman who follows Gabriel."})
     two = _doc("two", [_e("gabriels-sister", ["Gabriel's sister"], [("a2", "Waits at the inn.")], frm="a2")])
     assert profiles.tidy([one, two])["kin_folded"] == []
+
+
+# ---- round 4 ---------------------------------------------------------------------------------------
+
+def test_note_names_win_over_a_bare_or_generic_outer():
+    known = lambda n: None  # noqa: E731
+    assert generate.triage_name("the boy (Harry)", "person", known) == ("name", "Harry")
+    assert generate.triage_name("my mother (Auriél)", "person", lambda n: "auriel") == ("known", "auriel")
+    assert generate.triage_name("John Porter (Jack)", "person", known) == ("name", "John Porter")   # outer is a name
+
+
+def test_late_must_agree():
+    from lorekeeper import kinship
+    late, plain = kinship.parse("late wife"), kinship.parse("wife of")
+    assert not generate.kin_modifiers_agree(late["modifiers"], plain["modifiers"])
+    assert not generate.kin_modifiers_agree(plain["modifiers"], late["modifiers"])
+
+
+def test_adopted_and_adoptive_swap_when_read_from_the_owners_end(book):
+    g = _gen(book)
+    _person(g, "gabriel", "Gabriel de Leon", 1)
+    _person(g, "ezra", "Ezra Pike", 2)
+    g.relations.append({"id": "r1", "src": "gabriel", "dst": "ezra", "label": "adopted son of"})   # Ezra adopted him
+    assert g.kin_match("Gabriel's adoptive father")[0] == "one"
+
+
+def test_groups_are_not_dropped_as_kin_words(tmp_path, monkeypatch):
+    monkeypatch.setattr(tg, "CH2", CH2)
+    book = tg.make_epub(tmp_path / "g.epub", ch1=[*CH1, "The Guards watched the gate of Aveline closely all through that night."])
+    ch1 = _resp(new=[GABRIEL, _new("the Guards", 6, "group")], updates=[
+        {"id": "the Guards", "p": 6, "desc": "Watch the gate of Aveline and let nobody pass."}])
+    ix, report = run(book, tmp_path, ch1)
+    assert "the-guards" in names(ix) and not report["stats"].get(generate.KIN_NOT_NAME)
+
+
+def test_a_matched_relative_keeps_its_profile(book_a, tmp_path):
+    first = dict(AMELIE_FIRST, profiles=[{"id": "Amelie de Leon", "p": 6,
+                                          "text": "A tall healer who sits by the fire in the common room, Gabriel's sister."}])
+    ch2 = _resp(new=[{**_new("Gabriel's sister", 2), "desc": "A woman who greets Gabriel warmly in the courtyard."}])
+    ix, report = run(book_a, tmp_path, first, ch2)
+    amelie = next(e for e in ix["entities"] if e["id"] == "amelie-de-leon")
+    assert [f["text"] for f in amelie["facets"] if f.get("kind") == "profile"] == [
+        "A tall healer who sits by the fire in the common room, Gabriel's sister."]
+    assert report["stats"]["dropped: desc of a matched relative"] == 1
+
+
+def test_a_description_of_an_unnamed_owner_needs_a_part_not_a_drop(book, tmp_path):
+    g = _gen(book)
+    _person(g, "innkeeper", "the innkeeper", 1)
+    assert g.kin_match("the innkeeper's wife")[0] == "unknown"           # a known description as owner: needs a part
+    _person(g, "keeper2", "the keeper", 2)
+    assert g.kin_match("the keeper's wife")[0] == "unknown"
+    assert g.kin_match("Nobody's wife")[0] == "no owner"
+
+
+def test_tidy_folds_a_kin_entry_with_a_tie_and_removes_one_without():
+    from .test_profiles import _e
+    doc = tg_doc()
+    doc["entities"].append(_e("wulfric", ["Wulfric"], [("a4", "A silver lord.")], frm="a4"))
+    doc["relations"] += [
+        {"id": "r8", "src": "wulfric", "dst": "gabriel", "label": "father of", "kind": "family", "from": "a4",
+         "basis": "stated", "evidence": ["a4"]},
+        {"id": "r9", "src": "father", "dst": "gabriel", "label": "father of", "kind": "family", "from": "a3",
+         "basis": "stated", "evidence": ["a3"]}]
+    t = profiles.tidy([doc])
+    ids = [e["id"] for e in doc["entities"]]
+    assert "Father" not in t["removed"] and "Mama" in t["removed"]       # Mama's tie finds no named mother
+    assert "father" in ids and "wulfric" not in ids and "mama" not in ids   # the entry keeps its id and takes the name
+    father = next(e for e in doc["entities"] if e["id"] == "father")
+    assert "Wulfric" in {n["value"] for n in father["names"]}
+    assert not [e for e in validate.check_index(doc) if e.level == "error"]

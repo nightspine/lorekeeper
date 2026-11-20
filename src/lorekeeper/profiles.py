@@ -17,10 +17,10 @@ from __future__ import annotations
 
 from collections import Counter
 
-from . import merge
+from . import kinship, merge
 from .generate import (_POSSESSIVE, HINDSIGHT, MOMENTARY, SYSTEM, bare_kin_word, hidden_identity, is_description,
                        kin_description, kin_ties, sex_of, triage_name)
-from .generate import _gender, identity_modifiers
+from .generate import _gender, flip_modifiers, identity_modifiers
 
 
 def generate_possessive(name: str) -> bool:
@@ -79,15 +79,13 @@ def tidy(docs: list[dict]) -> dict:
     """Remove description-entities and fold wrapped references into their entity, in every doc.
     Returns {"removed": [names], "merged": [(drop name, keep name)], "changed": set of doc positions}."""
     ents, known, forget = _finder(docs)
-    removed, merged, changed = [], [], set()
+    removed, merged, changed, bare = [], [], set(), []
     counts = merge.word_counts(docs)
     for eid, (etype, names) in list(ents.items()):
         if not names or eid not in ents:
             continue
         if etype == "person" and all(bare_kin_word(n) for n in names):
-            changed |= set(remove(docs, eid))   # "Mama", "Father", "the boy": never a person of their own
-            removed.append(names[0])
-            forget(eid)
+            bare.append(eid)   # "Mama", "Father", "the boy": removed below unless a kin tie says whose they are
             continue
         verdicts = [triage_name(n, etype, lambda x: known(x, etype, eid)) for n in names]
         if all(v[0] == "drop" for v in verdicts):
@@ -105,13 +103,19 @@ def tidy(docs: list[dict]) -> dict:
             merged.append((names[0], ents[target][1][0]))
             ents[target][1].extend(n for n in names if n not in ents[target][1])
             forget(eid)
-    kin_folded = _fold_kin(docs, ents, known, forget, counts)
+    kin_folded = _fold_kin(docs, ents, known, forget, counts, bare)
     for _, _, i in kin_folded:
         changed |= set(i)
+    for eid in bare:
+        if eid in ents and all(bare_kin_word(n) for n in ents[eid][1]):   # not folded: never a person of their own
+            changed |= set(remove(docs, eid))
+            removed.append(ents[eid][1][0])
+            forget(eid)
+            ents.pop(eid, None)
     return {"removed": removed, "merged": merged, "kin_folded": [(a, b) for a, b, _ in kin_folded], "changed": changed}
 
 
-def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple[str, str, list[int]]]:
+def _fold_kin(docs: list[dict], ents: dict, known, forget, counts, bare=()) -> list[tuple[str, str, list[int]]]:
     """Fold the one named person the relations tie to X as his <kin> into the person known only as "X's <kin>"
     (the description keeps its id, so no id carries a name the reader has not reached), when
     - exactly one such description exists for X and exactly one named person fits (`kin_ties`, modifiers agreeing);
@@ -120,7 +124,8 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
     - the tie that identifies them comes at or before the named person's first appearance (anchor order within a
       book, series order across books), so no position shows both names without the tie;
     - nothing ties the two together and the text keeps no identity back (`hidden_identity`).
-    Returns (description, named, changed doc positions)."""
+    An entry named only by a kin word ("Mother") that carries a kin tie ("mother of Darrow") is the description
+    "Darrow's mother" and is folded the same way (`bare`: their ids). Returns (description, named, changed doc positions)."""
     rels = [r for d in docs for r in d.get("relations", [])]
     events = [ev for d in docs for ev in d.get("events", [])]
     facets: dict[str, list[str]] = {}
@@ -146,6 +151,23 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
                 groups.setdefault((owner, kd[1]["role"], _gender(kd[1]["word"]), identity_modifiers(kd[1]["modifiers"])),
                                   []).append((eid, kd[1]))
                 break
+    for eid in bare:
+        word = _plain_last(ents[eid][1][0])
+        for r in rels:
+            p = kinship.parse(r["label"])
+            if not p or eid not in (r["src"], r["dst"]) or r["src"] == r["dst"]:
+                continue
+            if r["src"] == eid:
+                owner, parsed = r["dst"], dict(p)
+            else:
+                role = kinship.ROLES.get(p["role"], p["role"])
+                owner, parsed = r["src"], {"role": role, "word": role, "modifiers": flip_modifiers(p["modifiers"])}
+            if not _gender(parsed["word"]) and _gender(word):
+                parsed["word"] = word   # the entry's own word says which: "Mother" is a mother
+            if named(owner):
+                groups.setdefault((owner, parsed["role"], _gender(parsed["word"]), identity_modifiers(parsed["modifiers"])),
+                                  []).append((eid, parsed))
+                break
     out = []
     for (owner, *_), found in groups.items():
         if len(found) != 1:
@@ -168,6 +190,11 @@ def _fold_kin(docs: list[dict], ents: dict, known, forget, counts) -> list[tuple
         forget(target)
         ents.pop(target, None)
     return out
+
+
+def _plain_last(name: str) -> str:
+    w = name.split()
+    return w[-1].casefold().strip(".,") if w else ""
 
 
 def remove(docs: list[dict], eid: str) -> list[int]:

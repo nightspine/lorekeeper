@@ -176,11 +176,9 @@ BARE_WORDS = frozenset({
     "father", "mother", "mama", "mum", "mummy", "mom", "mommy", "dad", "daddy", "papa", "da", "ma", "pa", "parent",
     "parents", "brother", "sister", "son", "daughter", "child", "baby", "uncle", "aunt", "auntie", "cousin", "nephew",
     "niece", "grandmother", "grandfather", "grandparent", "gran", "granny", "grandma", "grandpa", "wife", "husband",
-    "boy", "girl", "man", "woman", "lad", "lass", "stranger", "guard", "soldier", "servant", "maid", "voice",
-    "frere", "pere", "mere", "soeur", "maman", "figure", "visitor", "messenger", "boatman", "driver", "coachman", "porter"})
+    "boy", "girl", "man", "woman", "lad", "lass", "frere", "pere", "mere", "soeur", "maman"})
 _BARE_LEAD = {"the", "a", "an", "my", "his", "her", "their", "our", "your", "its", "this", "that", "old", "young", "little",
-              "poor", "dead", "late", "elder", "older", "younger", "eldest", "youngest", "big", "tall", "dark", "strange",
-              "other", "new"}
+              "poor", "dead", "late"}   # no "big"/"elder"...: "Big Brother" is a name
 KIN_NOT_NAME = "dropped: kin or role word, not a name"
 # A description entity whose notes say the text keeps its identity back is not folded into whoever turns out to be it.
 HIDDEN_IDENTITY = re.compile(r"\b(identity|unnamed|nameless|unidentified|unknown (?:man|woman|person|figure|stranger|girl|boy)|"
@@ -188,9 +186,12 @@ HIDDEN_IDENTITY = re.compile(r"\b(identity|unnamed|nameless|unidentified|unknown
 
 
 def bare_kin_word(name: str) -> bool:
-    """True when `name` is only a kin or role word once a leading article, possessive pronoun or plain adjective
-    is taken off ("Father", "Mama", "my mother", "the old man"). A possessive ("Gabriel's father") is not bare;
-    a kin word with a proper name ("Uncle Vernon", "Father Brown", "Mother Superior") is not either."""
+    """True when `name` is only a kin or generic person word once a leading article, possessive pronoun or plain
+    adjective is taken off ("Father", "Mama", "my mother", "the old man", "the boy"). A possessive ("Gabriel's
+    father") is not bare; a kin word with a proper name ("Uncle Vernon", "Father Brown", "Mother Superior") is not
+    either. Accepted loss: a book whose protagonists are only "the man" or "Ma" gets no such entries, because kin
+    words as people were the complaint; one-off roles ("a guard", "the porter") are left to the prompt and the
+    has-part rule."""
     if _POSSESSIVE.search(name or ""):
         return False
     note = re.search(r"\(([^)]*)\)", name or "")
@@ -235,15 +236,17 @@ def sex_of(names: list[str], relations: list[dict], eid: str) -> str | None:
 
 
 _AGE = {"elder": "older", "older": "older", "eldest": "older", "younger": "younger", "youngest": "younger"}
-_STATUS_MODS = {"late"}   # "his late father" says how things stand, not who he is
+_STATUS_MODS: frozenset = frozenset()   # "late", "former" and "ex" must agree too: "Maxim's late wife" is not "wife of Maxim"
 
 
 def kin_modifiers_agree(described: list[str], tie: list[str]) -> bool:
     """Whether a description's modifiers fit a tie's. Everything that changes who the person is (step, half,
-    in-law, foster, adoptive, great, ex...) must be the same on both sides, so an unmodified "father" never
-    matches "stepfather of". An age word ("elder", "younger") must agree with the tie's if the tie has one; an
-    unmodified description matches a tie that carries only an age word ("sister" may be "elder sister of")."""
-    strict = lambda mods: {m for m in mods if m not in _AGE and m not in _STATUS_MODS}  # noqa: E731
+    in-law, foster, adoptive, great, late, former, ex...) must be the same on both sides, so an unmodified "father" never
+    matches "stepfather of". An age word ("elder", "younger") on the description must be on the tie too and agree
+    with it; an unmodified description matches a tie that carries only an age word ("sister" may be "elder
+    sister of"). `strict` sets compare equal, so adopted and adoptive are different words, flipped by kin_ties
+    when a tie is read from the owner's end."""
+    strict = lambda mods: {{"adopted": "adoptive"}.get(m, m) for m in mods if m not in _AGE and m not in _STATUS_MODS}  # noqa: E731
     age = lambda mods: {_AGE[m] for m in mods if m in _AGE}  # noqa: E731
     if strict(described) != strict(tie):
         return False
@@ -252,7 +255,14 @@ def kin_modifiers_agree(described: list[str], tie: list[str]) -> bool:
 
 def identity_modifiers(mods: list[str]) -> frozenset:
     """The modifiers that change who a kin word names (step, half, in-law...): what groups descriptions."""
-    return frozenset(m for m in mods if m not in _AGE and m not in _STATUS_MODS)
+    return frozenset({"adopted": "adoptive"}.get(m, m) for m in mods if m not in _AGE and m not in _STATUS_MODS)
+
+
+def flip_modifiers(mods: list[str]) -> list[str]:
+    """A tie's modifiers seen from the other end: age words swap, adopted and adoptive swap."""
+    swap = {"elder": "younger", "eldest": "youngest", "older": "younger", "younger": "older", "youngest": "eldest",
+            "adopted": "adoptive", "adoptive": "adopted"}
+    return [swap.get(m, m) for m in mods]
 
 
 def kin_ties(relations: list[dict], owner: str, parsed: dict, sex, usable) -> list[tuple[str, dict]]:
@@ -271,9 +281,9 @@ def kin_ties(relations: list[dict], owner: str, parsed: dict, sex, usable) -> li
             other, g = r["src"], _gender(p["word"])    # "<other> father of <owner>": the word is about `other`
         elif r["src"] == owner and p["role"] == back:
             other, g = r["dst"], None                  # "<owner> son of <other>": nothing said about `other`
-            # An age word then describes the owner, so `other` is the opposite ("Gabriel elder brother of Celene").
-            mods = [{"elder": "younger", "eldest": "youngest", "older": "younger", "younger": "older",
-                     "youngest": "eldest"}.get(m, m) for m in mods]
+            # An age word then describes the owner, so `other` is the opposite ("Gabriel elder brother of Celene");
+            # adopted and adoptive swap the same way.
+            mods = flip_modifiers(mods)
         else:
             continue
         if not kin_modifiers_agree(parsed["modifiers"], mods):
@@ -533,18 +543,17 @@ def triage_name(raw, etype: str | None, known) -> tuple[str, str]:
     """
     name = " ".join(str(raw or "").split())
     m = re.fullmatch(r"(?P<outer>.+?)\s*\((?P<inner>[^)]*)\)", name)
+    inner = m["inner"].strip() if m else ""
+    if m and inner[:1].isupper() and bare_kin_word(m["outer"]) and not bare_kin_word(inner):
+        # "Mama (Auriél)", "the boy (Harry)": a kin or generic word with the name in a note is that name.
+        eid = known(inner)
+        return ("known", eid) if eid else ("name", inner)
     if m and m["inner"].strip() and _described(m["outer"]):
         # "Chevalier of the Golden Host (Gabriel)": a title or description, then who it is. A name
         # with a note ("Lashaame (High Inquisitrix)") stays that name: the note may be a shared title.
         eid = known(m["inner"].strip())
         if eid:
             return "known", eid
-    inner = m["inner"].strip() if m else ""
-    if m and inner[:1].isupper() and clean_name(m["outer"]) != name and not _described(m["outer"]) \
-            and _plain_words(clean_name(m["outer"])) and _plain_words(clean_name(m["outer"]))[-1] in BARE_WORDS:
-        # "Mama (Auriél)": a kin word with the name in a note is that name.
-        eid = known(inner)
-        return ("known", eid) if eid else ("name", inner)
     name = clean_name(name)
     m = _POSSESSIVE.match(name)
     if m:
@@ -916,14 +925,16 @@ class Generator:
 
     def kin_match(self, name: str, known=None) -> tuple[str, list[str]]:
         """What a possessive kin description ("Gabriel's sister") stands for: ("none", []) when it is not one,
-        ("no owner", []) when its owner is not a known named entity, ("unknown", []) when the owner is known and
+        ("no owner", []) when its owner is not known at all, ("unknown", []) when the owner is known (named or not) and
         no tie fits, else ("one", [id]) or ("several", ids). `known(name)` finds the owner (default `match_known`)."""
         kd = kin_description(name)
         if not kd:
             return "none", []
         owner = known(kd[0]) if known else self.match_known(kd[0], "person")
-        if not owner or not self._named(owner):
+        if not owner:
             return "no owner", []
+        if not self._named(owner):
+            return "unknown", []   # "the innkeeper's wife": the owner is a known description; it needs a part like any
         hits = self.kin_relatives(owner, kd[1])
         return ("one" if len(hits) == 1 else "several" if hits else "unknown"), hits
 
@@ -1440,7 +1451,7 @@ class Generator:
         proposals.sort(key=lambda ne: bool(kin_description(clean_name(ne.get("name", "")))))
         for i, ne in enumerate(proposals):
             proposed = clean_name(ne.get("name", ""))
-            if ne.get("type") in ("person", "group") and bare_kin_word(ne.get("name", "")):   # raw: a note may name them
+            if ne.get("type") == "person" and bare_kin_word(ne.get("name", "")):   # raw: a note may name them
                 self.stats[KIN_NOT_NAME] += 1   # "Father", "Mama", "the boy": never a person of their own
                 continue
             verdict, value = triage_name(ne.get("name", ""), ne.get("type"),
@@ -1448,11 +1459,12 @@ class Generator:
             if verdict == "drop":
                 self.stats[f"dropped: {value}"] += 1
                 continue
-            matched = "descriptions matched to a known entity"
+            matched, kin_matched = "descriptions matched to a known entity", False
             if verdict == "name" and ne.get("type") == "person" and is_description(value):
                 found, hits = self.kin_match(value, lambda n: here(n) or self.match_known(n, "person"))
                 if found == "one":
                     verdict, value, matched = "known", hits[0], "kin descriptions matched to a known relative"
+                    kin_matched = True
                 elif found == "several":
                     self.stats["dropped: kin description fits several"] += 1
                     continue
@@ -1460,7 +1472,8 @@ class Generator:
                     self.stats["dropped: unnamed relative of no one known"] += 1
                     continue
                 elif not has_part(value) and not has_part(proposed):
-                    self.stats["dropped: unnamed relative with no part"] += 1
+                    self.stats["dropped: unnamed relative with no part" if kin_description(value)
+                               else "dropped: unnamed person with no part"] += 1
                     continue
             name = value if verdict == "name" else proposed
             at = seq(ne.get("p"))
@@ -1508,7 +1521,9 @@ class Generator:
             if ne.get("_couple"):
                 couples.setdefault(self._core(ne["_couple"]), []).append(eid)
                 new_by_name.setdefault(self._core(ne["_couple"]), eid)
-            if str(ne.get("desc", "")).strip():
+            if kin_matched and str(ne.get("desc", "")).strip():
+                self.stats["dropped: desc of a matched relative"] += 1   # it would replace the relative's own profile
+            elif str(ne.get("desc", "")).strip():
                 desc_at = seq(ne.get("desc_p"))
                 desc_at = max(at, desc_at if desc_at is not None else chunk.end)
                 c = self._candidate("facet", f"n{i}", ne["desc"], desc_at, [], [eid], 280)
@@ -1536,7 +1551,7 @@ class Generator:
         for nn in raw.get("names", []):
             at = seq(nn.get("p"))
             eid = resolve(nn.get("id", ""), at)
-            if nn.get("name") and bare_kin_word(nn["name"]):
+            if nn.get("name") and eid and self._type(eid) == "person" and bare_kin_word(nn["name"]):
                 self.stats[KIN_NOT_NAME] += 1   # "Mama" is a different person to each character
                 continue
             if nn.get("name"):
