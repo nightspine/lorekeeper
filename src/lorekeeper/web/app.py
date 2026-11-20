@@ -866,7 +866,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             ask_slots["n"] += 1
         try:
             budget = askmod.OLLAMA_BUDGET if c["local"] else askmod.DEFAULT_BUDGET
-            got = await asyncio.to_thread(askmod.answer, view, question, c["model"], turns, budget, titles)
+            got = await asyncio.to_thread(askmod.answer, view, question, c["model"], turns, budget, titles,
+                                          askmod.ROSTER_CHARS if not c["local"] else 0)
         except llm.ProviderError as e:
             return ask_error(502, "model-failed", str(e)[:200])
         except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key

@@ -22,6 +22,23 @@ from lorekeeper import ask, llm
 from lorekeeper.gating import Position, view
 
 
+class _Recorder:
+    """Wraps the model to print what the roster pick returned."""
+
+    def __init__(self, inner):
+        self.inner, self.picked = inner, None
+
+    @property
+    def usage(self):
+        return getattr(self.inner, "usage", None)
+
+    def complete(self, system, prompt, schema, prefix=None):
+        r = self.inner.complete(system, prompt, schema, prefix)
+        if schema == ask.PICK_SCHEMA:
+            self.picked = (r or {}).get("ids")
+        return r
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("index", nargs="+", type=Path)
@@ -32,6 +49,8 @@ def main() -> None:
     ap.add_argument("--model")
     ap.add_argument("--budget", type=int)
     ap.add_argument("--show-slice", action="store_true")
+    ap.add_argument("--roster", type=int, help="roster size in characters for questions that name nobody "
+                    "(default: ask.ROSTER_CHARS for a cloud provider, 0 for ollama)")
     ap.add_argument("--fresh", action="store_true", help="no history between questions")
     ap.add_argument("questions", nargs="*")
     a = ap.parse_args()
@@ -54,6 +73,7 @@ def main() -> None:
     budget = a.budget or (ask.OLLAMA_BUDGET if a.provider == "ollama" else ask.DEFAULT_BUDGET)
     print(f"view at {anchor}: {len(v['entities'])} entries, {len(v['relations'])} connections, "
           f"{len(v['events'])} events, {len(v['chapters'])} chapter recaps", file=sys.stderr)
+    roster = a.roster if a.roster is not None else (0 if a.provider in (None, "ollama") else ask.ROSTER_CHARS)
     history: list[ask.Turn] = []
     for q in a.questions:
         print(f"\n> {q}")
@@ -65,7 +85,10 @@ def main() -> None:
             continue
         if a.fresh:
             history = []
-        r = ask.answer(v, q, model, history, budget, books)
+        rec = _Recorder(model)
+        r = ask.answer(v, q, rec, history, budget, books, roster)
+        if rec.picked is not None:
+            print(f"  picked: {rec.picked}")
         print(r.answer)
         print(f"  found={r.found} note={r.note!r} slice={r.context_chars} chars usage={r.usage}")
         for c in r.cites:
