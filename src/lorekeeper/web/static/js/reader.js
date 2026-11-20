@@ -1416,7 +1416,6 @@ export function mountReader(root) {
   function buildCard(e, b, bookEvents, order) {
     const now = b === s.book;
     const full = s.series.books.find((x) => x.key === b)?.title || b;
-    const short = bookShort(b);
     const heading = `${bookNumber(b, order)}${full}${now ? ", so far" : ""}`;
     // Profiles of this book, in view order. The latest one overall is already shown under "Who they are".
     const profiles = [...e.history.filter((f) => f.book === b && isProfile(f.id)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
@@ -1433,7 +1432,7 @@ export function mountReader(root) {
       const more = h("button.linkish.arc-more", { type: "button", "aria-expanded": "false", on: { click: () => {
         const open = p.classList.toggle("clamp") === false;
         more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Show less" : "Read more"; } } }, "Read more");
-      desc = h("div.arc-desc", h("span.eyebrow", `At the end of ${short}`), p, more);
+      desc = h("div.arc-desc", h("span.eyebrow", `At the end of ${full}`), p, more);
       // A short text needs no control; the clamp is measured once the card is in the page.
       queueMicrotask(() => requestAnimationFrame(() => { if (p.isConnected && p.scrollHeight <= p.clientHeight + 1) more.hidden = true; }));
     }
@@ -1444,12 +1443,12 @@ export function mountReader(root) {
     const turns = main.filter((ev) => ev.kind === "turn").slice(-4);
     const shownEv = turns.length >= 4 ? new Set(turns) : new Set([...turns, ...main.filter((ev) => ev.kind !== "turn").slice(-(4 - turns.length))]);
     const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
-    const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${short}`) : null;
+    const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
     return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full },
       h("div.book-head", h("h3.book-title", { title: full }, heading)),
       desc, eventsNode,
-      details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${short}`), list(details)) : null,
+      details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${full}`), list(details)) : null,
       impressions.length ? h("details.history", h("summary", `Earlier impressions (${impressions.length})`), list(impressions)) : null);
   }
 
