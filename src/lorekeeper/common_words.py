@@ -171,7 +171,7 @@ sixth seventh eighth ninth tenth half double triple
 monday tuesday wednesday thursday friday saturday sunday january february march april june july august september
 october november december christmas easter
 mr mrs ms dr st
-hometown homeland homes homeless whilst amongst thereafter thereby therein thereof thence hereby herein hereafter forthwith nonetheless notwithstanding
+ok okay ah eh hi ha yo hometown homeland homes homeless whilst amongst thereafter thereby therein thereof thence hereby herein hereafter forthwith nonetheless notwithstanding
 moreover furthermore consequently accordingly subsequently previously eventually ultimately immediately instantly
 initially originally apparently presumably evidently obviously clearly certainly definitely possibly probably
 perhaps merely simply solely partly mostly mainly largely entirely completely totally absolutely utterly fully
@@ -233,3 +233,17 @@ def _build() -> frozenset[str]:
 
 
 COMMON: frozenset[str] = _build()
+
+# Words that are ordinary English but also read as names (occupational surnames, first names, titles that
+# stand alone): in COMMON, so a question may use them freely, but not excused at the start of an answer's
+# sentence, where "Hunter arrives at dusk" would otherwise let an invented character through.
+NAME_LIKE_BASE = """
+hunter archer baker butcher carpenter cook cooper fisher miller mason porter shepherd smith taylor tailor turner
+walker carter weaver fletcher bishop knight king prince page parker marsh grant herb june lance penny price ray
+rob rod drew duke clay cliff major rich chip miner farmer glover thatcher wright sawyer chandler dyer fowler
+forester gardener hayward lord lady sir captain sergeant colonel
+""".split()
+NAME_LIKE: frozenset[str] = frozenset(NAME_LIKE_BASE)
+
+# What a sentence may open with without the index having said it: ordinary words that are not name-like.
+SENTENCE_FIRST: frozenset[str] = COMMON - NAME_LIKE
