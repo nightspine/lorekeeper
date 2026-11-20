@@ -96,10 +96,25 @@ def clear(d: dict) -> int:
     return n
 
 
+_FACET_PATH = re.compile(r"entities\[(\d+)\]\.facets\[(\d+)\]")
+
+
 def drop_named(d: dict, messages: list[str]) -> int:
-    """Remove the arcs whose ids the validator messages name (and any reference to them in `replaces`); returns how many."""
+    """Remove the arcs the validator messages are about (and any reference to them in `replaces`); returns how many.
+    A message names its item by position ("entities[3].facets[7]"); only when none of them points at an arc are the
+    arc ids it quotes (repr-quoted whole ids, so "arc-1" never matches "arc-10") taken as the culprits."""
     arcs_ = {f["id"] for e in d["entities"] for f in e.get("facets", []) if f.get("kind") == "arc"}
-    bad = {i for i in arcs_ if any(i in m for m in messages)}
+    bad: set[str] = set()
+    for m in messages:
+        for a, b in _FACET_PATH.findall(m):
+            try:
+                f = d["entities"][int(a)]["facets"][int(b)]
+            except (IndexError, KeyError):
+                continue
+            if f.get("kind") == "arc":
+                bad.add(f["id"])
+    if not bad:
+        bad = {i for i in arcs_ if any(repr(i) in m or f'"{i}"' in m for m in messages)}
     for e in d["entities"]:
         e["facets"] = [f for f in e.get("facets", []) if f["id"] not in bad]
         for f in e["facets"]:

@@ -1050,3 +1050,22 @@ def test_a_later_arc_is_absent_from_an_early_view(sherlock):
     assert not any(t in c[1] for c in fake.calls for t in hidden.values())
     sl = ask.select(late, "What happened to Holmes?", [], 40_000, BOOKS)
     assert any(f"[a:{i}]" in sl.text for i in late_arcs)
+
+
+def test_final_trim_drops_the_oldest_arc_line_first():
+    v = arc_view()
+    seen_only_newest = False
+    for budget in range(ask.select(v, "What happened to Gabriel?", [], 20_000, AB).chars, 150, -7):
+        sl = ask.select(v, "What happened to Gabriel?", [], budget, AB)
+        has1, has2 = "[a:A1]" in sl.text, "[a:A2]" in sl.text
+        assert not (has1 and not has2), budget          # the newest book's line is never cut while an older one stays
+        seen_only_newest |= has2 and not has1
+    assert seen_only_newest
+
+
+def test_an_oversized_arc_id_is_never_sent_or_citable():
+    v = arc_view()
+    v["entities"][0]["arcs"][0]["id"] = "A" * (ask.MAX_ID + 1)
+    sl = ask.select(v, "What happened to Gabriel?", [], 20_000, AB)
+    assert "A" * 20 not in sl.text and "Gabriel fled the cathedral" not in sl.text and "[a:A2]" in sl.text
+    assert all(t.get("id") != "A" * (ask.MAX_ID + 1) for t in sl.tags.values())
