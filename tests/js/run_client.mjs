@@ -10,7 +10,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "../..");
 const C = await import(join(root, "src/lorekeeper/web/static/js/lorekeeper-client.js"));
 const { words, fingerprint, textHash, blocksFromDocument, buildEdition, resolveAnchors, effectiveLocations,
-  frontier, locate, position, LorekeeperIndex, LocatorError, mentions, visibleNames, deriveNames } = C;
+  frontier, locate, position, LorekeeperIndex, LocatorError, mentions, visibleNames, deriveNames, MentionMatcher } = C;
 const fx = (n) => JSON.parse(readFileSync(join(resolve(process.argv[2] || join(here, "fixtures")), n), "utf8"));
 const canon = (v) => JSON.stringify(v, (k, x) =>
   x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort()) : x);
@@ -284,6 +284,14 @@ for (const c of fx("anchors.json")) {
     { a: ["Dr. Jekyll", "Jekyll"], b: ["Hyde"] }, 0);
   check("mentions: hand-made block", same(hid.counts, { a: [1], b: [1] }));
   check("mentions: before the first chapter", mentions([], [{ start: 5 }], { a: ["X"] }, 3).current === null);
+  for (const g of m.guard) {
+    const got = new MentionMatcher({ l: ["Lucy"], b: ["Brien"] }).find(g.raw);
+    check(`mentions guard parity: ${JSON.stringify(g.raw)}`, same(got, g.found), JSON.stringify(got));
+  }
+  check("deriveNames: a place does not suppress Dracula for the Count",
+    same(deriveNames([{ id: "d", type: "person", names: ["Count Dracula"] }, { id: "c", type: "place", names: ["Castle Dracula"] }]), { d: ["Dracula"] }));
+  check("deriveNames: two Potters derive no Potter",
+    same(deriveNames([{ id: "a", type: "person", names: ["Harry Potter"] }, { id: "b", type: "person", names: ["James Potter"] }]), { a: ["Harry"], b: ["James"] }));
   check("deriveNames: Count Dracula derives Dracula, not Count",
     same(deriveNames([{ id: "d", type: "person", names: ["Count Dracula"] }]), { d: ["Dracula"] }));
 }
