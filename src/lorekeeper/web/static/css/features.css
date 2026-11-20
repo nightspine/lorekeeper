@@ -208,3 +208,8 @@
   .d-kin .linkish { display: inline-flex; align-items: center; min-height: 44px; }
   .g-trees, .g-trees-wrap { min-height: 360px; height: 55vh; max-height: 460px; }
 }
+
+/* Where it comes up: the Passages fold gets a 44px hit area on a phone; the columns share the width at any size. */
+@media (max-width: 640px) {
+  details.passages summary { min-height: 44px; }
+}
