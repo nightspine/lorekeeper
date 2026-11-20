@@ -98,7 +98,7 @@ export function mountReader(root) {
   // Ask: questions answered from the index's notes at the position (ask.js). The thread lives in that closure.
   const ask = createAsk({
     key: () => s.key,
-    position: () => ({ anchor: s.map.frontier(s.p), finished: s.series ? finishedSet() : null, order: s.series ? s.order : null }),
+    position: askPosition,
     view: () => s.view,
     examples: askExamples, canOpen: canOpenCite, open: openCite,
     onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
@@ -192,7 +192,7 @@ export function mountReader(root) {
     if (stale()) return false;
     watchDupes(key);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
-    ask.check(key);   // another index: nothing asked about the last one stays
+    ask.check();   // another index: nothing asked about the last one stays
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
     if (!preview) await syncPosition(key);
@@ -763,7 +763,7 @@ export function mountReader(root) {
       }, 400);
     }
     s.prevIds = ids;
-    ask.check(s.key);   // moved back, a book unticked or switched: the thread goes
+    ask.check();   // moved back, a book unticked or switched: the thread goes
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1495,6 +1495,14 @@ export function mountReader(root) {
     if (!refresh) closeBtn.focus();
   }
 
+  /** Where the view on screen is computed: what the request sends, and what the thread is compared against. */
+  function askPosition() {
+    const anchor = s.map.frontier(s.p);
+    const order = s.series ? s.series.orders[s.order] : null;
+    const finished = s.series ? finishedSet() : null;
+    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book,
+      rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
+  }
   // ---- Ask: examples, sources, entry points -----------------------------------------------------
 
   /** Three questions built only from the gated view: the most known person, a second one, the last chapter read. */

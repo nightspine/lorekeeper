@@ -136,6 +136,19 @@ def test_history_is_cut_to_six_turns_and_fifteen_hundred_characters(ask):
     assert all(len(t.answer) == 1500 for t in seen["h"])
 
 
+def test_roster_is_for_a_cloud_model_only(ask):
+    import lorekeeper.ask as askmod
+    seen = {}
+    real = askmod.answer
+
+    def spy(view, question, llm_, history=(), budget=0, books=None, roster_chars=-1):
+        seen["r"] = roster_chars
+        return real(view, question, llm_, history, budget, books, roster_chars)
+    ask.mp.setattr(askmod, "answer", spy)
+    assert ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"}).status_code == 200
+    assert seen["r"] == askmod.ROSTER_CHARS == 120_000
+
+
 @pytest.mark.parametrize("body,status,code", [
     ({"question": ""}, 422, "bad-question"),
     ({"question": "   "}, 422, "bad-question"),
@@ -190,6 +203,13 @@ def test_ollama_busy(make):
         assert c.get("/api/ask").json()["local"] is True
         ok = c.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"})
         assert ok.status_code == 200 and ok.json()["local"] and ok.json()["provider"] == "ollama"
+        import lorekeeper.ask as askmod
+        seen = {}
+        real = askmod.answer
+        mp.setattr(askmod, "answer", lambda *a, **kw: (seen.update(r=a[6] if len(a) > 6 else kw.get("roster_chars")), real(*a, **kw))[1])
+        assert c.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"}).status_code == 200
+        assert seen["r"] == 0                                  # Ollama's context cannot hold a roster
+        mp.setattr(askmod, "answer", real)
         job = type("J", (), {"status": "running", "config": {"provider": "ollama"}})()
         c.app.state.jobs.jobs["busy"] = job
         r = c.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"})
