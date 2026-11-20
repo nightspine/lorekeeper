@@ -30,6 +30,9 @@ KEEP_LAST = 6              # an entry's last events and details are kept before 
 MAX_CONNECTIONS = 12       # connections printed per entry
 KIND_RANK = {"family": 0, "romance": 0, "service": 0, "alliance": 0, "hostility": 0, "friendship": 1,
              "acquaintance": 2, "place": 2}
+# Words that read the same both ways ("X is a friend of Y" is also "Y is a friend of X"); the others keep a direction.
+SYMMETRIC = {"brother", "sister", "sibling", "cousin", "friend", "rival", "lover", "wife", "husband", "spouse", "twin",
+             "ally", "enemy", "companion", "partner"}
 KIN_WORDS = set(w for t in generate.TIE_WORDS for w in text.words(t)) | {
     "master", "servant", "friend", "maker", "sire", "child", "children", "sibling", "grandmother", "grandfather",
     "stepmother", "stepfather", "boss", "mentor", "student", "apprentice", "enemy", "rival", "partner", "ally",
@@ -58,7 +61,8 @@ SYSTEM = f"""You answer a person's question about a book they are partway throug
 - Speak to the person as "you" and call the source "the index" ("The index doesn't say what became of her after that."). Never write "the notes", "the reader", "the reader's notes" or "tags".
 - Answer in 2 to 6 sentences of plain prose, with no markdown and no lists unless the person asks for one.
 - When the entries say two items share the name asked about, say so and answer for each.
-- Use names exactly as the entries spell them."""
+- Use names exactly as the entries spell them.
+- If the question also names someone the index has nothing on (the last line says so), leave that name out of your answer completely, even to say there is nothing on them: answer only the part about the others, and a sentence about the missing name is added for you."""
 
 STOP = set("""a about above after again against all am an and any are aren as at be because been before being below
 between both but by can could did do does doing don down during each few for from further had has have having he her
@@ -77,6 +81,7 @@ ORDINALS = {"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5, "sixth
 
 _PROPER = re.compile(r"(?<![.!?:;\"“(]\s)(?<!^)(?<![\w-])[A-Z][a-z]{2,}\b")   # as portraits._PROPER
 _TOKEN = re.compile(r"[^\W_][\w'’-]*")
+_RUN = re.compile(r"[A-Z][\w'’.-]*(?:\s+(?:(?:de|del|della|di|da|van|von|der|den|la|le|du|des|of|the)\s+)*[A-Z][\w'’.-]*)+")
 _POSS = re.compile(r"['’]s\b")
 _DELIM = re.compile(r"<\s*/?\s*notes\s*>", re.IGNORECASE)
 _VOICE = re.compile(r"\bthe (?:reader(?:['’]s)?(?: notes)?|notes|tags)\b", re.IGNORECASE)
@@ -88,7 +93,7 @@ _BOOK_N = [re.compile(r"\b(?:book|volume|part)\s+(\w+)\b"),
 @dataclass
 class Turn:
     question: str
-    answer: str
+    answer: str             # kept for the caller; never sent to the model (it is client text)
     cites: list[str] = field(default_factory=list)
 
 
@@ -170,8 +175,10 @@ class _Names:
     def __init__(self, entities: list[dict]):
         self.whole: dict[tuple[str, ...], set[str]] = {}
         self.part: dict[str, set[str]] = {}
+        self.forms: dict[str, tuple[bool, list[str]]] = {}
         for e in entities:
             person = e["type"] == "person"
+            self.forms[e["id"]] = (person, [_POSS.sub("", f) for f in [e["name"], *e.get("aliases", [])]])
             for form in [e["name"], *e.get("aliases", [])]:
                 c = merge.core(_POSS.sub("", form))
                 if not c or (len(c) == 1 and (len(c[0]) < 3 or c[0] in STOP)):
@@ -182,11 +189,39 @@ class _Names:
                         if len(w) >= 3 and w not in STOP and w not in merge.PARTICLES:
                             self.part.setdefault(w, set()).add(e["id"])
 
-    def find(self, toks: list[tuple[str, bool, bool]]) -> tuple[list[str], list[list[str]], set[int]]:
+    def runs(self, q: str, words: list[str]) -> list[tuple[str, int, int]]:
+        """Runs of adjacent capitalised words in the question (particles allowed inside), as
+        (text, first word index, last word index): each is one proposed name."""
+        out = []
+        for m in _RUN.finditer(_POSS.sub("", q)):
+            parts = m.group(0).split()
+            while parts and _norm(parts[0]) in STOP:        # "What Quincey Morris" → "Quincey Morris"
+                parts.pop(0)
+            if len(parts) < 2:
+                continue
+            ws = [w for p_ in parts for w in [_norm(p_)] if w]
+            for i in range(len(words) - len(ws) + 1):
+                if words[i:i + len(ws)] == ws:
+                    out.append((" ".join(parts), i, i + len(ws) - 1))
+                    break
+        return out
+
+    def find(self, toks: list[tuple[str, bool, bool]], q: str = "") -> tuple[list[str], list[list[str]], set[int]]:
         words = [t[0] for t in toks]
         hit: dict[str, int] = {}
         ambiguous: list[list[str]] = []
         used: set[int] = set()
+        # A run of capitalised words is one name: only the entries it fits are hits ("Quincey Morris" fits
+        # "Quincey P. Morris", not every Quincey and every Morris).
+        for text_, i, j in self.runs(q, words):
+            fits = sorted(eid for eid, (person, forms) in self.forms.items()
+                          if any(merge.extends(text_, f, person) or merge.same_person_name(text_, f) for f in forms))
+            if fits:
+                used.update(range(i, j + 1))
+                for x in fits:
+                    hit.setdefault(x, i)
+                if len(fits) > 1:
+                    ambiguous.append(fits)
         for c in sorted(self.whole, key=len, reverse=True):          # longest forms first
             n = len(c)
             for i in range(len(words) - n + 1):
@@ -302,7 +337,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     toks = _tokens(question)
     sl = Slice()
     names = _Names(view["entities"])
-    named, sl.ambiguous, used = names.find(toks)
+    named, sl.ambiguous, used = names.find(toks, question)
     if extra:
         named += [x for x in extra if x in ents and x not in named]
 
@@ -315,17 +350,32 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     qwords = {w for w, _c, _s in toks if w not in STOP and w not in ORDINALS and len(w) > 2}
     pronoun = any(w in PRONOUNS for w, _c, _s in toks)
     carried: list[str] = []
+    primary: set[str] = set()
     if history and (pronoun or not named):
-        for tag in history[-1].cites:
-            carried += [x for x in _entity_ids_of(view, tag) if x in ents and x not in named]
-        carried = list(dict.fromkeys(carried))[:4]
+        last = history[-1]
+        asked = names.find(_tokens(last.question), last.question)[0]      # who the last question was about
+        freq: dict[str, int] = {}
+        for tag in last.cites:
+            for x in _entity_ids_of(view, tag):
+                freq[x] = freq.get(x, 0) + 1
+        for x in asked:
+            freq[x] = freq.get(x, 0) + 100
+        carried = [x for x in sorted(freq, key=lambda x: -freq[x]) if x in ents and x not in named][:4]
+        primary = {x for x in asked if x in carried} or set(carried[:1])
     # "And what about his sister?": an entry tied to the carried one by a connection with that word.
     kin = {w if w in KIN_WORDS else w.removesuffix("s") for w, _c, _s in toks
            if w in KIN_WORDS or w.removesuffix("s") in KIN_WORDS}
     if carried and kin:
-        cset = set(carried)
-        by = {r["src"]: r["dst"] for r in view["relations"]
-              if r["dst"] in cset and r["src"] not in cset and kin & set(text.words(r["label"]))}
+        cset = primary
+        by: dict[str, str] = {}                    # tied entry → the carried entry it is tied to
+        for r in view["relations"]:
+            hit = kin & set(text.words(r["label"]))
+            if not hit:
+                continue
+            if r["dst"] in cset and r["src"] not in cset:          # "X is the sister of carried"
+                by.setdefault(r["src"], r["dst"])
+            elif r["src"] in cset and r["dst"] not in cset and hit & SYMMETRIC:   # "carried is a friend of X"
+                by.setdefault(r["dst"], r["src"])
         found = [x for x in by if x in ents]
         named = named + [x for x in found if x not in named]
         if len(found) == 1:
@@ -397,6 +447,55 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
         return (f"  Event: [ev:{ev['id']}]{where(ev.get('book'))}{' TURNING POINT' if ev.get('kind') == 'turn' else ''} "
                 f"{_clean(ev['summary'])}")
 
+    hdr_lines = _header(view, books, present, cur_book)
+    recap_full = _clean(view["recap"]["text"], 2500) if view.get("recap") else ""
+
+    def head_lines(eid: str, plim: int) -> list[str]:
+        e = ents[eid]
+        also = f"; also called {', '.join(_clean(a, 40) for a in e['aliases'][:6])}" if e["aliases"] else ""
+        lines = [f"[e:{eid}] {_clean(e['name'], 80)}, {e['type']}{also}"]
+        if e["profile"] and plim:
+            lines.append(f"  Now: [f:{e['profile']['id']}] {_clean(e['profile']['text'], plim)}")
+        return lines
+
+    def tail_lines(ids: list[str], dropped: list[str]) -> list[str]:
+        out_ = []
+        for g in sl.ambiguous:
+            g = [x for x in g if x in ents and x in ids]
+            if len(g) > 1:
+                out_.append("Note: the question's name fits " + " and ".join(f"{ents[x]['name']} [e:{x}]" for x in g)
+                            + " (two different entries).")
+        out_.extend(sl.notes)
+        if dropped:
+            names_ = list(dict.fromkeys(_clean(ents[x]["name"], 40) for x in dropped))[:3]
+            out_.append(f"Also called {', '.join(names_)}: {len(dropped)} more entries not shown.")
+        if sl.unknown:
+            out_.append("Note: the index holds nothing under the name(s): " + ", ".join(sl.unknown) + ".")
+        return out_
+
+    def mandatory(ids: list[str], plim: int, rlim: int) -> int:
+        n = len(OPEN) + len(CLOSE) + 2 + sum(len(x) + 1 for x in hdr_lines)
+        if recap_full and rlim:
+            n += min(len(recap_full), rlim) + 25
+        n += sum(len(x) + 1 for i in ids for x in head_lines(i, plim))
+        n += sum(len(x) + 1 for x in tail_lines(ids, ids[:1] if len(ids) < len(focus) else []))
+        return n
+
+    # The mandatory part (header, recap, heads, profiles) may use at most half the budget: shorten profiles,
+    # then the recap, then leave entries out (named ones first stay).
+    ids_all = list(focus)
+    plim_used, rlim_used = 600, 2500
+    ids = ids_all
+    for k in range(len(ids_all), 0, -1):
+        ids = ids_all[:k]
+        fit = next(((pl, rl) for rl, pl in [(2500, 600), (2500, 300), (2500, 150), (800, 150), (300, 150), (0, 150)]
+                    if mandatory(ids, pl, rl) <= budget_chars // 2), None)
+        if fit or k == 1:
+            plim_used, rlim_used = fit or (150, 0)
+            break
+    dropped_ids = ids_all[len(ids):]
+    focus = {x: focus[x] for x in ids}
+
     fixed = 0
     head: dict[str, list[str]] = {}
     ent_events: dict[str, list[dict]] = {}
@@ -404,15 +503,13 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     conn_lost: dict[str, int] = {}
     for eid, off in focus.items():
         e = ents[eid]
-        also = f"; also called {', '.join(_clean(a, 40) for a in e['aliases'][:6])}" if e["aliases"] else ""
         tag = f"[e:{eid}]"
         tags[tag] = {"kind": "entity", "id": eid, "entity": eid, "book": None, "label": e["name"]}
-        lines = [f"{tag} {_clean(e['name'], 80)}, {e['type']}{also}"]
-        if e["profile"]:
+        lines = head_lines(eid, plim_used)
+        if e["profile"] and plim_used:
             ptag = f"[f:{e['profile']['id']}]"
             tags[ptag] = {"kind": "facet", "id": e["profile"]["id"], "entity": eid,
                           "book": e["profile"].get("book"), "label": _label("facet", e["profile"], ents)}
-            lines.append(f"  Now: {ptag} {_clean(e['profile']['text'])}")
         head[eid] = lines
         fixed += sum(len(x) + 1 for x in lines)
         n_ev = ent_events[eid] = [ev for ev in view["events"] if eid in ev["entities"]]
@@ -479,15 +576,16 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
                 "ch", None, i)
 
     recap_lines: list[str] = []
-    if view.get("recap"):
+    if view.get("recap") and rlim_used:
         r = view["recap"]
         tags["[recap]"] = {"kind": "recap", "id": r["id"], "entity": None, "book": r.get("book"),
                            "label": "Story so far"}
-        recap_lines = [f"Story so far [recap]: {_clean(r['text'], 2500)}"]
+        recap_lines = [f"Story so far [recap]: {_clean(r['text'], rlim_used)}"]
 
     # Fill to the budget in priority order.
-    head_text = [OPEN, *_header(view, books, present, cur_book), *recap_lines]
-    used_chars = sum(len(x) + 1 for x in head_text) + fixed + len(CLOSE) + 200 * (len(focus) + 1)   # room for the "not shown" lines
+    head_text = [OPEN, *hdr_lines, *recap_lines]
+    tail = tail_lines(ids, dropped_ids)
+    used_chars = sum(len(x) + 1 for x in head_text) + fixed + len(CLOSE) + sum(len(x) + 1 for x in tail) + 200 * (len(focus) + 1)   # room for the "not shown" lines
     ch_cap = budget_chars // 4 if focus else budget_chars // 2
     ch_used = 0
     keep: list[tuple[float, float, str, str, str, int]] = []
@@ -542,12 +640,7 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     if rest_ch:
         out.append("Chapter recaps:")
         out.extend(c[3] for c in sorted(rest_ch, key=lambda c: c[5]))
-    for g in sl.ambiguous:
-        out.append("Note: the question's name fits " + " and ".join(
-            f"{ents[x]['name']} [e:{x}]" for x in g if x in ents) + " (two different entries).")
-    out.extend(sl.notes)
-    if sl.unknown:
-        out.append("Note: the index holds nothing under the name(s): " + ", ".join(sl.unknown) + ".")
+    out.extend(tail)
     out.append(CLOSE)
     sl.text = "\n".join(out)
     sl.omitted = omitted
@@ -555,8 +648,8 @@ def select(view: dict, question: str, history: list[Turn] = (), budget_chars: in
     return sl
 
 
-def _unknown_words(answer: str, allowed: set[str]) -> list[str]:
-    bad = []
+def _unknown_words(answer: str, allowed: set[str], banned: list[str] = ()) -> list[str]:
+    bad = [m.group(0) for w in banned for m in [re.search(r"\b" + re.escape(w) + r"\b", answer, re.IGNORECASE)] if m]
     for m in _PROPER.finditer(answer):
         w = _norm(m.group(0))
         if w and w not in allowed and w + "s" not in allowed and w.removesuffix("s") not in allowed and w not in bad:
@@ -581,7 +674,7 @@ def _tidy(s: str) -> str:
 def _voice(s: str) -> str:
     def fix(m: re.Match) -> str:
         w = m.group(0).lower()
-        r = "the index" if "notes" in w or "tags" in w else "your" if w.endswith(("’s", "'s")) else "you"
+        r = "the index's notes" if "notes" in w or "tags" in w else "your" if w.endswith(("’s", "'s")) else "you"
         return r.capitalize() if m.group(0)[:1].isupper() else r
     return _VOICE.sub(fix, s)
 
@@ -605,14 +698,22 @@ def _delta(before: dict | None, after: dict | None) -> dict | None:
     return {k: round(v - b.get(k, 0), 6) if isinstance(v, float) else v - b.get(k, 0) for k, v in after.items()}
 
 
-def _prompt(question: str, sl: Slice, history: list[Turn]) -> str:
+def _prompt(view: dict, question: str, sl: Slice, history: list[Turn]) -> str:
+    """Earlier answers are client text and are never sent: only the reader's earlier questions, and for each a
+    line built here from the current view (the entries that answer cited, if this view still shows them)."""
+    ents = {e["id"]: e["name"] for e in view["entities"]}
     parts = []
     if history:
         parts.append("Earlier in this conversation:")
         for t in history[-3:]:
-            parts.append(f"Reader: {_clean(t.question, 300)}\nAnswer: {_clean(t.answer, 500)}")
+            names = list(dict.fromkeys(ents[x] for tag in t.cites for x in _entity_ids_of(view, str(tag)) if x in ents))
+            parts.append(f"Reader: {_clean(t.question, 300)}")
+            if names:
+                parts.append("That answer was about: " + ", ".join(_clean(n, 60) for n in names[:5]))
         parts.append("")
     parts += [sl.text, "", f"Reader's question: {_clean(question, 600)}"]
+    if sl.unknown:
+        parts.append(f"The index has nothing on {', '.join(sl.unknown)}. Do not mention them or say anything about them.")
     return "\n".join(parts)
 
 
@@ -644,9 +745,9 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
         sl = select(view, question, history, budget_chars, books, extra=ids)
         sl.needs_pick = False
 
-    base = _prompt(question, sl, history)
+    base = _prompt(view, question, sl, history)
     allowed = set(text.words(_POSS.sub("", sl.text + " " + question + " " +
-                                        " ".join(t.question for t in history))))
+                                        " ".join(t.question for t in history)))) - set(sl.unknown)
 
     def ask(extra: str = "") -> dict:
         r = llm.complete(SYSTEM, base + extra, SCHEMA)
@@ -662,7 +763,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
     if not a:
         return done(NOT_SAID, False, [], "no answer")
     # Every problem is fixed by the same one retry (a single extra call per question).
-    bad = _unknown_words(a, allowed)
+    bad = _unknown_words(a, allowed, sl.unknown)
     problems = []
     if found and not cites:
         problems.append("Your last answer cited no note. List the tag of every note you used in cites, "
@@ -675,7 +776,7 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
                         '"the reader" or "tags".')
     if problems:
         a2, f2, c2 = read(ask("\n\n" + " ".join(problems) + " Answer again."))
-        if bad and (not a2 or _unknown_words(a2, allowed)):
+        if bad and (not a2 or _unknown_words(a2, allowed, sl.unknown)):
             return done(NOT_SAID, False, [], "refused: outside knowledge")
         if a2:
             a, found, cites = a2, f2, c2
@@ -685,4 +786,10 @@ def answer(view: dict, question: str, llm, history: list[Turn] = (), budget_char
             note = "rewritten: outside knowledge"
     a = _voice(a)
     out = [dict(sl.tags[c]) for c in cites]
-    return done(_truncate(a), found, out, note)
+    a = _truncate(a)
+    if sl.unknown:
+        shown = [(re.search(r"\b" + re.escape(w) + r"\b", question, re.IGNORECASE) or [None])[0] or w.capitalize()
+                 for w in sl.unknown]
+        a += f" The index has nothing on {' or '.join(shown)} up to where you are."
+        note = note or "unknown name"
+    return done(a, found, out, note)

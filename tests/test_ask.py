@@ -167,7 +167,7 @@ def test_early_view_never_holds_late_text(sherlock):
     fake = Fake(reply("Watson is a doctor.", ["recap"]))
     for q in ["Who is Watson?", "What has happened so far?", "Who is Holmes?", "What happened in book 2?"]:
         sl = ask.select(early, q, [], 40_000, BOOKS)
-        prompt = ask._prompt(q, sl, [])
+        prompt = ask._prompt(early, q, sl, [])
         for s in only_late:
             assert s not in sl.text and s not in prompt, s
     ask.answer(early, "Who is Watson?", fake, books=BOOKS)
@@ -216,9 +216,9 @@ def test_outside_name_fixed_on_retry():
 
 
 def test_names_in_question_or_slice_are_fine():
-    fake = Fake(reply("Renfield is a patient. Nothing is said about Seward.", ["e:E4"]))
-    a = ask.answer(small(), "What about Seward and Renfield?", fake)
-    assert a.found and len(fake.calls) == 1
+    fake = Fake(reply("Renfield is a patient. Chloe Hart is elsewhere.", ["e:E4"]))
+    a = ask.answer(small(), "What about Chloe Hart and Renfield?", fake)
+    assert a.found and len(fake.calls) == 1 and a.note is None
 
 
 def test_unknown_name_never_calls_model():
@@ -230,7 +230,8 @@ def test_unknown_name_never_calls_model():
 def test_unknown_name_beside_a_known_one_still_asks():
     fake = Fake(reply("Renfield is a patient.", ["e:E4"]))
     a = ask.answer(small(), "Is Renfield friends with Moriarty?", fake)
-    assert len(fake.calls) == 1 and "Moriarty" in fake.calls[0][1] and a.found
+    assert len(fake.calls) == 1 and "nothing on moriarty" in fake.calls[0][1] and a.found
+    assert a.answer.endswith("The index has nothing on Moriarty up to where you are.") and a.note == "unknown name"
 
 
 def test_sentence_initial_words_are_not_names():
@@ -384,7 +385,7 @@ def test_notes_and_reader_get_the_one_retry_then_are_rewritten():
                 reply("The reader's notes say Van Helsing is a doctor.", ["e:E1"]))
     a = ask.answer(small(), "Who is Van Helsing?", fake)
     assert len(fake.calls) == 2 and a.found
-    assert a.answer == "The index say Van Helsing is a doctor." and "notes" not in a.answer
+    assert a.answer == "The index's notes say Van Helsing is a doctor." and "reader" not in a.answer
     assert "Speak to the person" in fake.calls[1][1]
 
 
@@ -401,3 +402,54 @@ def test_clean_answer_in_the_right_voice_is_not_retried():
     fake = Fake(reply("You met Van Helsing as a Dutch doctor.", ["e:E1"]))
     ask.answer(small(), "Who is Van Helsing?", fake)
     assert len(fake.calls) == 1
+
+
+# ---- round 3: review findings
+
+def test_history_answers_never_reach_the_prompt():
+    secret = "Seward is murdered on the moors in the last chapter"
+    hist = [ask.Turn("Who is Renfield?", secret, ["e:E4", "e:NOPE", "ev:V2"])]
+    fake = Fake(reply("Renfield escapes.", ["ev:V2"]))
+    ask.answer(small(), "What happened to him?", fake, hist)
+    prompt = fake.calls[0][1]
+    assert "Seward" not in prompt and "murdered" not in prompt
+    assert "Reader: Who is Renfield?" in prompt and "That answer was about: Mr. Renfield" in prompt
+    assert "NOPE" not in prompt
+
+
+def test_unknown_name_beside_known_cannot_be_confirmed():
+    fake = Fake(reply("Renfield is friends with Moriarty.", ["e:E4"]), reply("Moriarty is his friend.", ["e:E4"]))
+    a = ask.answer(small(), "Is Renfield friends with Moriarty?", fake)
+    assert len(fake.calls) == 2 and a.answer == ask.NOT_SAID and a.note == "refused: outside knowledge"
+    fake = Fake(reply("Renfield is a patient.", ["e:E4"]))
+    a = ask.answer(small(), "Is Renfield friends with Moriarty or Lestrade?", fake)
+    assert a.answer.endswith("The index has nothing on Moriarty or Lestrade up to where you are.")
+
+
+def test_kin_follow_up_forward_for_symmetric_words_only():
+    hist = [ask.Turn("What happened to Nikita?", "He left.", ["e:E1"])]
+    v = kin_view()
+    v["relations"] = [{"id": "R1", "src": "E1", "dst": "E3", "label": "friend of", "book": "b1"},
+                      {"id": "R2", "src": "E1", "dst": "E2", "label": "father of", "book": "b1"}]
+    assert ask.select(v, "What about his friend?", hist, 10_000).named == ["E3"]
+    assert ask.select(v, "What about his father?", hist, 10_000).named == []      # "father of" keeps its direction
+    v["relations"][1] = {"id": "R2", "src": "E2", "dst": "E1", "label": "father of", "book": "b1"}
+    assert ask.select(v, "What about his father?", hist, 10_000).named == ["E2"]
+
+
+def test_mandatory_part_fits_the_budget_with_many_same_named_entries():
+    ents = [ent(f"J{i}", f"John Smith{i}", ["John"], profile=fac(f"P{i}", "A long profile. " * 40)) for i in range(40)]
+    v = mkview(ents, events=[ev("V1", "John arrives.", ["J0"])], recap={"id": "S", "text": "Story. " * 300, "book": "b1"})
+    sl = ask.select(v, "Who is John?", [], ask.OLLAMA_BUDGET)
+    assert sl.chars <= ask.OLLAMA_BUDGET
+    assert "more entries not shown" in sl.text and "[e:J0]" in sl.text
+
+
+def test_full_name_resolves_to_one_entry():
+    v = mkview([ent("Q1", "Quincey P. Morris"), ent("Q2", "Quincey Harker"), ent("M1", "Arthur Morris"),
+                ent("H1", "Abraham Van Helsing")])
+    sl = ask.select(v, "What did Quincey Morris do?", [], 10_000)
+    assert sl.named == ["Q1"] and not sl.ambiguous
+    assert ask.select(v, "Who is Van Helsing?", [], 10_000).named == ["H1"]
+    assert ask.select(v, "Who is Harker Quincey?", [], 10_000).named == ["Q2"]
+    assert set(ask.select(v, "Who is Quincey?", [], 10_000).named) == {"Q1", "Q2"}
