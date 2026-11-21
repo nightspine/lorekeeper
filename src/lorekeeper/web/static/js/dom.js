@@ -212,6 +212,24 @@ export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb"
  * runs once after it closed. Only one sheet is open at a time: opening another closes the first.
  */
 let openSheet = null;
+
+/** Lock the page behind an open modal (iOS Safari lets the page move behind a <dialog> otherwise): the body is
+ *  pinned where it was and put back, at the same scroll position, when the last lock is released. */
+let locks = 0, lockedAt = 0;
+export function lockScroll() {
+  if (locks++) return;
+  lockedAt = window.scrollY;
+  const b = document.body;
+  b.style.top = `-${lockedAt}px`;
+  b.classList.add("scroll-locked");
+}
+export function unlockScroll() {
+  if (!locks || --locks) return;
+  const b = document.body;
+  b.classList.remove("scroll-locked");
+  b.style.top = "";
+  window.scrollTo(0, lockedAt);
+}
 export function sheet({ title = "", content = null, footer = null, onClose = null, beforeClose = null, label = null, focus = null, className = "" } = {}) {
   if (openSheet) openSheet.close(true);
   const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -223,7 +241,7 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   const toasts = h("div.toasts.sheet-toasts", { "aria-live": "polite" });
   const panel = h("div.sheet-panel", head, body, footer ? h("footer.sheet-foot", footer) : null, toasts);
   const dlg = h("dialog.sheet", { "aria-label": label || title || "Panel", class: className }, panel);
-  let done, finished = false;
+  let done, finished = false, closing = false;
   const closed = new Promise((r) => { done = r; });
   const api = {
     el: dlg, body, toasts, closed,
@@ -231,15 +249,24 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
     setTitle: (t) => { titleEl.textContent = t; if (!label) dlg.setAttribute("aria-label", t || "Panel"); },
     close(force = false) {
       if (finished) return true;
+      if (closing) return true;
       if (!force && beforeClose && beforeClose() === false) return false;
-      if (dlg.open) dlg.close();
-      else finish();
+      if (!dlg.open) { finish(); return true; }
+      // Slide out for 200 ms (not under reduced motion, and not when another sheet replaces this one), then close.
+      if (force || matchMedia("(prefers-reduced-motion: reduce)").matches) { dlg.close(); return true; }
+      closing = true;
+      panel.style.transition = "transform 200ms ease-in, opacity 200ms ease-in";
+      panel.style.transform = "translateY(100%)";
+      panel.style.opacity = "0";
+      dlg.classList.add("closing");
+      setTimeout(() => { if (dlg.open) dlg.close(); else finish(); }, 200);
       return true;
     },
   };
   function finish() {
     if (finished) return;
     finished = true;
+    unlockScroll();
     if (openSheet === api) openSheet = null;
     dlg.remove();
     if (returnTo?.isConnected) { try { returnTo.focus({ preventScroll: true }); } catch { /* element gone */ } }
@@ -278,6 +305,7 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   head.addEventListener("pointercancel", release);
 
   document.body.append(dlg);
+  lockScroll();
   dlg.showModal();
   openSheet = api;
   const target = typeof focus === "string" ? dlg.querySelector(focus) : focus;

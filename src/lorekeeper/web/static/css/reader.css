@@ -462,7 +462,17 @@ details.history .fact-list { padding-bottom: var(--space-3); }
     border: 1px solid var(--line-2); border-bottom: 0; border-radius: 12px 12px 0 0; overscroll-behavior: contain; }
   dialog.drawer[open] { animation: drawer-up 220ms var(--ease); transition: transform 180ms var(--ease); }
   dialog.drawer::backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
-  .drawer header { position: relative; padding: 22px var(--space-4) var(--space-3); touch-action: none; cursor: grab; }
+  .drawer header { position: relative; padding: 20px var(--space-4) var(--space-2); touch-action: none; cursor: grab; align-items: flex-start; }
+  /* a compact head: type line, name, then the jump links and the Ask link close together */
+  .drawer .d-title { gap: 2px; }
+  .drawer .d-title .d-from { margin: 0; }
+  .drawer .d-jumps { margin-top: 0; gap: 0 16px; }
+  .drawer .d-jumps .linkish, .drawer .d-ask .linkish { position: relative; min-height: 30px; }
+  .drawer .d-jumps .linkish::after, .drawer .d-ask .linkish::after { content: ""; position: absolute; inset: -7px -4px; }   /* the hit area stays about 44px */
+  .drawer h2:focus, .drawer h2:focus-visible { outline: none; }   /* a heading takes focus to be announced; it is not a control */
+  .drawer .d-ask { margin: 0; }
+  .drawer header h2 { font-size: 20px; line-height: 1.2; }
+  .drawer .body { gap: var(--space-4); padding-top: var(--space-3); }
   .drawer header::before { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-2); }
   .drawer .body { min-height: 0; overscroll-behavior: contain; padding: var(--space-4) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); }
   .drawer-toasts { bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }

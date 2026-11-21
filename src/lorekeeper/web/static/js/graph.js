@@ -362,7 +362,7 @@ export function renderConnections(panel, ctx) {
 
   // ---- side panel ------------------------------------------------------------------------
   const side = h("aside.g-panel", { "aria-label": "Details" });
-  if (!sel && offSelEsc) offSelEsc();
+  if (!sel) { gs.focusSel = null; if (offSelEsc) offSelEsc(); }
   if (sel) {
     const e = graph.ents.get(sel);
     const r = ctx.revealed(sel);
@@ -406,9 +406,15 @@ export function renderConnections(panel, ctx) {
     side.classList.add("has-sel");
     // On a phone the selection is a bottom sheet over the map (css): Escape and a swipe down on its head clear it.
     const phoneSheet = () => matchMedia("(max-width: 640px)").matches;
-    const dismiss = () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); };
+    const dismiss = () => {
+      const name = e.name; gs.sel = null; gs.mode = "map"; gs.focusSel = null; ctx.repaint();
+      // focus goes back to the node that was selected
+      setTimeout(() => { for (const n of panel.querySelectorAll(".g-node")) if ((n.getAttribute("aria-label") || "").startsWith(`${name},`)) { n.focus({ preventScroll: true }); break; } }, 0);
+    };
+    // a selection that just opened takes focus on its heading, so it is announced
+    if (phoneSheet() && gs.focusSel !== sel) { gs.focusSel = sel; setTimeout(() => side.querySelector("h3")?.focus({ preventScroll: true }), 0); }
     if (offSelEsc) offSelEsc();
-    const onEsc = (ev) => { if (ev.key === "Escape" && phoneSheet() && !ev.defaultPrevented && !document.querySelector("dialog[open]")) { ev.preventDefault(); dismiss(); } };
+    const onEsc = (ev) => { if (!side.isConnected) { offSelEsc?.(); return; } if (ev.key === "Escape" && phoneSheet() && !ev.defaultPrevented && !document.querySelector("dialog[open]")) { ev.preventDefault(); dismiss(); } };
     document.addEventListener("keydown", onEsc);
     offSelEsc = () => { document.removeEventListener("keydown", onEsc); offSelEsc = null; };
     window.addEventListener("hashchange", () => offSelEsc?.(), { once: true });
@@ -433,7 +439,7 @@ export function renderConnections(panel, ctx) {
     side.onpointerup = endDrag; side.onpointercancel = endDrag;
     clear(side,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
-        h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
+        h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", { tabindex: "-1" }, e.name)),
         h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
       h("div.g-actions",
         h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; if (gs.mode === "focus") gs.trees = false; ctx.repaint(); } } },

@@ -595,7 +595,8 @@ export function mountReader(root) {
     el.panel.addEventListener("keydown", onListKey);
 
     // The overflow (Edit, Switch book) lives in the phone app bar's slot; the slot is hidden beside the rail and emptied on every route change.
-    document.getElementById("appbar-slot")?.replaceChildren(el.moreBtn);
+    // A read-only community preview has neither Edit nor Switch book: no button then.
+    document.getElementById("appbar-slot")?.replaceChildren(...(canEdit() || !preview ? [el.moreBtn] : []));
     clear(wrap, head, preview ? previewStrip(preview.info) : null, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
@@ -1883,7 +1884,7 @@ export function mountReader(root) {
     document.body.append(dlg);
     swipeToClose(dlg);
     dlg.showModal();
-    if (!refresh) closeBtn.focus();
+    if (!refresh) dlg.querySelector("#drawer-title")?.focus({ preventScroll: true });   // the heading is announced; × shows a ring only for keyboard focus
   }
 
   /** Where the view on screen is computed: what the request sends, and what the thread is compared against. */

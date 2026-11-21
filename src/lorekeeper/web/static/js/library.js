@@ -92,7 +92,7 @@ export function mountLibrary(root) {
       s.view = v; viewBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v))); listSig = ""; paintList(); persist();
     } } }, label));
   let toolbar;
-  const filterBtn = h("button.btn.lib-filterbtn", { type: "button", "aria-haspopup": "dialog", on: { click: () => openFilters() } },
+  const filterBtn = h("button.btn.lib-filterbtn", { type: "button", "aria-haspopup": "dialog", disabled: true, on: { click: () => openFilters() } },
     icon("sliders"), h("span.lib-filter-txt", "Filter and sort"), h("span.n", { "aria-hidden": "true" }));
   const list = h("div.lib-list");
   const pane = h("aside.lib-pane", { "aria-label": "Book details", hidden: true });
@@ -219,6 +219,7 @@ export function mountLibrary(root) {
     const sel = sourceSel.value || s.source;
     clear(sourceSel, SOURCES.map(([k, label]) => h("option", { value: k, selected: s.source === k }, `${label}, ${fmtInt(srcCount[k])}`)));
     sourceSel.value = s.source || sel;
+    filterBtn.disabled = false;
     const changed = [s.source !== "all", s.sort !== "title", s.view !== "list"].filter(Boolean).length;
     const badge = filterBtn.querySelector(".n");
     badge.textContent = changed ? String(changed) : "";
@@ -538,6 +539,7 @@ export function mountLibrary(root) {
 
   /** Phone: From, Sort and List/Covers behind one control, as choices in a sheet that apply as they are tapped. */
   function openFilters() {
+    if (!s.data) return;   // the catalog has not arrived: nothing to filter yet
     const choices = (name, items, current, set) => h("fieldset.sheet-choices", h("legend", name),
       items.map(([k, label]) => h("label.sheet-choice", h("input", { type: "radio", name: `lib-${name}`, value: k, checked: current() === k,
         on: { change: () => { set(k); paintFilters(); paintList(); persist(); } } }), h("span", label))));
