@@ -490,7 +490,7 @@ export function mountStudio(root) {
       h("caption.sr-only", "Runs, newest first"),
       h("thead", h("tr", ["Book", "Model", "State", "Progress", "Started"].map((t) => h("th", { scope: "col" }, t)))),
       h("tbody", trs)));
-    clear(side, foldList(rows, table, { show: 12, noun: "runs", open: runsOpen,
+    clear(side, foldList(rows, table, { show: matchMedia("(max-width: 640px)").matches ? 5 : 12, noun: "runs", open: runsOpen,
       onToggle: (on) => { runsOpen = on; }, keep: ctx.jobs.flatMap((j, i) => (ctx.view === "job" && ctx.id === j.id ? [i] : [])) }));
   }
 
