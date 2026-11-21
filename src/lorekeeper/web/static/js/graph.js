@@ -352,7 +352,15 @@ export function renderConnections(panel, ctx) {
         } } }, h("span", h("span.g-long", "Family "), "trees"), h("span.n", String(fams.length))) : null),
     h("div.g-display", h("span.g-summary", { "aria-live": "polite" }, summary), dispBtn, dispPanel));
 
-  function select(id) { gs.sel = id; if (id && types.size && !types.has(graph.ents.get(id).type)) types.add(graph.ents.get(id).type); ctx.repaint(); }
+  /** Every way of letting go of the selection (Escape, ×, a swipe down, a tap on the blank map) comes here, and focus
+   *  goes back to the node that was selected (found by entity id). */
+  function clearSel() {
+    const id = gs.sel;
+    gs.sel = null; gs.mode = "map"; gs.focusSel = null;
+    ctx.repaint();
+    if (id) setTimeout(() => panel.querySelector(`.g-node[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }), 0);
+  }
+  function select(id) { if (id == null && gs.sel) return clearSel(); gs.sel = id; if (id && types.size && !types.has(graph.ents.get(id).type)) types.add(graph.ents.get(id).type); ctx.repaint(); }
   const nameOf = (id) => graph.ents.get(id)?.name || id;
 
   if (!laid.size) {
@@ -406,11 +414,7 @@ export function renderConnections(panel, ctx) {
     side.classList.add("has-sel");
     // On a phone the selection is a bottom sheet over the map (css): Escape and a swipe down on its head clear it.
     const phoneSheet = () => matchMedia("(max-width: 640px)").matches;
-    const dismiss = () => {
-      const name = e.name; gs.sel = null; gs.mode = "map"; gs.focusSel = null; ctx.repaint();
-      // focus goes back to the node that was selected
-      setTimeout(() => { for (const n of panel.querySelectorAll(".g-node")) if ((n.getAttribute("aria-label") || "").startsWith(`${name},`)) { n.focus({ preventScroll: true }); break; } }, 0);
-    };
+    const dismiss = clearSel;
     // a selection that just opened takes focus on its heading, so it is announced
     if (phoneSheet() && gs.focusSel !== sel) { gs.focusSel = sel; setTimeout(() => side.querySelector("h3")?.focus({ preventScroll: true }), 0); }
     if (offSelEsc) offSelEsc();
@@ -440,7 +444,7 @@ export function renderConnections(panel, ctx) {
     clear(side,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", { tabindex: "-1" }, e.name)),
-        h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
+        h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: clearSel } }, icon("x"))),
       h("div.g-actions",
         h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; if (gs.mode === "focus") gs.trees = false; ctx.repaint(); } } },
           icon(focus ? "layers" : "eye"), focus ? "Full map" : "Focus"),
@@ -581,7 +585,7 @@ export function renderConnections(panel, ctx) {
     const isNew = ctx.revealed(id)?.isNew;
     const showLabel = labelFits.has(id);
     const g = s("g", { class: `g-node t-${e.type}${id === sel ? " sel" : ""}${dist && !inHood(id) ? " dim" : ""}${isNew ? " new" : ""}`,
-      transform: `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`, tabindex: 0, role: "button",
+      transform: `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`, tabindex: 0, role: "button", "data-id": id,
       "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}, ${degree(id)} connection${degree(id) === 1 ? "" : "s"}${isNew ? ", new" : ""}`,
       "aria-pressed": String(id === sel) });
     if (isNew) g.append(s("circle", { class: "g-halo", r: r + 10 }));
@@ -637,7 +641,7 @@ export function renderConnections(panel, ctx) {
     if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 4) drag.moved = true;
     if (drag.moved) setVb({ ...drag.vb, x: drag.vb.x - dx, y: drag.vb.y - dy });
   });
-  svg.addEventListener("pointerup", () => { if (drag && !drag.moved && gs.sel) { gs.sel = null; gs.mode = "map"; ctx.repaint(); } drag = null; });
+  svg.addEventListener("pointerup", () => { if (drag && !drag.moved && gs.sel) clearSel(); drag = null; });
 
   const zoomBtn = (label, ic, fn) => h("button.icon-btn.small", { type: "button", "aria-label": label, title: label, on: { click: fn } }, ic);
   const head = h("div.g-stage-head",

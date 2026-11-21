@@ -363,7 +363,8 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .dup-sides { grid-template-columns: minmax(0, 1fr); }
   /* 16px keeps iOS Safari from zooming the page when a field is focused */
   .reader input:not([type=checkbox]):not([type=radio]):not([type=range]), .reader select, .reader textarea,
-  dialog.drawer input:not([type=checkbox]):not([type=radio]), dialog.drawer select, dialog.drawer textarea { font-size: 16px; }
+  dialog.drawer input:not([type=checkbox]):not([type=radio]), dialog.drawer select, dialog.drawer textarea,
+  dialog.drawer .edit-form textarea.input, dialog.drawer .editing-title .edit-row > .input { font-size: 16px; }
 }
 /* Jump, overflow and series sheets */
 .jump-field { display: grid; gap: 6px; padding-bottom: var(--space-3); }
