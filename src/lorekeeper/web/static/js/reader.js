@@ -1070,12 +1070,15 @@ export function mountReader(root) {
     s.mergeToast = { auto, host, node, until: Date.now() + remaining };
     s.dropMergeToast = () => { clearTimeout(timer); dismiss(); s.mergeToast = null; s.dropMergeToast = null; };
   }
-  /** The entry sheet closed: a merge toast it was holding moves to the page. */
+  /** The entry sheet opened or closed: a merge toast still showing moves to where it can be reached (into the open
+   *  sheet, or back to the page), keeping the time it has left. */
   function rehomeMergeToast() {
     const m = s.mergeToast;
-    if (!m || !m.host || disposed) return;
+    if (!m || disposed) return;
+    const wantSheet = Boolean(document.querySelector("dialog.drawer[open]"));
+    if (wantSheet === Boolean(m.host)) return;
     const left = m.until - Date.now();
-    const kept = m.host.contains(m.node);   // false once the person dismissed it
+    const kept = m.host ? m.host.contains(m.node) : m.node.isConnected;   // false once the person dismissed it
     s.dropMergeToast?.();
     if (kept && left > 500) showMergeToast(m.auto, left);
   }
@@ -1739,6 +1742,7 @@ export function mountReader(root) {
       dlg.removeEventListener("close", onDialogClose);
       if (dlg.open) dlg.close();
       dlg.remove();
+      rehomeMergeToast();
       el.pane.className = `entry-pane drawer ${type || ""}`;
       el.pane.hidden = false;
       el.pane.append(...nodes);
@@ -1754,6 +1758,7 @@ export function mountReader(root) {
       document.body.append(d);
       swipeToClose(d);
       showModalLocked(d);
+      rehomeMergeToast();
       markOpenRow();
     }
     // Keep focus inside the entry: the field being typed in, else the heading.
@@ -1980,6 +1985,7 @@ export function mountReader(root) {
     document.body.append(dlg);
     swipeToClose(dlg);
     showModalLocked(dlg);
+    rehomeMergeToast();
     if (!refresh) dlg.querySelector("#drawer-title")?.focus({ preventScroll: true });   // the heading is announced; × shows a ring only for keyboard focus
   }
 
@@ -2118,7 +2124,7 @@ export function mountReader(root) {
   }
   // For tests only: with window.__lkTest set before the page loads, the safety net can be exercised by changing the
   // position past every guard (setP directly).
-  if (window.__lkTest) window.__lkTest.reader = { setP: (p) => setP(p), state: s };
+  if (window.__lkTest) window.__lkTest.reader = { setP: (p) => setP(p), state: s, mergeToast: () => showMergeToast({ id: "test", keepNames: ["a", "b"] }) };
   let unregister = null;
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
