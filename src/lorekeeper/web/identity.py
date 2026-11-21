@@ -74,15 +74,14 @@ class Identity:
         return f"series:{sid}", sorted(members, key=lambda it: (rank(it), it["key"]))
 
     def _candidates(self, gid: str, items: list[dict]) -> list[dict]:
-        """`merge.candidates` for a group, remembered while the group's index files (path, mtime, size)
-        and its "not the same" pairs are unchanged. Every write (merge, edit, undo, a build) changes a
-        file, so the next call recomputes. Callers get a copy: they add verdicts to the pairs."""
+        """`merge.candidates` for a group, remembered while the bytes of its index files (the digest
+        `Library.scan` took of what it parsed) and its "not the same" pairs are unchanged. Every write
+        (merge, edit, undo, a build) changes the bytes, so the next call recomputes. Callers get a
+        copy: they add verdicts to the pairs."""
         distinct = self.distinct(gid)
         # The stamp is a digest `Library.scan` took of the very bytes it parsed, so the key always
         # describes what the candidates were computed from, whatever happens to the file meanwhile.
-        stamp = tuple((str(it["path"]), it["stamp"]) for it in items) if all("stamp" in it for it in items) else None
-        if stamp is None:
-            return merge.candidates([it["doc"] for it in items], distinct)
+        stamp = tuple((str(it["path"]), it["stamp"]) for it in items)   # KeyError if an item has none: fail loudly
         key = (stamp, frozenset(distinct))
         hit = self._cands.get(gid)
         if hit is None or hit[0] != key:
