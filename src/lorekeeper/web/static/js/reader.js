@@ -173,10 +173,11 @@ export function mountReader(root) {
       for (const hsh of hashes) { const ed = await api.edition(hsh); if (ed) return { ed, hsh }; }
       return { ed: null, hsh: null };
     };
-    // Not preview: the duplicates check is slow on a big series and only paints a notice, so it never blocks the page.
-    const dupReq = preview ? null : api.duplicates(key).catch(() => null);
     const [sibDocs, found] = await Promise.all([Promise.all(siblingReqs.map(([, p]) => p)), findEdition()]);
     if (stale()) return false;
+    // Not preview: the duplicates check is slow on a big series and only paints a notice, so it never blocks the page;
+    // it starts once the edition has settled so the two do not compete for the server's CPU on a cold start.
+    const dupReq = preview ? null : api.duplicates(key).catch(() => null);
     siblingReqs.forEach(([bk], i) => s.seriesDocs.set(bk, sibDocs[i]));
     if (man && (!s.order || !man.orders[s.order])) s.order = man.defaultOrder;
     s.book = book || s.doc.series?.book || null;
@@ -199,7 +200,7 @@ export function mountReader(root) {
       s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
       s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
     }
-    s.dupes = null;
+    s.dupes = null;   // canEdit() uses the library list until the reply comes
     clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
@@ -207,11 +208,13 @@ export function mountReader(root) {
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
     if (dupReq) dupReq.then((d) => {
       if (stale() || !d) return;
+      const was = canEdit();
       s.dupes = d;
       watchDupes(key);
+      syncEditAvailability(was);
       paintTabs();
     });
-    if (!preview) await syncPosition(key, { reply: posReq });
+    if (!preview) await syncPosition(key, { reply: posReq, stale });
     return !stale();
   }
 
@@ -239,11 +242,11 @@ export function mountReader(root) {
       ...v.entities.flatMap((e) => e.facets.map((f) => f.id)), ...v.entities.filter((e) => e.profile).map((e) => e.profile.id)]);
   }
 
-  async function syncPosition(key, { poll = false, reply = null } = {}) {
+  async function syncPosition(key, { poll = false, reply = null, stale = () => false } = {}) {
     if (preview) return;
     let r;
     try { r = await (reply || api.position(key)); } catch { r = { synced: false, reason: "unreachable" }; }
-    if (disposed || s.key !== key) return;
+    if (disposed || s.key !== key || stale()) return;   // a reply for a load that has been replaced never touches s.sync or pendingMove
     if (!r || !r.synced) {
       if (!poll || !s.sync.on) { s.sync = { on: false, override: false, reason: r?.reason }; paintSource(); }
       return;
@@ -561,7 +564,22 @@ export function mountReader(root) {
   // ---- edit mode ---------------------------------------------------------------------------
   // Only an index built here can be changed, and only with its book file on disk (reveal points are
   // chosen by paragraph). Turning it on adds pen and trash controls to every row and "Add" buttons.
-  const canEdit = () => Boolean(s.dupes?.writable && s.map?.exact && s.hash);
+  // The server's rule (Identity.duplicates): every index of the book's series group is one built here. Known from the
+  // library list before the duplicates check answers; its reply, when it arrives, is trusted over this.
+  const guessWritable = () => {
+    const sid = s.doc?.series?.id;
+    const group = sid ? s.lib.indexes.filter((i) => i.series?.id === sid) : s.lib.indexes.filter((i) => i.key === s.key);
+    return group.length > 0 && group.every((i) => i.source === "generated");
+  };
+  const canEdit = () => Boolean((s.dupes ? s.dupes.writable : guessWritable()) && s.map?.exact && s.hash);
+  /** The duplicates reply may disagree with the guess: bring the Edit control and edit mode in line. */
+  function syncEditAvailability(was) {
+    if (was === canEdit() || !el.headActions) return;
+    const old = el.headActions.querySelector(".edit-toggle");
+    if (canEdit()) { const b = editButton(); if (b && !old) el.headActions.prepend(b); return; }
+    old?.remove();
+    if (s.edit) { s.edit = false; wrap.classList.remove("editing"); paintTabs(); if (s.drawer) openDrawer(s.drawer, { refresh: true }); saveUrl(); }
+  }
   const editor = createEditor({
     key: () => s.key, hash: () => s.hash, chapters: () => s.map.chapters, seqAt: () => s.map.seqAt(s.p),
     docs: () => currentIndexes(), view: () => s.view, book: () => s.book,
