@@ -61,13 +61,15 @@ class Library:
                 if p.name.endswith((".state", ".report")) or ".events" in p.name:
                     continue
                 try:
+                    st = p.stat()   # before reading: a write after this changes the stamp, never the other way round
+                    stamp = (st.st_mtime_ns, st.st_size)
                     doc = json.loads(p.read_text())
                 except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                     continue
                 if not isinstance(doc, dict) or doc.get("kind") not in ("index", "series"):
                     continue
                 key = f"{label}--{p.relative_to(d).with_suffix('').as_posix().replace('/', '--')}"
-                found[key] = {"key": key, "path": p, "source": label, "doc": doc}
+                found[key] = {"key": key, "path": p, "source": label, "doc": doc, "stamp": stamp}
         return found
 
     def summary(self) -> dict:

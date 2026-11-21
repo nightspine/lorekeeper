@@ -78,9 +78,10 @@ class Identity:
         and its "not the same" pairs are unchanged. Every write (merge, edit, undo, a build) changes a
         file, so the next call recomputes. Callers get a copy: they add verdicts to the pairs."""
         distinct = self.distinct(gid)
-        try:
-            stamp = tuple((str(it["path"]), (st := Path(it["path"]).stat()).st_mtime_ns, st.st_size) for it in items)
-        except OSError:
+        # The stamp was taken by `Library.scan` before it read each file, so a write that lands after
+        # the read gives a newer stamp than the document: the entry is then simply never matched again.
+        stamp = tuple((str(it["path"]), *it["stamp"]) for it in items) if all("stamp" in it for it in items) else None
+        if stamp is None:
             return merge.candidates([it["doc"] for it in items], distinct)
         key = (stamp, frozenset(distinct))
         hit = self._cands.get(gid)
