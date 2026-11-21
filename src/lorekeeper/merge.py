@@ -42,19 +42,22 @@ FEMININE = {"mrs", "miss", "ms", "lady", "dame", "queen", "princess", "mistress"
 _STOP = {"the", "of", "a", "an", "and"}
 
 
+# A long-running server sees every name of every book it builds, so the caches are bounded; the
+# Empire series has a few thousand distinct names, far under this.
+CACHE_SIZE = 65536
 _NOTE = re.compile(r"\([^)]*\)")
 
 
 # The helpers below are pure functions of one name string, and `candidates` asks about the same few
 # hundred names millions of times, so each is cached per string (results are tuples/frozensets, never
 # shared mutable lists).
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _name_words(name: str) -> tuple[str, ...]:
     """A name's normalized words without a bracketed note."""
     return tuple(text.words(_NOTE.sub(" ", name)))
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _title_words(name: str) -> tuple[str, ...]:
     w = _name_words(name)
     out = []
@@ -64,7 +67,7 @@ def _title_words(name: str) -> tuple[str, ...]:
     return tuple(out)
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _possessive(name: str) -> bool:
     return bool(POSSESSIVE.search(name))
 
@@ -74,7 +77,7 @@ def _titles(name: str) -> list[str]:
     return list(_title_words(name))
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _genders(name: str) -> frozenset[str]:
     return frozenset(("m" if t in MASCULINE else "f") for t in _title_words(name) if t in MASCULINE | FEMININE)
 
@@ -89,7 +92,7 @@ def _stem(word: str) -> str:
     return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _stems(x: tuple[str, ...]) -> frozenset[str]:
     return frozenset(_stem(w) for w in x if w not in _STOP)
 
@@ -111,13 +114,13 @@ def titled_surname(a: str, b: str) -> bool:
     return False
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def _plain(word: str) -> str:
     """Without accents, for comparing against HONORIFICS ("frère" → "frere")."""
     return "".join(c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c))
 
 
-@lru_cache(maxsize=None)
+@lru_cache(maxsize=CACHE_SIZE)
 def core(name: str) -> tuple[str, ...]:
     """A name's distinguishing words: normalized, without leading honorifics or a parenthetical note."""
     w = _name_words(name)

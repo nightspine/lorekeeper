@@ -77,3 +77,9 @@ def test_many_entities_are_fast():
     t = time.perf_counter()
     merge.candidates([doc])
     assert time.perf_counter() - t < 3
+
+
+def test_caches_are_bounded():
+    cached = [f for f in vars(merge).values() if hasattr(f, "cache_info")]
+    assert len(cached) >= 7
+    assert all(f.cache_info().maxsize is not None for f in cached)
