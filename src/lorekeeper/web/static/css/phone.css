@@ -33,16 +33,16 @@
   .appbar-slot { display: flex; align-items: center; flex: none; }
   .appbar-slot:empty { display: none; }
   .appbar .icon-btn { width: 44px; height: 44px; }
-  :root { --topbar-h: calc(48px + env(safe-area-inset-top, 0px)); }
+  :root { --topbar-h: calc(48px + env(safe-area-inset-top, 0px)); --tabbar-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
 
   /* Tab bar: icon over a short label, flat on --pane with a hairline. */
-  .tabbar { height: calc(56px + env(safe-area-inset-bottom, 0px)); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+  .tabbar { height: var(--tabbar-h); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
   .tabbar a { gap: 2px; font-size: 11px; font-weight: 600; letter-spacing: 0; }
   .tabbar a:focus-visible { outline: 2px solid var(--beacon); outline-offset: -4px; border-radius: 8px; }
   .tab-busy { top: 7px; }
-  main { padding-left: max(var(--main-px), env(safe-area-inset-left, 0px)); padding-right: max(var(--main-px), env(safe-area-inset-right, 0px)); padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 28px); }
+  main { padding-left: max(var(--main-px), env(safe-area-inset-left, 0px)); padding-right: max(var(--main-px), env(safe-area-inset-right, 0px)); padding-bottom: calc(var(--tabbar-h) + 28px); }
   main[data-route="settings"], main[data-route="library"] { padding-left: 0; padding-right: 0; }
-  .toasts { bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 12px); }
+  .toasts { bottom: calc(var(--tabbar-h) + 12px); }
 
   /* Sheets and dialogs: the same bottom sheet look for the older modal dialogs. */
   dialog.modal { inset: auto 0 0 0; margin: 0; width: 100%; max-width: none; max-height: 90dvh; border-bottom: 0; border-radius: 12px 12px 0 0; padding: 22px 16px calc(16px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; animation: sheet-in 220ms var(--ease); }
@@ -73,7 +73,7 @@
 }
 @media (max-width: 640px) {
   /* The build form: the estimate and Build index stay in reach at the bottom, above the tab bar. */
-  .build-go { position: sticky; bottom: calc(56px + env(safe-area-inset-bottom, 0px)); z-index: 5; margin: 0 calc(-1 * var(--main-px)); padding: 10px var(--main-px); background: var(--pane); border-top: 1px solid var(--line); justify-content: space-between; flex-wrap: nowrap; }
+  .build-go { position: sticky; bottom: var(--tabbar-h); z-index: 5; margin: 0 calc(-1 * var(--main-px)); padding: 10px var(--main-px); background: var(--pane); border-top: 1px solid var(--line); justify-content: space-between; flex-wrap: nowrap; }
   .build-est { flex: 1 1 0; min-width: 0; text-align: left; font-size: var(--text-xs); }
   .build-go .btn { min-height: 44px; }
   .prow { min-height: 56px; }

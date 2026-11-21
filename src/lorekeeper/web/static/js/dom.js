@@ -196,15 +196,24 @@ export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb"
 
 /** `dlg.showModal()` with the page locked behind it; released once when the dialog closes or is removed while open
  *  (a removed open dialog fires no close event). Use this for every modal dialog instead of calling showModal() directly. */
+const releases = new WeakMap();
 export function showModalLocked(dlg) {
   if (dlg.open) return;
   lockScroll();
   let released = false;
-  const release = () => { if (released) return; released = true; mo.disconnect(); dlg.removeEventListener("close", release); unlockScroll(); };
+  const release = () => { if (released) return; released = true; mo.disconnect(); dlg.removeEventListener("close", release); releases.delete(dlg); unlockScroll(); };
+  releases.set(dlg, release);
   const mo = new MutationObserver(() => { if (!dlg.isConnected) release(); });
   mo.observe(document.body, { childList: true, subtree: true });
   dlg.addEventListener("close", release);
   dlg.showModal();
+}
+
+/** Close a dialog opened with showModalLocked and release the page lock at once (the `close` event comes later, and a
+ *  command run right after closing, such as the palette scrolling to a chapter, must not meet a pinned page). */
+export function closeLocked(dlg) {
+  releases.get(dlg)?.();
+  if (dlg.open) dlg.close();
 }
 
 /**
@@ -266,13 +275,13 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
       if (!force && beforeClose && beforeClose() === false) return false;
       if (!dlg.open) { finish(); return true; }
       // Slide out for 200 ms (not under reduced motion, and not when another sheet replaces this one), then close.
-      if (force || matchMedia("(prefers-reduced-motion: reduce)").matches) { dlg.close(); return true; }
+      if (force || matchMedia("(prefers-reduced-motion: reduce)").matches) { closeLocked(dlg); return true; }
       closing = true;
       panel.style.transition = "transform 200ms ease-in, opacity 200ms ease-in";
       panel.style.transform = "translateY(100%)";
       panel.style.opacity = "0";
       dlg.classList.add("closing");
-      setTimeout(() => { if (dlg.open) dlg.close(); else finish(); }, 200);
+      setTimeout(() => { if (dlg.open) closeLocked(dlg); else finish(); }, 200);
       return true;
     },
   };

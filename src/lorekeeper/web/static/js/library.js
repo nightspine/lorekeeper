@@ -55,7 +55,10 @@ export function mountLibrary(root) {
   const phoneMq = matchMedia("(max-width: 640px)");
   const phone = () => phoneMq.matches;
   let bookSheet = null, filterSheet = null;
-  const onPhoneChange = () => { paneSig = ""; filterSheet?.close(true); bookSheet?.close(true); paintPane(); };
+  // Crossing 640px swaps the sheet and the pane for each other: the selection (and the address) stays; the pane or the
+  // sheet is repainted for the same book. A close that comes from the swap must not deselect.
+  let keepSelection = false;
+  const onPhoneChange = () => { paneSig = ""; filterSheet?.close(true); if (bookSheet) { keepSelection = true; bookSheet.close(true); } paintPane(); };
   phoneMq.addEventListener("change", onPhoneChange);
 
   // ---- the frame: built once ---------------------------------------------------------------
@@ -462,7 +465,7 @@ export function mountLibrary(root) {
     pane.hidden = !open || asSheet;
     split.classList.toggle("with-pane", open && !asSheet);
     if (!b) { paneSig = ""; clear(pane); if (bookSheet) bookSheet.close(true); return; }
-    if (!asSheet && bookSheet) bookSheet.close(true);
+    if (!asSheet && bookSheet) { keepSelection = true; bookSheet.close(true); }
     // The pane also shows the rest of the series (its list and the earlier-book warning), so their state is in the signature too.
     const sg = b.series && s.data.series.find((g) => g.id === b.series.id);
     const siblings = sg ? sg.books.map((k) => s.data.books.find((x) => x.key === k)).filter(Boolean)
@@ -528,10 +531,12 @@ export function mountLibrary(root) {
       return;
     }
     const opened = b.key;
-    bookSheet = sheet({ title: b.title, content, label: "Book details", className: "book-sheet",
+    const me = bookSheet = sheet({ title: b.title, content, label: "Book details", className: "book-sheet",
       onClose: () => {
-        bookSheet = null; paneSig = "";
+        if (bookSheet === me) bookSheet = null;
+        paneSig = "";
         if (disposed) return;
+        if (keepSelection) { keepSelection = false; return; }
         if (s.selected === opened) { s.selected = null; paintSelection(); persist(); }
         list.querySelector(`[data-key="${CSS.escape(opened)}"] [data-role=open]`)?.focus({ preventScroll: true });
       } });

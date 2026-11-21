@@ -1,5 +1,5 @@
 // Command palette (Cmd/Ctrl+K). Providers register sync functions returning items; see registerProvider.
-import { h, icon, clear, announce, showModalLocked } from "./dom.js";
+import { h, icon, clear, announce, showModalLocked, closeLocked } from "./dom.js";
 import { api } from "./api.js";
 
 const MAX_PER_GROUP = 8, MAX_TOTAL = 24;
@@ -213,7 +213,7 @@ export function openPalette(initialQuery = "") {
 }
 
 export function closePalette() {
-  if (dialog?.open) dialog.close();
+  if (dialog?.open) closeLocked(dialog);
 }
 
 // ---- wiring --------------------------------------------------------------------------------
