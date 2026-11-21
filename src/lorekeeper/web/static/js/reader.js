@@ -71,6 +71,8 @@ class PositionMap {
   }
 }
 
+const toastedMerges = new Set();   // merge ids whose phone toast has been shown
+
 export function mountReader(root) {
   const { route, parts, params } = parseHash();
   // A community index being tried before it is added: #/preview/<digest>?catalog=<book>&listing=<id>.
@@ -1055,11 +1057,18 @@ export function mountReader(root) {
     let merged = null;
     if (auto && phone()) {
       // On a phone the merge is a toast with Undo, never a line in the middle of the list.
+      // Once per merge (autoShown), gone after about 10 seconds, and gone when the Reader is left.
       s.autoShown = auto.id;
-      const n = auto.keepNames.length;
-      toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { action: { label: "Undo", run: async () => {
-        try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
-      } } });
+      if (!toastedMerges.has(auto.id)) {   // once per merge in this visit to the app
+        toastedMerges.add(auto.id);
+        const n = auto.keepNames.length;
+        s.dropMergeToast?.();
+        const gone = toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { action: { label: "Undo", run: async () => {
+          try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
+        } } });
+        const timer = setTimeout(() => gone(), 10000);
+        s.dropMergeToast = () => { clearTimeout(timer); gone(); s.dropMergeToast = null; };
+      }
     } else if (auto) {
       const dismiss = () => { clearTimeout(s.autoTimer); s.autoShown = auto.id; paintTabs(); };
       if (s.autoTimerFor !== auto.id) { s.autoTimerFor = auto.id; clearTimeout(s.autoTimer); s.autoTimer = setTimeout(() => { if (!disposed && s.autoShown !== auto.id) dismiss(); }, 20000); }
@@ -2094,7 +2103,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; s.dropMergeToast?.(); ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
