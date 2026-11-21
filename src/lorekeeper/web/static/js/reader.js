@@ -1035,12 +1035,12 @@ export function mountReader(root) {
       summary ? icon("chevron") : null);
   }
 
-  /** One book on the rail. `items`: [{ label, title, body, cls, id, badge }] in display order, `reached` is the
-   *  count in the button ("Show all 12 chapters": what the reader has reached, never the book's total). */
+  /** One book on the rail. `items` ([{ label, title, body, cls, id, badge, pin }]) are in display order: the fold keeps the first `NEAR`
+   *  and any `pin`ned item. `newest` only picks the word in the expanded button; `raw` is an earlier book's events block ({ total, build(full) }). */
   function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none, raw }) {
     const all = s.bkAll.has(bkKey(key));
     const folded = !all && items.length > NEAR;
-    const shown = !folded ? items : items.slice(0, NEAR);
+    const shown = !folded ? items : items.filter((it, i) => i < NEAR || it.pin);
     const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
       it.label ? h("span.ch-label", it.label) : null,
       it.title ? h("div.ch-name", it.title, it.badge || null) : null,
@@ -1274,7 +1274,7 @@ export function mountReader(root) {
     const loose = (rows.loose || []).filter((ev) => keep.has(ev));
     const currentItems = ordered(rowItems(rows));
     if (loose.length) {   // no chapter to put them in (no book file): one block of their own
-      const item = { label: null, title: null, cls: "", body: rowBody(s.newestFirst ? [...loose].reverse() : loose) };
+      const item = { label: null, title: null, cls: "", pin: true, body: rowBody(s.newestFirst ? [...loose].reverse() : loose) };
       currentItems[s.newestFirst ? "unshift" : "push"](item);
     }
     const currentBlock = currentItems.length ? bookBlock(s.series ? s.book : null, currentItems, { current: true, newest: s.newestFirst, repaint }) : null;
@@ -1287,7 +1287,7 @@ export function mountReader(root) {
       const evs = inRow(all.filter((ev) => ev.book === b));
       if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
       return bookBlock(b, [], { current: false, newest: s.newestFirst, noun: "event", repaint,
-        raw: { total: evs.length, build: (full) => (evs.length ? h("div.ch-body.tl-flat", rowBody(full || evs.length <= NEAR ? evs : evs.slice(0, NEAR))) : null) } });
+        raw: { total: evs.length, build: (full) => h("div.ch-body.tl-flat", rowBody(full ? evs : evs.slice(0, NEAR))) } });
     });
     const blocks = (s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock]).filter(Boolean);
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
@@ -1862,7 +1862,12 @@ export function mountReader(root) {
     const find = () => [...el.panel.querySelectorAll("li.ch-item")].find((d) => d.dataset.chapter === key);
     paintTabs();
     let item = find();
-    if (!item) {   // behind "Show all", in a collapsed earlier book or with the earlier books hidden
+    if (!item) {   // behind "Show all" in the current book
+      s.bkAll.add(bkKey(s.series ? s.book : null));
+      paintTabs();
+      item = find();
+    }
+    if (!item) {   // in a collapsed earlier book or with the earlier books hidden
       if (s.series && !s.chSeries) { s.chSeries = true; try { localStorage.setItem("lk-ch-series", "1"); } catch {} }
       for (const b of [s.series ? s.book : null, ...(s.series?.books || []).map((x) => x.key)]) { s.bkAll.add(bkKey(b)); if (b) s.bkOpen.add(bkKey(b)); }
       paintTabs();
