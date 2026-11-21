@@ -6,7 +6,6 @@ rule in `extends`. The order of pairs inside one group follows set iteration, so
 """
 
 import json
-import time
 from pathlib import Path
 
 import pytest
@@ -69,14 +68,20 @@ def test_helpers_do_not_share_mutable_results():
     assert merge._titles("Mrs. Dursley") == ["mrs"]
 
 
-def test_many_entities_are_fast():
-    # 600 entities, 180k pairs: the uncached loop needed seconds
+def test_names_are_parsed_once_not_once_per_pair(monkeypatch):
+    # 600 entities make 180k pairs; the uncached loop split every name again for every pair (millions of
+    # calls). Counting calls instead of seconds keeps this independent of the machine.
     ents = [{"id": f"p{i}", "type": "person", "from": "a1", "names": [{"value": f"Name{i} Surname{i % 40}", "from": "a1"}]}
             for i in range(600)]
     doc = {"anchors": [{"id": "a1", "seq": 1}], "entities": ents}
-    t = time.perf_counter()
+    for f in vars(merge).values():
+        if hasattr(f, "cache_clear"):
+            f.cache_clear()
+    calls = []
+    real = merge.text.words
+    monkeypatch.setattr(merge.text, "words", lambda t: calls.append(t) or real(t))
     merge.candidates([doc])
-    assert time.perf_counter() - t < 3
+    assert len(calls) <= 3 * len(ents)
 
 
 def test_caches_are_bounded():
