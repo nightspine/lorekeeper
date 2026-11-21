@@ -420,8 +420,9 @@ export function renderConnections(panel, ctx) {
     if (offSelEsc) offSelEsc();
     const onEsc = (ev) => { if (!side.isConnected) { offSelEsc?.(); return; } if (ev.key === "Escape" && phoneSheet() && !ev.defaultPrevented && !document.querySelector("dialog[open]")) { ev.preventDefault(); dismiss(); } };
     document.addEventListener("keydown", onEsc);
-    offSelEsc = () => { document.removeEventListener("keydown", onEsc); offSelEsc = null; };
-    window.addEventListener("hashchange", () => offSelEsc?.(), { once: true });
+    const onHash = () => offSelEsc?.();
+    window.addEventListener("hashchange", onHash);
+    offSelEsc = () => { document.removeEventListener("keydown", onEsc); window.removeEventListener("hashchange", onHash); offSelEsc = null; };
     let drag = null;
     side.onpointerdown = (ev) => {
       if (!phoneSheet() || !ev.target.closest(".g-head") || ev.target.closest("button, a") || side.scrollTop > 0) return;

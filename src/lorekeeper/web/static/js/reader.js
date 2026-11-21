@@ -1052,6 +1052,34 @@ export function mountReader(root) {
     clear(el.dupesSlot, dupesNotice());
     el.dupesSlot.dataset.key = dupesKey();
   }
+  /** The phone's "Merged N obvious duplicates" toast with Undo: in the open entry sheet's own host while that modal
+   *  is up (the page behind it is inert), gone after about 10 seconds or when the Reader is left. If the sheet closes
+   *  first the toast moves to the page for the time it has left; if the Reader is left while it is still showing, the
+   *  merge is forgotten so the toast comes back on return. */
+  function showMergeToast(auto, remaining = 10000) {
+    const n = auto.keepNames.length;
+    const dlg = document.querySelector("dialog.drawer[open]");
+    let host = null;
+    if (dlg) { host = dlg.querySelector(".drawer-toasts"); if (!host) { host = h("div.drawer-toasts"); dlg.append(host); } }
+    s.dropMergeToast?.();
+    const dismiss = toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { host, action: { label: "Undo", run: async () => {
+      try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
+    } } });
+    const node = (host || document.getElementById("toasts")).lastElementChild;
+    const timer = setTimeout(() => { dismiss(); s.mergeToast = null; }, remaining);
+    s.mergeToast = { auto, host, node, until: Date.now() + remaining };
+    s.dropMergeToast = () => { clearTimeout(timer); dismiss(); s.mergeToast = null; s.dropMergeToast = null; };
+  }
+  /** The entry sheet closed: a merge toast it was holding moves to the page. */
+  function rehomeMergeToast() {
+    const m = s.mergeToast;
+    if (!m || !m.host || disposed) return;
+    const left = m.until - Date.now();
+    const kept = m.host.contains(m.node);   // false once the person dismissed it
+    s.dropMergeToast?.();
+    if (kept && left > 500) showMergeToast(m.auto, left);
+  }
+
   function dupesNotice() {
     const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo : null;
     let merged = null;
@@ -1059,16 +1087,7 @@ export function mountReader(root) {
       // On a phone the merge is a toast with Undo, never a line in the middle of the list.
       // Once per merge (autoShown), gone after about 10 seconds, and gone when the Reader is left.
       s.autoShown = auto.id;
-      if (!toastedMerges.has(auto.id)) {   // once per merge in this visit to the app
-        toastedMerges.add(auto.id);
-        const n = auto.keepNames.length;
-        s.dropMergeToast?.();
-        const gone = toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { action: { label: "Undo", run: async () => {
-          try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
-        } } });
-        const timer = setTimeout(() => gone(), 10000);
-        s.dropMergeToast = () => { clearTimeout(timer); gone(); s.dropMergeToast = null; };
-      }
+      if (!toastedMerges.has(auto.id)) { toastedMerges.add(auto.id); showMergeToast(auto); }   // once per merge in this visit
     } else if (auto) {
       const dismiss = () => { clearTimeout(s.autoTimer); s.autoShown = auto.id; paintTabs(); };
       if (s.autoTimerFor !== auto.id) { s.autoTimerFor = auto.id; clearTimeout(s.autoTimer); s.autoTimer = setTimeout(() => { if (!disposed && s.autoShown !== auto.id) dismiss(); }, 20000); }
@@ -1624,7 +1643,7 @@ export function mountReader(root) {
     const id = s.drawer;
     const d = document.querySelector("dialog.drawer");
     s.drawer = null;
-    if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); }
+    if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); rehomeMergeToast(); }
     if (el.pane && !el.pane.hidden) { el.pane.hidden = true; clear(el.pane); el.split.classList.remove("has-entry"); }
     markOpenRow();
     checkPending();
@@ -1689,7 +1708,8 @@ export function mountReader(root) {
     dlg.addEventListener("pointerdown", (ev) => {
       if (!phone() || !ev.target.closest("header") || ev.target.closest("button, a, input, textarea, select") || (ev.pointerType === "mouse" && ev.button !== 0)) return;
       drag = { y: ev.clientY, t: ev.timeStamp, dy: 0, id: ev.pointerId };
-      dlg.setPointerCapture?.(ev.pointerId);
+      // captured on the header, not the dialog: the click that follows a tap or a short drag then lands on the header and is not read as a tap on the scrim
+      ev.target.closest("header").setPointerCapture?.(ev.pointerId);
       dlg.style.transition = "none";
     });
     dlg.addEventListener("pointermove", (ev) => {
@@ -2086,7 +2106,7 @@ export function mountReader(root) {
     }
     out.push(
       { id: "reader:jump", label: "Jump to chapter…", group: "Reading", keywords: "go chapter position",
-        run: () => setTimeout(() => el.chapSel?.focus(), 60) },
+        run: () => setTimeout(() => (phone() ? openJump() : el.chapSel?.focus()), 60) },
       { id: "reader:next", label: "Next reveal", group: "Reading", keywords: "forward step", run: () => stepReveal(1) },
       { id: "reader:prev", label: "Previous reveal", group: "Reading", keywords: "back step", run: () => stepReveal(-1) });
     if (!preview && ask.available?.available) out.push({ id: "reader:ask", label: "Ask about this book", group: "Reading",
@@ -2103,7 +2123,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; s.dropMergeToast?.(); ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
