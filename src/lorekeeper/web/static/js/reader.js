@@ -583,7 +583,8 @@ export function mountReader(root) {
           // Typed text is not dropped silently: the entry closes through the usual refresh, with a toast saying why.
           const dirty = drawerDirty();
           s.edit = false; wrap.classList.remove("editing"); paintTabs();
-          if (s.drawer) openDrawer(s.drawer, { refresh: true, discard: true });
+          // A dirty form closes the entry the way Close does (focus back to its row); a clean one refreshes into view mode.
+          if (s.drawer) { if (dirty) closeDrawer(); else openDrawer(s.drawer, { refresh: true }); }
           saveUrl();
           if (dirty) toast("Editing is not available for this book, so the entry was closed.", "error");
         }
