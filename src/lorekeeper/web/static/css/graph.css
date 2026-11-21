@@ -184,7 +184,7 @@ h3.g-pick { margin: 0; font-size: 16px; }
   .g-panel { display: grid; }
   /* On a phone a selection opens as a sheet over the bottom of the screen, so the map stays in view and the
      buttons are within reach instead of a screen-length scroll below the legend. */
-  .g-panel.has-sel { position: fixed; z-index: 35; left: 0; right: 0; bottom: calc(60px + env(safe-area-inset-bottom, 0px)); top: auto; max-height: min(32dvh, 280px); overflow: auto; overflow-x: hidden;
+  .g-panel.has-sel { position: fixed; z-index: 35; left: 0; right: 0; bottom: var(--tabbar-h, calc(56px + env(safe-area-inset-bottom, 0px))); top: auto; max-height: min(32dvh, 280px); overflow: auto; overflow-x: hidden;
     overscroll-behavior: contain; border: 1px solid var(--line-2); border-bottom: 0; border-radius: 12px 12px 0 0; margin: 0;
     padding: 24px var(--space-4) var(--space-4); box-shadow: var(--shadow); background: var(--pane);
     animation: drawer-up 220ms var(--ease); transition: transform 180ms var(--ease); }
