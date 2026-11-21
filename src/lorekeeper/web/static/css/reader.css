@@ -326,7 +326,8 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 
 /* ---------- small screens ---------- */
 /* The phone-only controls (the Jump button, the overflow, the series line) are hidden elsewhere. */
-.jump-btn, .more-btn, .series-line { display: none; }
+.jump-btn, .series-line { display: none; }
+.more-btn { display: inline-grid; }   /* it sits in the app bar's slot, which only a phone shows */
 @media (max-width: 640px) {
   .reader { --ruler-h: 88px; --tabs-h: 48px; }
   /* No head row on a phone: the app bar has the title; Edit and Switch book are in the overflow on the ruler. */
@@ -344,7 +345,6 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .jump-btn:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; border-radius: var(--radius); }
   .ruler .step-btns { grid-area: act; order: 0; gap: 0; }
   .ruler .rbtn { width: 40px; height: 44px; }
-  .more-btn { display: inline-grid; }
   .track { grid-area: track; min-width: 0; height: 40px; flex: none; margin: 0 10px 0 0; }
   .ruler input[type="range"].range { touch-action: pan-y; }
   .ruler-sub { padding: 6px 16px; gap: 2px 14px; }
@@ -361,6 +361,9 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .rd-list > .view-tabs { position: sticky; top: calc(var(--topbar-h) + var(--ruler-h)); z-index: 25; margin: 0 -16px; padding: 6px 12px; min-height: var(--tabs-h); background: var(--bg); border-bottom: 1px solid var(--line); }
   .reader.wide .rd-list > .view-tabs { margin-left: 0; margin-right: 0; }
   .dup-sides { grid-template-columns: minmax(0, 1fr); }
+  /* 16px keeps iOS Safari from zooming the page when a field is focused */
+  .reader input:not([type=checkbox]):not([type=radio]):not([type=range]), .reader select, .reader textarea,
+  dialog.drawer input:not([type=checkbox]):not([type=radio]), dialog.drawer select, dialog.drawer textarea { font-size: 16px; }
 }
 /* Jump, overflow and series sheets */
 .jump-field { display: grid; gap: 6px; padding-bottom: var(--space-3); }

@@ -579,7 +579,7 @@ export function mountReader(root) {
     el.track = h("div.track", h("div.rail", { "aria-hidden": "true" }, el.ticks), el.range);
     el.jump = h("div.jump-group", el.chapSel, h("span.pct-group", el.pctInput, h("span.subtle", "%")));
     el.position = h("section.ruler", { "aria-label": "Reading position" },
-      h("div.step-btns", prev, next, el.moreBtn), el.pct, el.chap, el.jumpBtn, el.track, el.jump);
+      h("div.step-btns", prev, next), el.pct, el.chap, el.jumpBtn, el.track, el.jump);
     // Secondary lines sit under the ruler only when they have something to say.
     el.sub = h("div.ruler-sub", el.source, el.hint, el.setting, el.headFacts, el.notice);
     placeJump();
@@ -594,6 +594,8 @@ export function mountReader(root) {
     el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
     el.panel.addEventListener("keydown", onListKey);
 
+    // The overflow (Edit, Switch book) lives in the phone app bar's slot; the slot is hidden beside the rail and emptied on every route change.
+    document.getElementById("appbar-slot")?.replaceChildren(el.moreBtn);
     clear(wrap, head, preview ? previewStrip(preview.info) : null, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
