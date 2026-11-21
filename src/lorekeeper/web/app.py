@@ -9,6 +9,7 @@ addressed by content hash, indexes by keys from a server-side scan of known dire
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -48,6 +49,7 @@ class Library:
 
     def __init__(self, index_dirs: list[tuple[str, Path]], epub_dirs: list[Path]) -> None:
         self.index_dirs, self.epub_dirs = index_dirs, epub_dirs
+        self._described: dict[Path, tuple[tuple, dict]] = {}   # epub path → ((mtime_ns, size), edition meta)
         self._editions: dict[Path, tuple[float, str]] = {}   # epub path → (mtime, textHash)
 
     def scan(self) -> dict[str, dict]:
@@ -88,6 +90,18 @@ class Library:
                 "hasEdition": any(self.edition_path(e.get("textHash", "")) for e in doc.get("editions", [])),
             })
         return {"indexes": indexes, "series": series}
+
+    def describe_edition(self, p: Path) -> dict:
+        """`describe(p)` plus `blockWords`, remembered per file (mtime, size): parsing a large EPUB takes
+        half a second and the Reader asks every time it opens."""
+        st = p.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+        hit = self._described.get(p)
+        if hit is None or hit[0] != stamp:
+            meta = describe(p)
+            meta["blockWords"] = [len(b.words) for b in epub.blocks(p)]
+            hit = self._described[p] = (stamp, meta)
+        return copy.deepcopy(hit[1])
 
     def edition_path(self, text_hash: str) -> Path | None:
         if not text_hash:
@@ -1188,9 +1202,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         p = library.edition_path(text_hash)
         if p is None:
             raise HTTPException(404, "book file for this edition not found")
-        meta = describe(p)
-        meta["blockWords"] = [len(b.words) for b in epub.blocks(p)]
-        return meta
+        return library.describe_edition(p)
 
     @app.get("/api/editions/{text_hash}/blocks")
     def edition_blocks(text_hash: str, seq: int = 0, before: int = 2, after: int = 2, i: str | None = None):
