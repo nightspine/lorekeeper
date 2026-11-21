@@ -3,7 +3,7 @@
 // nothing here fetches anything but this app's own /api. Registry text is untrusted: it only ever
 // goes through h() (textContent).
 import { api } from "./api.js";
-import { announce, clear, fmtInt, h, icon, showModalLocked, toast } from "./dom.js";
+import { announce, clear, fmtInt, h, icon, showModalLocked, closeLocked, toast } from "./dom.js";
 import { modal } from "./build.js";
 
 const REPORT = "https://github.com/nightspine/lorekeeper-registry/issues/new?title=Report:+";
@@ -92,7 +92,7 @@ function sheet(title) {
     h("header.csheet-head", h("h2#csheet-title", title), closeBtn), body);
   const ctl = { dialog: dlg, body, close() {
     window.removeEventListener("hashchange", ctl.close);
-    if (dlg.open) dlg.close();
+    closeLocked(dlg);
     dlg.remove();
     if (opener && document.contains(opener)) opener.focus();
   } };
