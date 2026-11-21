@@ -1,10 +1,10 @@
 // Command palette (Cmd/Ctrl+K). Providers register sync functions returning items; see registerProvider.
-import { h, icon, clear, announce } from "./dom.js";
+import { h, icon, clear, announce, lockScroll, unlockScroll } from "./dom.js";
 import { api } from "./api.js";
 
 const MAX_PER_GROUP = 8, MAX_TOTAL = 24;
 const providers = new Map();
-let dialog, input, list, items = [], active = 0, books = null, booksAt = 0, composing = false, announceTimer;
+let locked = false, dialog, input, list, items = [], active = 0, books = null, booksAt = 0, composing = false, announceTimer;
 
 /** provider: (query) => Item[]. Registering the same id replaces it. Returns an unregister function. */
 export function registerProvider(id, provider) {
@@ -139,9 +139,10 @@ function build() {
   });
   list = h("div.palette-list#palette-list", { role: "listbox", "aria-label": "Results" });
   dialog = h("dialog.palette", { "aria-label": "Command palette" },
-    h("div.palette-field", icon("search"), input), list);
+    h("div.palette-field", icon("search"), input,
+      h("button.icon-btn.palette-close", { type: "button", "aria-label": "Close", title: "Close", on: { click: () => closePalette() } }, icon("x"))), list);
   dialog.addEventListener("click", (e) => { if (e.target === dialog) closePalette(); });
-  dialog.addEventListener("close", () => { input.setAttribute("aria-expanded", "false"); });
+  dialog.addEventListener("close", () => { input.setAttribute("aria-expanded", "false"); if (locked) { locked = false; unlockScroll(); } });
   input.addEventListener("compositionstart", () => { composing = true; });
   input.addEventListener("compositionend", () => { composing = false; });
   document.body.append(dialog);
@@ -201,7 +202,7 @@ function onKey(e) {
 
 export function openPalette(initialQuery = "") {
   if (!dialog) build();
-  if (!dialog.open) dialog.showModal();
+  if (!dialog.open) { if (!locked) { locked = true; lockScroll(); } dialog.showModal(); }
   input.setAttribute("aria-expanded", "true");
   input.value = initialQuery;
   active = 0;

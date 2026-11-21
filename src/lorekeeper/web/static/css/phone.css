@@ -3,6 +3,9 @@
    Page-specific phone rules live in each page's own file (library.css, studio.css, settings.css, auth.css). */
 
 /* Touch: no flash on tap, no double-tap delay, hover styles only where a pointer can hover. */
+/* the palette's Close button exists on a phone only */
+.palette-close { display: none; }
+
 @media (hover: none) {
   a, button, label, summary, select, input, [role="button"], [role="tab"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   .btn:active, .icon-btn:active, .nav:active, .lib-filter:active, .tabbar a:active, .prow:active, .choice:active { background: var(--hover); }
@@ -53,6 +56,7 @@
   .palette[open] { display: flex; animation: sheet-in 220ms var(--ease); }
   .palette::before { content: ""; flex: none; width: 36px; height: 4px; margin: 8px auto 0; border-radius: 2px; background: var(--line-2); }
   .palette-input { height: 52px; }
+  .palette-close { display: inline-grid; flex: none; margin-right: -8px; }
   .palette-list { flex: 1; max-height: none; padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; }
   .palette-row { min-height: 48px; }
   .palette-hint { max-width: 45%; }
