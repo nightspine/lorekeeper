@@ -1036,3 +1036,150 @@ def test_arcs_only_fail_on_errors_they_introduce(tmp_path, monkeypatch):
         job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["report"]["arcs"].get("arcs") == 0, done["report"]["arcs"]
+
+
+def test_duplicates_are_computed_once_until_a_file_or_distinct_pair_changes(client, tmp_path, monkeypatch):
+    from lorekeeper import merge
+    from .test_merge import _ent, _index
+    ix = _index([_ent("dior", ["Dior"], "a1", facets=[("a1", "A thief.")]),
+                 _ent("dior-lachance", ["Dior LaChance"], "a3", facets=[("a3", "Gives a full name.")])])
+    path = tmp_path / "data" / "indexes" / "b.lore.json"
+    path.write_text(json.dumps(ix))
+    key = "generated--b.lore"
+    calls = []
+    real = merge.candidates
+    monkeypatch.setattr(merge, "candidates", lambda *a, **k: calls.append(1) or real(*a, **k))
+    first = client.get(f"/api/library/{key}/duplicates").json()
+    second = client.get(f"/api/library/{key}/duplicates").json()
+    assert len(calls) == 1 and first["pairs"] == second["pairs"]
+    # a changed file is picked up
+    ix["entities"].append(_ent("chloe", ["Chloe"]))
+    ix["entities"].append(_ent("chloe-sauvage", ["Chloe Sauvage"], "a2"))
+    path.write_text(json.dumps(ix))
+    pairs = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert len(calls) == 2 and {(p["keep"], p["drop"]) for p in pairs} == {("dior", "dior-lachance"), ("chloe", "chloe-sauvage")}
+    # so is a new "not the same" pair
+    client.post(f"/api/library/{key}/distinct", json={"a": "chloe", "b": "chloe-sauvage"})
+    pairs = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert len(calls) == 3 and {(p["keep"], p["drop"]) for p in pairs} == {("dior", "dior-lachance")}
+
+
+def test_edition_is_parsed_once_per_file_version(client, tmp_path, monkeypatch):
+    from lorekeeper.web import app as appmod
+    meta = upload(client, tmp_path)
+    real = appmod.epub.blocks
+    calls = []
+    monkeypatch.setattr(appmod.epub, "blocks", lambda p: calls.append(1) or real(p))
+    h = meta["textHash"] if "textHash" in meta else None
+    assert h, meta
+    a = client.get(f"/api/editions/{h}").json()
+    n = len(calls)
+    b = client.get(f"/api/editions/{h}").json()
+    assert a == b and a["blockWords"] and len(calls) == n
+
+
+def test_a_file_rewritten_during_the_computation_is_never_served_stale(client, tmp_path, monkeypatch):
+    from lorekeeper import merge
+    from .test_merge import _ent, _index
+    a = _index([_ent("dior", ["Dior"], "a1", facets=[("a1", "A thief.")]),
+                _ent("dior-lachance", ["Dior LaChance"], "a3", facets=[("a3", "Gives a full name.")])])
+    b = _index([_ent("chloe", ["Chloe"]), _ent("chloe-sauvage", ["Chloe Sauvage"], "a2")])
+    path = tmp_path / "data" / "indexes" / "b.lore.json"
+    path.write_text(json.dumps(a))
+    key = "generated--b.lore"
+    real = merge.candidates
+    once = []
+
+    import shutil
+    keep = tmp_path / "a-original.json"
+    shutil.copy2(path, keep)   # the original bytes with their metadata, as an undo snapshot has them
+
+    def racing(docs, distinct):
+        if not once:   # the file is replaced after it was read and before the result is computed
+            once.append(1)
+            path.write_text(json.dumps(b))
+        return real(docs, distinct)
+    monkeypatch.setattr(merge, "candidates", racing)
+    first = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in first} == {("dior", "dior-lachance")}   # computed from what it read
+    second = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in second} == {("chloe", "chloe-sauvage")}
+    shutil.copy2(keep, path)   # an undo puts the first bytes back, old mtime and all
+    third = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in third} == {("dior", "dior-lachance")}
+
+
+def test_edition_cache_notices_a_changed_epub(client, tmp_path):
+    import os
+    upload(client, tmp_path)
+    from lorekeeper.web import app as appmod
+    lib = appmod.Library.__new__(appmod.Library)
+    lib._described = {}
+    stored = next((tmp_path / "data" / "books").rglob("*.epub"))
+    first = lib.describe_edition(stored)
+    assert lib.describe_edition(stored) == first
+    make_epub(tmp_path / "n.epub", title="Another", ch1=["A brand new first paragraph, long enough to count as text here.",
+                                                         "And a second paragraph so this book differs from before."])
+    stored.write_bytes((tmp_path / "n.epub").read_bytes())
+    os.utime(stored, ns=(1, 1))
+    changed = lib.describe_edition(stored)
+    assert changed["title"] == "Another" and changed["textHash"] != first["textHash"]
+
+
+def _lib_with(tmp_path, files):
+    from lorekeeper.web import app as appmod
+    from .test_merge import _index
+    dirs = {}
+    for (label, name), series in files.items():
+        d = dirs.setdefault(label, tmp_path / label)
+        d.mkdir(exist_ok=True)
+        ix = _index([])
+        ix["id"] = name
+        if series:
+            ix["series"] = {"id": series, "book": name}
+        (d / f"{name}.lore.json").write_text(json.dumps(ix))
+    return appmod.Library(list(dirs.items()), [])
+
+
+def test_summary_marks_which_indexes_can_be_edited(tmp_path):
+    lib = _lib_with(tmp_path, {("generated", "solo"): None, ("community", "theirs"): None,
+                               ("generated", "s1"): "all-mine", ("generated", "s2"): "all-mine",
+                               ("generated", "m1"): "mixed", ("community", "m2"): "mixed"})
+    w = {i["id"]: i["writable"] for i in lib.summary()["indexes"]}
+    assert w == {"solo": True, "theirs": False, "s1": True, "s2": True, "m1": False, "m2": False}
+
+
+def test_get_reads_only_the_one_file(tmp_path, monkeypatch):
+    lib = _lib_with(tmp_path, {("generated", "a"): None, ("generated", "b"): None, ("generated", "c"): None})
+    read = []
+    real = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: read.append(self.name) or real(self))
+    item = lib.get("generated--b.lore")
+    assert item["doc"]["id"] == "b" and read == ["b.lore.json"]
+    assert lib.get("generated--nope") is None
+    assert {k: v["stamp"] for k, v in lib.scan().items()}["generated--b.lore"] == item["stamp"]
+
+
+def test_edition_is_parsed_once_and_gone_files_are_dropped(client, tmp_path, monkeypatch):
+    from lorekeeper.web import app as appmod
+    from lorekeeper.web.jobs import describe
+    from lorekeeper import epub
+    upload(client, tmp_path)
+    stored = next((tmp_path / "data" / "books").rglob("*.epub"))
+    lib = appmod.Library([], [])
+    calls = []
+    real = epub.read
+    monkeypatch.setattr(appmod.epub, "read", lambda p: calls.append(1) or real(p))
+    got = lib.describe_edition(stored)
+    assert len(calls) == 1
+    expected = {**describe(stored), "blockWords": [len(b.words) for b in real(stored).blocks]}
+    assert got == expected
+    other = tmp_path / "other.epub"
+    make_epub(other, title="Other")
+    lib.describe_edition(other)
+    other.unlink()
+    lib.describe_edition(stored.with_name(stored.name))   # a hit
+    third = tmp_path / "third.epub"
+    make_epub(third, title="Third", ch1=["Another first paragraph, long enough to count as text here.", "And a second paragraph for it."])
+    lib.describe_edition(third)
+    assert set(lib._described) == {stored, third}
