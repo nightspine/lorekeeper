@@ -1040,7 +1040,7 @@ export function mountReader(root) {
   function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none, raw }) {
     const all = s.bkAll.has(bkKey(key));
     const folded = !all && items.length > NEAR;
-    const shown = !folded ? items : newest ? items.slice(0, NEAR) : items.slice(-NEAR);
+    const shown = !folded ? items : items.slice(0, NEAR);
     const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
       it.label ? h("span.ch-label", it.label) : null,
       it.title ? h("div.ch-name", it.title, it.badge || null) : null,
@@ -1051,7 +1051,7 @@ export function mountReader(root) {
         all ? s.bkAll.delete(bkKey(key)) : s.bkAll.add(bkKey(key));
         repaint();
         el.panel.querySelector(`.ch-all[data-book="${CSS.escape(bkKey(key))}"]`)?.focus({ preventScroll: true });
-      } } }, all ? `Show only the latest ${NEAR}` : `Show all ${total} ${noun}${total === 1 ? "" : "s"}`) : null;
+      } } }, all ? `Show only the ${newest ? "latest" : "first"} ${NEAR}` : `Show all ${total} ${noun}${total === 1 ? "" : "s"}`) : null;
     const content = raw ? raw.build(all) : rail;
     if (current) return h("section.book-block.stack-book.current", { "aria-label": bookTitleOf(key) }, bookBanner(key), content, toggle);
     return h("details.book-block.stack-book.earlier", { "aria-label": bookTitleOf(key), open: s.bkOpen.has(bkKey(key)) ? "" : null,
@@ -1287,7 +1287,7 @@ export function mountReader(root) {
       const evs = inRow(all.filter((ev) => ev.book === b));
       if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
       return bookBlock(b, [], { current: false, newest: s.newestFirst, noun: "event", repaint,
-        raw: { total: evs.length, build: (full) => (evs.length ? h("div.ch-body.tl-flat", rowBody(full || evs.length <= NEAR ? evs : s.newestFirst ? evs.slice(0, NEAR) : evs.slice(-NEAR))) : null) } });
+        raw: { total: evs.length, build: (full) => (evs.length ? h("div.ch-body.tl-flat", rowBody(full || evs.length <= NEAR ? evs : evs.slice(0, NEAR))) : null) } });
     });
     const blocks = (s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock]).filter(Boolean);
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
