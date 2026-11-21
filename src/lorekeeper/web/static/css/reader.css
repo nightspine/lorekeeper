@@ -467,7 +467,9 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .drawer .d-title { gap: 2px; }
   .drawer .d-title .d-from { margin: 0; }
   .drawer .d-jumps { margin-top: 0; gap: 0 16px; }
-  .drawer .d-jumps .linkish, .drawer .d-ask .linkish { min-height: 36px; }
+  .drawer .d-jumps .linkish, .drawer .d-ask .linkish { position: relative; min-height: 30px; }
+  .drawer .d-jumps .linkish::after, .drawer .d-ask .linkish::after { content: ""; position: absolute; inset: -7px -4px; }   /* the hit area stays about 44px */
+  .drawer h2:focus, .drawer h2:focus-visible { outline: none; }   /* a heading takes focus to be announced; it is not a control */
   .drawer .d-ask { margin: 0; }
   .drawer header h2 { font-size: 20px; line-height: 1.2; }
   .drawer .body { gap: var(--space-4); padding-top: var(--space-3); }
