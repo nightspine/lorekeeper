@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.2](https://github.com/nightspine/lorekeeper/compare/v0.12.1...v0.12.2) (2026-11-21)
+
+
+### Performance Improvements
+
+* open a book in the Reader in about a second ([#85](https://github.com/nightspine/lorekeeper/issues/85)) ([85b527e](https://github.com/nightspine/lorekeeper/commit/85b527e745c6996bf0c8df7b56c82f60ae7b4a4b))
+
 ## [0.12.1](https://github.com/nightspine/lorekeeper/compare/v0.12.0...v0.12.1) (2026-11-21)
 
 
