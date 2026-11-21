@@ -534,9 +534,15 @@ export function mountLibrary(root) {
     const me = bookSheet = sheet({ title: b.title, content, label: "Book details", className: "book-sheet",
       onClose: () => {
         if (bookSheet === me) bookSheet = null;
-        paneSig = "";
         if (disposed) return;
-        if (keepSelection) { keepSelection = false; return; }
+        if (keepSelection) {
+          keepSelection = false;
+          // Widened to where the pane floats over the list (an iPhone turned to landscape): focus goes into it, as when a book is chosen there.
+          // (A native dialog may fire `close` synchronously, before paintPane has built the pane: focus its heading next frame.)
+          if (!phone() && floating()) requestAnimationFrame(() => { if (!disposed && !phone()) pane.querySelector("h2")?.focus({ preventScroll: true }); });
+          return;
+        }
+        paneSig = "";
         if (s.selected === opened) { s.selected = null; paintSelection(); persist(); }
         list.querySelector(`[data-key="${CSS.escape(opened)}"] [data-role=open]`)?.focus({ preventScroll: true });
       } });
