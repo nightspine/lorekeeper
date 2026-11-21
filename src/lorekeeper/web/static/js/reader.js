@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
-import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -426,6 +426,61 @@ export function mountReader(root) {
     }, 250);
   }
 
+  // ---- phone: the ruler's Jump sheet, the overflow menu and the series line ----------------------
+
+  const phone = () => matchMedia("(max-width: 640px)").matches;
+  /** Two small icons the shared set lacks (a chevron down, three dots), built as SVG nodes. */
+  function glyph(d) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "svg-icon"); svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+    for (const part of d) { const n = document.createElementNS(ns, part.startsWith("c") ? "circle" : "path"); if (part.startsWith("c")) { const [cx, cy] = part.slice(1).split(","); n.setAttribute("cx", cx); n.setAttribute("cy", cy); n.setAttribute("r", "1.6"); n.setAttribute("fill", "currentColor"); } else n.setAttribute("d", part); svg.append(n); }
+    return svg;
+  }
+  const chevronDown = () => glyph(["m6 9 6 6 6-6"]);
+  const dots = () => glyph(["c5,12", "c12,12", "c19,12"]);
+  /** The chapter the ruler names: a span beside the track on desktop, the Jump button's text on a phone. */
+  function setChap(text) {
+    el.chap.textContent = text;
+    if (el.chapText) el.chapText.textContent = text;
+  }
+  let top = null;   // the one Reader sheet that is open (Jump, More, series)
+  function openSheet(opts) {
+    top = sheet({ ...opts, onClose: () => { top = null; opts.onClose?.(); } });
+    return top;
+  }
+  function closeTop() { top?.close(true); }
+
+  /** Jump to a chapter or a percentage. Every move goes through moveTo, which asks before dropping an edit form. */
+  function openJump() {
+    const go = (p) => { closeTop(); moveTo(p); };
+    const pct = h("input.input.jump-pct", { type: "number", inputmode: "numeric", min: "0", max: "100", step: "1", value: String(Math.round(s.p * 100)), "aria-label": "Percent of the book" });
+    const submit = () => go(Math.min(100, Math.max(0, +pct.value || 0)) / 100);
+    pct.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); submit(); } });
+    const here = s.map.exact ? s.map.chapterAt(s.p) : null;
+    const rows = s.map.exact ? s.map.chapters.map((c, i) => {
+      const next = s.map.chapters[i + 1]?.start;
+      const nowHere = here && here.start === c.start;
+      return h(`li.jump-row${nowHere ? ".now" : ""}`,
+        h("button.jump-go", { type: "button", "aria-current": nowHere ? "true" : null, on: { click: () => go(s.map.blockStart(c.start)) } }, h("span.jump-name", tidyTitle(c.title))),
+        h("button.jump-end", { type: "button", "aria-label": `End of ${tidyTitle(c.title)}`, on: { click: () => go(next != null ? s.map.blockStart(next) : 1) } }, "End"));
+    }) : [];
+    const list = rows.length ? h("ol.jump-list", rows) : h("p.hint", "Chapter marks need the book file in the library.");
+    const sh = openSheet({ title: "Jump to", focus: pct,
+      content: [h("div.jump-field", h("label.label", { for: "jump-pct" }, "Percent of the book"), h("div.jump-pct-row", pct, h("button.btn.primary", { type: "button", on: { click: submit } }, "Go"))), list] });
+    pct.id = "jump-pct";
+    queueMicrotask(() => sh.el.querySelector(".jump-row.now .jump-go")?.scrollIntoView({ block: "center" }));
+    return sh;
+  }
+
+  /** The overflow: Edit and Switch book, which have no room on the phone's ruler. */
+  function openMore() {
+    const items = [];
+    if (canEdit()) items.push(h("button.more-item", { type: "button", on: { click: () => { closeTop(); setEdit(!s.edit); } } }, icon(s.edit ? "check" : "pen"), s.edit ? "Done editing" : "Edit this index"));
+    if (!preview) items.push(h("button.more-item", { type: "button", on: { click: () => { closeTop(); pickBook(); } } }, icon("layers"), "Switch book"));
+    openSheet({ title: s.doc.work.title, content: h("div.more-list", items) });
+  }
+
   // ---- layout ----------------------------------------------------------------------------
 
   const el = {};
@@ -442,6 +497,11 @@ export function mountReader(root) {
     el.pctNum = document.createTextNode("");
     el.pct = h("span.pct.num", el.pctNum, h("span.pct-unit", "%"));
     el.chap = h("span.chap");
+    // On a phone the chapter name is the way into the Jump sheet (chapter list and percent field); the span stays for desktop.
+    el.chapText = h("span.jt-text");
+    el.jumpBtn = h("button.jump-btn", { type: "button", "aria-haspopup": "dialog", "aria-label": "Jump to a chapter or a percentage", on: { click: openJump } },
+      el.chapText, chevronDown());
+    el.moreBtn = h("button.icon-btn.rbtn.more-btn", { type: "button", "aria-haspopup": "dialog", "aria-label": "More", title: "More", on: { click: openMore } }, dots());
     el.source = h("div.pos-source");
     el.range = h("input.range", { type: "range", min: "0", max: "1000", step: "1", value: String(Math.round(s.p * 1000)),
       "aria-label": "Reading position in the book" });
@@ -465,14 +525,14 @@ export function mountReader(root) {
       const r = el.range.getBoundingClientRect();
       const at = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
       const c = s.map.chapterAt(at);
-      el.chap.textContent = c ? tidyTitle(c.title) : "Before the first chapter";
+      setChap(c ? tidyTitle(c.title) : "Before the first chapter");
       el.chap.classList.add("hovering");
     });
     el.range.addEventListener("pointerleave", () => {
       if (!el.chap.classList.contains("hovering")) return;
       el.chap.classList.remove("hovering");
       const ch = s.map.chapterAt(s.p);
-      el.chap.textContent = ch ? tidyTitle(ch.title) : el.chap.title;
+      setChap(ch ? tidyTitle(ch.title) : el.chap.title);
     });
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
     el.range.addEventListener("input", () => {
@@ -519,7 +579,7 @@ export function mountReader(root) {
     el.track = h("div.track", h("div.rail", { "aria-hidden": "true" }, el.ticks), el.range);
     el.jump = h("div.jump-group", el.chapSel, h("span.pct-group", el.pctInput, h("span.subtle", "%")));
     el.position = h("section.ruler", { "aria-label": "Reading position" },
-      h("div.step-btns", prev, next), el.pct, el.chap, el.track, el.jump);
+      h("div.step-btns", prev, next), el.pct, el.chap, el.jumpBtn, el.track, el.jump);
     // Secondary lines sit under the ruler only when they have something to say.
     el.sub = h("div.ruler-sub", el.source, el.hint, el.setting, el.headFacts, el.notice);
     placeJump();
@@ -534,6 +594,8 @@ export function mountReader(root) {
     el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
     el.panel.addEventListener("keydown", onListKey);
 
+    // The overflow (Edit, Switch book) lives in the phone app bar's slot; the slot is hidden beside the rail and emptied on every route change.
+    document.getElementById("appbar-slot")?.replaceChildren(el.moreBtn);
     clear(wrap, head, preview ? previewStrip(preview.info) : null, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
@@ -670,21 +732,22 @@ export function mountReader(root) {
         h("option", { value: `end:${c.start}` }, `End of ${c.title}`))));
   }
 
-  function paintSeries() {
-    if (!s.series) return clear(el.series);
+  /** The series controls: which book, the reading order, and which earlier books are finished. They sit in a bar on
+   *  a wide screen and in a sheet on a phone; each change goes through okToMove. */
+  function seriesControls() {
     const order = s.series.orders[s.order];
     const seg = h("div.series-chips", { role: "group", "aria-label": "Book in series" }, order.map((k, i) => {
       const b = s.series.books.find((x) => x.key === k);
       const has = s.seriesDocs.get(k);
       const text = `${i + 1}. ${b?.title || k}`;
       return k === s.book ? h("span.chip", { "aria-current": "true" }, text)
-        : h("button.chip", { type: "button", disabled: !has, title: has ? b.title : "No index for this book", on: { click: () => switchBook(k) } }, text);
+        : h("button.chip", { type: "button", disabled: !has, title: has ? b.title : "No index for this book", on: { click: () => { closeTop(); switchBook(k); } } }, text);
     }));
     const orderSel = Object.keys(s.series.orders).length > 1 && h("select.select", { "aria-label": "Reading order", style: { width: "auto" },
       on: { change: async (e) => {
         const want = e.target.value;
         if (!(await okToMove("Changing the reading order closes the form you were editing."))) { e.target.value = s.order; return; }
-        s.order = want; render(); saveUrl();
+        closeTop(); s.order = want; render(); saveUrl();
       } } },
       Object.keys(s.series.orders).map((o) => h("option", { value: o, selected: o === s.order }, `${o} order`)));
     const before = order.slice(0, order.indexOf(s.book));
@@ -701,6 +764,27 @@ export function mountReader(root) {
       });
       return h("label.chip", { style: { cursor: "pointer" } }, box, `Finished ${b?.title || k}`);
     });
+    return { seg, orderSel, boxes };
+  }
+
+  function paintSeries() {
+    if (!s.series) return clear(el.series);
+    if (phone()) {
+      // One line: "Book 2 of 7 in Harry Potter", a tap opens the books, the reading order and the Finished boxes.
+      const order = s.series.orders[s.order];
+      const at = order.indexOf(s.book);
+      const name = s.series.title || s.series.name || "this series";
+      const btn = h("button.series-line", { type: "button", "aria-haspopup": "dialog",
+        on: { click: () => {
+          const { seg, orderSel, boxes } = seriesControls();
+          openSheet({ title: name, content: h("div.series-sheet", h("p.hint", "Pick the book to read. Earlier books you have finished add what you know from them."),
+            seg, orderSel ? h("div.series-order", h("label.label", "Reading order"), orderSel) : null,
+            boxes.length ? h("div.series-fin", h("p.label", "Earlier books you have finished"), boxes) : null) });
+        } } },
+        h("span.sl-text", at >= 0 ? `Book ${at + 1} of ${order.length} in ${name}` : `In the series ${name}`), chevronDown());
+      return clear(el.series, btn);
+    }
+    const { seg, orderSel, boxes } = seriesControls();
     clear(el.series, h("div.series-bar", h("span.eyebrow", { title: s.series.title }, "In this series"), seg, orderSel, boxes));
   }
 
@@ -745,7 +829,7 @@ export function mountReader(root) {
     el.hint.hidden = !(s.p === 0 && !v.entities.length && !v.events.length && !v.chapters.length);
     el.hint.textContent = el.hint.hidden ? "" : "Drag the slider to where you are in the book. Everything below updates to what you've read, and nothing further.";
     const ch = s.map.chapterAt(s.p);
-    el.chap.textContent = ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal";
+    setChap(ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal");
     el.chap.title = el.chap.textContent;
     paintSource();
     paintLastSetting();
@@ -898,7 +982,14 @@ export function mountReader(root) {
   function dupesNotice() {
     const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo : null;
     let merged = null;
-    if (auto) {
+    if (auto && phone()) {
+      // On a phone the merge is a toast with Undo, never a line in the middle of the list.
+      s.autoShown = auto.id;
+      const n = auto.keepNames.length;
+      toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { action: { label: "Undo", run: async () => {
+        try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
+      } } });
+    } else if (auto) {
       const dismiss = () => { clearTimeout(s.autoTimer); s.autoShown = auto.id; paintTabs(); };
       if (s.autoTimerFor !== auto.id) { s.autoTimerFor = auto.id; clearTimeout(s.autoTimer); s.autoTimer = setTimeout(() => { if (!disposed && s.autoShown !== auto.id) dismiss(); }, 20000); }
       const n = auto.keepNames.length;
@@ -1488,15 +1579,15 @@ export function mountReader(root) {
     next.focus();
     if (s.drawer && !el.pane.hidden) openDrawer(next.dataset.ent, { from: next, keepFocus: true });
   }
-  /** On a phone the ruler is one line; the chapter select and the percent field go to the line under it. */
+  /** On a phone the ruler is two lines and the chapter select and percent field give way to the Jump sheet (css hides
+   *  them); a sheet left open across the 640px line closes, and the series line is painted in the form that fits. */
+  let phoneWas = phone();
   function placeJump() {
-    if (!el.jump) return;
-    const phone = matchMedia("(max-width: 640px)").matches;
-    const target = phone ? el.sub : el.position;
-    if (el.jump.parentNode !== target) target.append(el.jump);
-    // On a phone the head row goes (the app bar has the title): Edit and Switch book end the jump row.
-    const actionsAt = phone ? el.jump : el.headActions?.parentNode === el.jump ? wrap.querySelector(".rd-head") : null;
-    if (actionsAt && el.headActions && el.headActions.parentNode !== actionsAt) actionsAt.append(el.headActions);
+    const now = phone();
+    if (now === phoneWas) return;
+    phoneWas = now;
+    closeTop();
+    if (el.series && s.series) paintSeries();
   }
   // The width can cross 1100px with an entry open: move it to the other form.
   let modeWas = paneMode();
@@ -1510,6 +1601,31 @@ export function mountReader(root) {
     }
   };
   window.addEventListener("resize", onResize);
+
+  /** On a phone the entry is a bottom sheet: a swipe down on its header (the handle) follows the finger and closes it
+   *  past 90px or on a quick flick, through requestCloseDrawer so typed text still asks first. */
+  function swipeToClose(dlg) {
+    let drag = null;
+    dlg.addEventListener("pointerdown", (ev) => {
+      if (!phone() || !ev.target.closest("header") || ev.target.closest("button, a, input, textarea, select") || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+      drag = { y: ev.clientY, t: ev.timeStamp, dy: 0, id: ev.pointerId };
+      dlg.setPointerCapture?.(ev.pointerId);
+      dlg.style.transition = "none";
+    });
+    dlg.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      drag.dy = Math.max(0, ev.clientY - drag.y);
+      dlg.style.transform = `translateY(${drag.dy}px)`;
+    });
+    const end = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      const { dy, t } = drag; drag = null;
+      dlg.style.transition = ""; dlg.style.transform = "";
+      if (dy > 90 || (dy > 30 && dy / Math.max(1, ev.timeStamp - t) > 0.5)) requestCloseDrawer();
+    };
+    dlg.addEventListener("pointerup", end);
+    dlg.addEventListener("pointercancel", end);
+  }
 
   /** Move the open entry between the pane and the modal drawer as it is: the same nodes, so typed text, open
    *  folds and listeners come along. */
@@ -1536,6 +1652,7 @@ export function mountReader(root) {
         on: { input: markDirty, change: markDirty, click: (ev) => { checkPending(); if (ev.target === d) requestCloseDrawer(); }, keyup: checkPending, close: onDialogClose,
           cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } } } }, nodes);
       document.body.append(d);
+      swipeToClose(d);
       d.showModal();
       markOpenRow();
     }
@@ -1764,6 +1881,7 @@ export function mountReader(root) {
       on: { input: markDirty, change: markDirty, keyup: checkPending, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
         click: (ev) => { checkPending(); if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
+    swipeToClose(dlg);
     dlg.showModal();
     if (!refresh) closeBtn.focus();
   }
