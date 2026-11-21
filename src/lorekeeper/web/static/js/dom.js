@@ -194,6 +194,19 @@ export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb"
   return nav;
 }
 
+/** `dlg.showModal()` with the page locked behind it; released once when the dialog closes or is removed while open
+ *  (a removed open dialog fires no close event). Use this for every modal dialog instead of calling showModal() directly. */
+export function showModalLocked(dlg) {
+  if (dlg.open) return;
+  lockScroll();
+  let released = false;
+  const release = () => { if (released) return; released = true; mo.disconnect(); dlg.removeEventListener("close", release); unlockScroll(); };
+  const mo = new MutationObserver(() => { if (!dlg.isConnected) release(); });
+  mo.observe(document.body, { childList: true, subtree: true });
+  dlg.addEventListener("close", release);
+  dlg.showModal();
+}
+
 /**
  * A bottom sheet on a native <dialog> (focus trap, Escape, inert page and scroll lock come from
  * showModal). Full width, rounded top corners, a grab handle, its own scroll, closed by the handle
@@ -266,7 +279,6 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   function finish() {
     if (finished) return;
     finished = true;
-    unlockScroll();
     if (openSheet === api) openSheet = null;
     dlg.remove();
     if (returnTo?.isConnected) { try { returnTo.focus({ preventScroll: true }); } catch { /* element gone */ } }
@@ -305,8 +317,7 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   head.addEventListener("pointercancel", release);
 
   document.body.append(dlg);
-  lockScroll();
-  dlg.showModal();
+  showModalLocked(dlg);
   openSheet = api;
   const target = typeof focus === "string" ? dlg.querySelector(focus) : focus;
   (target || titleEl).focus({ preventScroll: true });

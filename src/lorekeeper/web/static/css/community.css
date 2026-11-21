@@ -24,14 +24,14 @@
 .measures .m-sub { color: var(--text-3); font-size: var(--text-sm); }
 
 /* ---- the sheet: a side sheet, a bottom sheet on a phone ---- */
-dialog.sheet { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(480px, 100%); max-width: 100%; height: 100%; max-height: 100%; padding: 0; border: 0; border-left: 1px solid var(--line);
+dialog.csheet { position: fixed; inset: 0 0 0 auto; margin: 0; width: min(480px, 100%); max-width: 100%; height: 100%; max-height: 100%; padding: 0; border: 0; border-left: 1px solid var(--line);
   background: var(--pane); color: var(--text); box-shadow: var(--shadow); overflow: hidden; }
-dialog.sheet[open] { display: grid; grid-template-rows: auto 1fr; animation: sheet-in var(--dur-slow) var(--ease); }
-dialog.sheet::backdrop { background: var(--backdrop); }
-@keyframes sheet-in { from { opacity: 0; transform: translateX(24px); } }
-.sheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-5) var(--space-5) var(--space-3); }
-.sheet-head h2 { font-size: var(--text-xl); }
-.sheet-body { overflow: auto; padding: 0 var(--space-5) var(--space-5); display: grid; gap: var(--space-4); align-content: start; }
+dialog.csheet[open] { display: grid; grid-template-rows: auto 1fr; animation: csheet-in var(--dur-slow) var(--ease); }
+dialog.csheet::backdrop { background: var(--backdrop); }
+@keyframes csheet-in { from { opacity: 0; transform: translateX(24px); } }
+.csheet-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); padding: var(--space-5) var(--space-5) var(--space-3); }
+.csheet-head h2 { font-size: var(--text-xl); }
+.csheet-body { overflow: auto; padding: 0 var(--space-5) var(--space-5); display: grid; gap: var(--space-4); align-content: start; }
 .sheet-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
 .sheet-top p { margin: 0; }
 .sheet-sort { display: flex; gap: var(--space-4); }
@@ -75,11 +75,11 @@ dialog.sheet::backdrop { background: var(--backdrop); }
 .share-line { font-size: inherit; }
 
 @media (max-width: 640px) {
-  dialog.sheet { inset: auto 0 0 0; width: 100%; height: auto; max-height: 88vh; border-left: 0; border-top: 1px solid var(--line); border-radius: 0; }
-  dialog.sheet[open] { animation-name: sheet-up; }
-  @keyframes sheet-up { from { opacity: 0; transform: translateY(24px); } }
-  .sheet-head { padding: var(--space-4) var(--space-4) var(--space-2); }
-  .sheet-body { padding: 0 var(--space-4) var(--space-4); }
+  dialog.csheet { inset: auto 0 0 0; width: 100%; height: auto; max-height: 88vh; border-left: 0; border-top: 1px solid var(--line); border-radius: 0; }
+  dialog.csheet[open] { animation-name: csheet-up; }
+  @keyframes csheet-up { from { opacity: 0; transform: translateY(24px); } }
+  .csheet-head { padding: var(--space-4) var(--space-4) var(--space-2); }
+  .csheet-body { padding: 0 var(--space-4) var(--space-4); }
   .ready-actions .btn, .sheet-actions .btn, .ps-actions .btn, .share-steps .btn { min-height: 44px; }
   .ready-actions .linkish, .sort-btn, .ps-facts .linkish, .share-line { min-height: 44px; display: inline-flex; align-items: center; }
   .row-more summary { width: 44px; height: 44px; }
