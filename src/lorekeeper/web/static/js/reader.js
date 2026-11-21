@@ -200,7 +200,8 @@ export function mountReader(root) {
       s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
       s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
     }
-    s.dupes = null;   // canEdit() uses the library list until the reply comes
+    s.dupes = null;   // writableNow() uses the library entry until the reply comes
+    s.editAsked = s.edit;   // render() drops edit mode when the book cannot be edited; remember it was asked for
     clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
@@ -212,7 +213,7 @@ export function mountReader(root) {
       s.dupes = d;
       watchDupes(key);
       syncEditAvailability(was);
-      paintTabs();
+      repaintDupes();   // only the notice, and only when it differs: the tabs (and a search being typed in) stay as they are
     });
     if (!preview) await syncPosition(key, { reply: posReq, stale });
     return !stale();
@@ -564,22 +565,45 @@ export function mountReader(root) {
   // ---- edit mode ---------------------------------------------------------------------------
   // Only an index built here can be changed, and only with its book file on disk (reveal points are
   // chosen by paragraph). Turning it on adds pen and trash controls to every row and "Add" buttons.
-  // The server's rule (Identity.duplicates): every index of the book's series group is one built here. Known from the
-  // library list before the duplicates check answers; its reply, when it arrives, is trusted over this.
-  const guessWritable = () => {
-    const sid = s.doc?.series?.id;
-    const group = sid ? s.lib.indexes.filter((i) => i.series?.id === sid) : s.lib.indexes.filter((i) => i.key === s.key);
-    return group.length > 0 && group.every((i) => i.source === "generated");
-  };
-  const canEdit = () => Boolean((s.dupes ? s.dupes.writable : guessWritable()) && s.map?.exact && s.hash);
-  /** The duplicates reply may disagree with the guess: bring the Edit control and edit mode in line. */
+  // `writable` comes with the library entry (the server's rule for the book's series group) so the first render
+  // already knows; the duplicates reply, when it arrives, has the final word.
+  const writableNow = () => (s.dupes ? s.dupes.writable === true : s.lib.indexes.find((i) => i.key === s.key)?.writable === true);
+  const canEdit = () => Boolean(writableNow() && s.map?.exact && s.hash);
+  /** The duplicates reply may disagree with the library entry: bring the Edit control, edit mode and the open
+   *  entry's merge footer in line. Nothing here rebuilds the tabs. */
   function syncEditAvailability(was) {
-    if (was === canEdit() || !el.headActions) return;
-    const old = el.headActions.querySelector(".edit-toggle");
-    if (canEdit()) { const b = editButton(); if (b && !old) el.headActions.prepend(b); return; }
-    old?.remove();
-    if (s.edit) { s.edit = false; wrap.classList.remove("editing"); paintTabs(); if (s.drawer) openDrawer(s.drawer, { refresh: true }); saveUrl(); }
+    if (was !== canEdit() && el.headActions) {
+      const old = el.headActions.querySelector(".edit-toggle");
+      if (canEdit()) {
+        const b = editButton(); if (b && !old) el.headActions.prepend(b);
+        if (s.editAsked && !s.edit) setEdit(true);   // the address asked for edit mode and the first answer said no
+      } else {
+        old?.remove();
+        if (s.edit) {
+          // Typed text is not dropped silently: the entry closes through the usual refresh, with a toast saying why.
+          const dirty = drawerDirty();
+          s.edit = false; wrap.classList.remove("editing"); paintTabs();
+          if (s.drawer) openDrawer(s.drawer, { refresh: true, discard: true });
+          saveUrl();
+          if (dirty) toast("Editing is not available for this book, so the entry was closed.", "error");
+        }
+      }
+    }
+    syncFooter();
   }
+  /** The open entry's "Same as another entry" footer follows `writable` without rebuilding the entry. */
+  function syncFooter() {
+    const box = host();
+    if (!box || !s.drawer || s.edit) return;
+    const foot = box.querySelector(".drawer-foot");
+    if (!writableNow()) { foot?.remove(); return; }
+    const body = box.querySelector(".body");
+    if (!foot && body) body.append(mergeFooter(s.drawer));
+  }
+  const mergeFooter = (id) => h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
+    closeDrawer({ focus: false });
+    mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
+  } } }, icon("layers"), "Same as another entry…"));
   const editor = createEditor({
     key: () => s.key, hash: () => s.hash, chapters: () => s.map.chapters, seqAt: () => s.map.seqAt(s.p),
     docs: () => currentIndexes(), view: () => s.view, book: () => s.book,
@@ -593,6 +617,7 @@ export function mountReader(root) {
   });
   async function setEdit(on) {
     if (on && !canEdit()) return;
+    s.editAsked = false;
     // Done with typed text in a form: ask, as closing the entry does.
     if (!on && drawerDirty() && !(await confirmDialog({ title: "Discard what you wrote?", message: "Leaving edit mode closes the form you were editing.",
       confirmLabel: "Discard", cancelLabel: "Keep editing" }))) return;
@@ -903,9 +928,10 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), dupesNotice(),
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), el.dupesSlot = h("div.dupes-slot", dupesNotice()),
       s.edit ? editor.addEntityButton() : null, list);
     paintList();
+    el.dupesSlot.dataset.key = dupesKey();
   }
 
   /** After a merge or undo: reload the (rewritten) indexes and stay where the reader is. */
@@ -923,10 +949,21 @@ export function mountReader(root) {
       if (!next) return;
       if (next.undo?.auto && next.undo.id !== before) { s.autoShown = null; return reloadAfterMerge(); }
       s.dupes = next;
-      if (next.checking) watchDupes(key); else paintTabs();
+      if (next.checking) watchDupes(key); else { syncEditAvailability(canEdit()); repaintDupes(); }
     }, 3000);
   }
 
+  /** What dupesNotice() would show, as a string: the slot is rebuilt only when this changes. */
+  function dupesKey() {
+    const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo.id : "";
+    const n = s.dupes?.writable && !s.dupesDismissed ? openPairs(visiblePairs(s.dupes, s.view)).length : 0;
+    return `${auto}|${n}`;
+  }
+  function repaintDupes() {
+    if (!el.dupesSlot?.isConnected || el.dupesSlot.dataset.key === dupesKey()) return;
+    clear(el.dupesSlot, dupesNotice());
+    el.dupesSlot.dataset.key = dupesKey();
+  }
   function dupesNotice() {
     const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo : null;
     let merged = null;
@@ -1730,10 +1767,7 @@ export function mountReader(root) {
       connections,
       cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
-      s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
-        closeDrawer({ focus: false });
-        mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
-      } } }, icon("layers"), "Same as another entry…")) : null);
+      writableNow() ? mergeFooter(id) : null);
     // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
     if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
       ...e.arcs.map((a) => arcParagraph(a.text, `${arcLabel(a)}, written by the generator`))));
