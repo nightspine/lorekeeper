@@ -1076,3 +1076,45 @@ def test_edition_is_parsed_once_per_file_version(client, tmp_path, monkeypatch):
     n = len(calls)
     b = client.get(f"/api/editions/{h}").json()
     assert a == b and a["blockWords"] and len(calls) == n
+
+
+def test_a_file_rewritten_during_the_computation_is_never_served_stale(client, tmp_path, monkeypatch):
+    from lorekeeper import merge
+    from .test_merge import _ent, _index
+    a = _index([_ent("dior", ["Dior"], "a1", facets=[("a1", "A thief.")]),
+                _ent("dior-lachance", ["Dior LaChance"], "a3", facets=[("a3", "Gives a full name.")])])
+    b = _index([_ent("chloe", ["Chloe"]), _ent("chloe-sauvage", ["Chloe Sauvage"], "a2")])
+    path = tmp_path / "data" / "indexes" / "b.lore.json"
+    path.write_text(json.dumps(a))
+    key = "generated--b.lore"
+    real = merge.candidates
+    once = []
+
+    def racing(docs, distinct):
+        out = real(docs, distinct)
+        if not once:   # the file is replaced after it was read and before the result is stored
+            once.append(1)
+            path.write_text(json.dumps(b))
+        return out
+    monkeypatch.setattr(merge, "candidates", racing)
+    first = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in first} == {("dior", "dior-lachance")}
+    second = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in second} == {("chloe", "chloe-sauvage")}
+
+
+def test_edition_cache_notices_a_changed_epub(client, tmp_path):
+    import os
+    upload(client, tmp_path)
+    from lorekeeper.web import app as appmod
+    lib = appmod.Library.__new__(appmod.Library)
+    lib._described = {}
+    stored = next((tmp_path / "data" / "books").rglob("*.epub"))
+    first = lib.describe_edition(stored)
+    assert lib.describe_edition(stored) == first
+    make_epub(tmp_path / "n.epub", title="Another", ch1=["A brand new first paragraph, long enough to count as text here.",
+                                                         "And a second paragraph so this book differs from before."])
+    stored.write_bytes((tmp_path / "n.epub").read_bytes())
+    os.utime(stored, ns=(1, 1))
+    changed = lib.describe_edition(stored)
+    assert changed["title"] == "Another" and changed["textHash"] != first["textHash"]
