@@ -78,9 +78,9 @@ class Identity:
         and its "not the same" pairs are unchanged. Every write (merge, edit, undo, a build) changes a
         file, so the next call recomputes. Callers get a copy: they add verdicts to the pairs."""
         distinct = self.distinct(gid)
-        # The stamp was taken by `Library.scan` before it read each file, so a write that lands after
-        # the read gives a newer stamp than the document: the entry is then simply never matched again.
-        stamp = tuple((str(it["path"]), *it["stamp"]) for it in items) if all("stamp" in it for it in items) else None
+        # The stamp is a digest `Library.scan` took of the very bytes it parsed, so the key always
+        # describes what the candidates were computed from, whatever happens to the file meanwhile.
+        stamp = tuple((str(it["path"]), it["stamp"]) for it in items) if all("stamp" in it for it in items) else None
         if stamp is None:
             return merge.candidates([it["doc"] for it in items], distinct)
         key = (stamp, frozenset(distinct))

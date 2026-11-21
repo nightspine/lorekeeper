@@ -1090,17 +1090,23 @@ def test_a_file_rewritten_during_the_computation_is_never_served_stale(client, t
     real = merge.candidates
     once = []
 
+    import shutil
+    keep = tmp_path / "a-original.json"
+    shutil.copy2(path, keep)   # the original bytes with their metadata, as an undo snapshot has them
+
     def racing(docs, distinct):
-        out = real(docs, distinct)
-        if not once:   # the file is replaced after it was read and before the result is stored
+        if not once:   # the file is replaced after it was read and before the result is computed
             once.append(1)
             path.write_text(json.dumps(b))
-        return out
+        return real(docs, distinct)
     monkeypatch.setattr(merge, "candidates", racing)
     first = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
-    assert {(p["keep"], p["drop"]) for p in first} == {("dior", "dior-lachance")}
+    assert {(p["keep"], p["drop"]) for p in first} == {("dior", "dior-lachance")}   # computed from what it read
     second = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
     assert {(p["keep"], p["drop"]) for p in second} == {("chloe", "chloe-sauvage")}
+    shutil.copy2(keep, path)   # an undo puts the first bytes back, old mtime and all
+    third = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert {(p["keep"], p["drop"]) for p in third} == {("dior", "dior-lachance")}
 
 
 def test_edition_cache_notices_a_changed_epub(client, tmp_path):
