@@ -1,0 +1,219 @@
+{
+ "dracula": [],
+ "sherlock": [
+  {
+   "drop": "captain-morstan",
+   "dropNames": [
+    "Captain Morstan"
+   ],
+   "keep": "mary-morstan",
+   "keepNames": [
+    "Mary Morstan",
+    "Miss Morstan"
+   ],
+   "ranked": [
+    "Mary Morstan",
+    "Miss Morstan",
+    "Captain Morstan"
+   ],
+   "reason": "shared alias",
+   "sure": true
+  }
+ ],
+ "tricky": [
+  {
+   "drop": "p-dior2",
+   "dropNames": [
+    "Dior LaChance"
+   ],
+   "keep": "p-dior",
+   "keepNames": [
+    "Dior"
+   ],
+   "ranked": [
+    "Dior LaChance",
+    "Dior"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-severus",
+   "dropNames": [
+    "Severus Snape"
+   ],
+   "keep": "p-snape",
+   "keepNames": [
+    "Professor Snape"
+   ],
+   "ranked": [
+    "Severus Snape",
+    "Professor Snape"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-vernon",
+   "dropNames": [
+    "Vernon Dursley"
+   ],
+   "keep": "p-mr",
+   "keepNames": [
+    "Mr. Dursley"
+   ],
+   "ranked": [
+    "Vernon Dursley",
+    "Mr. Dursley"
+   ],
+   "reason": "fuller name",
+   "sure": false
+  },
+  {
+   "drop": "p-vernon",
+   "dropNames": [
+    "Vernon Dursley"
+   ],
+   "keep": "p-mrs",
+   "keepNames": [
+    "Mrs. Dursley"
+   ],
+   "ranked": [
+    "Vernon Dursley",
+    "Mrs. Dursley"
+   ],
+   "reason": "fuller name",
+   "sure": false
+  },
+  {
+   "drop": "p-avh",
+   "dropNames": [
+    "Abraham Van Helsing"
+   ],
+   "keep": "p-vh",
+   "keepNames": [
+    "Van Helsing"
+   ],
+   "ranked": [
+    "Abraham Van Helsing",
+    "Van Helsing"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-qp",
+   "dropNames": [
+    "Quincey P. Morris"
+   ],
+   "keep": "p-q",
+   "keepNames": [
+    "Quincey Morris"
+   ],
+   "ranked": [
+    "Quincey P. Morris",
+    "Quincey Morris"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-qpeter",
+   "dropNames": [
+    "Quincey Peter Morris"
+   ],
+   "keep": "p-q",
+   "keepNames": [
+    "Quincey Morris"
+   ],
+   "ranked": [
+    "Quincey Peter Morris",
+    "Quincey Morris"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-wolf",
+   "dropNames": [
+    "Wolfmother Kiara"
+   ],
+   "keep": "p-kiara",
+   "keepNames": [
+    "Kiara"
+   ],
+   "ranked": [
+    "Kiara",
+    "Wolfmother Kiara"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "p-grey",
+   "dropNames": [
+    "Greyhand"
+   ],
+   "keep": "p-frere",
+   "keepNames": [
+    "Frère Greyhand"
+   ],
+   "ranked": [
+    "Greyhand",
+    "Frère Greyhand"
+   ],
+   "reason": "same name",
+   "sure": true
+  },
+  {
+   "drop": "p-gab2",
+   "dropNames": [
+    "Gabriel de León"
+   ],
+   "keep": "p-gab",
+   "keepNames": [
+    "Gabriel",
+    "Gabe (the narrator)"
+   ],
+   "ranked": [
+    "Gabriel de León",
+    "Gabriel",
+    "Gabe (the narrator)"
+   ],
+   "reason": "fuller name",
+   "sure": true
+  },
+  {
+   "drop": "t-mug2",
+   "dropNames": [
+    "Muggle"
+   ],
+   "keep": "t-mug",
+   "keepNames": [
+    "Muggles"
+   ],
+   "ranked": [
+    "Muggles",
+    "Muggle"
+   ],
+   "reason": "same name",
+   "sure": true
+  },
+  {
+   "drop": "o-mirror2",
+   "dropNames": [
+    "Erised mirror"
+   ],
+   "keep": "o-mirror",
+   "keepNames": [
+    "Mirror of Erised"
+   ],
+   "ranked": [
+    "Erised mirror",
+    "Mirror of Erised"
+   ],
+   "reason": "same name",
+   "sure": true
+  }
+ ]
+}

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 
 from . import text
 
@@ -41,20 +42,46 @@ FEMININE = {"mrs", "miss", "ms", "lady", "dame", "queen", "princess", "mistress"
 _STOP = {"the", "of", "a", "an", "and"}
 
 
-def _titles(name: str) -> list[str]:
-    """The leading titles of a name, normalized: "Mrs. Dursley" → ["mrs"]."""
-    w = text.words(re.sub(r"\([^)]*\)", " ", name))
+_NOTE = re.compile(r"\([^)]*\)")
+
+
+# The helpers below are pure functions of one name string, and `candidates` asks about the same few
+# hundred names millions of times, so each is cached per string (results are tuples/frozensets, never
+# shared mutable lists).
+@lru_cache(maxsize=None)
+def _name_words(name: str) -> tuple[str, ...]:
+    """A name's normalized words without a bracketed note."""
+    return tuple(text.words(_NOTE.sub(" ", name)))
+
+
+@lru_cache(maxsize=None)
+def _title_words(name: str) -> tuple[str, ...]:
+    w = _name_words(name)
     out = []
     while len(w) > 1 and _plain(w[0]) in HONORIFICS:
         out.append(_plain(w[0]))
         w = w[1:]
-    return out
+    return tuple(out)
+
+
+@lru_cache(maxsize=None)
+def _possessive(name: str) -> bool:
+    return bool(POSSESSIVE.search(name))
+
+
+def _titles(name: str) -> list[str]:
+    """The leading titles of a name, normalized: "Mrs. Dursley" → ["mrs"]."""
+    return list(_title_words(name))
+
+
+@lru_cache(maxsize=None)
+def _genders(name: str) -> frozenset[str]:
+    return frozenset(("m" if t in MASCULINE else "f") for t in _title_words(name) if t in MASCULINE | FEMININE)
 
 
 def compatible(a: str, b: str) -> bool:
     """False when the two names' titles say different people (a man's title and a woman's)."""
-    ga = {("m" if t in MASCULINE else "f") for t in _titles(a) if t in MASCULINE | FEMININE}
-    gb = {("m" if t in MASCULINE else "f") for t in _titles(b) if t in MASCULINE | FEMININE}
+    ga, gb = _genders(a), _genders(b)
     return not (ga and gb and ga != gb)
 
 
@@ -62,10 +89,15 @@ def _stem(word: str) -> str:
     return word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
 
 
+@lru_cache(maxsize=None)
+def _stems(x: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(_stem(w) for w in x if w not in _STOP)
+
+
 def same_words(x: tuple[str, ...], y: tuple[str, ...]) -> bool:
     """The same name in another form: singular or plural, words reordered around "of"
     ("Muggles" / "Muggle", "Mirror of Erised" / "Erised mirror")."""
-    a, b = {_stem(w) for w in x if w not in _STOP}, {_stem(w) for w in y if w not in _STOP}
+    a, b = _stems(x), _stems(y)
     return bool(a) and a == b and any(len(w) > 3 for w in a)
 
 
@@ -79,17 +111,17 @@ def titled_surname(a: str, b: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=None)
 def _plain(word: str) -> str:
     """Without accents, for comparing against HONORIFICS ("frère" → "frere")."""
     return "".join(c for c in unicodedata.normalize("NFKD", word) if not unicodedata.combining(c))
 
 
+@lru_cache(maxsize=None)
 def core(name: str) -> tuple[str, ...]:
     """A name's distinguishing words: normalized, without leading honorifics or a parenthetical note."""
-    w = text.words(re.sub(r"\([^)]*\)", " ", name))
-    while len(w) > 1 and _plain(w[0]) in HONORIFICS:
-        w = w[1:]
-    return tuple(w)
+    w = _name_words(name)
+    return w[len(_title_words(name)):]
 
 
 # Words that join a surname without being one ("Gabriel de León", "Abraham Van Helsing").
@@ -110,7 +142,7 @@ def same_person_name(a: str, b: str) -> bool:
     """Two forms of one person's name that differ only in middle names or initials: "Quincey Morris" /
     "Quincey P. Morris" / "Quincey Peter Morris". The first and last words must be equal; whatever
     sits between them may be missing on either side, or be an initial of the other's."""
-    if not compatible(a, b) or POSSESSIVE.search(a) or POSSESSIVE.search(b):
+    if not compatible(a, b) or _possessive(a) or _possessive(b):
         return False
     x, y = core(a), core(b)
     if len(x) < 2 or len(y) < 2 or x[0] != y[0] or x[-1] != y[-1] or len(x[0]) < 2 or len(x[-1]) < 2:
@@ -139,7 +171,7 @@ def extends(a: str, b: str, person: bool = True, loose: bool = False) -> bool:
         return False
     if x == y or same_words(x, y):
         return True
-    if not person or POSSESSIVE.search(a) or POSSESSIVE.search(b):
+    if not person or _possessive(a) or _possessive(b):
         return False
     if titled_surname(a, b):
         return True
