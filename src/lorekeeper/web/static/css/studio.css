@@ -154,6 +154,9 @@ details.advanced .advanced-body { display: grid; gap: var(--space-4); padding-bo
   .runs td.c-part { text-align: right; }
   table.data.runs tr > td:is(:nth-child(2), :nth-child(5)) { display: none; }
   .studio-side .fold-more { margin: 4px 16px; min-height: 44px; }
+  /* the run's facts, one per line, instead of a sentence that wraps mid-phrase */
+  .run-meta { display: grid; grid-template-columns: minmax(0, 1fr); gap: 2px; justify-items: start; }
+  .run-meta > span:not(.badge) { color: var(--text-2); font-size: var(--text-s); overflow-wrap: anywhere; }
   .studio-main { padding: 0 16px 32px; }
   .studio .page-head { min-height: 0; padding: 10px 16px; }
   .studio .page-head h1 { display: none; }   /* the app bar already says "Runs" */
