@@ -325,28 +325,70 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .dup-pick button > span:nth-child(2) { flex: 1; }
 
 /* ---------- small screens ---------- */
+/* The phone-only controls (the Jump button, the overflow, the series line) are hidden elsewhere. */
+.jump-btn, .more-btn, .series-line { display: none; }
 @media (max-width: 640px) {
-  /* The head is one line under the app bar (which already shows the title): the author line and two icon buttons. */
-  /* No head row on a phone: the app bar has the title, Edit and Switch book end the jump row (placeJump). */
+  .reader { --ruler-h: 88px; --tabs-h: 48px; }
+  /* No head row on a phone: the app bar has the title; Edit and Switch book are in the overflow on the ruler. */
   .rd-head { display: none; }
-  .ruler-sub .reader-switch { margin-left: 0; flex: none; }
-  .ruler-sub .jump-group { flex: 1 1 0; min-width: 0; }
-  .switch-book, .edit-toggle { width: 44px; min-height: 44px; padding: 0; justify-content: center; }
-  .switch-book .btn-lbl, .edit-toggle .btn-lbl { display: none; }
-  /* The ruler is one sticky line: percentage, chapter, the track and the step buttons. The chapter select and the
-     percent field move to the line under it (reader.js places them). */
-  .ruler { gap: 8px; padding: 0 4px 0 16px; }
-  .ruler .chap { max-width: 9ch; }
-  .ruler .step-btns { order: 5; }
+  /* The ruler is two lines under the app bar: the percentage, the chapter (a button into the Jump sheet) and the step
+     buttons, then the track full width with a thumb-sized hit area. */
+  .ruler { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "pct chap act" "track track track"; align-items: center; gap: 0 10px;
+    height: var(--ruler-h); min-height: 0; padding: 4px 6px 0 16px; }
+  .ruler .pct { grid-area: pct; font-size: 18px; min-width: 0; }
+  .ruler .chap, .ruler .jump-group { display: none; }
+  .jump-btn { grid-area: chap; display: flex; align-items: center; gap: 4px; justify-self: start; max-width: 100%; min-width: 0; height: 44px; padding: 0 4px; border: 0; background: none; color: var(--text-2); font: 500 var(--text-base)/1.2 var(--font-ui); text-align: left; cursor: pointer; }
+  .jump-btn .jt-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jump-btn .svg-icon { flex: none; width: 16px; height: 16px; color: var(--text-3); }
+  .jump-btn:active { color: var(--text); }
+  .jump-btn:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; border-radius: var(--radius); }
+  .ruler .step-btns { grid-area: act; order: 0; gap: 0; }
   .ruler .rbtn { width: 40px; height: 44px; }
-  .track { min-width: 60px; }
-  .ruler-sub { padding: 6px 16px; }
-  .ruler-sub .chsel { flex: 1 1 140px; width: 0; min-width: 0; }   /* the long chapter names must not set the width */
+  .more-btn { display: inline-grid; }
+  .track { grid-area: track; min-width: 0; height: 40px; flex: none; margin: 0 10px 0 0; }
+  .ruler input[type="range"].range { touch-action: pan-y; }
+  .ruler-sub { padding: 6px 16px; gap: 2px 14px; }
   .pos-hint, .pos-setting { display: none; }
-  .pos-series { padding: 8px 16px; }
+  /* The series is one line; the books and the reading order are in its sheet. */
+  .pos-series { padding: 0; }
+  .series-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px 0 16px; border: 0; background: none; color: var(--text-2); font: 500 var(--text-sm)/1.2 var(--font-ui); text-align: left; cursor: pointer; }
+  .series-line .sl-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .series-line .svg-icon { flex: none; width: 16px; height: 16px; color: var(--text-3); }
+  .series-line:active { background: var(--hover); }
+  .series-line:focus-visible { outline: 2px solid var(--beacon); outline-offset: -2px; }
+  /* The tabs are a segmented control pinned under the ruler. */
   .rd-list { padding: 0 16px 32px; }
+  .rd-list > .view-tabs { position: sticky; top: calc(var(--topbar-h) + var(--ruler-h)); z-index: 25; margin: 0 -16px; padding: 6px 12px; min-height: var(--tabs-h); background: var(--bg); border-bottom: 1px solid var(--line); }
+  .reader.wide .rd-list > .view-tabs { margin-left: 0; margin-right: 0; }
   .dup-sides { grid-template-columns: minmax(0, 1fr); }
 }
+/* Jump, overflow and series sheets */
+.jump-field { display: grid; gap: 6px; padding-bottom: var(--space-3); }
+.jump-pct-row { display: flex; gap: var(--space-2); }
+.jump-pct-row .input { flex: 1; min-width: 0; font-size: 16px; }
+.jump-pct-row .btn { flex: none; min-width: 72px; }
+.jump-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+.jump-row { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.jump-row > button { border: 0; background: none; color: var(--text); font: inherit; cursor: pointer; }
+.jump-go { flex: 1 1 auto; min-width: 0; min-height: 48px; padding: 8px 4px; text-align: left; }
+.jump-name { display: block; overflow-wrap: anywhere; }
+.jump-row.now .jump-go { color: var(--beacon); font-weight: 650; }
+.jump-end { flex: none; min-width: 56px; color: var(--text-3) !important; font-size: var(--text-sm) !important; }
+.jump-go:active, .jump-end:active { background: var(--hover); }
+.more-list { display: grid; }
+.more-item { display: flex; align-items: center; gap: 14px; min-height: 52px; padding: 0 4px; border: 0; border-bottom: 1px solid var(--line); background: none; color: var(--text); font: 500 var(--text-md)/1.2 var(--font-ui); text-align: left; cursor: pointer; }
+.more-item:last-child { border-bottom: 0; }
+.more-item .svg-icon { width: 20px; height: 20px; color: var(--text-2); }
+.more-item:active { background: var(--hover); }
+.series-sheet { display: grid; gap: var(--space-4); }
+.series-sheet .series-chips { display: grid; gap: 0; }
+.series-sheet .series-chips .chip { display: flex; align-items: center; min-height: 48px; padding: 8px 4px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none; color: var(--text); font: inherit; text-align: left; overflow-wrap: anywhere; }
+.series-sheet .series-chips .chip[aria-current] { color: var(--beacon); font-weight: 650; }
+.series-sheet .series-chips button.chip:disabled { color: var(--text-3); }
+.series-order, .series-fin { display: grid; gap: 6px; }
+.series-fin label.chip { display: flex; align-items: center; gap: 12px; min-height: 48px; overflow-wrap: anywhere; }
+.series-fin label.chip input { width: 22px; height: 22px; flex: none; }
+.series-sheet .select { width: 100% !important; font-size: 16px; }
 
 /* ---------- edit mode: pen and trash on every row, inline forms, the delete foot ---------- */
 .edit-toggle { margin-right: var(--space-2); }
@@ -412,14 +454,25 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .d-jumps .n { color: var(--text-3); font-weight: 600; }
 .drawer .d-sec { scroll-margin-top: var(--space-3); }
 @media (max-width: 640px) {
-  dialog.drawer { border-radius: 0; border-left: 0; }
-  .drawer header { padding: var(--space-4) var(--space-4) var(--space-3); }
-  .drawer .body { padding: var(--space-4) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); }
+  /* The entry is a bottom sheet: full width, rounded top corners, a handle, its own scroll, clear of the home indicator. */
+  dialog.drawer { inset: auto 0 0 0; width: 100%; max-width: 100%; height: auto; max-height: min(92dvh, 100dvh - env(safe-area-inset-top) - 8px);
+    border: 1px solid var(--line-2); border-bottom: 0; border-radius: 12px 12px 0 0; overscroll-behavior: contain; }
+  dialog.drawer[open] { animation: drawer-up 220ms var(--ease); transition: transform 180ms var(--ease); }
+  dialog.drawer::backdrop { backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .drawer header { position: relative; padding: 22px var(--space-4) var(--space-3); touch-action: none; cursor: grab; }
+  .drawer header::before { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-2); }
+  .drawer .body { min-height: 0; overscroll-behavior: contain; padding: var(--space-4) var(--space-4) calc(var(--space-6) + env(safe-area-inset-bottom)); }
+  .drawer-toasts { bottom: calc(var(--space-4) + env(safe-area-inset-bottom)); }
 }
+@keyframes drawer-up { from { transform: translateY(100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { dialog.drawer[open] { animation: none; } }
 @media (max-width: 640px) {
   /* Cast filters: search on its own line, the type chips as one row that scrolls sideways, then the sort. */
-  .filters .search { flex-basis: 100%; max-width: none; }
-  .filters { min-width: 0; flex-wrap: wrap; }
+  .filters { min-width: 0; flex-wrap: wrap; gap: 8px; padding-top: 10px; }
+  .filters .search { flex: 1 1 0; min-width: 0; max-width: none; }
+  .filters .sort-select { order: 1; flex: none; width: auto; max-width: 176px; margin: 0; font-size: 16px; }
+  .filters .type-chips { order: 2; }
+  .filters .input, .filters .select { font-size: 16px; }
   .type-chips { display: flex; gap: 16px; width: 100%; min-width: 0; overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap;
     -webkit-mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); mask-image: linear-gradient(to right, black calc(100% - 24px), transparent); }
   .type-chips > * { flex: none; }

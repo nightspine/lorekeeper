@@ -19,6 +19,7 @@ const ANCHOR = { person: [0, 0], creature: [0, -0.9], place: [-1, -0.55], group:
 const SPREAD = 420;
 const KEY_FIGURES = 60;   // larger maps start with the most present entities only
 
+let offSelEsc = null;   // drops the Escape listener of the phone selection sheet when the map is painted again
 function s(tag, attrs = {}, ...children) {
   const el = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -361,6 +362,7 @@ export function renderConnections(panel, ctx) {
 
   // ---- side panel ------------------------------------------------------------------------
   const side = h("aside.g-panel", { "aria-label": "Details" });
+  if (!sel && offSelEsc) offSelEsc();
   if (sel) {
     const e = graph.ents.get(sel);
     const r = ctx.revealed(sel);
@@ -402,6 +404,33 @@ export function renderConnections(panel, ctx) {
     } } }, "Read the whole description") : null;
     const n = degree(sel);
     side.classList.add("has-sel");
+    // On a phone the selection is a bottom sheet over the map (css): Escape and a swipe down on its head clear it.
+    const phoneSheet = () => matchMedia("(max-width: 640px)").matches;
+    const dismiss = () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); };
+    if (offSelEsc) offSelEsc();
+    const onEsc = (ev) => { if (ev.key === "Escape" && phoneSheet() && !ev.defaultPrevented && !document.querySelector("dialog[open]")) { ev.preventDefault(); dismiss(); } };
+    document.addEventListener("keydown", onEsc);
+    offSelEsc = () => { document.removeEventListener("keydown", onEsc); offSelEsc = null; };
+    window.addEventListener("hashchange", () => offSelEsc?.(), { once: true });
+    let drag = null;
+    side.onpointerdown = (ev) => {
+      if (!phoneSheet() || !ev.target.closest(".g-head") || ev.target.closest("button, a") || side.scrollTop > 0) return;
+      drag = { y: ev.clientY, t: ev.timeStamp, dy: 0, id: ev.pointerId };
+      side.setPointerCapture?.(ev.pointerId);
+      side.style.transition = "none";
+    };
+    side.onpointermove = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      drag.dy = Math.max(0, ev.clientY - drag.y);
+      side.style.transform = `translateY(${drag.dy}px)`;
+    };
+    const endDrag = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      const { dy, t } = drag; drag = null;
+      side.style.transition = ""; side.style.transform = "";
+      if (dy > 80 || (dy > 30 && dy / Math.max(1, ev.timeStamp - t) > 0.5)) dismiss();
+    };
+    side.onpointerup = endDrag; side.onpointercancel = endDrag;
     clear(side,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
