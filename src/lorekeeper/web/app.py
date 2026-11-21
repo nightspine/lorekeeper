@@ -9,6 +9,7 @@ addressed by content hash, indexes by keys from a server-side scan of known dire
 from __future__ import annotations
 
 import asyncio
+import copy
 import hashlib
 import json
 import logging
@@ -48,29 +49,55 @@ class Library:
 
     def __init__(self, index_dirs: list[tuple[str, Path]], epub_dirs: list[Path]) -> None:
         self.index_dirs, self.epub_dirs = index_dirs, epub_dirs
+        self._described: dict[Path, tuple[tuple, dict]] = {}   # epub path → ((mtime_ns, size), edition meta)
         self._editions: dict[Path, tuple[float, str]] = {}   # epub path → (mtime, textHash)
 
-    def scan(self) -> dict[str, dict]:
-        found: dict[str, dict] = {}
+    def _paths(self):
+        """(key, label, path) of every candidate JSON file, in scan order; nothing is read."""
         for label, d in self.index_dirs:
             if not d.is_dir():
                 continue
             for p in sorted(d.rglob("*.json")):
                 if p.name.endswith((".state", ".report")) or ".events" in p.name:
                     continue
-                try:
-                    doc = json.loads(p.read_text())
-                except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-                    continue
-                if not isinstance(doc, dict) or doc.get("kind") not in ("index", "series"):
-                    continue
-                key = f"{label}--{p.relative_to(d).with_suffix('').as_posix().replace('/', '--')}"
-                found[key] = {"key": key, "path": p, "source": label, "doc": doc}
+                yield f"{label}--{p.relative_to(d).with_suffix('').as_posix().replace('/', '--')}", label, p
+
+    @staticmethod
+    def _load(key: str, label: str, p: Path) -> dict | None:
+        try:
+            data = p.read_bytes()   # one read: the document and its digest describe the same bytes
+            stamp = hashlib.blake2b(data, digest_size=16).hexdigest()
+            doc = json.loads(data.decode())
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        if not isinstance(doc, dict) or doc.get("kind") not in ("index", "series"):
+            return None
+        return {"key": key, "path": p, "source": label, "doc": doc, "stamp": stamp}
+
+    def scan(self) -> dict[str, dict]:
+        found: dict[str, dict] = {}
+        for key, label, p in self._paths():
+            if (item := self._load(key, label, p)) is not None:
+                found[key] = item
         return found
+
+    def get(self, key: str) -> dict | None:
+        """One scanned item by key, reading only the files that carry that key (what `scan().get(key)`
+        returns, without reading and hashing the rest)."""
+        item = None
+        for k, label, p in self._paths():
+            if k == key and (found := self._load(k, label, p)) is not None:
+                item = found
+        return item
 
     def summary(self) -> dict:
         indexes, series = [], []
-        for item in self.scan().values():
+        found = self.scan()
+        # Same membership rule as `Identity.group`: an index with a series is writable only when every
+        # index of that series is generated here; one without a series, when it is generated itself.
+        foreign = {(it["doc"].get("series") or {}).get("id") for it in found.values()
+                   if it["doc"].get("kind") == "index" and it["source"] != "generated"}
+        for item in found.values():
             doc = item["doc"]
             if doc["kind"] == "series":
                 series.append({"key": item["key"], "id": doc["id"], "title": doc["title"],
@@ -82,12 +109,29 @@ class Library:
                 "title": doc.get("work", {}).get("title"), "authors": doc.get("work", {}).get("authors", []),
                 "series": doc.get("series"), "complete": doc.get("coverage", {}).get("complete"),
                 "bookKind": doc.get("bookKind"),
+                "writable": item["source"] == "generated" and ((doc.get("series") or {}).get("id") not in foreign
+                                                               or not (doc.get("series") or {}).get("id")),
                 "entities": len(doc.get("entities", [])), "anchors": len(doc.get("anchors", [])),
                 "model": (prov.get("generator") or {}).get("model"), "updated": prov.get("updated") or prov.get("created"),
                 "textHashes": [e.get("textHash") for e in doc.get("editions", [])],
                 "hasEdition": any(self.edition_path(e.get("textHash", "")) for e in doc.get("editions", [])),
             })
         return {"indexes": indexes, "series": series}
+
+    def describe_edition(self, p: Path) -> dict:
+        """`describe(p)` plus `blockWords`, remembered per file (mtime, size): parsing a large EPUB takes
+        half a second and the Reader asks every time it opens."""
+        st = p.stat()
+        stamp = (st.st_mtime_ns, st.st_size)
+        hit = self._described.get(p)
+        if hit is None or hit[0] != stamp:
+            book = epub.read(p)   # parsed once for both
+            meta = describe(p, book)
+            meta["blockWords"] = [len(b.words) for b in book.blocks]
+            for gone in [q for q in self._described if q != p and not q.exists()]:
+                del self._described[gone]
+            hit = self._described[p] = (stamp, meta)
+        return copy.deepcopy(hit[1])
 
     def edition_path(self, text_hash: str) -> Path | None:
         if not text_hash:
@@ -796,7 +840,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.get("/api/library/{key}")
     def library_doc(key: str):
-        item = library.scan().get(key)
+        item = library.get(key)
         if item is None:
             raise HTTPException(404, "no such index")
         return item["doc"]
@@ -929,7 +973,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.get("/api/library/{key}/position")
     def library_position(key: str):
-        item = library.scan().get(key)
+        item = library.get(key)
         if item is None or item["doc"].get("kind") != "index":
             raise HTTPException(404, "no such index")
         owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
@@ -1067,7 +1111,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def not_community(key: str) -> None:
         """A community index is read-only: it is somebody else's work, replaced as a whole by a newer version."""
-        item = library.scan().get(key)
+        item = library.get(key)
         if item is not None and item["source"] == "community":
             raise HTTPException(409, "A community index can't be changed here. It is read-only.")
 
@@ -1188,9 +1232,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         p = library.edition_path(text_hash)
         if p is None:
             raise HTTPException(404, "book file for this edition not found")
-        meta = describe(p)
-        meta["blockWords"] = [len(b.words) for b in epub.blocks(p)]
-        return meta
+        return library.describe_edition(p)
 
     @app.get("/api/editions/{text_hash}/blocks")
     def edition_blocks(text_hash: str, seq: int = 0, before: int = 2, after: int = 2, i: str | None = None):
@@ -1198,7 +1240,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         p = library.edition_path(text_hash)
         if p is None:
             raise HTTPException(404, "book file for this edition not found")
-        doc = library.scan().get(i, {}).get("doc") if i else None
+        doc = (library.get(i) or {}).get("doc") if i else None
         return editor.passage(parsed(p), seq, before, after, doc=doc)
 
     # ---- community indexes ------------------------------------------------------------------------

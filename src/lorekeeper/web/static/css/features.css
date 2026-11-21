@@ -225,3 +225,6 @@
 @media (max-width: 640px) {
   details.passages summary { min-height: 44px; }
 }
+
+/* The slot the Reader repaints on its own when the duplicates check answers; it adds no box of its own. */
+.dupes-slot { display: contents; }

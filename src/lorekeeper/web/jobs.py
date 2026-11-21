@@ -149,9 +149,9 @@ def mark_story(chapters: list[dict]) -> None:
         begun = begun or story
 
 
-def describe(path: Path) -> dict:
+def describe(path: Path, book=None) -> dict:
     """Metadata the UI needs: title, chapters with word counts, edition hash."""
-    book = epub.read(path)
+    book = book or epub.read(path)   # a caller that already parsed the EPUB passes it
     ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
     chapters = [{"n": i + 1, "title": c.title or f"Section {i + 1}", "start": c.start,
                  "words": sum(len(b.words) for b in book.blocks[c.start:end])}

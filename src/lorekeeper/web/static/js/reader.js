@@ -139,6 +139,8 @@ export function mountReader(root) {
     const mine = ++loadSeq;
     const stale = () => disposed || mine !== loadSeq;
     const meta = s.lib.indexes.find((i) => i.key === key);
+    // Book Orbit's answer is slow and needs nothing from the index: ask now so it overlaps everything below.
+    const posReq = preview ? null : api.position(key).catch(() => ({ synced: false, reason: "unreachable" }));
     let doc;
     try { doc = preview ? await api.communityPreview(preview.hex) : await api.index(key); } catch (e) {
       if (stale()) return false;
@@ -152,27 +154,35 @@ export function mountReader(root) {
     forgetMentions();   // an edit or merge reloads the index: counts made for the old one may name what is now hidden
     s.series = null; s.seriesDocs = new Map();
     const sid = preview ? null : s.doc.series?.id;
-    if (sid) {
-      const man = s.lib.series.find((x) => x.id === sid);
-      if (man) {
-        s.series = man;
-        const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
-        for (const b of man.books) {
-          const cands = siblings.filter((i) => i.series.book === b.key);
-          const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
-          if (!choice) continue;
-          s.seriesDocs.set(b.key, choice.key === key ? s.doc : await api.index(choice.key).catch(() => null));
-          if (stale()) return false;
-        }
-        if (!s.order || !man.orders[s.order]) s.order = man.defaultOrder;
+    // The other books of the series and the edition do not depend on each other: fetch them together.
+    const man = sid ? s.lib.series.find((x) => x.id === sid) : null;
+    const siblingReqs = [];
+    if (man) {
+      s.series = man;
+      const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
+      for (const b of man.books) {
+        const cands = siblings.filter((i) => i.series.book === b.key);
+        const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
+        if (!choice) continue;
+        siblingReqs.push([b.key, choice.key === key ? Promise.resolve(s.doc) : api.index(choice.key).catch(() => null)]);
       }
     }
-    s.book = book || s.doc.series?.book || null;
     // seq hints are only valid for the edition the index was built from.
     const hashes = (s.doc.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash);
-    let edition = null;
-    s.hash = null;
-    for (const hsh of hashes) { edition = await api.edition(hsh); if (stale()) return false; if (edition) { s.hash = hsh; break; } }
+    const findEdition = async () => {
+      for (const hsh of hashes) { const ed = await api.edition(hsh); if (ed) return { ed, hsh }; }
+      return { ed: null, hsh: null };
+    };
+    const [sibDocs, found] = await Promise.all([Promise.all(siblingReqs.map(([, p]) => p)), findEdition()]);
+    if (stale()) return false;
+    // Not preview: the duplicates check is slow on a big series and only paints a notice, so it never blocks the page;
+    // it starts once the edition has settled so the two do not compete for the server's CPU on a cold start.
+    const dupReq = preview ? null : api.duplicates(key).catch(() => null);
+    siblingReqs.forEach(([bk], i) => s.seriesDocs.set(bk, sibDocs[i]));
+    if (man && (!s.order || !man.orders[s.order])) s.order = man.defaultOrder;
+    s.book = book || s.doc.series?.book || null;
+    const edition = found.ed;
+    s.hash = found.hsh;
     s.map = new PositionMap(s.doc, edition);
     // Another book of the series: the position last set for it, else its start.
     if (!keepPosition) s.p = readingList().find((e) => e.key === key)?.p ?? 0;
@@ -190,14 +200,22 @@ export function mountReader(root) {
       s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
       s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
     }
-    s.dupes = preview ? null : await api.duplicates(key).catch(() => null);
-    if (stale()) return false;
-    watchDupes(key);
+    s.dupes = null;   // writableNow() uses the library entry until the reply comes
+    s.editAsked = s.edit;   // render() drops edit mode when the book cannot be edited; remember it was asked for
+    clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
-    if (!preview) await syncPosition(key);
+    if (dupReq) dupReq.then((d) => {
+      if (stale() || !d) return;
+      const was = canEdit();
+      s.dupes = d;
+      watchDupes(key);
+      syncEditAvailability(was);
+      repaintDupes();   // only the notice, and only when it differs: the tabs (and a search being typed in) stay as they are
+    });
+    if (!preview) await syncPosition(key, { reply: posReq, stale });
     return !stale();
   }
 
@@ -225,11 +243,11 @@ export function mountReader(root) {
       ...v.entities.flatMap((e) => e.facets.map((f) => f.id)), ...v.entities.filter((e) => e.profile).map((e) => e.profile.id)]);
   }
 
-  async function syncPosition(key, { poll = false } = {}) {
+  async function syncPosition(key, { poll = false, reply = null, stale = () => false } = {}) {
     if (preview) return;
     let r;
-    try { r = await api.position(key); } catch { r = { synced: false, reason: "unreachable" }; }
-    if (disposed || s.key !== key) return;
+    try { r = await (reply || api.position(key)); } catch { r = { synced: false, reason: "unreachable" }; }
+    if (disposed || s.key !== key || stale()) return;   // a reply for a load that has been replaced never touches s.sync or pendingMove
     if (!r || !r.synced) {
       if (!poll || !s.sync.on) { s.sync = { on: false, override: false, reason: r?.reason }; paintSource(); }
       return;
@@ -610,7 +628,46 @@ export function mountReader(root) {
   // ---- edit mode ---------------------------------------------------------------------------
   // Only an index built here can be changed, and only with its book file on disk (reveal points are
   // chosen by paragraph). Turning it on adds pen and trash controls to every row and "Add" buttons.
-  const canEdit = () => Boolean(s.dupes?.writable && s.map?.exact && s.hash);
+  // `writable` comes with the library entry (the server's rule for the book's series group) so the first render
+  // already knows; the duplicates reply, when it arrives, has the final word.
+  const writableNow = () => (s.dupes ? s.dupes.writable === true : s.lib.indexes.find((i) => i.key === s.key)?.writable === true);
+  const canEdit = () => Boolean(writableNow() && s.map?.exact && s.hash);
+  /** The duplicates reply may disagree with the library entry: bring the Edit control, edit mode and the open
+   *  entry's merge footer in line. Nothing here rebuilds the tabs. */
+  function syncEditAvailability(was) {
+    if (was !== canEdit() && el.headActions) {
+      const old = el.headActions.querySelector(".edit-toggle");
+      if (canEdit()) {
+        const b = editButton(); if (b && !old) el.headActions.prepend(b);
+        if (s.editAsked && !s.edit) setEdit(true);   // the address asked for edit mode and the first answer said no
+      } else {
+        old?.remove();
+        if (s.edit) {
+          // Typed text is not dropped silently: the entry closes through the usual refresh, with a toast saying why.
+          const dirty = drawerDirty();
+          s.edit = false; wrap.classList.remove("editing"); paintTabs();
+          // A dirty form closes the entry the way Close does (focus back to its row); a clean one refreshes into view mode.
+          if (s.drawer) { if (dirty) closeDrawer(); else openDrawer(s.drawer, { refresh: true }); }
+          saveUrl();
+          if (dirty) toast("Editing is not available for this book, so the entry was closed.", "error");
+        }
+      }
+    }
+    syncFooter();
+  }
+  /** The open entry's "Same as another entry" footer follows `writable` without rebuilding the entry. */
+  function syncFooter() {
+    const box = host();
+    if (!box || !s.drawer || s.edit) return;
+    const foot = box.querySelector(".drawer-foot");
+    if (!writableNow()) { foot?.remove(); return; }
+    const body = box.querySelector(".body");
+    if (!foot && body) body.append(mergeFooter(s.drawer));
+  }
+  const mergeFooter = (id) => h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
+    closeDrawer({ focus: false });
+    mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
+  } } }, icon("layers"), "Same as another entry…"));
   const editor = createEditor({
     key: () => s.key, hash: () => s.hash, chapters: () => s.map.chapters, seqAt: () => s.map.seqAt(s.p),
     docs: () => currentIndexes(), view: () => s.view, book: () => s.book,
@@ -624,6 +681,7 @@ export function mountReader(root) {
   });
   async function setEdit(on) {
     if (on && !canEdit()) return;
+    s.editAsked = false;
     // Done with typed text in a form: ask, as closing the entry does.
     if (!on && drawerDirty() && !(await confirmDialog({ title: "Discard what you wrote?", message: "Leaving edit mode closes the form you were editing.",
       confirmLabel: "Discard", cancelLabel: "Keep editing" }))) return;
@@ -956,9 +1014,10 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), dupesNotice(),
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), el.dupesSlot = h("div.dupes-slot", dupesNotice()),
       s.edit ? editor.addEntityButton() : null, list);
     paintList();
+    el.dupesSlot.dataset.key = dupesKey();
   }
 
   /** After a merge or undo: reload the (rewritten) indexes and stay where the reader is. */
@@ -976,10 +1035,21 @@ export function mountReader(root) {
       if (!next) return;
       if (next.undo?.auto && next.undo.id !== before) { s.autoShown = null; return reloadAfterMerge(); }
       s.dupes = next;
-      if (next.checking) watchDupes(key); else paintTabs();
+      if (next.checking) watchDupes(key); else { syncEditAvailability(canEdit()); repaintDupes(); }
     }, 3000);
   }
 
+  /** What dupesNotice() would show, as a string: the slot is rebuilt only when this changes. */
+  function dupesKey() {
+    const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo.id : "";
+    const n = s.dupes?.writable && !s.dupesDismissed ? openPairs(visiblePairs(s.dupes, s.view)).length : 0;
+    return `${auto}|${n}`;
+  }
+  function repaintDupes() {
+    if (!el.dupesSlot?.isConnected || el.dupesSlot.dataset.key === dupesKey()) return;
+    clear(el.dupesSlot, dupesNotice());
+    el.dupesSlot.dataset.key = dupesKey();
+  }
   function dupesNotice() {
     const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo : null;
     let merged = null;
@@ -1127,12 +1197,12 @@ export function mountReader(root) {
       summary ? icon("chevron") : null);
   }
 
-  /** One book on the rail. `items`: [{ label, title, body, cls, id, badge }] in display order, `reached` is the
-   *  count in the button ("Show all 12 chapters": what the reader has reached, never the book's total). */
+  /** One book on the rail. `items` ([{ label, title, body, cls, id, badge, pin }]) are in display order: the fold keeps the first `NEAR`
+   *  and any `pin`ned item. `newest` only picks the word in the expanded button; `raw` is an earlier book's events block ({ total, build(full) }). */
   function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none, raw }) {
     const all = s.bkAll.has(bkKey(key));
     const folded = !all && items.length > NEAR;
-    const shown = !folded ? items : newest ? items.slice(0, NEAR) : items.slice(-NEAR);
+    const shown = !folded ? items : items.filter((it, i) => i < NEAR || it.pin);
     const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
       it.label ? h("span.ch-label", it.label) : null,
       it.title ? h("div.ch-name", it.title, it.badge || null) : null,
@@ -1143,7 +1213,7 @@ export function mountReader(root) {
         all ? s.bkAll.delete(bkKey(key)) : s.bkAll.add(bkKey(key));
         repaint();
         el.panel.querySelector(`.ch-all[data-book="${CSS.escape(bkKey(key))}"]`)?.focus({ preventScroll: true });
-      } } }, all ? `Show only the latest ${NEAR}` : `Show all ${total} ${noun}${total === 1 ? "" : "s"}`) : null;
+      } } }, all ? `Show only the ${newest ? "latest" : "first"} ${NEAR}` : `Show all ${total} ${noun}${total === 1 ? "" : "s"}`) : null;
     const content = raw ? raw.build(all) : rail;
     if (current) return h("section.book-block.stack-book.current", { "aria-label": bookTitleOf(key) }, bookBanner(key), content, toggle);
     return h("details.book-block.stack-book.earlier", { "aria-label": bookTitleOf(key), open: s.bkOpen.has(bkKey(key)) ? "" : null,
@@ -1366,7 +1436,7 @@ export function mountReader(root) {
     const loose = (rows.loose || []).filter((ev) => keep.has(ev));
     const currentItems = ordered(rowItems(rows));
     if (loose.length) {   // no chapter to put them in (no book file): one block of their own
-      const item = { label: null, title: null, cls: "", body: rowBody(s.newestFirst ? [...loose].reverse() : loose) };
+      const item = { label: null, title: null, cls: "", pin: true, body: rowBody(s.newestFirst ? [...loose].reverse() : loose) };
       currentItems[s.newestFirst ? "unshift" : "push"](item);
     }
     const currentBlock = currentItems.length ? bookBlock(s.series ? s.book : null, currentItems, { current: true, newest: s.newestFirst, repaint }) : null;
@@ -1379,7 +1449,7 @@ export function mountReader(root) {
       const evs = inRow(all.filter((ev) => ev.book === b));
       if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
       return bookBlock(b, [], { current: false, newest: s.newestFirst, noun: "event", repaint,
-        raw: { total: evs.length, build: (full) => (evs.length ? h("div.ch-body.tl-flat", rowBody(full || evs.length <= NEAR ? evs : s.newestFirst ? evs.slice(0, NEAR) : evs.slice(-NEAR))) : null) } });
+        raw: { total: evs.length, build: (full) => h("div.ch-body.tl-flat", rowBody(full ? evs : evs.slice(0, NEAR))) } });
     });
     const blocks = (s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock]).filter(Boolean);
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
@@ -1816,10 +1886,7 @@ export function mountReader(root) {
       connections,
       cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
-      s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
-        closeDrawer({ focus: false });
-        mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
-      } } }, icon("layers"), "Same as another entry…")) : null);
+      writableNow() ? mergeFooter(id) : null);
     // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
     if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
       ...e.arcs.map((a) => arcParagraph(a.text, `${arcLabel(a)}, written by the generator`))));
@@ -1981,7 +2048,12 @@ export function mountReader(root) {
     const find = () => [...el.panel.querySelectorAll("li.ch-item")].find((d) => d.dataset.chapter === key);
     paintTabs();
     let item = find();
-    if (!item) {   // behind "Show all", in a collapsed earlier book or with the earlier books hidden
+    if (!item) {   // behind "Show all" in the current book
+      s.bkAll.add(bkKey(s.series ? s.book : null));
+      paintTabs();
+      item = find();
+    }
+    if (!item) {   // in a collapsed earlier book or with the earlier books hidden
       if (s.series && !s.chSeries) { s.chSeries = true; try { localStorage.setItem("lk-ch-series", "1"); } catch {} }
       for (const b of [s.series ? s.book : null, ...(s.series?.books || []).map((x) => x.key)]) { s.bkAll.add(bkKey(b)); if (b) s.bkOpen.add(bkKey(b)); }
       paintTabs();
