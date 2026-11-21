@@ -354,7 +354,7 @@ wheels = [
 
 [[package]]
 name = "lorekeeper"
-version = "0.12.2"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
