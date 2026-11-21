@@ -1036,3 +1036,43 @@ def test_arcs_only_fail_on_errors_they_introduce(tmp_path, monkeypatch):
         job = c.post("/api/jobs", json={"book_id": book["id"], "config": {"provider": "claude", "chunk_words": 5000}}).json()
         done = wait_for(c, job["id"], {"done", "failed"})
     assert done["report"]["arcs"].get("arcs") == 0, done["report"]["arcs"]
+
+
+def test_duplicates_are_computed_once_until_a_file_or_distinct_pair_changes(client, tmp_path, monkeypatch):
+    from lorekeeper import merge
+    from .test_merge import _ent, _index
+    ix = _index([_ent("dior", ["Dior"], "a1", facets=[("a1", "A thief.")]),
+                 _ent("dior-lachance", ["Dior LaChance"], "a3", facets=[("a3", "Gives a full name.")])])
+    path = tmp_path / "data" / "indexes" / "b.lore.json"
+    path.write_text(json.dumps(ix))
+    key = "generated--b.lore"
+    calls = []
+    real = merge.candidates
+    monkeypatch.setattr(merge, "candidates", lambda *a, **k: calls.append(1) or real(*a, **k))
+    first = client.get(f"/api/library/{key}/duplicates").json()
+    second = client.get(f"/api/library/{key}/duplicates").json()
+    assert len(calls) == 1 and first["pairs"] == second["pairs"]
+    # a changed file is picked up
+    ix["entities"].append(_ent("chloe", ["Chloe"]))
+    ix["entities"].append(_ent("chloe-sauvage", ["Chloe Sauvage"], "a2"))
+    path.write_text(json.dumps(ix))
+    pairs = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert len(calls) == 2 and {(p["keep"], p["drop"]) for p in pairs} == {("dior", "dior-lachance"), ("chloe", "chloe-sauvage")}
+    # so is a new "not the same" pair
+    client.post(f"/api/library/{key}/distinct", json={"a": "chloe", "b": "chloe-sauvage"})
+    pairs = client.get(f"/api/library/{key}/duplicates").json()["pairs"]
+    assert len(calls) == 3 and {(p["keep"], p["drop"]) for p in pairs} == {("dior", "dior-lachance")}
+
+
+def test_edition_is_parsed_once_per_file_version(client, tmp_path, monkeypatch):
+    from lorekeeper.web import app as appmod
+    meta = upload(client, tmp_path)
+    real = appmod.epub.blocks
+    calls = []
+    monkeypatch.setattr(appmod.epub, "blocks", lambda p: calls.append(1) or real(p))
+    h = meta["textHash"] if "textHash" in meta else None
+    assert h, meta
+    a = client.get(f"/api/editions/{h}").json()
+    n = len(calls)
+    b = client.get(f"/api/editions/{h}").json()
+    assert a == b and a["blockWords"] and len(calls) == n
