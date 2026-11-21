@@ -1124,3 +1124,62 @@ def test_edition_cache_notices_a_changed_epub(client, tmp_path):
     os.utime(stored, ns=(1, 1))
     changed = lib.describe_edition(stored)
     assert changed["title"] == "Another" and changed["textHash"] != first["textHash"]
+
+
+def _lib_with(tmp_path, files):
+    from lorekeeper.web import app as appmod
+    from .test_merge import _index
+    dirs = {}
+    for (label, name), series in files.items():
+        d = dirs.setdefault(label, tmp_path / label)
+        d.mkdir(exist_ok=True)
+        ix = _index([])
+        ix["id"] = name
+        if series:
+            ix["series"] = {"id": series, "book": name}
+        (d / f"{name}.lore.json").write_text(json.dumps(ix))
+    return appmod.Library(list(dirs.items()), [])
+
+
+def test_summary_marks_which_indexes_can_be_edited(tmp_path):
+    lib = _lib_with(tmp_path, {("generated", "solo"): None, ("community", "theirs"): None,
+                               ("generated", "s1"): "all-mine", ("generated", "s2"): "all-mine",
+                               ("generated", "m1"): "mixed", ("community", "m2"): "mixed"})
+    w = {i["id"]: i["writable"] for i in lib.summary()["indexes"]}
+    assert w == {"solo": True, "theirs": False, "s1": True, "s2": True, "m1": False, "m2": False}
+
+
+def test_get_reads_only_the_one_file(tmp_path, monkeypatch):
+    lib = _lib_with(tmp_path, {("generated", "a"): None, ("generated", "b"): None, ("generated", "c"): None})
+    read = []
+    real = Path.read_bytes
+    monkeypatch.setattr(Path, "read_bytes", lambda self: read.append(self.name) or real(self))
+    item = lib.get("generated--b.lore")
+    assert item["doc"]["id"] == "b" and read == ["b.lore.json"]
+    assert lib.get("generated--nope") is None
+    assert {k: v["stamp"] for k, v in lib.scan().items()}["generated--b.lore"] == item["stamp"]
+
+
+def test_edition_is_parsed_once_and_gone_files_are_dropped(client, tmp_path, monkeypatch):
+    from lorekeeper.web import app as appmod
+    from lorekeeper.web.jobs import describe
+    from lorekeeper import epub
+    upload(client, tmp_path)
+    stored = next((tmp_path / "data" / "books").rglob("*.epub"))
+    lib = appmod.Library([], [])
+    calls = []
+    real = epub.read
+    monkeypatch.setattr(appmod.epub, "read", lambda p: calls.append(1) or real(p))
+    got = lib.describe_edition(stored)
+    assert len(calls) == 1
+    expected = {**describe(stored), "blockWords": [len(b.words) for b in real(stored).blocks]}
+    assert got == expected
+    other = tmp_path / "other.epub"
+    make_epub(other, title="Other")
+    lib.describe_edition(other)
+    other.unlink()
+    lib.describe_edition(stored.with_name(stored.name))   # a hit
+    third = tmp_path / "third.epub"
+    make_epub(third, title="Third", ch1=["Another first paragraph, long enough to count as text here.", "And a second paragraph for it."])
+    lib.describe_edition(third)
+    assert set(lib._described) == {stored, third}
