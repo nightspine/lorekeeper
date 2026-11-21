@@ -61,9 +61,9 @@ class Library:
                 if p.name.endswith((".state", ".report")) or ".events" in p.name:
                     continue
                 try:
-                    st = p.stat()   # before reading: a write after this changes the stamp, never the other way round
-                    stamp = (st.st_mtime_ns, st.st_size)
-                    doc = json.loads(p.read_text())
+                    data = p.read_bytes()   # one read: the document and its digest describe the same bytes
+                    stamp = hashlib.blake2b(data, digest_size=16).hexdigest()
+                    doc = json.loads(data.decode())
                 except (OSError, json.JSONDecodeError, UnicodeDecodeError):
                     continue
                 if not isinstance(doc, dict) or doc.get("kind") not in ("index", "series"):
