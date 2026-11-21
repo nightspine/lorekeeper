@@ -1,0 +1,90 @@
+/* The phone (640px and below), shell and pages: the app bar, the tab bar, safe areas, the iOS rules (16px fields, no
+   overflow, no tap flash) and the sheets. Loaded last, so it wins over the older phone rules in features.css.
+   Page-specific phone rules live in each page's own file (library.css, studio.css, settings.css, auth.css). */
+
+/* Touch: no flash on tap, no double-tap delay, hover styles only where a pointer can hover. */
+/* the palette's Close button exists on a phone only */
+.palette-close { display: none; }
+
+@media (hover: none) {
+  a, button, label, summary, select, input, [role="button"], [role="tab"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  .btn:active, .icon-btn:active, .nav:active, .lib-filter:active, .tabbar a:active, .prow:active, .choice:active { background: var(--hover); }
+  .btn.primary:active { filter: brightness(.92); }
+}
+
+@media (max-width: 640px) {
+  /* Nothing is wider than the screen. The fixes are at the root of each page; these are the safety net. */
+  html, body { max-width: 100%; overflow-x: clip; overscroll-behavior-x: none; }
+  body { min-height: 100dvh; }
+  .shell, main { max-width: 100%; min-width: 0; }
+  main > * { min-width: 0; max-width: 100%; }
+  pre, code, kbd { overflow-wrap: anywhere; }
+  pre { white-space: pre-wrap; max-width: 100%; overflow-x: auto; }
+  img, svg, video, canvas { max-width: 100%; }
+  h1, h2, h3, h4, p, li, dd, dt, label, .muted, .hint, a { overflow-wrap: anywhere; }
+
+  /* 16px fields: iOS Safari zooms the page on focus below that. */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]), select, textarea,
+  .input, .select, .textarea, .palette-input { font-size: 16px; }
+
+  /* App bar: one compact row under the status bar (black-translucent, so the bar pads for the notch). */
+  .appbar { height: calc(48px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(4px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
+  .appbar-title { font-size: 17px; line-height: 48px; }
+  .appbar-slot { display: flex; align-items: center; flex: none; }
+  .appbar-slot:empty { display: none; }
+  .appbar .icon-btn { width: 44px; height: 44px; }
+  :root { --topbar-h: calc(48px + env(safe-area-inset-top, 0px)); --tabbar-h: calc(56px + env(safe-area-inset-bottom, 0px)); }
+
+  /* Tab bar: icon over a short label, flat on --pane with a hairline. */
+  .tabbar { height: var(--tabbar-h); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); }
+  .tabbar a { gap: 2px; font-size: 11px; font-weight: 600; letter-spacing: 0; }
+  .tabbar a:focus-visible { outline: 2px solid var(--beacon); outline-offset: -4px; border-radius: 8px; }
+  .tab-busy { top: 7px; }
+  main { padding-left: max(var(--main-px), env(safe-area-inset-left, 0px)); padding-right: max(var(--main-px), env(safe-area-inset-right, 0px)); padding-bottom: calc(var(--tabbar-h) + 28px); }
+  main[data-route="settings"], main[data-route="library"] { padding-left: 0; padding-right: 0; }
+  .toasts { bottom: calc(var(--tabbar-h) + 12px); }
+
+  /* Sheets and dialogs: the same bottom sheet look for the older modal dialogs. */
+  dialog.modal { inset: auto 0 0 0; margin: 0; width: 100%; max-width: none; max-height: 90dvh; border-bottom: 0; border-radius: 12px 12px 0 0; padding: 22px 16px calc(16px + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; animation: sheet-in 220ms var(--ease); }
+  dialog.modal[open] { animation: sheet-in 220ms var(--ease); }
+  dialog.modal::before { content: ""; position: absolute; top: 8px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--line-2); }
+  .confirm-actions { flex-direction: column-reverse; }
+  .confirm-actions .btn { width: 100%; justify-content: center; }
+
+  /* The palette, as a tall sheet from the bottom: the field stays at the top, clear of the keyboard. */
+  .palette { inset: auto 0 0 0; width: 100%; max-width: none; margin: 0; height: calc(100dvh - env(safe-area-inset-top, 0px) - 24px); border-bottom: 0; border-radius: 12px 12px 0 0; display: none; flex-direction: column; animation: sheet-in 220ms var(--ease); overscroll-behavior: contain; }
+  .palette[open] { display: flex; animation: sheet-in 220ms var(--ease); }
+  .palette::before { content: ""; flex: none; width: 36px; height: 4px; margin: 8px auto 0; border-radius: 2px; background: var(--line-2); }
+  .palette-input { height: 52px; }
+  .palette-close { display: inline-grid; flex: none; margin-right: -8px; }
+  .palette-list { flex: 1; max-height: none; padding-bottom: calc(var(--space-2) + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; }
+  .palette-row { min-height: 48px; }
+  .palette-hint { max-width: 45%; }
+
+  /* Sheet content: choice rows (Filter and sort) with a 48px hit area. */
+  .sheet-choices { margin: 0 0 var(--space-4); padding: 0; border: 0; display: grid; gap: 0; }
+  .sheet-choices legend { padding: 0 0 var(--space-2); font-size: var(--text-xs); font-weight: 600; color: var(--text-3); }
+  .sheet-choice { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 48px; border-top: 1px solid var(--line); cursor: pointer; }
+  .sheet-choice:last-child { border-bottom: 1px solid var(--line); }
+  .sheet-choice input { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; margin: 0; border-radius: 50%; border: 1.5px solid var(--text-3); background: transparent; }
+  .sheet-choice input:checked { border-color: var(--beacon); background: radial-gradient(circle, var(--beacon) 0 4px, transparent 5px); }
+  .sheet-choice input:focus-visible { outline: 2px solid var(--beacon); outline-offset: 3px; }
+  .sheet-choice:has(input:checked) { color: var(--text); font-weight: 600; }
+}
+@media (max-width: 640px) {
+  /* The build form: the estimate and Build index stay in reach at the bottom, above the tab bar. */
+  .build-go { position: sticky; bottom: var(--tabbar-h); z-index: 5; margin: 0 calc(-1 * var(--main-px)); padding: 10px var(--main-px); background: var(--pane); border-top: 1px solid var(--line); justify-content: space-between; flex-wrap: nowrap; }
+  .build-est { flex: 1 1 0; min-width: 0; text-align: left; font-size: var(--text-xs); }
+  .build-go .btn { min-height: 44px; }
+  .prow { min-height: 56px; }
+  .build-id .cover-sm { width: 72px; }
+  .build details > summary { min-height: 48px; }
+  .page .btns .btn, .bk-head-main .btns .btn { min-height: 44px; }
+  .bk-head-main .btn.quiet { justify-self: start; padding-left: 0; }
+}
+@media (max-width: 640px) {
+  .auth-page { padding-top: calc(24px + env(safe-area-inset-top, 0px)); }
+}
+@media (min-width: 641px) {
+  .appbar-slot { display: none; }
+}

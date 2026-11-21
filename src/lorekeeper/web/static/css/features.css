@@ -134,7 +134,7 @@
   main { padding: 16px var(--main-px) calc(60px + env(safe-area-inset-bottom, 0px) + 32px); }
   main[data-route="settings"] { padding: 0 0 calc(60px + env(safe-area-inset-bottom, 0px) + 16px); }
   body[data-signed-in="false"] main, body[data-must-change-password="true"] main { padding-bottom: 32px; }
-  .toasts { left: 12px; right: 12px; bottom: calc(60px + env(safe-area-inset-bottom, 0px) + 12px); max-width: none; }
+  .toasts { left: 12px; right: 12px; bottom: calc(var(--tabbar-h, calc(56px + env(safe-area-inset-bottom, 0px))) + 12px); max-width: none; }
   body[data-signed-in="false"] .toasts, body[data-must-change-password="true"] .toasts { bottom: 12px; }
   /* 44px hit areas */
   .btn, .input, .select { min-height: 44px; }
@@ -202,7 +202,7 @@
 .d-kin .linkish { font-weight: 600; }
 @media (max-width: 640px) {
   .view-tabs.five .count { display: none; }
-  .ask-composer { bottom: calc(60px + env(safe-area-inset-bottom, 0px)); }
+  .ask-composer { bottom: var(--tabbar-h, calc(56px + env(safe-area-inset-bottom, 0px))); }
   .ask-field { min-height: 44px; }
   .ask-send { min-height: 44px; }
   .ask-example, .ask-cancel { min-height: 44px; }

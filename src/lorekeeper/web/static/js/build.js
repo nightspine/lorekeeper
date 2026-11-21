@@ -2,7 +2,7 @@
 // has no index" choice, and a compact settings dialog for queuing several books in order.
 import { api } from "./api.js";
 import { state as appState } from "./app.js";
-import { clear, fmtDuration, fmtInt, h, icon, toast } from "./dom.js";
+import { clear, fmtDuration, fmtInt, h, icon, showModalLocked, closeLocked, toast } from "./dom.js";
 
 /** Shown wherever a Book Orbit book without an EPUB cannot be built. */
 export const NO_EPUB = "Book Orbit has no EPUB for this book, so there's no text to index.";
@@ -24,7 +24,7 @@ export function modal(title, { width = 600 } = {}) {
       if (done) return;
       done = true;
       window.removeEventListener("hashchange", api.close0);
-      if (dlg.open) dlg.close();
+      closeLocked(dlg);
       dlg.remove();
       if (prev && document.contains(prev)) prev.focus();
     },
@@ -35,7 +35,7 @@ export function modal(title, { width = 600 } = {}) {
   closeBtn.addEventListener("click", () => api.close());
   window.addEventListener("hashchange", api.close0);
   document.body.append(dlg);
-  dlg.showModal();
+  showModalLocked(dlg);
   (dlg.querySelector("input, select, button:not(.icon-btn)") || closeBtn).focus();
   return api;
 }

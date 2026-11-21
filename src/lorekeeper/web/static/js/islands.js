@@ -337,6 +337,7 @@ function render(A) {
     const want = `${e.type}|${r.toFixed(1)}|${isNew}`;
     g.setAttribute("class", `g-node g-dot t-${e.type}${id === sel ? " sel" : ""}${near && !near.has(id) ? " dim" : ""}${isNew ? " new" : ""}`);
     g.setAttribute("aria-label", `${e.name}, ${TYPE_LABEL[e.type]}${isNew ? ", new" : ""}`);
+    g.setAttribute("data-id", id);   // the selection sheet returns focus to its node by id
     g.setAttribute("aria-pressed", String(id === sel));
     if (g.dataset.look === want) return;
     g.dataset.look = want;

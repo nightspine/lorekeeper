@@ -5,7 +5,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { bookNo, buildDialog, builtWith, cover, NO_EPUB, numWord, partLine, startBuild, statusChip } from "./build.js";
-import { clear, fmtInt, h, icon, loadError, loading, relTime, toast } from "./dom.js";
+import { clear, fmtInt, h, icon, loadError, loading, relTime, sheet, toast } from "./dom.js";
 
 // Column sorts: every sort the old select offered. Recently indexed runs newest first.
 const SORTS = { title: "Title", author: "Author", series: "Series", recent: "Last indexed" };
@@ -47,10 +47,19 @@ export function mountLibrary(root) {
   const s = {
     data: null, demo: undefined, q: params.get("q") || "", selected: params.get("book"),
     sort: SORTS[params.get("sort") || saved.sort] ? params.get("sort") || saved.sort : "title",
-    view: (params.get("view") || saved.view) === "grid" ? "grid" : "list",
+    view: ["grid", "covers"].includes(params.get("view") || saved.view) ? "grid" : "list",
     show: params.get("show") || "all", source: params.get("source") || "all",
   };
   let timer, searchTimer, disposed = false, listSig = "", paneSig = "";
+  // On a phone the book's details and the filter choices are bottom sheets, not a pane beside the list.
+  const phoneMq = matchMedia("(max-width: 640px)");
+  const phone = () => phoneMq.matches;
+  let bookSheet = null, filterSheet = null;
+  // Crossing 640px swaps the sheet and the pane for each other: the selection (and the address) stays; the pane or the
+  // sheet is repainted for the same book. A close that comes from the swap must not deselect.
+  let keepSelection = false;
+  const onPhoneChange = () => { paneSig = ""; filterSheet?.close(true); if (bookSheet) { keepSelection = true; bookSheet.close(true); } paintPane(); };
+  phoneMq.addEventListener("change", onPhoneChange);
 
   // ---- the frame: built once ---------------------------------------------------------------
   const count = h("p.lib-count");
@@ -86,6 +95,8 @@ export function mountLibrary(root) {
       s.view = v; viewBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === v))); listSig = ""; paintList(); persist();
     } } }, label));
   let toolbar;
+  const filterBtn = h("button.btn.lib-filterbtn", { type: "button", "aria-haspopup": "dialog", disabled: true, on: { click: () => openFilters() } },
+    icon("sliders"), h("span.lib-filter-txt", "Filter and sort"), h("span.n", { "aria-hidden": "true" }));
   const list = h("div.lib-list");
   const pane = h("aside.lib-pane", { "aria-label": "Book details", hidden: true });
   const split = h("div.lib-split", list, pane);
@@ -94,7 +105,8 @@ export function mountLibrary(root) {
       h("div.lib-title", h("h1", "Library"), count),
       h("div.lib-head-end",
         h("div.search.lib-search-wrap", icon("search"), search, h("kbd.kbd", { "aria-hidden": "true" }, "/")),
-        h("label.btn.primary", { for: "lib-upload" }, icon("upload"), "Add an EPUB"), upload)),
+        filterBtn,
+        h("label.btn.primary.lib-add", { for: "lib-upload", title: "Add an EPUB" }, icon("upload"), h("span.lib-add-txt", "Add an EPUB")), upload)),
     toolbar = h("div.lib-toolbar", { hidden: true },   // shown once there are books to filter
       showGroup,
       h("label.lib-from", h("span", "From"), sourceSel),
@@ -210,6 +222,11 @@ export function mountLibrary(root) {
     const sel = sourceSel.value || s.source;
     clear(sourceSel, SOURCES.map(([k, label]) => h("option", { value: k, selected: s.source === k }, `${label}, ${fmtInt(srcCount[k])}`)));
     sourceSel.value = s.source || sel;
+    filterBtn.disabled = false;
+    const changed = [s.source !== "all", s.sort !== "title", s.view !== "list"].filter(Boolean).length;
+    const badge = filterBtn.querySelector(".n");
+    badge.textContent = changed ? String(changed) : "";
+    filterBtn.setAttribute("aria-label", changed ? `Filter and sort, ${changed} changed` : "Filter and sort");
     const bo = s.data.bookorbit || {};
     clear(boNote, bo.connected ? [`Book Orbit synced ${relTime(bo.synced)}`]
       : h("a", { href: "#/settings/bookorbit" }, icon("link"), "Connect Book Orbit"));
@@ -419,12 +436,13 @@ export function mountLibrary(root) {
     paintPane();
     paintSelection();
     persist();
-    if (focusPane) pane.querySelector("h2")?.focus();
+    if (focusPane && !phone()) pane.querySelector("h2")?.focus();
   }
 
   /** Clear the selection; with `refocus`, hand focus back to the row or tile it came from. */
   function deselect(refocus) {
     const key = s.selected;
+    if (bookSheet) { bookSheet.close(true); return; }
     s.selected = null; paintPane(); paintSelection(); persist();
     if (!refocus || !key) return;
     list.querySelector(`[data-key="${CSS.escape(key)}"] [data-role=open]`)?.focus();
@@ -443,9 +461,11 @@ export function mountLibrary(root) {
   function paintPane() {
     const b = s.data?.books.find((x) => x.key === s.selected);
     const open = Boolean(b);
-    pane.hidden = !open;
-    split.classList.toggle("with-pane", open);
-    if (!b) { paneSig = ""; clear(pane); return; }
+    const asSheet = phone();
+    pane.hidden = !open || asSheet;
+    split.classList.toggle("with-pane", open && !asSheet);
+    if (!b) { paneSig = ""; clear(pane); if (bookSheet) bookSheet.close(true); return; }
+    if (!asSheet && bookSheet) { keepSelection = true; bookSheet.close(true); }
     // The pane also shows the rest of the series (its list and the earlier-book warning), so their state is in the signature too.
     const sg = b.series && s.data.series.find((g) => g.id === b.series.id);
     const siblings = sg ? sg.books.map((k) => s.data.books.find((x) => x.key === k)).filter(Boolean)
@@ -453,8 +473,9 @@ export function mountLibrary(root) {
     const sig = JSON.stringify([b, sg, siblings, b.series && s.data.books.filter((x) => x.series?.id === b.series.id).map((x) => [x.key, x.status])]);
     if (sig === paneSig) return;   // a reload that changed nothing about this book leaves the pane, its focus and scroll alone
     paneSig = sig;
-    const keep = pane.contains(document.activeElement) ? document.activeElement.dataset.act : null;
-    const scroll = pane.scrollTop;
+    const host = asSheet ? (bookSheet?.el || pane) : pane;
+    const keep = host.contains(document.activeElement) ? document.activeElement.dataset.act : null;
+    const scroll = asSheet ? (bookSheet?.body.scrollTop || 0) : pane.scrollTop;
     const series = b.series ? s.data.series.find((g) => g.id === b.series.id) : null;
     const byKey = Object.fromEntries(s.data.books.map((x) => [x.key, x]));
     const d = b.versions.find((v) => v.isDefault);
@@ -465,7 +486,7 @@ export function mountLibrary(root) {
       ? h("a.btn", { href: `#/studio/job/${b.job.id}`, dataset: { act: "progress" } }, "View progress")
       : h(`button.btn${href ? "" : ".primary"}`, { type: "button", dataset: { act: "build" }, "aria-disabled": b.canBuild ? null : "true",
         on: { click: () => (b.canBuild ? startBuild(b) : toast(NO_EPUB, "error")) } }, b.status === "missing" ? "Build index" : "Rebuild index");
-    clear(pane,
+    const content = [
       h("button.icon-btn.pane-close", { type: "button", "aria-label": "Close details", title: "Close details", dataset: { act: "close" },
         on: { click: () => deselect(true) } }, icon("x")),
       cover(b, "md"),
@@ -495,9 +516,53 @@ export function mountLibrary(root) {
         h("ul.pane-list", series.books.map((k) => byKey[k]).filter(Boolean).map((x) => h(`li${x.key === b.key ? ".here" : ""}`,
           h("a", { href: `#/book/${encodeURIComponent(x.key)}`, "aria-current": x.key === b.key ? "true" : null },
             h("span.subtle.num", `${x.series.index ?? "?"}.`), " ", x.title), statusChip(x))))) : null,
-      h("p.pane-more", h("a", { href: `#/book/${encodeURIComponent(b.key)}`, dataset: { act: "page" } }, "Versions, runs and book settings")));
-    pane.scrollTop = scroll;
-    if (keep) pane.querySelector(`[data-act="${keep}"]`)?.focus({ preventScroll: true });
+      h("p.pane-more", h("a", { href: `#/book/${encodeURIComponent(b.key)}`, dataset: { act: "page" } }, "Versions, runs and book settings"))];
+    if (!asSheet) {
+      clear(pane, content);
+      pane.scrollTop = scroll;
+      if (keep) pane.querySelector(`[data-act="${keep}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    // Phone: the same content in a bottom sheet (its own Close and handle replace the pane's close button and title card).
+    if (bookSheet) {
+      bookSheet.set(content); bookSheet.setTitle(b.title);
+      bookSheet.body.scrollTop = scroll;
+      if (keep) bookSheet.el.querySelector(`[data-act="${keep}"]`)?.focus({ preventScroll: true });
+      return;
+    }
+    const opened = b.key;
+    const me = bookSheet = sheet({ title: b.title, content, label: "Book details", className: "book-sheet",
+      onClose: () => {
+        if (bookSheet === me) bookSheet = null;
+        if (disposed) return;
+        if (keepSelection) {
+          keepSelection = false;
+          // Widened to where the pane floats over the list (an iPhone turned to landscape): focus goes into it, as when a book is chosen there.
+          // (A native dialog may fire `close` synchronously, before paintPane has built the pane: focus its heading next frame.)
+          if (!phone() && floating()) requestAnimationFrame(() => { if (!disposed && !phone()) pane.querySelector("h2")?.focus({ preventScroll: true }); });
+          return;
+        }
+        paneSig = "";
+        if (s.selected === opened) { s.selected = null; paintSelection(); persist(); }
+        list.querySelector(`[data-key="${CSS.escape(opened)}"] [data-role=open]`)?.focus({ preventScroll: true });
+      } });
+  }
+
+  /** Phone: From, Sort and List/Covers behind one control, as choices in a sheet that apply as they are tapped. */
+  function openFilters() {
+    if (!s.data) return;   // the catalog has not arrived: nothing to filter yet
+    const choices = (name, items, current, set) => h("fieldset.sheet-choices", h("legend", name),
+      items.map(([k, label]) => h("label.sheet-choice", h("input", { type: "radio", name: `lib-${name}`, value: k, checked: current() === k,
+        on: { change: () => { set(k); paintFilters(); paintList(); persist(); } } }), h("span", label))));
+    const srcCount = (k) => k === "all" ? s.data.books.length : s.data.books.filter((b) => b.source === k).length;
+    filterSheet = sheet({ title: "Filter and sort", label: "Filter and sort", className: "filter-sheet",
+      content: [
+        choices("Sort", Object.entries(SORTS).map(([k, l]) => [k, `${l}${k === "recent" ? ", newest first" : ""}`]), () => s.sort, (k) => { s.sort = k; }),
+        choices("From", SOURCES.map(([k, l]) => [k, `${l}, ${fmtInt(srcCount(k))}`]), () => s.source, (k) => { s.source = k; }),
+        choices("View", [["list", "List"], ["grid", "Covers"]], () => s.view, (k) => { s.view = k; viewBtns.forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === k))); listSig = ""; }),
+      ],
+      footer: h("button.btn.primary", { type: "button", on: { click: () => filterSheet.close() } }, "Done"),
+      onClose: () => { filterSheet = null; if (!disposed) filterBtn.focus({ preventScroll: true }); } });
   }
 
   /** The state in one sentence: "A complete index of the whole book.", "Building, part 3 of 12." */
@@ -562,5 +627,9 @@ export function mountLibrary(root) {
   document.addEventListener("keydown", onKey);
 
   load();
-  return () => { disposed = true; clearTimeout(timer); document.removeEventListener("keydown", onKey); };
+  return () => {
+    disposed = true; clearTimeout(timer); document.removeEventListener("keydown", onKey);
+    phoneMq.removeEventListener("change", onPhoneChange);
+    filterSheet?.close(true); bookSheet?.close(true);
+  };
 }

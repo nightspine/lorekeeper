@@ -3,7 +3,7 @@
 // nothing here fetches anything but this app's own /api. Registry text is untrusted: it only ever
 // goes through h() (textContent).
 import { api } from "./api.js";
-import { announce, clear, fmtInt, h, icon, toast } from "./dom.js";
+import { announce, clear, fmtInt, h, icon, showModalLocked, closeLocked, toast } from "./dom.js";
 import { modal } from "./build.js";
 
 const REPORT = "https://github.com/nightspine/lorekeeper-registry/issues/new?title=Report:+";
@@ -87,12 +87,12 @@ export async function useIndex(catalogKey, r, { busy = null } = {}) {
 function sheet(title) {
   const opener = document.activeElement;
   const closeBtn = h("button.icon-btn.small", { type: "button", "aria-label": "Close", title: "Close" }, icon("x"));
-  const body = h("div.sheet-body");
-  const dlg = h("dialog.sheet", { "aria-labelledby": "sheet-title" },
-    h("header.sheet-head", h("h2#sheet-title", title), closeBtn), body);
+  const body = h("div.csheet-body");
+  const dlg = h("dialog.csheet", { "aria-labelledby": "csheet-title" },
+    h("header.csheet-head", h("h2#csheet-title", title), closeBtn), body);
   const ctl = { dialog: dlg, body, close() {
     window.removeEventListener("hashchange", ctl.close);
-    if (dlg.open) dlg.close();
+    closeLocked(dlg);
     dlg.remove();
     if (opener && document.contains(opener)) opener.focus();
   } };
@@ -101,7 +101,7 @@ function sheet(title) {
   closeBtn.addEventListener("click", ctl.close);
   window.addEventListener("hashchange", ctl.close);
   document.body.append(dlg);
-  dlg.showModal();
+  showModalLocked(dlg);
   closeBtn.focus();
   return ctl;
 }
