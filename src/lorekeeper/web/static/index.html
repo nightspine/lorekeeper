@@ -2,7 +2,16 @@
 <html lang="en" data-theme="dark" class="lk-app">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#11141A" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+  <meta name="color-scheme" content="dark light">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lorekeeper">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <title>Lorekeeper</title>
   <meta name="description" content="Generate and explore spoiler-free book companions.">
   <!-- Fonts are self-hosted (static/fonts): nothing leaves this machine on page load, and the app works offline. -->
@@ -17,10 +26,16 @@
   <link rel="stylesheet" href="/static/css/auth.css">
   <link rel="stylesheet" href="/static/css/features.css">
   <link rel="stylesheet" href="/static/css/community.css">
+  <link rel="stylesheet" href="/static/css/phone.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
   <script>
     // Apply the saved theme before first paint to avoid a flash.
-    try { const t = localStorage.getItem("lk-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+    try {
+      const t = localStorage.getItem("lk-theme"); if (t) document.documentElement.dataset.theme = t;
+      // The browser chrome follows the app's theme, which may differ from the system's.
+      const c = document.documentElement.dataset.theme === "light" ? "#FFFFFF" : "#11141A";
+      document.querySelectorAll('meta[name="theme-color"]').forEach((m) => { m.media = ""; m.content = c; });
+    } catch {}
   </script>
 </head>
 <body>
@@ -47,6 +62,7 @@
     <!-- Phone only: the page title, search and theme in one row. -->
     <header class="appbar" id="appbar">
       <p class="appbar-title" id="appbar-title">Lorekeeper</p>
+      <div class="appbar-slot" id="appbar-slot"></div>
       <button class="icon-btn" type="button" data-palette aria-label="Search and commands" title="Search and commands"><span data-icon="search"></span></button>
       <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch to light theme" title="Switch to light theme"><span data-icon="sun"></span></button>
     </header>
@@ -54,7 +70,7 @@
     <!-- Phone only: Library, the open book, Runs, Settings. -->
     <nav class="tabbar" id="tabbar" aria-label="App">
       <a href="#/library" data-route="library"><span data-icon="library"></span><span>Library</span></a>
-      <a href="#/library" id="tab-book" data-route="reader" hidden><span data-icon="book-open"></span><span class="tab-book-title">Book</span></a>
+      <a href="#/library" id="tab-book" data-route="reader" hidden><span data-icon="book-open"></span><span class="tab-book-title">Reading</span></a>
       <a href="#/studio" data-route="studio"><span data-icon="pulse"></span><span>Runs</span><span class="tab-busy" id="tab-busy" hidden></span></a>
       <a href="#/settings" data-route="settings"><span data-icon="settings"></span><span>Settings</span></a>
     </nav>
