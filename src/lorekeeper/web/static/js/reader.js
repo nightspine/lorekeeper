@@ -139,6 +139,8 @@ export function mountReader(root) {
     const mine = ++loadSeq;
     const stale = () => disposed || mine !== loadSeq;
     const meta = s.lib.indexes.find((i) => i.key === key);
+    // Book Orbit's answer is slow and needs nothing from the index: ask now so it overlaps everything below.
+    const posReq = preview ? null : api.position(key).catch(() => ({ synced: false, reason: "unreachable" }));
     let doc;
     try { doc = preview ? await api.communityPreview(preview.hex) : await api.index(key); } catch (e) {
       if (stale()) return false;
@@ -152,27 +154,34 @@ export function mountReader(root) {
     forgetMentions();   // an edit or merge reloads the index: counts made for the old one may name what is now hidden
     s.series = null; s.seriesDocs = new Map();
     const sid = preview ? null : s.doc.series?.id;
-    if (sid) {
-      const man = s.lib.series.find((x) => x.id === sid);
-      if (man) {
-        s.series = man;
-        const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
-        for (const b of man.books) {
-          const cands = siblings.filter((i) => i.series.book === b.key);
-          const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
-          if (!choice) continue;
-          s.seriesDocs.set(b.key, choice.key === key ? s.doc : await api.index(choice.key).catch(() => null));
-          if (stale()) return false;
-        }
-        if (!s.order || !man.orders[s.order]) s.order = man.defaultOrder;
+    // The other books of the series and the edition do not depend on each other: fetch them together.
+    const man = sid ? s.lib.series.find((x) => x.id === sid) : null;
+    const siblingReqs = [];
+    if (man) {
+      s.series = man;
+      const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
+      for (const b of man.books) {
+        const cands = siblings.filter((i) => i.series.book === b.key);
+        const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
+        if (!choice) continue;
+        siblingReqs.push([b.key, choice.key === key ? Promise.resolve(s.doc) : api.index(choice.key).catch(() => null)]);
       }
     }
-    s.book = book || s.doc.series?.book || null;
     // seq hints are only valid for the edition the index was built from.
     const hashes = (s.doc.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash);
-    let edition = null;
-    s.hash = null;
-    for (const hsh of hashes) { edition = await api.edition(hsh); if (stale()) return false; if (edition) { s.hash = hsh; break; } }
+    const findEdition = async () => {
+      for (const hsh of hashes) { const ed = await api.edition(hsh); if (ed) return { ed, hsh }; }
+      return { ed: null, hsh: null };
+    };
+    // Not preview: the duplicates check is slow on a big series and only paints a notice, so it never blocks the page.
+    const dupReq = preview ? null : api.duplicates(key).catch(() => null);
+    const [sibDocs, found] = await Promise.all([Promise.all(siblingReqs.map(([, p]) => p)), findEdition()]);
+    if (stale()) return false;
+    siblingReqs.forEach(([bk], i) => s.seriesDocs.set(bk, sibDocs[i]));
+    if (man && (!s.order || !man.orders[s.order])) s.order = man.defaultOrder;
+    s.book = book || s.doc.series?.book || null;
+    const edition = found.ed;
+    s.hash = found.hsh;
     s.map = new PositionMap(s.doc, edition);
     // Another book of the series: the position last set for it, else its start.
     if (!keepPosition) s.p = readingList().find((e) => e.key === key)?.p ?? 0;
@@ -190,14 +199,19 @@ export function mountReader(root) {
       s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
       s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
     }
-    s.dupes = preview ? null : await api.duplicates(key).catch(() => null);
-    if (stale()) return false;
-    watchDupes(key);
+    s.dupes = null;
+    clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
-    if (!preview) await syncPosition(key);
+    if (dupReq) dupReq.then((d) => {
+      if (stale() || !d) return;
+      s.dupes = d;
+      watchDupes(key);
+      paintTabs();
+    });
+    if (!preview) await syncPosition(key, { reply: posReq });
     return !stale();
   }
 
@@ -225,10 +239,10 @@ export function mountReader(root) {
       ...v.entities.flatMap((e) => e.facets.map((f) => f.id)), ...v.entities.filter((e) => e.profile).map((e) => e.profile.id)]);
   }
 
-  async function syncPosition(key, { poll = false } = {}) {
+  async function syncPosition(key, { poll = false, reply = null } = {}) {
     if (preview) return;
     let r;
-    try { r = await api.position(key); } catch { r = { synced: false, reason: "unreachable" }; }
+    try { r = await (reply || api.position(key)); } catch { r = { synced: false, reason: "unreachable" }; }
     if (disposed || s.key !== key) return;
     if (!r || !r.synced) {
       if (!poll || !s.sync.on) { s.sync = { on: false, override: false, reason: r?.reason }; paintSource(); }
