@@ -1,10 +1,10 @@
 // Command palette (Cmd/Ctrl+K). Providers register sync functions returning items; see registerProvider.
-import { h, icon, clear, announce, lockScroll, unlockScroll } from "./dom.js";
+import { h, icon, clear, announce, showModalLocked } from "./dom.js";
 import { api } from "./api.js";
 
 const MAX_PER_GROUP = 8, MAX_TOTAL = 24;
 const providers = new Map();
-let locked = false, dialog, input, list, items = [], active = 0, books = null, booksAt = 0, composing = false, announceTimer;
+let dialog, input, list, items = [], active = 0, books = null, booksAt = 0, composing = false, announceTimer;
 
 /** provider: (query) => Item[]. Registering the same id replaces it. Returns an unregister function. */
 export function registerProvider(id, provider) {
@@ -142,7 +142,7 @@ function build() {
     h("div.palette-field", icon("search"), input,
       h("button.icon-btn.palette-close", { type: "button", "aria-label": "Close", title: "Close", on: { click: () => closePalette() } }, icon("x"))), list);
   dialog.addEventListener("click", (e) => { if (e.target === dialog) closePalette(); });
-  dialog.addEventListener("close", () => { input.setAttribute("aria-expanded", "false"); if (locked) { locked = false; unlockScroll(); } });
+  dialog.addEventListener("close", () => { input.setAttribute("aria-expanded", "false"); });
   input.addEventListener("compositionstart", () => { composing = true; });
   input.addEventListener("compositionend", () => { composing = false; });
   document.body.append(dialog);
@@ -202,7 +202,7 @@ function onKey(e) {
 
 export function openPalette(initialQuery = "") {
   if (!dialog) build();
-  if (!dialog.open) { if (!locked) { locked = true; lockScroll(); } dialog.showModal(); }
+  if (!dialog.open) showModalLocked(dialog);
   input.setAttribute("aria-expanded", "true");
   input.value = initialQuery;
   active = 0;
