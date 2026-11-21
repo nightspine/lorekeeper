@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
-import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -1733,7 +1733,7 @@ export function mountReader(root) {
           cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } } } }, nodes);
       document.body.append(d);
       swipeToClose(d);
-      d.showModal();
+      showModalLocked(d);
       markOpenRow();
     }
     // Keep focus inside the entry: the field being typed in, else the heading.
@@ -1959,7 +1959,7 @@ export function mountReader(root) {
         click: (ev) => { checkPending(); if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
     swipeToClose(dlg);
-    dlg.showModal();
+    showModalLocked(dlg);
     if (!refresh) dlg.querySelector("#drawer-title")?.focus({ preventScroll: true });   // the heading is announced; × shows a ring only for keyboard focus
   }
 
