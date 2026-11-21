@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/nightspine/lorekeeper/compare/v0.12.2...v0.13.0) (2026-11-21)
+
+
+### Features
+
+* the app on a phone redesigned to fit the screen and feel like a native app ([#88](https://github.com/nightspine/lorekeeper/issues/88)) ([47b5fa0](https://github.com/nightspine/lorekeeper/commit/47b5fa0f5fc248072274e85f57f1ae6148fe9b58))
+
 ## [0.12.2](https://github.com/nightspine/lorekeeper/compare/v0.12.1...v0.12.2) (2026-11-21)
 
 
