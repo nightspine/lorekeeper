@@ -19,6 +19,7 @@ from pathlib import Path
 from ..generate import slug
 from ..text import words as text_words
 from ..llm import CLAUDE_MODELS
+from .bookorbit import is_finished
 from .jobs import is_story
 
 
@@ -169,7 +170,9 @@ class Catalog:
                                    if b.get("hasCover")
                                    else (f"/api/catalog/cover/up:{local}" if meta and meta.get("cover") else None),
                                    can_build=bool(b.get("epubFileId")) or bool(meta),
-                                   extra={"bookorbitId": b["id"], "language": b.get("language")}))
+                                   extra={"bookorbitId": b["id"], "language": b.get("language"),
+                                          "finished": is_finished(b.get("readStatus")),
+                                          "finishedAt": b.get("finishedAt") if is_finished(b.get("readStatus")) else None}))
         for bid, meta in uploads.items():
             if bid in linked:
                 continue   # a downloaded copy of a Book Orbit book, already listed above
