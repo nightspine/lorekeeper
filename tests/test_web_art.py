@@ -369,6 +369,30 @@ def test_redraw_replaces_the_picture_and_undo_brings_it_back(env):
     assert env.c.get(old["url"]).status_code == 200 and not (folder / new["file"]).exists()
 
 
+def test_a_redraw_keeps_the_earlier_books_its_prompt_carries(env):
+    """The redrawn picture is drawn from the old prompt, so it carries the same earlier-book content: its `inherits` (and
+    `partial`) go to the new record, else the Reader would show a prompt it hides until those books are finished. A record
+    from before `inherits` existed gets none either, so the Reader still treats it as unknown."""
+    env.key()
+    run_set(env, portraits=False)
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    first, second = man["pictures"][0], man["pictures"][1]
+    first.update({"inherits": ["book-one"], "partial": True})
+    second.pop("inherits", None)
+    path.write_text(json.dumps(man))
+
+    new = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={"note": "Closer"}).json()
+    assert new["inherits"] == ["book-one"] and new.get("partial") is True
+    stored = {p["id"]: p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert stored[new["id"]]["inherits"] == ["book-one"] and stored[new["id"]].get("partial") is True
+
+    legacy = env.c.post(f"/api/library/{KEY}/art/{second['id']}/redraw", json={}).json()
+    assert "inherits" not in legacy
+    stored = {p["id"]: p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert "inherits" not in stored[legacy["id"]]
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)
