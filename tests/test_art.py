@@ -928,3 +928,56 @@ def test_an_edited_prompt_is_never_softened_and_its_refusal_is_raised():
         il.draw(il.job("plate", "One"), text="My own words: a mill at dusk, a woman at the gate, nothing else in view at all.")
     assert len(im.calls) == 1 and not any("quieter composition" in p for p in t.prompts) and il.report.refused == 1
     assert not il.man[0]["skipped"]                    # the person may try again
+
+
+# ---- round 3, item 13: what a prompt inherits from earlier books, and readers who have not finished them
+
+OWN_WORLD = ("A river valley seen years later: the same stone mills and cottages, some roofs mended with new slate, carts and "
+             "a few iron tools. People wear wool coats. The light is clear and cold, the fields worked hard, the mood watchful.")
+
+
+class TwoWorlds(Text):
+    def complete(self, system, prompt, schema, prefix=None):
+        if "visual world note" in prompt and "Three" in prompt:
+            self.prompts.append(prompt)
+            return {"text": OWN_WORLD}
+        return super().complete(system, prompt, schema, prefix)
+
+
+def test_every_picture_says_which_earlier_books_its_prompt_inherits():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    il.run()
+    assert all(p["inherits"] == [] for p in pics(s1))
+    assert pics(s2) and all(p["inherits"] == ["b1"] and not p.get("partial") for p in pics(s2))   # book one's world note
+    assert WORLD in pics(s2, "plate")[0]["prompt"]
+
+
+def test_a_reader_who_has_not_finished_the_earlier_book_gets_nothing_from_it():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+    t, im = TwoWorlds(), Image()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il.run()                                                     # a build: book one counts as read
+    full = next(p for p in pics(s2, "plate"))
+    with pytest.raises(art.NotVisible):
+        il.job("portrait", "stranger", at="b2.a5", finished=set())       # only book one has the stranger
+    job = il.job("plate", "Three", at="b2.a5", finished=set())
+    pr = il.make_prompt(job)
+    assert pr.partial and pr.inherits == [] and WORLD not in pr.text and OWN_WORLD in pr.text
+    assert s2.m["worldOwn"]["text"] == OWN_WORLD and s2.m["world"]["inherited"]               # the set's note is unchanged
+    assert all(j == 1 for j, _ in pr.references)                # no picture of book one as a reference
+    oren = [n for n in s2.m["appearance"]["oren"] if n.get("partial")]
+    assert oren and oren[0]["inherits"] == []                   # written again from book two alone
+    rec = il.draw(job, pr)
+    assert rec["partial"] and rec["inherits"] == []
+    # a reader who finished book one gets the set's own prompt, and a resumed build never counts the partial picture as drawn
+    pr2 = il.make_prompt(il.job("plate", "Three", at="b2.a5", finished={"b1"}))
+    assert not pr2.partial and pr2.inherits == ["b1"] and WORLD in pr2.text
+    assert (rec["kind"], rec["target"], rec["from"]) not in il._have(1) or full["from"] == rec["from"]
+    n = len(im.calls)
+    art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), im, "ink", workers=1, log=lambda *_: None,
+                    pause=0).run()
+    assert len(im.calls) == n                                   # the full plate was already there

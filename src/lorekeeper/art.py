@@ -291,6 +291,7 @@ class Job:
     chapter: dict | None = None
     change: str = ""          # a portrait's reason for a new version (what changed), "" for the first
     shape: str = ""
+    finished: frozenset[str] | None = None   # earlier book keys the reader finished (None: all, as a run)
 
 
 @dataclass
@@ -304,6 +305,9 @@ class Prompt:
     sources: list[str] = field(default_factory=list)                 # anchors (of this book) it was written from
     writer: str = ""          # the writer's prompt, kept so a refusal can be rewritten from it
     check: str = ""           # the text the checks read it against
+    inherits: list[str] = field(default_factory=list)   # earlier book keys whose content the prompt uses
+    partial: bool = False     # written for a reader who has not finished every earlier book
+    world: str = ""           # the world note text pasted in
 
 
 @dataclass
@@ -623,9 +627,11 @@ class Illustrator:
         got, why, _ = self._write_full(prompt, bi, anchor, source, words)
         return got, why
 
-    def view(self, bi: int, anchor: str) -> dict:
-        """The gated view of books 0..bi at an anchor of book bi: what a reader there may know."""
-        key = (bi, anchor)
+    def view(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> dict:
+        """The gated view of books 0..bi at an anchor of book bi: what a reader there may know (`finished`: the earlier books
+        they finished; None: all of them)."""
+        finished = self._finished(bi, finished)
+        key = (bi, anchor, finished)
         with self.lock:              # the global lock only finds the key's own lock: views at other anchors are built at once
             if key in self._views:
                 return self._views[key]
@@ -637,11 +643,12 @@ class Illustrator:
                     v = gating.view(docs, gating.Position(None, anchor))
                 else:
                     keys = [d["series"]["book"] for d in docs]
+                    fin = None if finished is None else set(finished)
                     if self.series:
-                        v = gating.view(docs, gating.Position(keys[-1], anchor), self.series)
+                        v = gating.view(docs, gating.Position(keys[-1], anchor), self.series, finished=fin)
                     else:
                         v = gating.view(docs, gating.Position(keys[-1], anchor),
-                                        {"defaultOrder": "run", "orders": {"run": keys}}, "run")
+                                        {"defaultOrder": "run", "orders": {"run": keys}}, "run", fin)
                 self._views[key] = v
             return self._views[key]
 
@@ -688,16 +695,11 @@ class Illustrator:
                 break
         return out
 
-    def world(self, bi: int) -> dict | None:
-        """The book's world note: written once from its first chapters; in a series the first book's, to which a later book may
-        append one sentence. A note the person edited is never rewritten. None when none can be written."""
-        m = self.man[bi]
-        if m.get("world"):
-            return m["world"]
-        base = next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None)
+    def _world_inputs(self, bi: int):
+        """(anchor, recaps, passages, sources) the book's own world note is written from, or None (no story chapter)."""
         chs = self._story_chapters(bi)
         if not chs:
-            return base
+            return None
         b = self.books[bi]
         at = max((c["last"] for c in chs), key=b.ord_of.get)     # a chapter's last anchor is at or after all its events
         set_at = [e for c in chs for e in c["events"][:3] if e.get("setting")]
@@ -709,17 +711,64 @@ class Illustrator:
                          | {r["from"] for c in chs for r in c["recaps"]}, key=b.ord_of.get)
         if any(b.ord_of[a] > b.ord_of[at] for a in sources):    # by construction never; kept as the rule's last guard
             raise ValueError("world note written from content after its anchor")
-        body = f"Recaps and settings:\n{recaps}\n\nPassages:\n{passages}"
-        try:
-            w = self._world_write(bi, base, body, recaps, passages, at, sources)
-        except TextFailed as e:
-            self.log(f"  world note: text model failed ({e.detail})")
-            self._skip(bi, "world note", str(e))
-            return base
-        if w is None:
+        return at, recaps, passages, sources
+
+    def world(self, bi: int, finished: frozenset[str] | set[str] | None = None) -> dict | None:
+        """The book's world note: written once from its first chapters; in a series the first book's, to which a later book may
+        append one sentence. A note the person edited is never rewritten. None when none can be written.
+
+        `finished`: the earlier books' keys the reader has finished (None: all of them, as a run assumes). When the note the
+        set uses comes from an earlier book outside it, the book's *own* note is used instead (`worldOwn`, written from its
+        own first story chapters the first time it is needed), so a reader who skipped book one never gets its world."""
+        finished = self._finished(bi, finished)
+        m = self.man[bi]
+        if not m.get("world"):
+            base = next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None)
+            got = self._world_inputs(bi)
+            if got is None:
+                if finished is None or base is None or set(self._world_books(bi, base)) <= finished:
+                    return base
+                return None
+            at, recaps, passages, sources = got
+            body = f"Recaps and settings:\n{recaps}\n\nPassages:\n{passages}"
+            try:
+                w = self._world_write(bi, base, body, recaps, passages, at, sources)
+            except TextFailed as e:
+                self.log(f"  world note: text model failed ({e.detail})")
+                self._skip(bi, "world note", str(e))
+                w = None
+            if w is not None:
+                m["world"] = w
+                self._save(bi)
+            elif finished is None:
+                return base
+        w, _, inherits = self._world_for(bi, None)
+        if finished is None or set(inherits) <= finished:
+            return w
+        return self._own_world(bi)
+
+    def _own_world(self, bi: int) -> dict | None:
+        """The world note written from this book alone (`worldOwn`): for a reader who has not finished the earlier book the
+        set's note comes from."""
+        m = self.man[bi]
+        if m.get("worldOwn"):
+            return m["worldOwn"]
+        if (m.get("world") or {}).get("book") == self._bkey(bi) and not m["world"].get("base") and not m["world"].get("inherited"):
+            return m["world"]
+        got = self._world_inputs(bi)
+        if got is None:
             return None
-        m["world"] = w
-        self._save(bi)
+        at, recaps, passages, sources = got
+        try:
+            w = self._world_write(bi, None, "", recaps, passages, at, sources)
+        except TextFailed as e:
+            self.log(f"  own world note: text model failed ({e.detail})")
+            return None
+        if w is not None:
+            with self.lock:
+                m["worldOwn"] = w
+                self._dirty.add(bi)
+                self._save(bi)
         return w
 
     def _world_write(self, bi, base, body, recaps, passages, at, sources) -> dict | None:
@@ -727,13 +776,14 @@ class Illustrator:
             # an inherited note keeps the anchor of the book it was written in, with that book's key: anchor ids repeat across
             # the books of a series, so an anchor is only ever looked up in its own book
             j = next(j for j in range(bi - 1, -1, -1) if self.man[j].get("world") is base)
+            books = self._world_books(j, base)
             w = {"text": base["text"], "edited": base.get("edited", False), "from": base["from"],
-                 "book": base.get("book", self._bkey(j)), "inherited": True}
+                 "book": base.get("book", self._bkey(j)), "inherited": True, "inherits": books}
             if not base.get("edited"):
                 more, why = self._write(WORLD_MORE.format(base=base["text"]) + "\n" + body, bi, at, passages + recaps, (0, 70))
                 if more:
                     w = {"text": base["text"] + " " + more, "edited": False, "from": at, "book": self._bkey(bi), "base": base["text"],
-                         "sources": sources}
+                         "inherits": books, "sources": sources}
                 elif why != "empty":
                     self.log(f"  world note: no addition ({why})")
         else:
@@ -745,23 +795,65 @@ class Illustrator:
             w = {"text": got, "edited": False, "from": at, "book": self._bkey(bi), "sources": sources}
         return w
 
-    def _world_text(self, bi: int, pos: tuple[int, int]) -> tuple[str, str | None]:
-        """(text, anchor) of the world note a picture at `pos` is written from: the series' older text when an
-        appended sentence of this book lies ahead of it."""
+    def _world_books(self, j: int, w: dict) -> list[str]:
+        """The book keys whose content a world note found in book j's manifest holds: the book that wrote it and the books its
+        own text came from."""
+        own = w.get("book") or (self._bkey(j) if not w.get("inherited") else None)
+        prev = next((jj for jj in range(j - 1, -1, -1) if self.man[jj].get("world")), None)
+        if own is None and prev is not None:
+            own = self._bkey(prev)
+        return sorted(set(w.get("inherits", [])) | ({own} if own else set()))
+
+    def _world_for(self, bi: int, finished: frozenset[str] | None) -> tuple[dict | None, bool, list[str]]:
+        """(the world note a picture of book bi uses for a reader who finished `finished`, whether its `from` is an anchor of
+        book bi, the earlier book keys its text comes from)."""
         w, own = self._world_of(bi)
         if not w:
-            return "", None
+            return None, False, []
+        j = bi if self.man[bi].get("world") else next(jj for jj in range(bi - 1, -1, -1) if self.man[jj].get("world") is w)
+        inherits = [k for k in self._world_books(j, w) if k != self._bkey(bi)]
+        if finished is None or set(inherits) <= finished:
+            return w, own, inherits
+        mine = self.man[bi].get("worldOwn") or (w if own and not w.get("base") and not inherits else None)
+        return (mine, bool(mine), []) if mine else (None, False, [])
+
+    def _world_text(self, bi: int, pos: tuple[int, int], finished: frozenset[str] | None = None) -> tuple[str, str | None, list[str]]:
+        """(text, anchor, inherits) of the world note a picture at `pos` is written from: the series' older text when an
+        appended sentence of this book lies ahead of it; for a reader who has not finished the book it comes from, this book's
+        own note, or none."""
+        w, own, inherits = self._world_for(bi, finished)
+        if not w:
+            return "", None, []
         o = self.books[bi].ord_of
         if not own:                    # written in an earlier, finished book: nothing in it lies ahead of the reader
-            return w["text"], None
+            return w["text"], None, inherits
         if w.get("base") and (bi, o[w["from"]]) > pos:
-            return w["base"], None
-        return w["text"], w["from"]
+            return w["base"], None, inherits
+        return w["text"], w["from"], inherits
 
     def _bkey(self, bi: int) -> str:
         """The key of a book that anchors are stored with: its series book key, else its id."""
         d = self.books[bi].doc
         return str((d.get("series") or {}).get("book") or d.get("id") or bi)
+
+    def _finished(self, bi: int, finished) -> frozenset[str] | None:
+        """`finished` as a set of earlier book keys, or None when it covers every earlier book (a run's reader)."""
+        if finished is None:
+            return None
+        f = frozenset(str(k) for k in finished)
+        return None if all(self._bkey(j) in f for j in range(bi)) else f
+
+    def _usable(self, j: int, bi: int, finished: frozenset[str] | None, rec: dict | None = None) -> bool:
+        """Whether content of book j (a stored note or picture `rec` from its manifest) may reach a prompt of book bi for a
+        reader who finished `finished`: book bi itself or a finished one, and every book the record inherits finished too.
+        A record written for a reader with fewer books (`partial`) is used only for such a reader."""
+        if rec is not None and rec.get("partial") and finished is None:
+            return False
+        if finished is None:
+            return True
+        if j != bi and self._bkey(j) not in finished:
+            return False
+        return rec is None or set(rec.get("inherits", [])) <= finished | {self._bkey(bi)}
 
     def _world_of(self, bi: int) -> tuple[dict | None, bool]:
         """(the world note a picture of book bi uses, whether its `from` is an anchor of book bi)."""
@@ -772,10 +864,10 @@ class Illustrator:
             return w, own and w["from"] in self.books[bi].ord_of
         return next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None), False
 
-    def _anchor(self, bi: int, anchor: str) -> str:
+    def _anchor(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> str:
         """The anchor a picture shows from: a picture of the book's first chapters is held to the end of the chapters its
         world note is written from, so that no picture is written from content after its anchor."""
-        w, own = self._world_of(bi)
+        w, own, _ = self._world_for(bi, finished)
         b = self.books[bi]
         if w and own and not w.get("base") and b.ord_of[w["from"]] > b.ord_of[anchor]:
             return w["from"]
@@ -830,7 +922,8 @@ class Illustrator:
 
     def _have(self, bi: int) -> set[tuple]:
         """(kind, target, from) of what a book's set already holds or will never draw (a final skip)."""
-        return {_key(r) for r in self.man[bi]["pictures"]} | {(x.get("kind"), x["target"], x.get("from")) for x in self.man[bi]["skipped"]}
+        return {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")} | \
+            {(x.get("kind"), x["target"], x.get("from")) for x in self.man[bi]["skipped"]}
 
     def _is_new(self, bi: int, j: Job, have: set[tuple]) -> bool:
         return (j.kind, j.target, self._anchor(bi, j.anchor)) not in have and (j.kind, j.target, j.anchor) not in have
@@ -954,7 +1047,8 @@ class Illustrator:
             if not profs or not (written or named[eid] >= 2):
                 continue
             # only a drawn picture counts: one planned in an earlier book and then skipped does not
-            before = any(r["kind"] == "portrait" and r["target"] == eid for j in range(bi) for r in self.man[j]["pictures"])
+            before = any(r["kind"] == "portrait" and r["target"] == eid and not r.get("partial")
+                         for j in range(bi) for r in self.man[j]["pictures"])
             looks = lambda t: {w.lower() for w in LOOK_PROFILE.findall(t)}     # noqa: E731
             if before:
                 start, seen = None, looks(next((p[2]["text"] for p in reversed(profs) if p[0] < bi), ""))
@@ -995,55 +1089,64 @@ class Illustrator:
     def _pos(self, bi: int, anchor: str) -> tuple[int, int]:
         return bi, self.books[bi].ord_of[anchor]
 
-    def latest_note(self, eid: str, pos: tuple[int, int]) -> tuple[int, dict] | None:
-        """(book, note) of the entity's latest appearance note at or before `pos`."""
+    def latest_note(self, eid: str, pos: tuple[int, int], finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, note) of the entity's latest appearance note at or before `pos`, among those a reader who finished `finished`
+        may be shown (`_usable`)."""
         best = None
         for j in range(pos[0] + 1):
             for n in self.man[j]["appearance"].get(eid, []):
                 k = (j, self.books[j].ord_of.get(n["from"], -1))
-                if k[1] >= 0 and k <= pos and (best is None or k >= best[0]):
+                if k[1] >= 0 and k <= pos and (best is None or k >= best[0]) and self._usable(j, pos[0], finished, n):
                     best = (k, j, n)
         return (best[1], best[2]) if best else None
 
-    def latest_picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False) -> tuple[int, dict] | None:
-        """(book, record) of the entity's latest picture at or (strict) before `pos`."""
+    def latest_picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
+                       finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, record) of the entity's latest picture at or (strict) before `pos`, among those `finished` allows."""
         best = None
         for j in range(pos[0] + 1):
             for r in self.man[j]["pictures"]:
                 k = (j, self.books[j].ord_of.get(r["from"], -1))
                 if r["kind"] in kinds and r["target"] == eid and 0 <= k[1] and (k < pos if strict else k <= pos) \
-                        and (best is None or k >= best[0]):
+                        and (best is None or k >= best[0]) and self._usable(j, pos[0], finished, r):
                     best = (k, j, r)
         return (best[1], best[2]) if best else None
 
-    def ensure_note(self, bi: int, eid: str, anchor: str, change: str = "") -> tuple[str | None, str, list[str]]:
+    def ensure_note(self, bi: int, eid: str, anchor: str, change: str = "",
+                    finished: frozenset[str] | None = None) -> tuple[str | None, str, list[str], list[str]]:
         """The entity's appearance note at `anchor`: the latest earlier one; amended ("the same man, aged...") when `change` says its
         look changed there; written now when it has none. Returns (note, reason when None, anchors of this book it was written
-        from), and stores a new note in the manifest."""
+        from, the earlier book keys its text comes from), and stores a new note in the manifest. For a reader who has not
+        finished every earlier book (`finished`) only notes from books they finished are used, and a note written for them is
+        stored as `partial` (never used for anyone else)."""
         b = self.books[bi]
+        me = self._bkey(bi)
+        finished = self._finished(bi, finished)
         pos = self._pos(bi, anchor)
         with self.lock:
             lock = self._entity_locks.setdefault(eid, threading.Lock())
         with lock:
-            hit = self.latest_note(eid, pos)
+            hit = self.latest_note(eid, pos, finished)
             cur = hit[1] if hit else None
+            cur_books = sorted(set(cur.get("inherits", [])) | ({self._bkey(hit[0])} if hit[0] != bi else set())) if cur else []
             if cur and (not change or (hit[0] == bi and cur["from"] == anchor)):
                 if not cur["text"]:          # the text shows no look: remembered, not asked again until a look change
-                    return None, "empty", []
-                return cur["text"], "", (cur.get("sources", []) if hit[0] == bi else [])
+                    return None, "empty", [], []
+                return cur["text"], "", (cur.get("sources", []) if hit[0] == bi else []), [k for k in cur_books if k != me]
             if cur and not cur["text"]:
-                cur = None                   # nothing to amend: the note is written afresh
-            view = self.view(bi, anchor)
+                cur, cur_books = None, []    # nothing to amend: the note is written afresh
+            view = self.view(bi, anchor, finished)
             ve = next((x for x in view["entities"] if x["id"] == eid), None)
             e = b.ents.get(eid) or next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
             if ve is None or e is None:
-                return None, "not visible", []
+                return None, "not visible", [], []
             passages, used = self.passage(bi, self._mentions(bi, eid, b.seq_of[anchor]), b.seq_of[anchor], 450)
             shown = ([ve["profile"]] if ve["profile"] else []) + ve["facets"][:8]
             # only this book's own facets carry anchors of this book (an earlier book's are finished content, and its anchor
             # ids may repeat here)
             own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             srcs = {b.anchor_at(s) for s in used} | {own[f["id"]] for f in shown if f["id"] in own}
+            inherits = sorted((set(cur_books) | {str(f["book"]) for f in shown if f.get("book") not in (None, me)}) - {me})
             kind = P.KINDS.get(e["type"], e["type"])
             amend = AMEND.format(prev=cur["text"], change=change, who=kind.split(" ", 1)[-1]) if cur and change else ""
             prompt = APPEAR.format(who=ve["name"], kind=kind, looks=LOOKS.get(e["type"], "look"), more="", prev=amend,
@@ -1053,32 +1156,41 @@ class Illustrator:
                                    NOTE_WORDS)
             sources = sorted(srcs, key=b.ord_of.get)
             if got is None and why != "empty":
-                return None, why, []
+                return None, why, [], []
+            note = {"from": anchor, "text": got or "", "sources": sources, "inherits": inherits}
+            if finished is not None:
+                note["partial"] = True
             with self.lock:
-                self.man[bi]["appearance"].setdefault(eid, []).append({"from": anchor, "text": got or "", "sources": sources})
+                self.man[bi]["appearance"].setdefault(eid, []).append(note)
+                self._dirty.add(bi)
                 self._save(bi)
-            return (got, "", sources) if got else (None, "empty", [])
+            return (got, "", sources, inherits) if got else (None, "empty", [], [])
 
-    def _references(self, ids: list[str], pos: tuple[int, int], view: dict) -> list[tuple[int, dict]]:
+    def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
+                    finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES."""
         deg = Counter()
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self.latest_picture(eid, pos))]
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self.latest_picture(eid, pos, finished=finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return [h for _, h in found[:MAX_REFERENCES]]
 
     # ---- one picture: its job, its prompt, its drawing (also the entry points of on-demand drawing)
 
-    def job(self, kind: str, target: str, bi: int = -1, at: str | None = None, shape: str | None = None) -> Job:
+    def job(self, kind: str, target: str, bi: int = -1, at: str | None = None, shape: str | None = None,
+            finished: set[str] | frozenset[str] | None = None) -> Job:
         """The job for a picture of any kind: an event id, a chapter title, or an entity id (the anchor is the latest facet or
-        profile visible at `at`). A target after `at` raises NotVisible."""
+        profile visible at `at`). A target after `at` raises NotVisible. `finished`: the earlier book keys the reader has
+        finished (None: all); the job carries it to `make_prompt`, and an entity only an unfinished earlier book has is not
+        visible."""
         bi = len(self.books) - 1 if bi < 0 else bi
         at_bi = bi
         if kind not in SHAPE_OF:
             raise ValueError(f"no such kind of picture: {kind}")
+        fin = self._finished(bi, finished)
         b = self.books[bi]
         shape = shape or SHAPE_OF[kind]
         if kind == "event":
@@ -1098,6 +1210,8 @@ class Illustrator:
                 bi = next((j for j in range(bi - 1, -1, -1) if target in self.books[j].ents), -1)
                 if bi < 0:
                     raise ValueError("no such entry")
+                if fin is not None and self._bkey(bi) not in fin:
+                    raise NotVisible(target)
                 b = self.books[bi]
             e = b.ents[target]
             anchor = e["from"] if e["from"] in b.ord_of else b.anchors[0]["id"]
@@ -1106,7 +1220,10 @@ class Illustrator:
                         at is None or bi < at_bi or b.ord_of[f["from"]] <= b.ord_of[at]):
                     anchor = f["from"]
             job = Job(kind, target, bi, anchor, shape=shape)
-        if at is not None and bi == at_bi and b.ord_of[self._anchor(bi, job.anchor)] > b.ord_of[at]:
+        job.finished = fin if bi == at_bi else (None if fin is None else frozenset(fin))
+        if job.finished is not None:
+            self.world(bi, job.finished)   # the reader's own world note, written when the set has none for them
+        if at is not None and bi == at_bi and b.ord_of[self._anchor(bi, job.anchor, self._finished(bi, job.finished))] > b.ord_of[at]:
             raise NotVisible(target)
         return job
 
@@ -1119,16 +1236,27 @@ class Illustrator:
         ids = [x for e in (job.chapter or {}).get("events", []) if e.get("kind") != "minor" for x in e.get("entities", [])]
         return [x for x, _ in Counter(ids).most_common(4)]
 
-    def make_prompt(self, job: Job) -> Prompt:
+    def make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None = None) -> Prompt:
         """Write the prompt for one picture from what is visible at its anchor: the passage the event cites, the index content
         (`gating.view`), the world note and the figures' appearance notes (appended verbatim by code). Raises
-        ValueError("dropped: ...") with the reason when no usable prompt comes out."""
+        ValueError("dropped: ...") with the reason when no usable prompt comes out.
+
+        `finished` (else the job's): the earlier book keys the reader has finished, None for all of them (a run). Content of an
+        earlier book outside it never reaches the prompt: not its world note (this book's own is used), its appearance notes,
+        its facets or its pictures as references. `Prompt.inherits` lists the earlier books whose content the prompt does use
+        (world note, notes, profiles, entries and reference pictures from them), and `partial` says it was written for a
+        reader with fewer books."""
         bi, b = job.bi, self.books[job.bi]
-        anchor = self._anchor(bi, job.anchor)
+        me = self._bkey(bi)
+        fin = self._finished(bi, finished if finished is not None else job.finished)
+        if fin is not None:
+            self.world(bi, fin)
+        anchor = self._anchor(bi, job.anchor, fin)
         upto, pos = b.seq_of[anchor], self._pos(bi, anchor)
-        view = self.view(bi, anchor)
+        view = self.view(bi, anchor, fin)
         vis = {x["id"]: x for x in view["entities"]}
-        world, wfrom = self._world_text(bi, pos)
+        world, wfrom, inherits = self._world_text(bi, pos, fin)
+        inherits = set(inherits)
         sources = {job.anchor} | ({wfrom} if wfrom else set())
         if job.event:                      # the moment shown: its text, setting and figures reach the prompt
             sources |= {job.event["from"]} | {a for a in job.event.get("evidence", []) if a in b.ord_of}
@@ -1138,10 +1266,12 @@ class Illustrator:
             e = b.ents.get(eid) or next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
             if e is None or e["type"] not in NOTE_TYPES or len(figures) >= 6:
                 continue
-            note, why, srcs = self.ensure_note(bi, eid, anchor, job.change if job.kind == "portrait" and eid == job.target else "")
+            note, why, srcs, books = self.ensure_note(bi, eid, anchor, job.change if job.kind == "portrait" and eid == job.target else "",
+                                                      fin)
             if note:
                 figures.append((eid, note))
                 sources |= set(srcs)
+                inherits |= set(books)
             elif job.kind in ENTITY_KINDS and eid == job.target:
                 raise ValueError("skipped: no look described" if why == "empty" else _reason(why))
         if job.kind in ENTITY_KINDS:
@@ -1180,6 +1310,10 @@ class Illustrator:
             ctx.append(line)
             own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             sources |= {own[f["id"]] for f in ([v["profile"]] if v["profile"] else []) + v["facets"][:4] if f["id"] in own}
+            if v["profile"] and v["profile"].get("book") not in (None, me):
+                inherits.add(str(v["profile"]["book"]))
+            if eid not in b.ents:       # an entry this book has not named yet: its names come from an earlier book
+                inherits |= {self._bkey(j) for j in range(bi) if eid in self.books[j].ents}
         what = KINDS_WHAT[job.kind].format(frame=(job.event or {}).get("summary", ""), who=who)
         if job.kind == "plate" and not job.event:
             what = "the main moment of a chapter, as its recap tells it."
@@ -1197,12 +1331,15 @@ class Illustrator:
             raise ValueError("dropped: written from content after its anchor")
         refs: list[tuple[int, dict]] = []
         if job.kind in ("plate", "event"):
-            refs = self._references(ids, pos, view)
+            refs = self._references(ids, pos, view, fin)
         elif job.kind == "portrait" and job.change:
-            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True)
+            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             refs = [prev] if prev else []
+        for j, r in refs:                  # a reference picture carries what its own prompt came from
+            inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         return Prompt(self._assemble(scene, [n for _, n in figures], world, bi), scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
-                      sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check)
+                      sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
+                      sorted(inherits - {me}), fin is not None, world)
 
     @staticmethod
     def _shown(out: dict, figures: list[tuple[str, str]], ids: list[str], vis: dict) -> tuple[list, list]:
@@ -1281,7 +1418,9 @@ class Illustrator:
         rec = {"id": fid, "kind": job.kind, "target": job.target,
                "chapter": (job.chapter or b.chapter_of(pr.anchor) or {}).get("title"), "from": pr.anchor,
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
-               "references": [r["id"] for _, r in pr.references], "sources": pr.sources}
+               "references": [r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits)}
+        if pr.partial:
+            rec["partial"] = True
         if job.kind in ENTITY_KINDS:
             rec["appearance"] = dict(pr.notes).get(job.target, "")
         rec.update({"provider": self.provider, "model": pic.model or self.model, "quality": self.quality, "shape": pr.shape,
@@ -1343,7 +1482,7 @@ class Illustrator:
                                detail=e.reason[:160], refused=True)
                     return None
                 pr.scene = soft
-                pr.text = self._assemble(soft, [n for _, n in pr.notes], self._world_text(bi, self._pos(bi, pr.anchor))[0], bi)
+                pr.text = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi)
                 continue
             except llm.ProviderError as e:
                 self._release(amount)
