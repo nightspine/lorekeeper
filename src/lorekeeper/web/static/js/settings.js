@@ -384,8 +384,8 @@ export function mountSettings(root) {
       on: { change: (e) => { if (e.target.value.trim()) save({ style: e.target.value.trim() }, "Style"); } } });
     const quality = h("select.select#pic-quality", { on: { change: (e) => save({ quality: e.target.value }, "Quality") } },
       QUALITIES.map(([k, l]) => h("option", { value: k, selected: k === d.quality }, l)));
-    const cap = h("input.input.w-90#pic-cap", { type: "number", min: "1", step: "1", inputmode: "decimal", value: String(d.cap),
-      on: { change: (e) => save({ cap: Math.max(1, +e.target.value || 10) }, "Limit") } });
+    const cap = h("input.input.w-90#pic-cap", { type: "number", min: "0.05", step: "0.05", inputmode: "decimal", value: String(d.cap),
+      on: { change: (e) => save({ cap: +e.target.value > 0 ? Math.round(+e.target.value * 100) / 100 : 10 }, "Limit") } });
     const prov = provs.length > 1 ? h("select.select#pic-prov", { on: { change: (e) => save({ provider: e.target.value }, "Provider") } },
       provs.map((p) => h("option", { value: p.id, selected: p.id === (d.provider || provs[0].id) }, `${p.label}, ${imageLine(p, d.quality)}`))) : null;
     const sets = h("div.pic-sets", h("p.set-note", "Looking for pictures…"));

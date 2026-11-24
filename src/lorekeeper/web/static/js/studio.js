@@ -4,7 +4,7 @@ import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadEr
 import { confirmDialog, cover, partLine } from "./build.js";
 import { openShare, readyMade } from "./community.js";
 import { registerProvider } from "./palette.js";
-import { picturesForm } from "./art.js";
+import { picturesForm, styleLabel } from "./art.js";
 
 const PHASES = [
   { key: "extract", label: "Reading", icon: "book-open" },
@@ -18,6 +18,13 @@ const PHASES = [
 const ART_PHASE = { key: "art", label: "Drawing pictures", icon: "sparkle" };
 /** An "Add pictures" run: no reading, only the pictures stage, on an index that already exists (`index` is its library key). */
 const isArtJob = (job) => job.kind === "art" || job.config?.kind === "art";
+const PICTURE_PROVIDER = { gemini: "Gemini", openai: "OpenAI" };
+/** "Ink, draft, drawn by Gemini" from a run's `art` config. */
+const artLine = (job) => {
+  const a = job.config?.art || {};
+  const prov = PICTURE_PROVIDER[a.provider || job.config?.image_provider] || a.provider || job.config?.image_provider;
+  return [styleLabel(a.style || ""), a.quality, prov ? `drawn by ${prov}` : null].filter(Boolean).join(", ");
+};
 const phasesOf = (job) => (isArtJob(job) ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
 const DROP_COLORS = ["var(--t-person)", "var(--t-group)", "var(--t-concept)", "var(--t-object)", "var(--t-term)",
   "var(--t-place)", "var(--rose)", "var(--text-3)"];
@@ -481,7 +488,8 @@ export function mountStudio(root) {
   const partText = (j) => partLine(j.progress, j.status);
   // "15 min ago" within a day, then a short date: the column stays narrow.
   const when = (t) => (Date.now() / 1000 - t < 86400 ? relTime(t) : new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
-  const rowCells = (j) => [h("span.subtle", { title: j.config.model || "default model" }, (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
+  const rowCells = (j) => [isArtJob(j) ? h("span.subtle", artLine(j))
+    : h("span.subtle", { title: j.config.model || "default model" }, (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
   let tableSig = "";
   /** The runs table. A poll that only changes a run's state or progress updates those cells in place, so focus and
    *  the open fold survive; a new or removed run rebuilds the rows. */
@@ -589,17 +597,20 @@ export function mountStudio(root) {
         h("div.monitor-head",
           h("div.monitor-id", h("h2", job.book_title),
             h("p.run-meta",
-              el.badge, el.model = h("span.run-model", job.config.model || "default model"),
-              isArtJob(job) ? h("span", "pictures for an existing index")
-                : [h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
-                  h("span", job.config.verify === false ? "no fact-check" : "fact-checked")],
-              job.config.art ? h("span", "with pictures") : null)),
+              el.badge,
+              // A pictures run has no reading model of its own: its style, quality and the provider that draws.
+              isArtJob(job) ? [el.model = h("span.run-model", artLine(job)), h("span", "pictures for the index as it is")]
+                : [el.model = h("span.run-model", job.config.model || "default model"),
+                  h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
+                  h("span", job.config.verify === false ? "no fact-check" : "fact-checked"),
+                  job.config.art ? h("span", `with pictures, ${artLine(job)}`) : null])),
           el.actions),
         el.error,
         h("div.progress-hero",
           h("div.progress-top", el.pct, el.where), el.bar, el.phases)),
-      el.stats,
-      h("div.split",
+      isArtJob(job) ? null : el.stats,
+      // A pictures run reads nothing, so it has no discoveries, recap, quality gate or parts: only its progress and log.
+      isArtJob(job) ? null : h("div.split",
         h("section.mon-sec", el.foundHead, el.shield, el.feed),
         h("div.monitor-right",
           el.recapCard,
@@ -608,7 +619,7 @@ export function mountStudio(root) {
       h("div.console",
         h("div.console-bar", h("span.title", icon("terminal"), "Log"), h("div.ctrls", filter, followBtn, copyBtn)),
         el.log));
-    if ((job.config.provider || "ollama") !== "ollama") {
+    if ((job.config.provider || "ollama") !== "ollama" && !isArtJob(job)) {
       loadProviderLabels().then((labels) => {
         const label = labels[job.config.provider];
         if (label && el.model.isConnected) el.model.append(` on ${label}`);
@@ -673,7 +684,8 @@ export function mountStudio(root) {
 
     function paint() {
       clear(el.badge, statusBadge(m.status));
-      const pct = m.wordsTotal ? (m.wordsDone / m.wordsTotal) * 100 : m.status === "done" ? 100 : 0;
+      const pct = isArtJob(job) && m.art?.[1] ? (m.art[0] / m.art[1]) * 100
+        : m.wordsTotal ? (m.wordsDone / m.wordsTotal) * 100 : m.status === "done" ? 100 : 0;
       clear(el.pct, pct >= 10 || pct === 0 ? Math.round(pct) : pct.toFixed(1), h("small", "%"));
       el.fill.style.width = `${pct}%`;
       el.bar.setAttribute("aria-valuenow", String(Math.round(pct)));

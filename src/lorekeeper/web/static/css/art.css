@@ -48,7 +48,9 @@
 
 /* ---- Cast rows: a 24px portrait in the type mark's place, the type colour as its ring ---- */
 .ent-row.has-face .ent-name .nm::before { display: none; }
-.ent-face { width: 24px; height: 24px; flex: none; border-radius: 50%; object-fit: cover; background: var(--pane-2); box-shadow: 0 0 0 2px var(--t); }
+.ent-face { display: inline-block; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden; background: var(--pane-2); box-shadow: 0 0 0 2px var(--t); }
+/* A portrait is 3:4 with a margin round the figure: the circle takes the face, a little above the middle. */
+.ent-face-img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 28%; transform: scale(1.6); transform-origin: 50% 32%; }
 .ent-row.has-face .ent-name .nm { gap: 10px; }
 .ent-row.dormant .ent-face { opacity: .55; }
 

@@ -19,6 +19,8 @@ export const SHAPES = [["landscape", "Landscape"], ["portrait", "Portrait"], ["s
 export const KIND_OF_TYPE = { person: "portrait", creature: "portrait", group: "portrait", place: "place", object: "thing" };
 const SHAPE_OF = { plate: "landscape", event: "landscape", portrait: "portrait", place: "landscape", thing: "landscape" };
 export const ENTITY_KINDS = new Set(["portrait", "place", "thing"]);
+/** The image providers' names, for "on Gemini" (the record holds the id). */
+const PROVIDER_LABEL = { gemini: "Gemini", openai: "OpenAI" };
 
 /** A style slug as words: the known ones by name, a custom one as the person wrote it (the manifest's `style`). */
 export function styleLabel(slug, text = null) {
@@ -73,7 +75,10 @@ export function loadArt(key, style = null) {
 function normalise(r) {
   const manifest = r.manifest && typeof r.manifest === "object" ? r.manifest : r;
   const styles = (Array.isArray(r.styles) ? r.styles : []).filter((x) => typeof x === "string" || (x && typeof x.slug === "string"))
-    .map((x) => (typeof x === "string" ? { slug: x, text: null } : { slug: x.slug, text: typeof x.style === "string" ? x.style : typeof x.text === "string" ? x.text : null }));
+    .map((x) => (typeof x === "string" ? { slug: x, text: null, pictures: null }
+      : { slug: x.slug, text: typeof x.style === "string" ? x.style : typeof x.text === "string" ? x.text : null, pictures: Number.isFinite(x.pictures) ? x.pictures : null }))
+    // A style with no pictures yet (the prompt route writes a set's world note before anything is drawn) is not offered.
+    .filter((x) => x.pictures !== 0);
   const screened = r.screened && typeof r.screened === "object" ? r.screened : manifest.screened && typeof manifest.screened === "object" ? manifest.screened : {};
   return { manifest: { ...manifest, pictures: Array.isArray(manifest.pictures) ? manifest.pictures : [] }, styles, screened, slug: typeof r.slug === "string" ? r.slug : null };
 }
@@ -135,7 +140,7 @@ export function artImg(src, alt, cls = "art-img", { eager = false } = {}) {
   const img = h(`img.${cls}`, { src, alt: alt || "", loading: eager ? "eager" : "lazy", decoding: "async", draggable: "false" });
   img.addEventListener("error", () => {
     img.closest(".has-face")?.classList.remove("has-face");   // a Cast row gets its type mark back
-    const btn = img.closest(".art-thumb, .art-plate, .art-face-btn");
+    const btn = img.closest(".art-thumb, .art-plate, .art-face-btn, .ent-face");
     (btn || img).remove();
   });
   return img;
@@ -191,7 +196,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     prev.disabled = i === 0; next.disabled = i === items.length - 1;
     const facts = [
       ["Style", styleLabel(it.style || r.style, it.styleText)],
-      ["Model", [r.model, r.provider ? `on ${it.providerLabel || r.provider}` : null].filter(Boolean).join(" ")],
+      ["Model", [r.model, r.provider ? `on ${PROVIDER_LABEL[r.provider] || r.provider}` : null].filter(Boolean).join(" ")],
       ["Quality", r.quality ? `${r.quality[0].toUpperCase()}${r.quality.slice(1)}` : null],
       ["Cost", typeof r.cost === "number" ? (r.cost > 0 ? money(r.cost).replace(/^about /, "") : "Price unknown") : null],
       ["Drawn", when(r.created)],
@@ -212,7 +217,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     // While the lightbox is open its own stack; after it closed, the modal it was opened from (the entry drawer, a sheet),
     // since a modal makes the page's stack unreachable.
     toast(done, "ok", { host: dlg.open ? toasts : modalToasts(), action: id ? { label: "Undo", run: async () => {
-      try { await api.undo(it.key, id); forgetArt(it.key); toast("Undone"); onChanged?.(); } catch (e) { toast(e.message, "error"); }
+      if (dlg.open) close();   // the picture on screen is the one being undone
+      try { await api.undo(it.key, id); forgetArt(it.key); toast("Undone", "ok", { host: modalToasts() }); onChanged?.(); } catch (e) { toast(e.message, "error", { host: modalToasts() }); }
     } } : null });
   }
   function redraw(it) {
@@ -354,14 +360,23 @@ export async function openPictureSheet(opts) {
       st.price = typeof r.price === "number" ? r.price : null;
       st.asked = asked;
       st.promptStyle = asked.style;
+      st.promptFor = { kind: st.kind, target: st.target, style: st.style, custom: st.custom };
+      clear(err);
       if (st.style === "custom") st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
       st.busy = false; ctrl = null;
       paint();
     } catch (e) {
       if (mine !== gen || st.closed) return;
       st.busy = false; ctrl = null;
-      clear(body, h("div.art-error", { role: "alert" },
-        h("p", e.code === "not-visible" ? "This isn't revealed at your position yet." : `Couldn't write a prompt: ${e.message}`)),
+      const why = promptError(e);
+      if (st.promptFor && e.code !== "not-visible") {
+        // A prompt was already on screen: keep it, with the style and moment it was written for, and say why the new one failed.
+        Object.assign(st, st.promptFor);
+        paint();
+        clear(err, h("p", why));
+        return;
+      }
+      clear(body, h("div.art-error", { role: "alert" }, h("p", why)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
       paintFoot();
     }
@@ -502,6 +517,18 @@ export async function openPictureSheet(opts) {
   return sh;
 }
 
+/** One sentence for a prompt the server could not write. "dropped" is the pipeline's own check refusing what the model wrote
+ *  (a name, hindsight wording...): asking again usually gives a usable one. */
+function promptError(e) {
+  if (e.code === "not-visible") return "This isn't revealed at your position yet.";
+  if (e.code === "dropped") {
+    const reason = String(e.message || "").replace(/^(dropped|skipped):\s*/, "");
+    return `The prompt that came back didn't pass the checks (${reason}). Write it again for another one.`;
+  }
+  if (e.code === "busy") return "Pictures are being drawn for this book. Try again once that run has finished.";
+  return `Couldn't write a prompt: ${e.message}`;
+}
+
 // ---- the Pictures group of the build form and the book page --------------------------------------
 
 /**
@@ -541,8 +568,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     const portraits = h("input", { type: "checkbox", id: `${idPrefix}-portraits`, checked: st.portraits, disabled: !st.on, on: { change: (e) => { st.portraits = e.target.checked; paint(); } } });
     const levels = st.provider ? levelsOf(st.provider) : QUALITIES;
     if (!levels.some(([k]) => k === st.quality)) st.quality = levels[0][0];
-    const cap = h("input.input.w-90", { type: "number", min: "1", step: "1", id: `${idPrefix}-cap`, value: String(st.cap), disabled: !st.on, inputmode: "decimal",
-      on: { change: (e) => { st.cap = Math.max(1, +e.target.value || 10); refresh(); } } });
+    // Dollars and cents: a small first run ("Stop at $0.30") is a reasonable way to try a style.
+    const cap = h("input.input.w-90", { type: "number", min: "0.05", step: "0.05", id: `${idPrefix}-cap`, value: String(st.cap), disabled: !st.on, inputmode: "decimal",
+      on: { change: (e) => { const v = +e.target.value; st.cap = Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : 10; e.target.value = String(st.cap); refresh(); } } });
     clear(body,
       always ? null : h("label.switch", { for: `${idPrefix}-on` }, tick, h("span", h("span.label.label-block", "Draw pictures"),
         h("span.hint", "Chapter pictures and portraits, drawn after the index is written."))),
@@ -574,7 +602,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     if (mine !== seq) return;
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
-      line.textContent = `About ${n} picture${n === 1 ? "" : "s"}, ${money(r.price)}${r.price != null && +r.price > st.cap ? `. The run stops at $${st.cap}` : ""}.`;
+      line.textContent = `About ${n} picture${n === 1 ? "" : "s"}, ${money(r.price)}${r.price != null && +r.price > st.cap ? `. The run stops at $${Number.isInteger(st.cap) ? st.cap : st.cap.toFixed(2)}` : ""}.`;
     } else {
       const rough = fallback?.(st);
       line.textContent = rough || "The count is worked out when the index is written.";

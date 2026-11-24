@@ -1159,7 +1159,7 @@ export function mountReader(root) {
     const open = s.drawer === e.id && el.pane && !el.pane.hidden;
     // A visible portrait takes the type mark's place (the type colour stays as a ring round it).
     const face = latestPicture(e.id);
-    const faceImg = face ? artImg(picSrc(face, true), "", "ent-face") : null;
+    const faceImg = face ? h("span.ent-face", artImg(picSrc(face, true), "", "ent-face-img")) : null;
     const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}${sleeping ? ".dormant" : ""}${open ? ".sel" : ""}${faceImg ? ".has-face" : ""}`, { type: "button",
       dataset: { ent: e.id }, "aria-current": open ? "true" : null,
       "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}${fresh ? ", new" : ""}${from ? `, from ${bookShort(from)}${sleeping ? ", not in this book yet" : ""}` : ""}`,
