@@ -836,3 +836,4 @@ Embedding changes `fileHash` but not `textHash`.
 5. **Translations.** A translation is a different text; should it be a different work with linked entity ids?
 6. **Signatures.** Registries exist (§8.7) and record who vouches for each check, but nothing proves it: a listing, an attestation or a publisher name can be verified only by trusting the registry that serves it, and builder attestations only by repeating them. Signed indexes, signed attestations and publisher keys remain open.
 7. **Non-EPUB formats** (PDF, MOBI/KF8, CBZ): text models for these are undefined.
+8. **Illustrations.** The reference implementation can draw pictures for an index as a companion set kept outside the index document, each picture gated by an anchor of the index exactly as a facet or an event is; such sets are not part of 0.1, and whether to standardise them for clients stays open.
