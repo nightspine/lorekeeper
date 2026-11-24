@@ -724,3 +724,40 @@ def test_a_text_model_failure_is_a_502_not_a_missing_target(env, monkeypatch):
     monkeypatch.setattr(art.Illustrator, "make_prompt", fails)
     r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"})
     assert r.status_code == 502 and r.json()["code"] == "model-failed"
+
+
+def world_of(e):
+    p = e.data / "art" / e.hash / "ink" / "art.json"
+    return json.loads(p.read_text()).get("world") if p.exists() else None
+
+
+def test_a_draw_on_a_cache_miss_keeps_no_world_note_for_a_picture_it_then_holds_back(env):
+    env.key()
+    r = env.c.post(f"/api/library/{KEY}/art/draw",
+                   json={"kind": "event", "target": "e1", "style": "ink", "p": "a2", "prompt": "A gate at dawn."})
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert any("visual world note" in p for p in env.text.prompts)          # it was written, then not kept
+    assert world_of(env) is None and env.image.calls == []
+
+
+@pytest.mark.parametrize("route", ["draw", "prompt"])
+def test_a_dropped_prompt_keeps_no_world_note_it_wrote(env, route):
+    env.key()
+    env.text.scene = lambda prompt: SCENE_WITH_NAME                        # the writer names someone every time: dropped
+    r = env.c.post(f"/api/library/{KEY}/art/{route}", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."})
+    assert r.status_code == 422 and r.json()["code"] == "dropped", r.text
+    assert any("visual world note" in p for p in env.text.prompts) and world_of(env) is None
+    assert env.image.calls == []
+
+
+def test_a_world_note_already_there_is_never_taken_back(env):
+    env.key()
+    env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A grey valley of mills."})
+    env.text.scene = lambda prompt: SCENE_WITH_NAME
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."})
+    assert r.status_code == 422 and world_of(env)["text"] == "A grey valley of mills."
+
+
+SCENE_WITH_NAME = ("Mira stands at a wooden gate beside a grey stone mill, a basket on her arm, while an old miller dusted with "
+                   "flour watches from the doorway. Soft morning light falls across the packed earth of the yard and a path leads "
+                   "off toward low green hills in the distance under a pale sky.")

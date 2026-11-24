@@ -1322,6 +1322,53 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
         return rec
 
+    WORLD_KEYS = ("world", "worldOwn")
+
+    def prompt_for(il, ctx: dict, slug_: str, args: tuple):
+        """(job, Prompt) for one picture, as the prompt and draw routes both need it. The world note this reader's pictures use
+        (the book's own when an earlier book is unfinished) is written first, once, as a run writes it, and a world note
+        written here is taken back when no prompt comes out (the picture is then held back, not visible or dropped). Appearance
+        notes written on the way stay: they are the entity's, at their own anchors."""
+        job = art_job(*args)                     # not visible even before a world note holds it: no call at all
+        h, fin = ctx["hash"], args[-1]
+        before = arts.manifest(h, slug_)
+        try:
+            il.world(len(il.books) - 1, finished=None if fin is None else set(fin))
+            if arts.manifest(h, slug_) != before:
+                job = art_job(*args)
+            try:
+                return job, il.make_prompt(job)
+            except artmod.NotVisible as e:
+                raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+            except artmod.TextFailed as e:
+                raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+            except ValueError as e:
+                raise ArtRefusal(422, "dropped", str(e)) from e
+        except ArtRefusal:
+            untake_world(h, slug_, before)
+            raise
+
+    def untake_world(h: str, slug_: str, before: dict | None) -> None:
+        """Put the set's world notes back as they were before this request; a set this request began and left with nothing
+        else in it goes altogether."""
+        m = arts.manifest(h, slug_)
+        if m is None or all(m.get(k) == (before or {}).get(k) for k in WORLD_KEYS):
+            return
+        for k in WORLD_KEYS:
+            if before is not None and k in before:
+                m[k] = before[k]
+            elif before is None and k == "world":
+                m[k] = None
+            else:
+                m.pop(k, None)
+        folder = arts.folder(h, slug_)
+        if before is None and not m.get("pictures") and not m.get("appearance"):
+            (folder / "art.json").unlink(missing_ok=True)
+            if folder.is_dir() and not any(folder.iterdir()):
+                folder.rmdir()
+        else:
+            arts.save(h, slug_, m)
+
     def picture_json(h: str, slug_: str, rec: dict) -> dict:
         return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
 
@@ -1519,31 +1566,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
-                job = art_job(*args)                     # not visible even before a world note holds it: no call at all
-                # The world note this reader's pictures use (the book's own when an earlier one is unfinished), written once
-                # as a run writes it; a new one is kept only when the picture is then still visible.
-                before = arts.manifest(ctx["hash"], slug_)
-                il.world(len(il.books) - 1, finished=None if fin is None else set(fin))
-                if arts.manifest(ctx["hash"], slug_) != before:
-                    try:
-                        job = art_job(*args)
-                    except ArtRefusal:
-                        folder = arts.folder(ctx["hash"], slug_)
-                        if before is None:
-                            (folder / "art.json").unlink(missing_ok=True)
-                            if folder.is_dir() and not any(folder.iterdir()):
-                                folder.rmdir()
-                        else:
-                            arts.save(ctx["hash"], slug_, before)
-                        raise
-                try:
-                    pr = il.make_prompt(job)
-                except artmod.NotVisible as e:
-                    raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
-                except artmod.TextFailed as e:
-                    raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
-                except ValueError as e:
-                    raise ArtRefusal(422, "dropped", str(e)) from e
+                job, pr = prompt_for(il, ctx, slug_, args)
             # The price of the chosen provider and quality, also before its key is added.
             prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
             name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
@@ -1576,15 +1599,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
-                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
+                args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
+                job = art_job(*args)
                 pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))))
-                if pr is None:
-                    try:
-                        pr = il.make_prompt(job)   # for its anchor and references; the person's text is drawn
-                    except artmod.TextFailed as e:
-                        raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
-                    except ValueError as e:
-                        raise ArtRefusal(422, "dropped", str(e)) from e
+                if pr is None:   # for its anchor and references (the person's text is drawn), with the prompt route's rollback
+                    job, pr = prompt_for(il, ctx, slug_, args)
                 rec = draw_given(il, job, pr, text_)
                 entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_, "added": [rec["id"]]},
                                     f"drew a picture ({rec['kind']})")
