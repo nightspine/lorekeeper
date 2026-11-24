@@ -147,9 +147,9 @@ def test_billed_request_is_not_sent_twice(monkeypatch):
                 http.calls.append(a)
                 raise _f
             monkeypatch.setattr(llm, "_http", raising)
-        with pytest.raises(llm.ProviderError):
+        with pytest.raises(llm.ProviderError) as e:
             m.draw("x")
-        assert len(http.calls) == 1
+        assert len(http.calls) == 1 and e.value.sent is not False     # maybe drawn: no caller may send it again
     # never accepted: refused connection or unknown host is tried again
     calls = []
 
@@ -163,6 +163,22 @@ def test_billed_request_is_not_sent_twice(monkeypatch):
     monkeypatch.setattr(llm, "_http", refused)
     m = llm.make_image("gemini", api_key="k")
     assert m.draw("x").data == PNG and len(calls) == 3
+
+
+def test_a_request_that_never_got_through_says_so(monkeypatch):
+    import urllib.error
+    monkeypatch.setattr(images.time, "sleep", lambda s: None)
+
+    def refused(*a, **k):
+        raise urllib.error.URLError(ConnectionRefusedError("refused"))
+    monkeypatch.setattr(llm, "_http", refused)
+    with pytest.raises(llm.ProviderError) as e:
+        llm.make_image("gemini", api_key="k").draw("x")
+    assert e.value.sent is False
+    m, http = gemini(monkeypatch, *[(429, {"error": {"message": "slow down"}})] * 3)
+    with pytest.raises(llm.ProviderError) as e:
+        m.draw("x")
+    assert e.value.sent is False and e.value.status == 429
 
 
 def test_retries_on_429_then_succeeds(monkeypatch):

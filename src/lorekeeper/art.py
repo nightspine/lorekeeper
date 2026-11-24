@@ -31,6 +31,7 @@ from typing import Callable, Protocol
 from . import anchors as A
 from . import epub, gating, images, llm
 from . import portraits as P
+from .common_words import SENTENCE_FIRST
 from .generate import ABOUT_THE_TEXT
 
 VERSION = "0.1"
@@ -312,6 +313,7 @@ class Report:
     softened: int = 0           # pictures drawn from a quieter rewrite after a refusal
     skipped: Counter = field(default_factory=Counter)
     cost: float = 0.0           # image calls
+    at_risk: float = 0.0        # the price of image calls that failed after they were sent (maybe billed; counted in the cap)
     text_cost: float = 0.0
     stopped: str = ""           # why the run stopped early ("" = it did not)
     held: int = 0               # pictures moved later to the world note's anchor (the end of its first story chapter)
@@ -320,7 +322,8 @@ class Report:
     def lines(self) -> list[str]:
         out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}"
                + (f" ({self.softened} drawn quieter after a refusal)" if self.softened else "") + f"; images ${self.cost:.2f}"
-               + (f", text ${self.text_cost:.4f}" if self.text_cost else "")]
+               + (f", text ${self.text_cost:.4f}" if self.text_cost else "")
+               + (f", up to ${self.at_risk:.2f} for calls that failed after sending" if self.at_risk else "")]
         if self.stopped:
             out.append(f"stopped: {self.stopped}")
         if self.held:
@@ -329,6 +332,27 @@ class Report:
         out += [f"  {n} x {why}" for why, n in sorted(self.skipped.items())]
         out += [f"  - {r['target']}: {r['reason']}" for r in self.reasons]
         return out
+
+
+@dataclass(frozen=True)
+class _Names:
+    """The names a prompt may not use: full names of two words or more (one alternation), name words that are not ordinary
+    sentence words ("Mira"), and one-word names that are ordinary words ("Grace"), which count only away from a sentence's start."""
+    phrases: re.Pattern | None
+    tokens: frozenset[str]
+    alone: frozenset[str]
+
+    def find(self, text: str) -> str:
+        if self.phrases is not None and (m := self.phrases.search(text)):
+            return m.group(0)
+        for m in re.finditer(r"[A-Z][\w'’-]{2,}", text):
+            w = m.group(0)
+            for x in (w, re.sub(r"['’]s$", "", w)):
+                if x in self.tokens:
+                    return x
+                if x in self.alone and not re.search(r"(^|[.!?:;\"“”]\s*)$", text[:m.start()]):
+                    return x
+        return ""
 
 
 class NotVisible(ValueError):
@@ -354,12 +378,9 @@ def _seqs(anchors: list[dict], ep: epub.Book | None) -> dict[str, int]:
     found = A.resolve(anchors, ep.blocks)
     if not any(v is not None for v in found.values()):
         raise ValueError("none of the index's anchors is in this EPUB: is it the edition the index was built from?")
-    out, nxt = {}, ep.blocks[-1].seq if ep.blocks else 0
-    for a in reversed(anchors):
-        if found[a["id"]] is not None:
-            nxt = found[a["id"]]
-        out[a["id"]] = nxt
-    return out
+    never = len(ep.blocks)               # past the last block: a trailing unresolved anchor is never reached
+    return {a["id"]: (never if loc == A.INFINITY else int(loc))
+            for a, loc in zip(anchors, A.effective_locations(anchors, found))}
 
 
 
@@ -379,6 +400,8 @@ class _B:
         self.events = {e["id"]: e for e in d.get("events", [])}
         self.lo = self.aseqs[0]
         self.hi = max(self.seq_of.get(d.get("coverage", {}).get("through"), self.aseqs[-1]), self.lo)
+        if self.epub is not None:
+            self.hi = min(self.hi, len(self.epub.blocks) - 1)
         self.text: dict[int, str] = {}
         self.first: dict[str, int] = {}
         if self.epub is not None:
@@ -463,6 +486,11 @@ class Illustrator:
                  series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
                  pause: float = 1.0) -> None:
         self.books = [_B(i, b) for i, b in enumerate(books)]
+        if len(self.books) > 1:
+            ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
+            if None in ids or len(ids) > 1 or any(not (b.doc.get("series") or {}).get("book") for b in self.books):
+                raise ValueError("several indexes are drawn together only as books of one series (each with the same "
+                                 "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
         self.portraits, self.quality, self.cap, self.max_pictures = portraits, quality, cap, max_pictures
         self.chapter_filter, self.series, self.workers = chapters, series, workers
@@ -481,15 +509,26 @@ class Illustrator:
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._entity_locks: dict[str, threading.Lock] = {}
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
+        self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
+        self.styles: list[str] = []       # each set's own style text: the one stored first, for every style of the same slug
         for b in self.books:
             m = b.b.sink.manifest()
-            if not m or m.get("style") != style:
-                m = blank(self._hash(b), style)
+            th = self._hash(b)
+            if m:
+                if m.get("textHash") and th and m["textHash"] != th:
+                    raise ValueError(f"the art set there belongs to another edition ({m['textHash'][:12]}...), not "
+                                     f"{b.doc.get('work', {}).get('title', 'this book')}: choose another folder")
+                if style_slug(str(m.get("style", ""))) != style_slug(style):
+                    raise ValueError(f"the art set there is of another style ({m.get('style')!r}): choose another folder")
+            else:
+                m = blank(th, style)
             for k, v in blank("", "").items():
                 m.setdefault(k, v)
+            m["textHash"] = m["textHash"] or th
             m["skipped"] = [s for s in m["skipped"] if s.get("final")]
             self.man.append(m)
+            self.styles.append(m["style"] or style)
         self.names = self._banned_names()
 
     # ---- small helpers
@@ -500,7 +539,8 @@ class Illustrator:
         return built.get("textHash", "")
 
     def _save(self, bi: int) -> None:
-        if self.books[bi].b.draw:
+        """Write a book's manifest: a book that is drawn, or a read-only one whose sink received a picture (on demand)."""
+        if self.books[bi].b.draw or bi in self._dirty:
             self.books[bi].b.sink.save(self.man[bi])
 
     def _complete(self, prompt: str, schema: dict = SCHEMA) -> dict:
@@ -523,17 +563,31 @@ class Illustrator:
     def text_spent(self) -> float:
         return self._usage() - self._usage0
 
-    def _banned_names(self) -> dict[int, list[re.Pattern]]:
-        """Per book, patterns for the capitalised words of every person, creature and group name up to it: a prompt names none."""
-        out, toks = {}, set()
+    def _banned_names(self) -> dict[int, "_Names"]:
+        """Per book, the names of every person, creature and group of it and the earlier books: a prompt names none."""
+        out: dict[int, _Names] = {}
+        phrases: set[str] = set()
+        tokens: set[str] = set()
+        alone: set[str] = set()
         for b in self.books:
             for e in b.doc["entities"]:
-                if e["type"] in ("person", "creature", "group"):
-                    for n in e["names"]:
-                        for t in re.findall(r"[A-Z][\w'’-]{2,}", re.sub(r"\(.*?\)", " ", n["value"])):
-                            if t.lower() not in P.TITLES and t.lower() not in ("the", "and", "van", "von"):
-                                toks.add(t)
-            out[b.i] = [re.compile(r"(?<!\w)" + re.escape(t) + r"(?!\w)") for t in sorted(toks)]
+                if e["type"] not in ("person", "creature", "group"):
+                    continue
+                for n in e["names"]:
+                    value = " ".join(re.sub(r"\(.*?\)", " ", n["value"]).split())
+                    value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
+                    toks = [t for t in re.findall(r"[A-Z][\w'’-]{2,}", value)
+                            if t.lower() not in P.TITLES and t.lower() not in ("the", "and", "van", "von")]
+                    if len(value.split()) > 1:
+                        phrases.add(value)
+                    elif toks and toks[0].lower() in SENTENCE_FIRST:
+                        alone.add(toks[0])      # "Grace", "the Stranger": a name only when not opening a sentence
+                    for t in toks:
+                        if t.lower() not in SENTENCE_FIRST:
+                            tokens.add(t)       # "Mira", "Harker"; never "Order" or "Dawn" alone
+            rx = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(phrases, key=len, reverse=True)) + r")(?!\w)") \
+                if phrases else None
+            out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone))
         return out
 
     def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int]) -> tuple[str | None, str]:
@@ -550,10 +604,9 @@ class Illustrator:
             return None, why
         if ABOUT_THE_TEXT.search(got):
             return None, "wording: about the passage"
-        for rx in self.names[bi]:
-            m = rx.search(got)
-            if m:
-                return None, f"name in the text: {m.group(0)}"
+        hit = self.names[bi].find(got)
+        if hit:
+            return None, f"name in the text: {hit}"
         return got, ""
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
@@ -671,11 +724,16 @@ class Illustrator:
 
     def _world_write(self, bi, base, body, recaps, passages, at, sources) -> dict | None:
         if base:
-            w = {"text": base["text"], "edited": base.get("edited", False), "from": base["from"], "inherited": True}
+            # an inherited note keeps the anchor of the book it was written in, with that book's key: anchor ids repeat across
+            # the books of a series, so an anchor is only ever looked up in its own book
+            j = next(j for j in range(bi - 1, -1, -1) if self.man[j].get("world") is base)
+            w = {"text": base["text"], "edited": base.get("edited", False), "from": base["from"],
+                 "book": base.get("book", self._bkey(j)), "inherited": True}
             if not base.get("edited"):
                 more, why = self._write(WORLD_MORE.format(base=base["text"]) + "\n" + body, bi, at, passages + recaps, (0, 70))
                 if more:
-                    w = {"text": base["text"] + " " + more, "edited": False, "from": at, "base": base["text"], "sources": sources}
+                    w = {"text": base["text"] + " " + more, "edited": False, "from": at, "book": self._bkey(bi), "base": base["text"],
+                         "sources": sources}
                 elif why != "empty":
                     self.log(f"  world note: no addition ({why})")
         else:
@@ -684,25 +742,42 @@ class Illustrator:
                 self.log(f"  world note dropped: {why}")
                 self._skip(bi, "world note", _reason(why).replace("prompt", "world note"))
                 return None
-            w = {"text": got, "edited": False, "from": at, "sources": sources}
+            w = {"text": got, "edited": False, "from": at, "book": self._bkey(bi), "sources": sources}
         return w
 
     def _world_text(self, bi: int, pos: tuple[int, int]) -> tuple[str, str | None]:
         """(text, anchor) of the world note a picture at `pos` is written from: the series' older text when an
         appended sentence of this book lies ahead of it."""
-        w = self.man[bi].get("world") or next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None)
+        w, own = self._world_of(bi)
         if not w:
             return "", None
         o = self.books[bi].ord_of
-        if w.get("base") and w["from"] in o and (bi, o[w["from"]]) > pos:
+        if not own:                    # written in an earlier, finished book: nothing in it lies ahead of the reader
+            return w["text"], None
+        if w.get("base") and (bi, o[w["from"]]) > pos:
             return w["base"], None
-        return w["text"], w["from"] if w["from"] in o else None
+        return w["text"], w["from"]
+
+    def _bkey(self, bi: int) -> str:
+        """The key of a book that anchors are stored with: its series book key, else its id."""
+        d = self.books[bi].doc
+        return str((d.get("series") or {}).get("book") or d.get("id") or bi)
+
+    def _world_of(self, bi: int) -> tuple[dict | None, bool]:
+        """(the world note a picture of book bi uses, whether its `from` is an anchor of book bi)."""
+        w = self.man[bi].get("world")
+        if w:
+            book = w.get("book")
+            own = (book == self._bkey(bi)) if book is not None else not w.get("inherited")
+            return w, own and w["from"] in self.books[bi].ord_of
+        return next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None), False
 
     def _anchor(self, bi: int, anchor: str) -> str:
         """The anchor a picture shows from: a picture of the book's first chapters is held to the end of the chapters its
         world note is written from, so that no picture is written from content after its anchor."""
-        w, b = self.man[bi].get("world"), self.books[bi]
-        if w and not w.get("inherited") and not w.get("base") and w["from"] in b.ord_of and b.ord_of[w["from"]] > b.ord_of[anchor]:
+        w, own = self._world_of(bi)
+        b = self.books[bi]
+        if w and own and not w.get("base") and b.ord_of[w["from"]] > b.ord_of[anchor]:
             return w["from"]
         return anchor
 
@@ -721,9 +796,9 @@ class Illustrator:
         m = self.man[bi]
         evs = [e for e in chapter["events"] if e.get("kind") != "minor"]
         key = self._screen_key(evs)
-        got = m["screened"].get(chapter["title"])
-        if isinstance(got, dict) and got.get("key") == key and all(x in self.books[bi].events for x in got.get("events", [])):
-            return list(got["events"])
+        fresh = self.screened(bi, chapter)
+        if fresh is not None:
+            return fresh
         ids: list[str] = []
         if evs:
             lines = "\n".join(f"{n}. {e['summary']}" + (f" (at {e['setting']['text']})" if e.get("setting") else "")
@@ -753,11 +828,43 @@ class Illustrator:
         return max(moments, key=lambda x: (len(set(re.findall(r"[a-z]{4,}", b.events[x]["summary"].lower())) & recap),
                                            -b.ord_of[b.events[x]["from"]]))
 
+    def _have(self, bi: int) -> set[tuple]:
+        """(kind, target, from) of what a book's set already holds or will never draw (a final skip)."""
+        return {_key(r) for r in self.man[bi]["pictures"]} | {(x.get("kind"), x["target"], x.get("from")) for x in self.man[bi]["skipped"]}
+
+    def _is_new(self, bi: int, j: Job, have: set[tuple]) -> bool:
+        return (j.kind, j.target, self._anchor(bi, j.anchor)) not in have and (j.kind, j.target, j.anchor) not in have
+
+    def _budget(self) -> int | None:
+        """How many more pictures the picture limit and the cost cap leave room for (None: no bound known). With an unknown
+        price the cap bounds nothing until a picture has cost something."""
+        room = None
+        with self.lock:
+            if self.max_pictures is not None:
+                room = max(0, self.max_pictures - self.report.drawn - self.in_flight)
+            price = llm.image_price(self.provider, self.model, self.quality, "landscape") or self.last_cost
+            if self.cap is not None and price > 0:
+                n = max(0, int((self.cap - self._spent() - self.reserved) / price + 1e-9))
+                room = n if room is None else min(room, n)
+        return room
+
     def plan(self, bi: int, record: bool = True) -> list[Job]:
         """Every picture a book is to have: chapter plates (and the other drawable moments at level "all"), then portraits.
-        `record` False plans without reporting skips (the first count of a series run, planned again before drawing)."""
+        `record` False plans without reporting skips (the first count of a series run, planned again before drawing).
+        Portraits are drawn first, so when the picture limit or the cost cap leaves room for only some pictures, chapters past
+        that room are not screened (no text call for what will not be drawn)."""
         b, jobs = self.books[bi], []
         level = b.b.level
+        have = self._have(bi)
+        ports: list[Job] = []
+        if self.portraits:
+            ports = self._portrait_jobs(bi)
+            if self.chapter_filter:      # a run limited to some chapters draws portraits only up to the last of them
+                end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
+                ports = [j for j in ports if b.seq_of[j.anchor] <= end]
+        budget = self._budget()
+        room = None if budget is None else max(0, budget - sum(self._is_new(bi, j, have) for j in ports))
+        new = 0
         for ch in b.chapters if level else ():
             if self.chapter_filter and ch["n"] not in self.chapter_filter:
                 continue
@@ -765,6 +872,8 @@ class Illustrator:
                 if record:
                     self._skip(bi, ch["title"], "skipped: chapter has no events")
                 continue
+            if (room is not None and new >= room) or self._over_cap():
+                break                        # nothing past here would be drawn
             try:
                 moments = self.drawable(bi, ch)
             except TextFailed as e:
@@ -772,22 +881,51 @@ class Illustrator:
                     self._skip(bi, ch["title"], str(e), detail=e.detail)
                 continue
             main = self._main_moment(bi, ch, moments)
+            got: list[Job] = []
             if main:
-                jobs.append(Job("plate", ch["title"], bi, ch["last"], event=b.events[main], chapter=ch, shape="landscape"))
+                got.append(Job("plate", ch["title"], bi, ch["last"], event=b.events[main], chapter=ch, shape="landscape"))
             elif ch["recaps"]:
-                jobs.append(Job("plate", ch["title"], bi, ch["last"], chapter=ch, shape="landscape"))
+                got.append(Job("plate", ch["title"], bi, ch["last"], chapter=ch, shape="landscape"))
             if level == "all":
                 for x in moments:
                     if x != main:
                         ev = b.events[x]
-                        jobs.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
-        if self.portraits:
-            ports = self._portrait_jobs(bi)
-            if self.chapter_filter:      # a run limited to some chapters draws portraits only up to the last of them
-                end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
-                ports = [j for j in ports if b.seq_of[j.anchor] <= end]
-            jobs += ports
-        return jobs
+                        got.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
+            new += sum(self._is_new(bi, j, have) for j in got)
+            jobs += got
+        return jobs + ports
+
+    def screened(self, bi: int, chapter: dict) -> list[str] | None:
+        """The chapter's drawable event ids from a fresh screening in the manifest, or None when it has not been screened (or
+        the index changed since). The manifest holds `screened[<chapter title>] = {"key": <hash of the chapter's non-minor
+        events' ids, anchors and summaries>, "events": [event id, ...]}`; titles are the plan's (" (2)" for a repeat)."""
+        got = self.man[bi]["screened"].get(chapter["title"])
+        evs = [e for e in chapter["events"] if e.get("kind") != "minor"]
+        if isinstance(got, dict) and got.get("key") == self._screen_key(evs) and all(x in self.books[bi].events for x in got.get("events", [])):
+            return list(got["events"])
+        return None
+
+    def counts(self, bi: int = -1) -> dict:
+        """What a run on book bi would draw, with no model call (for an estimate): `plates` (chapters with events that get a
+        plate: all of them unless a fresh screening found nothing drawable and there is no recap), `portraits` (the
+        portrait jobs, versions included), and `chapters`: [{"title", "drawable"}], `drawable` the fresh screening's count of
+        visible moments or None when not screened yet (at level "all" a chapter has up to that many pictures)."""
+        bi = len(self.books) - 1 if bi < 0 else bi
+        b = self.books[bi]
+        chapters, plates = [], 0
+        for ch in b.chapters:
+            if self.chapter_filter and ch["n"] not in self.chapter_filter:
+                continue
+            if not ch["events"]:
+                continue
+            ids = self.screened(bi, ch)
+            chapters.append({"title": ch["title"], "drawable": None if ids is None else len(ids)})
+            plates += 1 if ids is None or ids or ch["recaps"] else 0
+        ports = self._portrait_jobs(bi) if self.portraits else []
+        if self.chapter_filter:
+            end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
+            ports = [j for j in ports if b.seq_of[j.anchor] <= end]
+        return {"plates": plates, "portraits": len(ports), "chapters": chapters}
 
     def _profiles(self, bi: int, eid: str) -> list[tuple[int, int, dict]]:
         """(book, ordinal, facet) of the entity's profiles in books 0..bi, in reading order."""
@@ -902,7 +1040,9 @@ class Illustrator:
                 return None, "not visible", []
             passages, used = self.passage(bi, self._mentions(bi, eid, b.seq_of[anchor]), b.seq_of[anchor], 450)
             shown = ([ve["profile"]] if ve["profile"] else []) + ve["facets"][:8]
-            own = {f["id"]: f["from"] for f in e.get("facets", []) if f["from"] in b.ord_of}
+            # only this book's own facets carry anchors of this book (an earlier book's are finished content, and its anchor
+            # ids may repeat here)
+            own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             srcs = {b.anchor_at(s) for s in used} | {own[f["id"]] for f in shown if f["id"] in own}
             kind = P.KINDS.get(e["type"], e["type"])
             amend = AMEND.format(prev=cur["text"], change=change, who=kind.split(" ", 1)[-1]) if cur and change else ""
@@ -950,9 +1090,7 @@ class Illustrator:
             ch = next((c for c in b.chapters if c["title"] == target), None)
             if ch is None:
                 raise ValueError("no such chapter")
-            got = self.man[bi]["screened"].get(target)
-            moments = [x for x in got.get("events", []) if x in b.events] if isinstance(got, dict) \
-                and got.get("key") == self._screen_key([e for e in ch["events"] if e.get("kind") != "minor"]) else []
+            moments = self.drawable(bi, ch)      # cached; screened now when the set has no fresh screening (TextFailed if it fails)
             main = self._main_moment(bi, ch, moments)
             job = Job("plate", target, bi, ch["last"], event=b.events[main] if main else None, chapter=ch, shape=shape)
         else:
@@ -1022,14 +1160,16 @@ class Illustrator:
         sources |= {b.anchor_at(s) for s in used}
         ctx: list[str] = []
         if job.kind in ("plate", "event") and job.chapter:
-            seen = {v["id"] for v in view["events"]}
+            # this chapter's own recaps and events up to the anchor, by its own book's ordinals: ids can repeat across books
+            # (r1, e3), so "the view has an item with this id" could be an earlier book's
+            at = b.ord_of[anchor]
             if job.event:
                 ctx.append(f"The moment: {job.event['summary']}" + (f" (at {job.event['setting']['text']})" if job.event.get("setting") else ""))
-            recaps = [r for r in job.chapter["recaps"] if r["id"] in {c["id"] for c in view["chapters"]}]
+            recaps = [r for r in job.chapter["recaps"] if b.ord_of[r["from"]] <= at]
             if recaps:
                 ctx.append("The chapter so far: " + " ".join(r["text"] for r in recaps))
                 sources |= {r["from"] for r in recaps}
-            before = [e2 for e2 in job.chapter["events"] if e2["id"] in seen and e2["id"] != (job.event or {}).get("id")
+            before = [e2 for e2 in job.chapter["events"] if b.ord_of[e2["from"]] <= at and e2["id"] != (job.event or {}).get("id")
                       and (not job.event or b.ord_of[e2["from"]] < b.ord_of[job.event["from"]])][-5:]
             if before:
                 ctx.append("Earlier in the chapter: " + " / ".join(e2["summary"] for e2 in before))
@@ -1061,7 +1201,7 @@ class Illustrator:
         elif job.kind == "portrait" and job.change:
             prev = self.latest_picture(job.target, pos, ("portrait",), strict=True)
             refs = [prev] if prev else []
-        return Prompt(self._assemble(scene, [n for _, n in figures], world), scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
+        return Prompt(self._assemble(scene, [n for _, n in figures], world, bi), scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check)
 
     @staticmethod
@@ -1079,14 +1219,14 @@ class Illustrator:
             return figures, ids
         return [(eid, n) for eid, n in figures if eid in keep], [eid for eid in ids if eid in keep]
 
-    def _assemble(self, scene: str, notes: list[str], world: str) -> str:
+    def _assemble(self, scene: str, notes: list[str], world: str, bi: int = -1) -> str:
         """What the image model gets: the scene, then the notes, the world note and the style, all added by code."""
         parts = [scene.rstrip()]
         if notes:
             parts.append("Figures: " + " ".join(n.rstrip(".") + "." for n in notes))
         if world:
             parts.append("World: " + world.rstrip())
-        return " ".join(parts + [style_sentence(self.style), NO_TEXT])
+        return " ".join(parts + [style_sentence(self.styles[bi]), NO_TEXT])
 
     # ---- cost and the cap
 
@@ -1105,22 +1245,32 @@ class Illustrator:
                 self.man[bi]["skipped"].append({"target": target, "reason": reason, "kind": kind, "from": anchor, "final": True})
                 self._save(bi)
 
-    def _reserve(self, price: float) -> str:
-        """Count a draw call in flight, or say why none may start (the cost cap, the picture limit)."""
+    def _spent(self) -> float:
+        """What the run has spent and may have spent: pictures, calls that failed after they were sent, and text."""
+        return self.report.cost + self.report.at_risk + self.text_spent()
+
+    def _over_cap(self, more: float = 0.0) -> bool:
+        return self.cap is not None and self._spent() + self.reserved + more > self.cap + 1e-9
+
+    def _reserve(self, price: float) -> tuple[str, float]:
+        """Count a draw call in flight, or say why none may start (the cost cap, the picture limit). Returns (why not, the
+        amount reserved), and `_release` gives back exactly that amount."""
         with self.lock:
+            amount = price or self.last_cost
             if not self.stop:
                 if self.max_pictures is not None and self.report.drawn + self.in_flight >= self.max_pictures:
                     self.stop = f"picture limit {self.max_pictures} reached"
-                elif self.cap is not None and self.report.cost + self.text_spent() + self.reserved + (price or self.last_cost) > self.cap + 1e-9:
+                elif self._over_cap(amount):
                     self.stop = f"cost cap ${self.cap:.2f} reached"
-            if not self.stop:
-                self.reserved += price or self.last_cost
-                self.in_flight += 1
-            return self.stop
+            if self.stop:
+                return self.stop, 0.0
+            self.reserved += amount
+            self.in_flight += 1
+            return "", amount
 
-    def _release(self, price: float) -> None:
+    def _release(self, amount: float) -> None:
         with self.lock:
-            self.reserved = max(0.0, self.reserved - (price or self.last_cost))
+            self.reserved = max(0.0, self.reserved - amount)
             self.in_flight = max(0, self.in_flight - 1)
 
     def _record(self, job: Job, pr: Prompt, pic: images.Drawn) -> dict:
@@ -1138,11 +1288,22 @@ class Illustrator:
                     "cost": round(pic.cost, 6), "created": _now()})
         return rec
 
-    def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None) -> dict | None:
+    def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None, soften: bool | None = None) -> dict | None:
         """Draw one picture and file it; `text` replaces the written prompt (a person edited it). None when skipped, with the reason
-        in the report. A refusal gets one quieter rewrite of the scene and then a recorded skip; a provider error one retry.
-        The cost cap is checked before every call."""
+        in the report. A refusal gets one quieter rewrite of the scene (`soften`, on unless `text` is given: a person's own prompt
+        is never rewritten, and its refusal is raised as `images.ImageRefused`) and then a recorded skip. A provider error is sent
+        again once only when `images` says the request never reached the provider (`ProviderError.sent is False`): a timeout, a
+        reset or a 5xx after sending may have drawn and billed the picture, so its price counts against the cap and the picture
+        is skipped. The cost cap is checked before every call."""
         bi = job.bi
+        soften = text is None if soften is None else soften
+        if self._budget() == 0:            # the limit or the cap leaves no room: no prompt is written for it
+            why, _ = self._reserve(llm.image_price(self.provider, self.model, self.quality, job.shape or SHAPE_OF[job.kind]) or 0.0)
+            if why:
+                with self.lock:
+                    self.report.skipped[f"stopped: {why}"] += 1
+                return None
+            self._release(_)
         try:
             pr = prompt or self.make_prompt(job)
         except ValueError as e:
@@ -1156,14 +1317,20 @@ class Illustrator:
         softened = retried = False
         while True:
             refs = [(d, r["mime"]) for j, r in pr.references if (d := self.books[j].b.sink.read(r["file"]))][:images.MAX_REFERENCES]
-            if self._reserve(price):
+            why, amount = self._reserve(price)
+            if why:
                 with self.lock:
-                    self.report.skipped[f"stopped: {self.stop}"] += 1
+                    self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
                 pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs)
             except images.ImageRefused as e:
-                self._release(price)
+                self._release(amount)
+                if not soften:
+                    with self.lock:
+                        self.report.refused += 1
+                        self.report.reasons.append({"target": job.target, "reason": f"refused: provider declined ({e.reason[:160]})"})
+                    raise
                 soft = None
                 if not softened:
                     softened = True
@@ -1176,21 +1343,26 @@ class Illustrator:
                                detail=e.reason[:160], refused=True)
                     return None
                 pr.scene = soft
-                pr.text = self._assemble(soft, [n for _, n in pr.notes], self._world_text(bi, self._pos(bi, pr.anchor))[0])
+                pr.text = self._assemble(soft, [n for _, n in pr.notes], self._world_text(bi, self._pos(bi, pr.anchor))[0], bi)
                 continue
             except llm.ProviderError as e:
-                self._release(price)
-                if retried:
-                    self._skip(bi, job.target, "skipped: provider error", kind=job.kind, anchor=job.anchor, detail=str(e)[:160])
-                    return None
-                retried = True
-                time.sleep(self.pause)
-                continue
-            self._release(price)
+                self._release(amount)
+                if getattr(e, "sent", None) is False and not retried:
+                    retried = True
+                    time.sleep(self.pause)
+                    continue
+                billed = getattr(e, "sent", None) is not False and not (e.status and 400 <= e.status < 500)
+                with self.lock:
+                    if billed:          # it may have been drawn and billed: counted, never sent again
+                        self.report.at_risk += amount
+                self._skip(bi, job.target, "skipped: provider error", kind=job.kind, anchor=job.anchor, detail=str(e)[:160])
+                return None
+            self._release(amount)
             break
         rec = self._record(job, pr, pic)
         with self.lock:
             self.books[bi].b.sink.put(rec["file"], pic.data)
+            self._dirty.add(bi)
             self.man[bi]["pictures"].append(rec)
             self.report.drawn += 1
             self.report.softened += softened
@@ -1224,7 +1396,12 @@ class Illustrator:
 
     def _notes_pass(self, bi: int, jobs: list[Job]) -> None:
         """Every entity's note exists before any picture is drawn, written at the first anchor that needs it, so that two
-        pictures of one entity never carry two notes."""
+        pictures of one entity never carry two notes. `jobs` in drawing order; only those the picture limit and the cost cap
+        leave room for get their notes here (a picture past them writes its own, if it is ever drawn), and the pass stops
+        when the text spent reaches the cap."""
+        budget = self._budget()
+        if budget is not None:
+            jobs = jobs[:budget]
         needs: dict[str, list[tuple[int, str, str]]] = {}
         b = self.books[bi]
         for j in jobs:
@@ -1238,6 +1415,9 @@ class Illustrator:
 
         def entity(item):
             for _, a, change in sorted(set(item[1])):
+                with self.lock:
+                    if not self.stop and self._over_cap():
+                        self.stop = f"cost cap ${self.cap:.2f} reached"
                 if self.stop:
                     return
                 try:
@@ -1263,16 +1443,18 @@ class Illustrator:
             if not jobs:
                 continue
             b = self.books[bi]
-            have = {_key(r) for r in self.man[bi]["pictures"]} | {(s.get("kind"), s["target"], s.get("from")) for s in self.man[bi]["skipped"]}
-            todo = [j for j in jobs if (j.kind, j.target, self._anchor(bi, j.anchor)) not in have and (j.kind, j.target, j.anchor) not in have]
+            have = self._have(bi)
+            todo = [j for j in jobs if self._is_new(bi, j, have)]
             self.done += len(jobs) - len(todo)
             self.log(f"{b.doc['work']['title']}: {len(todo)} pictures to draw, {len(jobs) - len(todo)} already there")
-            self._notes_pass(bi, todo)
             by: dict[str, list[Job]] = {}
             named = Counter(x for e in b.doc.get("events", []) for x in e.get("entities", []))
             for j in sorted((j for j in todo if j.kind == "portrait"), key=lambda j: (-named[j.target], b.ord_of[j.anchor])):
                 by.setdefault(j.target, []).append(j)
             scenes = sorted((j for j in todo if j.kind != "portrait"), key=lambda j: b.ord_of[j.anchor])
+            # drawing order: the entities' portraits run side by side (first versions first), then the scenes
+            rounds = max((len(c) for c in by.values()), default=0)
+            self._notes_pass(bi, [c[k] for k in range(rounds) for c in by.values() if k < len(c)] + scenes)
 
             def one(j: Job) -> None:
                 if not self.stop:

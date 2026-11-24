@@ -294,14 +294,37 @@ def test_a_refusal_gets_one_quieter_rewrite_then_a_recorded_skip():
     assert len(im2.calls) == before
 
 
-def test_a_provider_error_is_retried_once_then_skipped():
+def test_a_provider_error_is_sent_again_only_when_it_never_reached_the_provider():
     class Flaky(Image):
-        def draw(self, prompt, **kw):
-            self.calls.append(prompt)
-            raise llm.ProviderError("HTTP 500")
-    im = Flaky()
-    il, rep, sink, t, im = run(image=im, portraits=False)
-    assert len(im.calls) == 4 and not pics(sink) and rep.skipped["skipped: provider error"] == 2
+        def __init__(self, sent):
+            super().__init__()
+            self.sent = sent
+
+        def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
+            if shape == "portrait":
+                return super().draw(prompt, shape=shape, quality=quality, references=references)
+            self.calls.append({"prompt": prompt, "shape": shape})
+            raise llm.ProviderError("could not reach the host" if self.sent is False else "the request failed after it was sent",
+                                    None, self.sent)
+    il, rep, sink, t, im = run(image=Flaky(False))                  # refused connection, 429: never sent, so sent once more
+    assert sum(c["shape"] == "landscape" for c in im.calls) == 4 and not pics(sink, "plate")
+    assert rep.skipped["skipped: provider error"] == 2 and rep.at_risk == 0
+    il, rep, sink, t, im = run(image=Flaky(None))                   # a timeout after sending: maybe billed, never sent twice
+    assert sum(c["shape"] == "landscape" for c in im.calls) == 2 and rep.skipped["skipped: provider error"] == 2
+    assert rep.at_risk == pytest.approx(0.1) and "failed after sending" in rep.lines()[0]
+
+
+def test_a_call_that_failed_after_sending_counts_against_the_cap():
+    class Lost(Image):
+        sends = 0
+
+        def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
+            self.sends += 1
+            if self.sends > 1:
+                raise llm.ProviderError("the request failed after it was sent: timed out")
+            return super().draw(prompt, shape=shape, quality=quality, references=references)
+    il, rep, sink, t, im = run(image=Lost(cost=0.4), cap=1.0)
+    assert rep.drawn == 1 and rep.at_risk == pytest.approx(0.4) and im.sends == 2 and "cost cap" in rep.stopped
 
 
 def test_the_cost_cap_stops_the_run_and_keeps_what_was_drawn():
@@ -740,3 +763,168 @@ def test_illustrate_command_gives_earlier_books_portraits_only_unless_a_level_is
     m1 = json.loads(next((tmp_path / "art").glob("*/digital-art/art.json")).read_text())
     m2 = json.loads((tmp_path / "o" / "art.json").read_text())
     assert {p["kind"] for p in m1["pictures"]} == {"portrait"} and "plate" in {p["kind"] for p in m2["pictures"]}
+
+
+# ---- round 3
+
+
+def series_shared_ids():
+    """Two books whose anchors have the same ids (the generator's tocNN.paraMM repeat in every book of a series)."""
+    bk1, d1, _, _ = series_docs()
+    bk2 = book(("Three", ["Mira came back to the mill years later with a new coat and a basket of eggs."] + CH1[1:]),
+               ("Four", CH2))
+    ents = [ent("mira", "Mira", facets=[portrait("mira", "a3", "A slight young woman of about twenty who carries baskets.", 1, "b2")]),
+            ent("oren", "Oren", frm="a1", facets=[portrait("oren", "a2", "The old miller, white haired and broad, who runs the mill.", 1, "b2")])]
+    evs = [event(1, 1, "Oren the miller greets her at the door of the mill.", ["oren", "mira"], "turn"),
+           event(2, 3, "The hooded stranger is seen again on the road by the mill.", ["stranger", "mira"], "turn"),
+           event(3, 8, "Mira walks to the well behind the mill.", ["mira"], "turn")]
+    d2 = doc(bk2, "b2", "", ents, evs, [recap(1, 5, "Three"), recap(2, 11, "Four")])
+    for e in d2["entities"]:
+        for n in e["names"]:
+            n["from"] = e["from"]
+    return bk1, d1, bk2, d2
+
+
+def test_anchor_ids_shared_by_two_books_are_never_confused(monkeypatch):
+    bk1, d1, bk2, d2 = series_shared_ids()
+    d1["entities"][3]["facets"][0].update({"from": "a7", "evidence": ["a7"]})   # the stranger's book-one profile at a7
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2, "all")], Text(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    rep = il.run()
+    assert s1.m["world"]["from"] == "a5" and s2.m["world"]["book"] == "b1" and s2.m["world"]["inherited"]
+    assert not rep.skipped.get("dropped: written from content after its anchor")
+    o = ordinal(d2)
+    early = [p for p in pics(s2) if o[p["from"]] < o["a5"]]
+    assert {p["target"] for p in early} >= {"e2"}                            # book two's opening is drawn, held to nothing
+    e2 = next(p for p in pics(s2) if p["target"] == "e2")
+    assert "a7" not in e2["sources"] and all(o[a] <= o[e2["from"]] for a in e2["sources"])
+
+
+def test_with_a_picture_limit_only_the_pictures_drawn_get_notes_and_screening():
+    il, rep, sink, t, im = run(max_pictures=1)
+    notes = [p for p in t.prompts if "fixed appearance note" in p]
+    assert rep.drawn == 1 and len(notes) == 1 and not any("Which of them are a visible moment" in p for p in t.prompts)
+
+
+def test_text_spent_on_notes_counts_against_the_cap():
+    class Usage:
+        cost_usd = 0.0
+
+    class Costly(Text):
+        usage = Usage()
+
+        def complete(self, system, prompt, schema, prefix=None):
+            self.usage.cost_usd += 0.3
+            return super().complete(system, prompt, schema, prefix)
+    t = Costly()
+    il, rep, sink, _, im = run(text_=t, cap=1.0)
+    notes = [p for p in t.prompts if "fixed appearance note" in p]
+    assert "cost cap" in rep.stopped and len(notes) <= 1 and not im.calls
+
+
+def test_a_reservation_is_released_by_the_amount_it_reserved():
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         Text(), Image(), "ink", cap=10, log=lambda *_: None, pause=0)
+    _, a = il._reserve(0.0)                    # an unknown price, nothing drawn yet: reserves 0
+    il.last_cost = 0.04
+    _, b = il._reserve(0.0)                    # reserves the last picture's cost
+    il._release(a)
+    assert il.reserved == pytest.approx(0.04) and b == pytest.approx(0.04)
+    il._release(b)
+    assert il.reserved == 0 and il.in_flight == 0
+
+
+def test_an_on_demand_picture_of_a_read_only_book_saves_that_books_set():
+    bk1, d1, bk2, d2 = series_docs()
+    s1 = Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1, None, draw=False), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    rec = il.draw(il.job("portrait", "stranger", at="b2.a3"))
+    assert rec and s1.m and [p["id"] for p in s1.m["pictures"]] == [rec["id"]] and rec["file"] in s1.files
+
+
+def test_a_set_is_the_same_for_every_style_text_with_its_slug_and_belongs_to_one_edition():
+    sink = Mem()
+    run(sink=sink, style="Chalk on a blackboard, smudged white lines.", portraits=False)
+    n = len(pics(sink))
+    il, rep, _, _, im = run(sink=sink, style="chalk on a BLACKBOARD smudged white lines", portraits=True)
+    assert sink.m["style"] == "Chalk on a blackboard, smudged white lines." and len(pics(sink)) > n
+    assert all("Chalk on a blackboard, smudged white lines." in c["prompt"] for c in im.calls)
+    with pytest.raises(ValueError, match="another style"):
+        run(sink=sink, style="ink")
+    other = base_doc(book(("One", CH1), ("Two", CH2)))
+    other["editions"] = [{"textHash": "sha256:else", "builtFrom": True}]
+    with pytest.raises(ValueError, match="another edition"):
+        run(other, sink=sink, style="Chalk on a blackboard, smudged white lines.")
+
+
+def test_several_standalone_indexes_are_refused(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    with pytest.raises(ValueError, match="one series"):
+        art.Illustrator([art.Book(base_doc(bk), bk, Mem()), art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink")
+    a, b = _cli_index(tmp_path, base_doc(bk), bk, "a.lore.json"), _cli_index(tmp_path, base_doc(bk), bk, "b.lore.json")
+    im = Image()
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: im)
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    with pytest.raises(SystemExit, match="one series"):
+        cli.main(["illustrate", str(a), str(b), "--epub", "1.epub", "--epub", "2.epub"])
+    assert not im.calls
+
+
+def test_a_trailing_anchor_not_in_the_epub_is_never_reached():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["anchors"][-1]["fp"] = "0000000000000000"
+    d["anchors"][-2]["fp"] = "0000000000000001"
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", log=lambda *_: None)
+    b = il.books[0]
+    assert b.seq_of["a11"] == b.seq_of["a10"] == len(bk.blocks) and b.hi == len(bk.blocks) - 1 and b.seq_of["a9"] == 9
+
+
+def test_ordinary_words_of_a_group_name_are_not_names():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("order", "The Order of the Dawn", "group"))
+    dawn = "Dawn breaks over a grey stone mill " + SCENE[SCENE.index("beside") + 21:]
+    il, rep, sink, t, im = run(d, bk, text_=Text(scene=lambda p: dawn), portraits=False)
+    assert len(pics(sink, "plate")) == 2
+    named = dawn + " A banner of the Order of the Dawn hangs there."
+    il, rep, sink, t, im = run(d, bk, text_=Text(scene=lambda p: named), portraits=False)
+    assert not pics(sink, "plate") and il.names[0].find(named) == "Order of the Dawn"
+    assert il.names[0].find("They meet Mira's brother.") == "Mira" and il.names[0].find("Stranger things wait. Grey hills.") == ""
+    assert il.names[0].find("They watch the Stranger.") == "Stranger"
+
+
+def test_an_on_demand_plate_screens_its_chapter_and_shows_the_turning_point():
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    j = il.job("plate", "One")
+    assert j.event and j.event["id"] == "e2"
+
+
+def test_counts_need_no_model_call():
+    bk = book(("One", CH1), ("Two", CH2))
+    t = Text()
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    c = il.counts()
+    assert c == {"plates": 2, "portraits": 4, "chapters": [{"title": "One", "drawable": None}, {"title": "Two", "drawable": None}]}
+    assert not t.prompts
+    il.run()
+    n = len(t.prompts)
+    assert [x["drawable"] for x in il.counts()["chapters"]] == [2, 3] and len(t.prompts) == n
+
+
+def test_an_edited_prompt_is_never_softened_and_its_refusal_is_raised():
+    bk = book(("One", CH1), ("Two", CH2))
+    t, im = Text(), Image(refuse=[lambda prompt, n: True])
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    with pytest.raises(images.ImageRefused):
+        il.draw(il.job("plate", "One"), text="My own words: a mill at dusk, a woman at the gate, nothing else in view at all.")
+    assert len(im.calls) == 1 and not any("quieter composition" in p for p in t.prompts) and il.report.refused == 1
+    assert not il.man[0]["skipped"]                    # the person may try again
