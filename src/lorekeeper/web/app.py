@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -20,6 +21,7 @@ import threading
 import time
 import urllib.request
 import uuid
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -29,7 +31,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import art as artmod
 from .. import ask as askmod
-from .. import epub, gating, llm, text
+from .. import epub, gating, images, llm, text
 from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
@@ -222,7 +224,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return none
         if llm.DEFAULT_MODEL not in models:
             return none
-        busy = any(j.status in ("running", "stopping") and j.config.get("provider") in (None, "ollama")
+        # A pictures run writes its prompts with a cloud model: it counts only when its text provider is Ollama.
+        busy = any(j.status in ("running", "stopping")
+                   and (j.config.get("provider") or ("" if j.kind == "art" else "ollama")) == "ollama"
                    for j in jobs.jobs.values())
         # one Ollama model at a time: don't compete with a running build
         return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
@@ -434,7 +438,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return response
 
     def job_json(job) -> dict:
-        return {**asdict(job), "output_name": Path(job.output).name}
+        return {**asdict(job), "output_name": Path(job.output).name,
+                **({"index": job.config.get("index_key")} if job.kind == "art" else {})}
 
     @app.get("/")
     def root():
@@ -1127,15 +1132,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             super().__init__(detail)
             self.status, self.code, self.detail = status, code, detail
 
+    QUALITIES = ("draft", "standard", "best")
+
     def art_index(key: str) -> dict:
-        scan = library.scan()
-        item = scan.get(key)
+        """The one index a pictures route works on (no library scan: only the series prior needs one)."""
+        item = library.get(key)
         if item is None or item["doc"].get("kind") != "index":
             raise ArtRefusal(404, "not-found", "no such index")
         h = artstore.text_hash(item["doc"])
         if not artstore.HASH.fullmatch(h):
             raise ArtRefusal(409, "no-edition", "This index names no edition, so it can't have pictures.")
-        return {"item": item, "doc": item["doc"], "hash": h, "scan": scan}
+        return {"item": item, "doc": item["doc"], "hash": h}
 
     def art_epub(ctx: dict) -> epub.Book:
         p = library.edition_path(ctx["hash"])
@@ -1146,8 +1153,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def art_prior(ctx: dict) -> list[dict]:
         """The earlier books of the series, in its default reading order, whose indexes are in the library."""
         sref = ctx["doc"].get("series")
-        manifest, siblings = proto.series_parts(ctx["item"], ctx["scan"])
-        if not sref or not manifest:
+        if not sref:
+            return []
+        manifest, siblings = proto.series_parts(ctx["item"], library.scan())
+        if not manifest:
             return []
         order = manifest["doc"]["orders"].get(manifest["doc"].get("defaultOrder"), [])
         earlier = order[:order.index(sref["book"])] if sref["book"] in order else []
@@ -1157,9 +1166,68 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def art_inputs(job):
         ctx = art_index(job.config["index_key"])
         return ctx["doc"], art_epub(ctx), art_prior(ctx)
-    jobs.art_inputs = art_inputs
+
+    def art_key_for(job) -> str | None:
+        """The library key of the index a job draws for: the pictures run's own, else the build's output."""
+        if job.kind == "art":
+            return job.config.get("index_key")
+        try:
+            rel = Path(job.output).relative_to(data_dir / "indexes").with_suffix("").as_posix()
+        except ValueError:
+            return None
+        return f"generated--{rel.replace('/', '--')}"
+
+    def art_journal(job, h: str, slug_: str, added: list[str]) -> str | None:
+        """A run's pictures as one journal entry: its undo takes out exactly those."""
+        key = art_key_for(job)
+        if not key or library.get(key) is None:
+            return None
+        return journal_art(key, [], {"op": "add", "textHash": h, "style": slug_, "added": added},
+                           f"drew {len(added)} picture{'s' if len(added) != 1 else ''}")["id"]
+    jobs.art_inputs, jobs.art_journal = art_inputs, art_journal
+
+    def journal_art(key: str, keep: list[Path], art: dict, what: str) -> dict:
+        return identity.snapshot(key, keep, {"kind": "art", "what": what, "art": art})
+
+    def art_revert(entry: dict, snap: Path) -> None:
+        """Undo one pictures entry, touching only the records it names: what it added is taken out, what it removed is put
+        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay."""
+        a = entry["art"]
+        h = a["textHash"]
+        if a.get("op") == "remove-sets":
+            for slug_ in a["sets"]:
+                src = snap / slug_
+                with arts.lock(h, slug_):
+                    if arts.manifest(h, slug_) is None:
+                        dst = arts.folder(h, slug_)
+                        dst.mkdir(parents=True, exist_ok=True)
+                        for f in src.iterdir():
+                            if not (dst / f.name).exists():
+                                shutil.copy2(f, dst / f.name)
+                    else:
+                        arts.put_back(h, slug_, json.loads((src / "art.json").read_text()).get("pictures", []), src)
+            return
+        slug_ = a["style"]
+        with arts.lock(h, slug_):
+            if a.get("added"):
+                arts.take_out(h, slug_, a["added"])
+            if a.get("removed"):
+                arts.put_back(h, slug_, a["removed"], snap)
+            if a.get("op") == "world":
+                m = arts.manifest(h, slug_)
+                if m is not None:
+                    m["world"] = a.get("before")
+                    arts.save(h, slug_, m)
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True):
+        """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
+        pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
+        if provider is not None and provider not in llm.IMAGE_PROVIDERS:
+            raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
+        if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
+            raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
+        if quality not in QUALITIES:
+            raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
         text_model = jobs.cheap_model(None) if text_needed else None
         if text_model is None and text_needed:
             raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
@@ -1167,10 +1235,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             image = jobs.image_model(provider, model)
         except ValueError as e:
             raise ArtRefusal(422, "bad-model", str(e)) from e
-        books_ = [artmod.Book(d, None, arts.sink(artstore.text_hash(d), style), None, draw=False) for d in art_prior(ctx)
-                  if artstore.HASH.fullmatch(artstore.text_hash(d))]
-        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], style), None))
-        return artmod.Illustrator(books_, text_model, image, style, quality=quality, log=lambda m: None, pause=0), image
+        slug_, style = arts.resolve(ctx["hash"], style)
+        books_ = []
+        for d in art_prior(ctx):
+            ph = artstore.text_hash(d)
+            if artstore.HASH.fullmatch(ph):
+                books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
+        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
+        return artmod.Illustrator(books_, text_model, image, style, quality=quality, log=lambda m: None, pause=0), image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1222,23 +1294,42 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         except (KeyError, StopIteration, ValueError) as e:
             raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
 
+    def draw_given(il, job, pr, text_: str | None = None) -> dict:
+        """Draw the prompt as given (the person's own or edited text, or an old prompt): a refusal is answered with the
+        provider's reason and never softened into another text. Nothing is recorded as skipped for a later run."""
+        m = il.man[-1]
+        skipped = len(m.get("skipped", []))
+        try:
+            if "soften" in inspect.signature(il.draw).parameters:
+                rec = il.draw(job, prompt=pr, text=text_, soften=False)
+            else:
+                # TODO(lead): remove this branch once art.py takes soften=False (pipeline round 3, item 12).
+                il._write = lambda *a, **kw: (None, "the given prompt is drawn as it is")
+                rec = il.draw(job, prompt=pr, text=text_)
+        except images.ImageRefused as e:
+            raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
+        if rec is None:
+            why = il.report.reasons[-1]["reason"] if il.report.reasons else next(iter(il.report.skipped), "skipped")
+            if len(m.get("skipped", [])) > skipped:   # an on-demand refusal must not stop a run drawing that picture
+                del m["skipped"][skipped:]
+                il.books[-1].b.sink.save(m)
+            raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
+        return rec
+
     def picture_json(h: str, slug_: str, rec: dict) -> dict:
         return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
 
-    def ref_json(il, refs) -> list[dict]:
-        out = []
-        for j, r in refs:
-            h = artstore.text_hash(il.books[j].doc)
-            out.append({"id": r["id"], "kind": r["kind"], "target": r["target"],
-                        "url": f"/api/art/{h}/{artmod.style_slug(il.style)}/{r['id']}"})
-        return out
+    def ref_json(il, refs, slug_: str) -> list[dict]:
+        return [{"id": r["id"], "kind": r["kind"], "target": r["target"],
+                 "url": f"/api/art/{artstore.text_hash(il.books[j].doc)}/{slug_}/{r['id']}"} for j, r in refs]
 
     def art_busy(h: str) -> None:
         if jobs.drawing(h):
             raise ArtRefusal(409, "busy", "Pictures are being drawn for this book. Try again once that run has finished.")
 
     def art_route(fn):
-        """Run a pictures route off the event loop (they wait on models), answering refusals as {detail, code}."""
+        """Run a pictures route off the event loop (they read books and wait on models), answering refusals as
+        {detail, code}."""
         import functools
 
         @functools.wraps(fn)
@@ -1253,7 +1344,69 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return await asyncio.get_running_loop().run_in_executor(None, work)
         return wrapped
 
-    prompts: dict[tuple, tuple[float, object]] = {}   # the prompt route's Prompt, reused by draw when the job matches
+    # The prompt route's Prompt, reused by draw when the job matches (an hour, the 32 latest), behind one lock.
+    prompts: OrderedDict[tuple, tuple[float, object]] = OrderedDict()
+    prompts_lock = threading.Lock()
+
+    def remember_prompt(k: tuple, pr) -> None:
+        with prompts_lock:
+            prompts[k] = (time.time(), pr)
+            prompts.move_to_end(k)
+            while len(prompts) > 32:
+                prompts.popitem(last=False)
+
+    def recall_prompt(k: tuple):
+        with prompts_lock:
+            hit = prompts.get(k)
+        return copy.copy(hit[1]) if hit and time.time() - hit[0] < 3600 else None
+
+    app.state.art_prompts = (remember_prompt, recall_prompt, prompts)   # for tests
+
+    @app.get("/api/art")
+    def art_sets():
+        """Every art set on this server, per book, for Settings: the index it belongs to, its styles and their size."""
+        found: dict[str, dict] = {}
+        for it in library.scan().values():
+            if it["doc"].get("kind") == "index":
+                h = artstore.text_hash(it["doc"])
+                if h not in found or (it["source"] == "generated" and found[h]["source"] != "generated"):
+                    found[h] = it
+        out = []
+        for h in arts.editions():
+            it = found.get(h)
+            styles = [{k: s[k] for k in ("style", "slug", "pictures", "bytes")} for s in arts.styles(h)]
+            out.append({"key": it["key"] if it else None, "title": (it["doc"].get("work") or {}).get("title") if it else None,
+                        "textHash": h, "styles": styles, "bytes": sum(s["bytes"] for s in styles)})
+        return out
+
+    @app.delete("/api/art/{text_hash}")
+    def art_remove_sets(text_hash: str, style: str | None = None):
+        """Remove a book's pictures (one style with `?style=`), kept for undo in the journal of an index of that edition."""
+        try:
+            if not artstore.HASH.fullmatch(text_hash):
+                raise ArtRefusal(404, "no-set", "no pictures for that book")
+            slugs = [s["slug"] for s in arts.styles(text_hash) if style is None or s["slug"] == artmod.style_slug(style)]
+            if not slugs:
+                raise ArtRefusal(404, "no-set", "no pictures for that book")
+            art_busy(text_hash)
+            key = next((it["key"] for it in library.scan().values() if it["doc"].get("kind") == "index"
+                        and artstore.text_hash(it["doc"]) == text_hash), None)
+            entry = None
+            if key:
+                entry = journal_art(key, [], {"op": "remove-sets", "textHash": text_hash, "sets": slugs},
+                                    f"removed the pictures ({', '.join(slugs)})")
+            for slug_ in slugs:
+                with arts.lock(text_hash, slug_):
+                    folder = arts.folder(text_hash, slug_)
+                    if entry:
+                        shutil.copytree(folder, identity.dir / entry["id"] / slug_)
+                    shutil.rmtree(folder)
+            parent = arts.root / text_hash
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        return {"removed": slugs, "undo": entry["id"] if entry else None}
 
     @app.get("/api/library/{key}/art")
     def library_art(key: str, style: str | None = None):
@@ -1271,32 +1424,38 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
     @app.get("/api/art/estimate")
+    @art_route
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: bool = True,
                      provider: str | None = None, model: str | None = None, quality: str = "standard"):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all)."""
-        try:
-            ctx = art_index(key)
-            if level not in artmod.LEVELS or quality not in ("draft", "standard", "best"):
-                raise ArtRefusal(422, "bad-config", "level must be main or all; quality draft, standard or best.")
-            il, image = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False)
-        except ArtRefusal as e:
-            return art_error(e.status, e.code, e.detail)
-        b, man = il.books[-1], il.man[-1]
-        chapters, plates = [], 0
-        for ch in b.chapters:
-            got = artstore.screened_count(man.get("screened") or {}, ch["title"])
-            evs = [e for e in ch["events"] if e.get("kind") != "minor"]
-            drawable = got if got is not None else len([e for e in evs if e.get("kind") == "turn"] if level == "main" else evs)
-            chapters.append({"title": ch["title"], "drawable": drawable, "screened": got is not None})
-            if ch["events"]:   # as the plan: a chapter with no events gets no picture
-                plates += 1 if level == "main" else max(1, drawable)
-        try:
-            ports = len(il._portrait_jobs(len(il.books) - 1)) if portraits else 0
-        except Exception:  # noqa: BLE001 - an estimate is never worth an error
-            ports = 0
-        prov = getattr(image, "provider", None) or provider or next(iter(llm.IMAGE_PROVIDERS))
-        name = getattr(image, "name", None) or model or llm.IMAGE_PROVIDERS[prov]["default"]
+        ctx = art_index(key)
+        if level not in artmod.LEVELS:
+            raise ArtRefusal(422, "bad-config", "level must be main or all.")
+        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False)
+        bi = len(il.books) - 1
+        if hasattr(il, "counts"):   # art.py round 3: the counts without a model call
+            got = il.counts(bi, level=level, portraits=portraits) if "level" in inspect.signature(il.counts).parameters \
+                else il.counts(bi)
+            plates, ports = got["plates"], (got["portraits"] if portraits else 0)
+            chapters = [{"title": c["title"], "drawable": c.get("drawable"), "screened": c.get("drawable") is not None}
+                        for c in got["chapters"]]
+        else:
+            b, man = il.books[bi], il.man[bi]
+            chapters, plates = [], 0
+            for ch in b.chapters:
+                n = artstore.screened_count(man.get("screened") or {}, ch["title"])
+                evs = [e for e in ch["events"] if e.get("kind") != "minor"]
+                drawable = n if n is not None else len([e for e in evs if e.get("kind") == "turn"] if level == "main" else evs)
+                chapters.append({"title": ch["title"], "drawable": drawable, "screened": n is not None})
+                if ch["events"]:   # as the plan: a chapter with no events gets no picture
+                    plates += 1 if level == "main" else max(1, drawable)
+            try:
+                ports = len(il._portrait_jobs(bi)) if portraits else 0
+            except Exception:  # noqa: BLE001 - an estimate is never worth an error
+                ports = 0
+        prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+        name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
         each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
         price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
@@ -1318,21 +1477,22 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def art_run(key: str, request: Request):
         """Pictures for this index as a run on the queue (the build form's pictures stage, on an existing index)."""
         body = await json_body(request)
-        try:
+
+        @art_route
+        def work():
             ctx = art_index(key)
             art_epub(ctx)
-        except ArtRefusal as e:
-            return art_error(e.status, e.code, e.detail)
-        owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
-        try:
-            job = jobs.submit_art(key, body.get("art", body), index_path=str(ctx["item"]["path"]),
-                                  book_id=(owner or {}).get("localId") or "", text_hash=ctx["hash"],
-                                  title=ctx["doc"].get("work", {}).get("title") or key)
-        except ValueError as e:
-            return art_error(422, "bad-config", str(e))
-        except RuntimeError as e:
-            return art_error(409, "busy", str(e))
-        return job_json(job)
+            owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
+            try:
+                job = jobs.submit_art(key, body.get("art", body), index_path=str(ctx["item"]["path"]),
+                                      book_id=(owner or {}).get("localId") or "", text_hash=ctx["hash"],
+                                      title=ctx["doc"].get("work", {}).get("title") or key)
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            except RuntimeError as e:
+                raise ArtRefusal(409, "busy", str(e)) from e
+            return job_json(job)
+        return await work()
 
     @app.post("/api/library/{key}/art/prompt")
     async def art_prompt(key: str, request: Request):
@@ -1345,34 +1505,44 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             style = art_style(body.get("style"))
             art_busy(ctx["hash"])
             quality = body.get("quality") or "standard"
-            if quality not in ("draft", "standard", "best"):
-                raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
-            with arts.lock(ctx["hash"], style):
-                il, image = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+            slug_ = arts.resolve(ctx["hash"], style)[0]
+            with arts.lock(ctx["hash"], slug_):
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
                 given, at = art_position(ctx, body)
-                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
+                args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
+                job = art_job(*args)                     # not visible even before a world note holds it: no call at all
                 if not il.man[-1].get("world"):
-                    il.world(len(il.books) - 1)          # the set's world note, once, as a run would write it
-                    job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
+                    # The set's world note, once, as a run writes it; kept only when the picture is then still visible.
+                    before = arts.manifest(ctx["hash"], slug_)
+                    il.world(len(il.books) - 1)
+                    try:
+                        job = art_job(*args)
+                    except ArtRefusal:
+                        folder = arts.folder(ctx["hash"], slug_)
+                        if before is None:
+                            (folder / "art.json").unlink(missing_ok=True)
+                            if folder.is_dir() and not any(folder.iterdir()):
+                                folder.rmdir()
+                        else:
+                            arts.save(ctx["hash"], slug_, before)
+                        raise
                 try:
                     pr = il.make_prompt(job)
                 except artmod.NotVisible as e:
                     raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
                 except ValueError as e:
                     raise ArtRefusal(422, "dropped", str(e)) from e
-            k = (key, job.kind, job.target, artmod.style_slug(style), job.shape, job.anchor)
-            if len(prompts) > 32:
-                prompts.pop(min(prompts, key=lambda x: prompts[x][0]))
-            prompts[k] = (time.time(), pr)
             prov, name = getattr(image, "provider", None), getattr(image, "name", None)
-            return {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
-                    "target": job.target, "references": ref_json(il, pr.references), "provider": prov, "model": name,
-                    "price": llm.image_price(prov, name, quality, pr.shape) if prov else None}
+            out = {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
+                   "target": job.target, "references": ref_json(il, pr.references, slug_), "provider": prov, "model": name,
+                   "price": llm.image_price(prov, name, quality, pr.shape) if prov else None}
+            remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor), pr)
+            return out
         return await work()
 
     @app.post("/api/library/{key}/art/draw")
     async def art_draw(key: str, request: Request):
-        """Draw one picture with the given prompt (the person may have edited it) and file it: the new record."""
+        """Draw one picture with the given prompt (the person may have edited it) and file it: the new record, undone like an edit."""
         body = await json_body(request)
 
         @art_route
@@ -1382,30 +1552,25 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             text_ = " ".join(str(body.get("prompt") or "").split())
             if not text_ or len(text_) > 4000:
                 raise ArtRefusal(422, "bad-prompt", "Give the prompt to draw, at most 4,000 characters.")
-            quality = body.get("quality") or "standard"
-            if quality not in ("draft", "standard", "best"):
-                raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
             art_busy(ctx["hash"])
-            with arts.lock(ctx["hash"], style):
-                il, image = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+            slug_ = arts.resolve(ctx["hash"], style)[0]
+            with arts.lock(ctx["hash"], slug_):
+                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
+                                               body.get("model"))
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
                 job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
-                hit = prompts.get((key, job.kind, job.target, artmod.style_slug(style), job.shape, job.anchor))
-                if hit and time.time() - hit[0] < 3600:
-                    pr = copy.copy(hit[1])
-                else:
+                pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor))
+                if pr is None:
                     try:
                         pr = il.make_prompt(job)   # for its anchor and references; the person's text is drawn
                     except ValueError as e:
                         raise ArtRefusal(422, "dropped", str(e)) from e
-                rec = il.draw(job, prompt=pr, text=text_)
-                if rec is None:
-                    why = (il.report.reasons[-1]["reason"] if il.report.reasons else
-                           next(iter(il.report.skipped), "skipped"))
-                    raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
-            return picture_json(ctx["hash"], artmod.style_slug(style), rec)
+                rec = draw_given(il, job, pr, text_)
+                entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_, "added": [rec["id"]]},
+                                    f"drew a picture ({rec['kind']})")
+            return {**picture_json(ctx["hash"], slug_, rec), "undo": entry["id"]}
         return await work()
 
     def art_record(ctx: dict, pid: str) -> tuple[str, dict]:
@@ -1422,11 +1587,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             slug_, rec = art_record(ctx, pid)
             art_busy(ctx["hash"])
             with arts.lock(ctx["hash"], slug_):
-                folder = arts.folder(ctx["hash"], slug_)
                 f = arts.path(ctx["hash"], slug_, pid)
-                entry = identity.snapshot(key, [folder / "art.json", *([f] if f else [])],
-                                          {"kind": "art", "what": f"removed a picture ({rec['kind']})",
-                                           "art": {"textHash": ctx["hash"], "style": slug_}})
+                entry = journal_art(key, [f] if f else [], {"op": "delete", "textHash": ctx["hash"], "style": slug_,
+                                                            "removed": [rec]}, f"removed a picture ({rec['kind']})")
                 try:
                     arts.remove(ctx["hash"], slug_, pid)
                 except Exception:
@@ -1450,11 +1613,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             ctx = art_index(key)
             slug_, rec = art_record(ctx, pid)
             art_busy(ctx["hash"])
-            m = arts.manifest(ctx["hash"], slug_)
-            style = m.get("style") or slug_
             with arts.lock(ctx["hash"], slug_):
-                il, image = illustrator(ctx, style, rec.get("quality") or "standard",
-                                        rec.get("provider") or None, rec.get("model") or None)
+                prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
+                mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
+                qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
+                il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod)
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in il.books[-1].ord_of:
@@ -1466,29 +1629,22 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 pr = artmod.Prompt(text_, text_, rec["from"], rec.get("shape") or job.shape,
                                    [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
                                    list(rec.get("sources") or [rec["from"]]))
-                folder = arts.folder(ctx["hash"], slug_)
+                new = draw_given(il, job, pr)
                 old = arts.path(ctx["hash"], slug_, pid)
-                entry = identity.snapshot(key, [folder / "art.json", *([old] if old else [])],
-                                          {"kind": "art", "what": f"drew a picture again ({rec['kind']})",
-                                           "art": {"textHash": ctx["hash"], "style": slug_}})
+                entry = journal_art(key, [old] if old and old.name != new["file"] else [],
+                                    {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
+                                     "added": [new["id"]]}, f"drew a picture again ({rec['kind']})")
                 try:
-                    new = il.draw(job, prompt=pr)
-                    if new is None:
-                        why = il.report.reasons[-1]["reason"] if il.report.reasons else "skipped"
-                        raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
                     man = arts.manifest(ctx["hash"], slug_)
                     for r in man["pictures"]:
-                        if r["id"] == new["id"] and r.get("created") == new.get("created"):
+                        if r["id"] == new["id"]:
                             r["replaces"] = pid
                     man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
                     man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
                     arts.save(ctx["hash"], slug_, man)
                     if old is not None and new["file"] != old.name:
                         old.unlink(missing_ok=True)
-                except BaseException:
-                    if arts.manifest(ctx["hash"], slug_) != m:   # restore what was there
-                        shutil.copy2(identity.dir / entry["id"] / "art.json", folder / "art.json")
-                        arts.prune(ctx["hash"], slug_)
+                except Exception:
                     identity.discard(entry["id"])
                     raise
             return {**picture_json(ctx["hash"], slug_, {**new, "replaces": pid}), "undo": entry["id"]}
@@ -1505,20 +1661,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not text_ or len(text_) > artstore.MAX_WORLD:
                 raise ArtRefusal(422, "bad-text", f"Write the world note in 1 to {artstore.MAX_WORLD} characters.")
             art_busy(ctx["hash"])
-            slug_ = artmod.style_slug(style)
-            with arts.lock(ctx["hash"], style):
-                m = arts.manifest(ctx["hash"], style)
-                if m is None:
+            slug_, style = arts.resolve(ctx["hash"], style)
+            with arts.lock(ctx["hash"], slug_):
+                m = arts.manifest(ctx["hash"], slug_)
+                if m is None:   # a new set; an existing one is never replaced by an empty manifest
                     m = artmod.blank(next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")),
                                           ctx["hash"]), style)
-                    arts.save(ctx["hash"], style, m)
-                entry = identity.snapshot(key, [arts.folder(ctx["hash"], style) / "art.json"],
-                                          {"kind": "art", "what": "changed the world note",
-                                           "art": {"textHash": ctx["hash"], "style": slug_}})
+                entry = journal_art(key, [], {"op": "world", "textHash": ctx["hash"], "style": slug_, "before": m.get("world")},
+                                    "changed the world note")
                 # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
                 m["world"] = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
                 try:
-                    arts.save(ctx["hash"], style, m)
+                    arts.save(ctx["hash"], slug_, m)
                 except Exception:
                     identity.discard(entry["id"])
                     raise
@@ -1595,12 +1749,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         elif jobs.drawing(last["art"]["textHash"]):
             raise HTTPException(409, "Pictures are being drawn for this book. Undo once that run has finished.")
         try:
-            if art_entry:
-                a = last["art"]
-                with arts.lock(a["textHash"], a["style"]):
-                    out = editor.undo(key, merge_id)
-                    arts.prune(a["textHash"], a["style"])   # a redraw's new file is no longer listed
-                return out
+            if art_entry:   # only the records the entry touched: pictures drawn since stay
+                return identity.undo(key, merge_id, revert=art_revert)
             return editor.undo(key, merge_id)
         except KeyError as e:
             raise HTTPException(404, "no such index") from e

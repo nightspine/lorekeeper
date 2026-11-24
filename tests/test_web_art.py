@@ -3,6 +3,7 @@ routes, delete, redraw and the world note with undo. Scripted text and image mod
 
 import json
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -87,7 +88,7 @@ def wait_for(c, job_id, statuses=("done", "failed", "stopped"), timeout=15):
 
 
 def run_set(e, **cfg):
-    r = e.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "level": "main", **cfg}})
+    r = e.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "level": "main", "cap": 10, **cfg}})
     assert r.status_code == 200, r.text
     return wait_for(e.c, r.json()["id"])
 
@@ -138,7 +139,7 @@ def test_screened_counts_read_the_cache_by_chapter_title():
 def test_a_pictures_run_on_an_existing_index_draws_the_set_and_never_writes_the_index(env):
     env.key()
     before = env.index.read_bytes()
-    done = wait_for(env.c, env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink"}}).json()["id"])
+    done = wait_for(env.c, env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "cap": 10}}).json()["id"])
     assert done["status"] == "done", done["error"] and done["kind"] == "art"
     rep = done["report"]["art"]
     assert rep["drawn"] == len(env.image.calls) > 0 and rep["style"] == "ink" and rep["textHash"] == env.hash
@@ -201,14 +202,16 @@ def test_a_run_is_refused_while_a_build_writes_the_index(env):
     env.key()
     busy = jobs_mod.Job(id="busy1", book_id="", book_title="Millbrook", config={}, output=str(env.index), status="running")
     env.jobs.jobs["busy1"] = busy
-    r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink"}})
+    r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "cap": 10}})
     assert r.status_code == 409 and r.json()["code"] == "busy"
     busy.status = "done"
 
 
 def test_a_bad_config_is_refused_before_anything_is_queued(env):
-    for cfg in ({"style": ""}, {"style": "ink", "level": "every"}, {"style": "ink", "cap": -1}, {"style": "ink", "provider": "claude"},
-                {"style": "ink", "quality": "huge"}):
+    for cfg in ({"style": "", "cap": 5}, {"style": "ink", "level": "every", "cap": 5}, {"style": "ink", "cap": -1},
+                {"style": "ink", "provider": "claude", "cap": 5}, {"style": "ink", "quality": "huge", "cap": 5},
+                {"style": "ink"}, {"style": "ink", "cap": None}, {"style": "ink", "cap": 0}, {"style": "ink", "cap": 501},
+                {"style": "ink", "level": None, "cap": 5}):
         r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": cfg})
         assert r.status_code == 422, cfg
     assert env.jobs.jobs == {}
@@ -247,8 +250,10 @@ def test_the_build_ends_with_the_pictures_stage_after_the_arcs(tmp_path, monkeyp
         meta = upload(c, tmp_path)
         bad = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "level": "x"}}})
         assert bad.status_code == 422
-        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink"}}}).json()
+        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "cap": 10}}}).json()
         assert job["config"]["art"]["level"] == "main" and job["config"]["art"]["cap"] == 10
+        no_cap = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink"}}})
+        assert no_cap.status_code == 422
         done = wait_for(c, job["id"])
         events = (tmp_path / "data" / "jobs" / f"{job['id']}.events.jsonl").read_text()
         key = "generated--" + Path(done["output"]).with_suffix("").name
@@ -266,7 +271,7 @@ def test_without_an_image_key_the_build_skips_the_pictures(tmp_path, monkeypatch
     app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         meta = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink"}}}).json()
+        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "cap": 10}}}).json()
         done = wait_for(c, job["id"])
     assert done["status"] == "done" and done["report"]["art"] == {"skipped": "no image key"}
 
@@ -346,7 +351,7 @@ def test_delete_and_undo(env):
     u = env.c.post(f"/api/library/{KEY}/undo/{r.json()['undo']}")
     assert u.status_code == 200 and u.json()["kind"] == "art"
     back = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
-    assert [p["id"] for p in back] == [p["id"] for p in pics] and env.c.get(pics[0]["url"]).status_code == 200
+    assert sorted(p["id"] for p in back) == sorted(p["id"] for p in pics) and env.c.get(pics[0]["url"]).status_code == 200
     assert env.c.delete(f"/api/library/{KEY}/art/p00000000").status_code == 404
 
 
@@ -379,7 +384,7 @@ def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     assert r.status_code == 422 and r.json()["code"] == "refused"
     after = env.c.get(f"/api/library/{KEY}/art?style=ink").json()
     assert [p["id"] for p in after["pictures"]] == [p["id"] for p in before["pictures"]]
-    assert not list((env.data / "merges").glob("*/entry.json"))
+    assert [json.loads(p.read_text())["art"]["op"] for p in (env.data / "merges").glob("*/entry.json")] == ["add"]   # the run's
 
 
 def test_the_world_note_can_be_written_by_hand_and_undone(env):
@@ -427,5 +432,236 @@ def test_mutating_routes_need_the_csrf_header(env):
     bare = TestClient(env.c.app)
     for method, url in (("post", f"/api/library/{KEY}/art/run"), ("post", f"/api/library/{KEY}/art/prompt"),
                         ("post", f"/api/library/{KEY}/art/draw"), ("delete", f"/api/library/{KEY}/art/p00000000"),
-                        ("put", f"/api/library/{KEY}/art/world")):
+                        ("put", f"/api/library/{KEY}/art/world"), ("post", f"/api/library/{KEY}/art/p00000000/redraw"),
+                        ("delete", f"/api/art/{env.hash}")):
         assert getattr(bare, method)(url).status_code == 403, url
+
+
+# ---- round 2
+
+
+def pictures(e, style="ink"):
+    return e.c.get(f"/api/library/{KEY}/art", params={"style": style}).json()["pictures"]
+
+
+def undo(e, entry):
+    r = e.c.post(f"/api/library/{KEY}/undo/{entry}")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def latest_entry(e):
+    entries = [json.loads(p.read_text()) for p in (e.data / "merges").glob("*/entry.json")]
+    return max(entries, key=lambda x: x["at"])
+
+
+def test_undo_touches_only_the_records_of_its_entry(env):
+    env.key()
+    run_set(env, portraits=False)
+    a = pictures(env)[0]
+    deleted = env.c.delete(f"/api/library/{KEY}/art/{a['id']}").json()["undo"]
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"}).json()
+    b = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink", "prompt": got["prompt"]}).json()
+    run = run_set(env, portraits=True)
+    more = {p["id"] for p in pictures(env)} - {b["id"]} - {p["id"] for p in pictures(env) if p["kind"] != "portrait"}
+    assert len(more) >= 3 and run["progress"]["artUndo"] == latest_entry(env)["id"]
+    undo(env, run["progress"]["artUndo"])                       # the run's portraits go, B stays
+    assert b["id"] in {p["id"] for p in pictures(env)} and not more & {p["id"] for p in pictures(env)}
+    undo(env, b["undo"])
+    assert b["id"] not in {p["id"] for p in pictures(env)}
+    undo(env, deleted)
+    assert a["id"] in {p["id"] for p in pictures(env)} and env.c.get(a["url"]).status_code == 200
+
+
+def test_undoing_a_delete_never_takes_out_a_picture_drawn_outside_the_journal(env):
+    env.key()
+    run_set(env, portraits=False)
+    a = pictures(env)[0]
+    deleted = env.c.delete(f"/api/library/{KEY}/art/{a['id']}").json()["undo"]
+    store = store_mod.ArtStore(env.data)
+    store.put(env.hash, "ink", {"id": "p0000cccc", "file": "p0000cccc.png", "kind": "plate", "target": "x", "from": "a1"},
+              png(2, 2, b"late"))
+    undo(env, deleted)
+    ids = {p["id"] for p in pictures(env)}
+    assert {a["id"], "p0000cccc"} <= ids and (env.data / "art" / env.hash / "ink" / "p0000cccc.png").exists()
+
+
+def test_a_style_is_its_slug_and_never_starts_the_set_over(env):
+    env.key()
+    run_set(env, portraits=False)
+    n = len(pictures(env))
+    r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "Ink"})
+    assert r.status_code == 200, r.text
+    assert env.c.put(f"/api/library/{KEY}/art/world", json={"style": "INK", "text": "A valley of mills."}).status_code == 200
+    m = json.loads((env.data / "art" / env.hash / "ink" / "art.json").read_text())
+    assert len(m["pictures"]) == n and m["style"] == "ink" and len(pictures(env, "Ink")) == n
+    assert run_set(env, style="Ink", portraits=False)["report"]["art"]["drawn"] == 0     # the same set: nothing new to draw
+
+
+def test_pictures_entries_keep_the_duplicates_panel_working(env):
+    env.key()
+    run_set(env, portraits=False)
+    env.c.delete(f"/api/library/{KEY}/art/{pictures(env)[0]['id']}")
+    entry = latest_entry(env)
+    assert entry["keepNames"] == [] and entry["dropNames"] == []
+    assert env.c.get(f"/api/library/{KEY}/duplicates").status_code == 200
+
+
+def test_a_pictures_run_names_its_providers_and_does_not_make_ollama_look_busy(env, monkeypatch):
+    env.key()
+
+    class Tags:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return json.dumps({"models": [{"name": llm.DEFAULT_MODEL}]}).encode()
+    monkeypatch.setattr(web_app.urllib.request, "urlopen", lambda *a, **kw: Tags())
+    monkeypatch.setattr(jobs_mod.JobManager, "configured", lambda self: [])
+    monkeypatch.setattr(jobs_mod.JobManager, "text_provider", lambda self, p=None: "claude")
+    job = env.jobs.submit_art(KEY, {"style": "ink", "cap": 5}, index_path="/nowhere", book_id="", title="M", text_hash="ef" * 32)
+    assert job.config["provider"] == "claude" and job.config["image_provider"] == "gemini"
+    job.status = "running"
+    assert env.c.get("/api/ask").json()["reason"] != "ollama-busy"
+    job.config["provider"] = None
+    assert env.c.get("/api/ask").json()["reason"] != "ollama-busy"
+    job.status = "stopped"
+
+
+def test_an_earlier_book_without_an_edition_is_skipped_not_fatal(env):
+    env.key()
+    real = env.jobs.art_inputs
+
+    def with_bad_prior(job):
+        doc, bk, _ = real(job)
+        return doc, bk, [{"work": {"title": "Before Millbrook"}, "editions": [{"textHash": "not-a-hash"}], "anchors": [], "entities": []}]
+    env.jobs.art_inputs = with_bad_prior
+    done = run_set(env, portraits=False)
+    assert done["status"] == "done" and done["report"]["art"]["drawn"] > 0
+    assert "Before Millbrook names no edition" in (env.data / "jobs" / f"{done['id']}.events.jsonl").read_text()
+
+
+def test_the_estimate_refuses_an_unknown_provider(env):
+    r = env.c.get("/api/art/estimate", params={"key": KEY, "provider": "foo"})
+    assert r.status_code == 422 and r.json()["code"] == "bad-provider"
+    assert env.c.get("/api/art/estimate", params={"key": KEY, "provider": "gemini", "model": "nope"}).json()["code"] == "bad-model"
+
+
+def test_the_prompt_cache_is_safe_across_threads(env):
+    from concurrent.futures import ThreadPoolExecutor
+    remember, recall, cache = env.c.app.state.art_prompts
+
+    def one(i):
+        remember(("k", i), f"prompt {i}")
+        return recall(("k", i))
+    with ThreadPoolExecutor(8) as pool:
+        got = list(pool.map(one, range(200)))
+    assert len(cache) == 32 and all(g is None or g.startswith("prompt") for g in got) and recall(("k", 199)) == "prompt 199"
+
+
+def test_routes_for_one_index_do_not_scan_the_library(env, monkeypatch):
+    env.key()
+    run_set(env, portraits=False)
+    n = []
+    real = web_app.Library.scan
+    monkeypatch.setattr(web_app.Library, "scan", lambda self: n.append(1) or real(self))
+    env.c.get(f"/api/library/{KEY}/art", params={"style": "ink"})
+    env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A valley."})
+    assert n == [1]           # the world note's journal entry finds the book's group; reading the set scans nothing
+
+
+def test_starting_a_run_works_off_the_event_loop(env, monkeypatch):
+    env.key()
+    names = []
+    real = web_app.Catalog.entries
+    monkeypatch.setattr(web_app.Catalog, "entries", lambda self: names.append(threading.current_thread().name) or real(self))
+    run_set(env, portraits=False)
+    assert names and all(x.startswith("asyncio_") for x in names)    # the loop's default executor, not the loop
+
+
+def test_a_stop_in_the_pictures_stage_leaves_the_build_resumable(tmp_path, monkeypatch):
+    from .test_web import SlowFake, upload
+    monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
+    t = Text()
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
+    monkeypatch.setattr(art, "WORKERS", 1)
+    builds = []
+    real_run = jobs_mod.generate.run
+    monkeypatch.setattr(jobs_mod.generate, "run", lambda *a, **kw: builds.append(1) or real_run(*a, **kw))
+    box = {}
+
+    class Stopper(GeminiFake):
+        def draw(self, prompt, **kw):
+            if not box.get("stopped"):
+                box["stopped"] = True
+                mgr = box["mgr"]
+                mgr.stop(next(j.id for j in mgr.jobs.values() if j.status == "running"))
+            return super().draw(prompt, **kw)
+    im = Stopper()
+    monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    box["mgr"] = app.state.jobs
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        meta = upload(c, tmp_path)
+        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "cap": 10}}}).json()
+        stopped = wait_for(c, job["id"])
+        assert stopped["status"] == "stopped" and stopped["progress"]["resumeFrom"] == "art", stopped
+        first = len(im.calls)
+        assert c.post(f"/api/jobs/{job['id']}/resume").status_code == 200
+        done = wait_for(c, job["id"], ("done", "failed"))
+    assert done["status"] == "done", done["error"] and len(builds) == 1
+    assert len(im.calls) > first and "resumeFrom" not in done["progress"] and "arcs" in done["report"]
+
+
+def test_the_prompt_route_keeps_no_world_note_for_a_picture_it_then_holds_back(env):
+    env.key()
+    r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e1", "style": "ink", "p": "a2"})
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert any("visual world note" in p for p in env.text.prompts)          # it was written, then not kept
+    assert env.c.get(f"/api/library/{KEY}/art", params={"style": "ink"}).json()["world"] is None
+
+
+def test_a_given_prompt_is_never_softened(env):
+    env.key()
+    run_set(env, portraits=False)
+    old = pictures(env)[0]
+    env.image.calls.clear()
+    env.image.refuse = [lambda prompt, n: True, lambda prompt, n: True]
+    env.text.prompts.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/redraw", json={"note": "At night"})
+    assert r.status_code == 422 and r.json()["code"] == "refused" and len(env.image.calls) == 1
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate at dusk."})
+    assert r.status_code == 422 and r.json()["code"] == "refused" and len(env.image.calls) == 2
+    assert not any("quieter composition" in p for p in env.text.prompts)
+    assert json.loads((env.data / "art" / env.hash / "ink" / "art.json").read_text())["skipped"] == []
+
+
+def test_settings_lists_and_removes_a_books_pictures_with_undo(env):
+    env.key()
+    run_set(env, portraits=False)
+    listed = env.c.get("/api/art").json()
+    assert listed == [{"key": KEY, "title": "Millbrook", "textHash": env.hash, "bytes": listed[0]["bytes"],
+                       "styles": [{"style": "ink", "slug": "ink", "pictures": len(pictures(env)), "bytes": listed[0]["bytes"]}]}]
+    n = len(pictures(env))
+    busy = jobs_mod.Job(id="art2", book_id="", book_title="M", config={"text_hash": env.hash}, output="", status="running", kind="art")
+    env.jobs.jobs["art2"] = busy
+    assert env.c.delete(f"/api/art/{env.hash}").status_code == 409
+    busy.status = "done"
+    r = env.c.delete(f"/api/art/{env.hash}", params={"style": "ink"})
+    assert r.status_code == 200 and r.json()["removed"] == ["ink"]
+    assert env.c.get("/api/art").json() == [] and pictures(env) == []
+    undo(env, r.json()["undo"])
+    assert len(pictures(env)) == n and env.c.get(pictures(env)[0]["url"]).status_code == 200
+    assert env.c.delete(f"/api/art/{'00' * 32}").status_code == 404
+
+
+def test_a_pictures_job_names_its_index(env):
+    env.key()
+    done = run_set(env, portraits=False)
+    assert done["index"] == KEY == done["config"]["index_key"]
+    assert all("index" not in j or j["kind"] == "art" for j in env.c.get("/api/jobs").json())

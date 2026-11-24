@@ -78,9 +78,23 @@ class ArtStore:
             if m is None:
                 continue
             out.append({"slug": sub.name, "style": m.get("style"), "pictures": len(m.get("pictures", [])),
-                        "cost": m.get("cost", 0.0), "_t": (sub / "art.json").stat().st_mtime})
+                        "cost": m.get("cost", 0.0), "bytes": sum(f.stat().st_size for f in sub.iterdir() if f.is_file()),
+                        "_t": (sub / "art.json").stat().st_mtime})
         out.sort(key=lambda s: -s.pop("_t"))
         return out
+
+    def resolve(self, text_hash: str, style: str) -> tuple[str, str]:
+        """(slug, style text) of the set a style names. A set is identified by its slug: "Ink" is the "ink" set, and a custom
+        style whose slug is a stored set's uses that set's stored text, so the pipeline reuses the set and never starts it over."""
+        slug = art.style_slug(style)
+        m = self.manifest(text_hash, slug)
+        return slug, (m.get("style") if m and m.get("style") else style)
+
+    def editions(self) -> list[str]:
+        """Text hashes that have at least one art set."""
+        if not self.root.is_dir():
+            return []
+        return sorted(d.name for d in self.root.iterdir() if HASH.fullmatch(d.name) and self.styles(d.name))
 
     def find(self, text_hash: str, pid: str) -> tuple[str, dict] | None:
         """(slug, record) of a picture id in any style of the edition."""
@@ -158,6 +172,36 @@ class ArtStore:
         return gone
 
 
+    # ---- targeted undo: put back or take out exactly the records a journal entry touched (callers hold `lock`)
+
+    def take_out(self, text_hash: str, slug: str, ids: list[str]) -> int:
+        """Remove these pictures (records and files) and nothing else; returns how many were there."""
+        n = 0
+        for pid in ids:
+            if self.remove(text_hash, slug, pid) is not None:
+                n += 1
+        return n
+
+    def put_back(self, text_hash: str, slug: str, records: list[dict], src: Path) -> int:
+        """Put records back, with their files from `src` (a journal snapshot), unless a record with the id is already there."""
+        sink = self.sink(text_hash, slug)
+        m = sink.manifest()
+        if m is None:
+            raise LookupError("this art set is gone")
+        have = {r.get("id") for r in m.get("pictures", [])}
+        n = 0
+        for rec in records:
+            name = str(rec.get("file") or "")
+            if rec.get("id") in have or not FILE.fullmatch(name) or not (src / name).is_file():
+                continue
+            sink.put(name, (src / name).read_bytes())
+            m["pictures"].append(rec)
+            n += 1
+        m["cost"] = round(sum(r.get("cost") or 0 for r in m["pictures"]), 6)
+        sink.save(m)
+        return n
+
+
 def screened_count(screened: dict, title: str) -> int | None:
     """How many drawable moments the set's screening found in a chapter, or None when it was not screened. The cache is
     keyed by the chapter title (a key may carry more after the title, such as a stamp of the chapter's events) and holds
@@ -169,3 +213,4 @@ def screened_count(screened: dict, title: str) -> int | None:
     if isinstance(hit, dict):
         hit = next((v for k in ("moments", "events", "chosen", "drawable") if isinstance(v := hit.get(k), list)), None)
     return len(hit) if isinstance(hit, list) else None
+

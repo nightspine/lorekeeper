@@ -428,17 +428,19 @@ class Identity:
             tmp.replace(p)
         return entry
 
-    def snapshot(self, key: str, paths: list[Path], meta: dict) -> dict:
-        """Journal a change to files that are not index documents (an art set's manifest and pictures): copy them for
-        undo and return the entry; the caller then makes the change, or calls `discard` when it fails. `undo` restores
-        them like any other entry, so pictures share the one undo history of the book's group."""
+    def snapshot(self, key: str, keep: list[Path], meta: dict) -> dict:
+        """Journal a change to the pictures (not an index document): copy the files in `keep` into the entry for its undo
+        and return the entry. Nothing is copied back by `undo` itself: the caller's `revert` puts back or takes out exactly
+        what the entry touched, so pictures share the one undo history of the book's group and an undo never touches
+        anything drawn since."""
         gid, _ = self.group(key)
-        entry = {"id": uuid.uuid4().hex[:12], "group": gid, "at": time.time(), **meta, "files": [str(p) for p in paths]}
+        if len({p.name for p in keep}) != len(keep):
+            raise ValueError("two files with one name")
+        entry = {"id": uuid.uuid4().hex[:12], "group": gid, "at": time.time(), "keepNames": [], "dropNames": [],
+                 **meta, "files": []}
         snap = self.dir / entry["id"]
         snap.mkdir(parents=True, exist_ok=True)
-        if len({p.name for p in paths}) != len(paths):
-            raise ValueError("two files with one name")
-        for p in paths:
+        for p in keep:
             shutil.copy2(p, snap / p.name)
         (snap / "entry.json").write_text(json.dumps(entry, indent=2))
         return entry
@@ -452,7 +454,9 @@ class Identity:
         journal = self._journal(gid)
         return journal[-1] if journal else None
 
-    def undo(self, key: str, merge_id: str) -> dict:
+    def undo(self, key: str, merge_id: str, revert=None) -> dict:
+        """Undo the latest entry of the group. `revert(entry, snapshot folder)` is called for a pictures entry before its
+        snapshot goes, and does the whole of its undo."""
         with self._lock:
             gid, items = self.group(key)
             journal = self._journal(gid)
@@ -461,6 +465,10 @@ class Identity:
             if self._busy(items):
                 raise RuntimeError("a build is writing one of these indexes; undo once it has finished")
             snap = self.dir / merge_id
+            if journal[-1].get("kind") == "art":
+                if revert is None:
+                    raise LookupError("this change to the pictures is undone from the pictures")
+                revert(journal[-1], snap)
             for f in journal[-1]["files"]:
                 p = Path(f)
                 shutil.copy2(snap / p.name, p)
