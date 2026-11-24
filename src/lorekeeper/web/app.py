@@ -987,17 +987,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return {"synced": False, "reason": "no-edition"}
         cached = next((b for b in catalog.bookorbit_books() if b["id"] == owner["bookorbitId"]), None) or {}
         status, finished_at = cached.get("readStatus"), cached.get("finishedAt")
+        items, error, down = [], None, False
         try:
             live = bo_client().read_status(owner["bookorbitId"])
-            if live["status"] is not None:      # an older server has no status: keep what the sync saw
+            if live["known"]:                    # null means no status; only a missing field keeps the cache
                 status, finished_at = live["status"], live["finishedAt"]
+        except bookorbit.BookOrbitUnreachable as e:
+            down, error = True, e                # no second wait for the progress call
         except bookorbit.BookOrbitError:
             pass                                 # fall back to the cached status
-        items, error = [], None
-        try:
-            items = bo_client().progress(owner["bookorbitId"])
-        except bookorbit.BookOrbitError as e:
-            error = e
+        if not down:
+            try:
+                items = bo_client().progress(owner["bookorbitId"])
+            except bookorbit.BookOrbitError as e:
+                error = e
         newest = max((i["updatedAt"] for i in items if i.get("updatedAt")), default=None)
         if bookorbit.is_finished(status):
             try:

@@ -33,6 +33,10 @@ class BookOrbitError(Exception):
     """A failure worth showing the user as is."""
 
 
+class BookOrbitUnreachable(BookOrbitError):
+    """The server could not be reached at all (as opposed to answering with an error)."""
+
+
 def normalize_url(url: str) -> str:
     url = (url or "").strip().rstrip("/")
     if not url:
@@ -170,7 +174,7 @@ class BookOrbit:
                     raise BookOrbitError("Book Orbit couldn't find that item.") from e
                 raise BookOrbitError(f"Book Orbit error {e.code}: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
         raise BookOrbitError("Book Orbit rejected the session.")
 
     # ---- data ------------------------------------------------------------------------------
@@ -275,10 +279,12 @@ class BookOrbit:
     def read_status(self, book_id) -> dict:
         """The person's read status of one book, `{"status", "finishedAt"}` (a GET; nothing is ever written).
 
-        `GET /books/{id}` carries `readStatus` as an object; an older server may not carry it at all,
-        then the status is None.
+        `GET /books/{id}` carries `readStatus` as an object, or null when the person has no status.
+        An older server may not carry the field at all: `known` is False then, and a null status
+        with `known` True means "no status".
         """
-        return read_status_of(self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}"))
+        r = self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}")
+        return {**read_status_of(r), "known": isinstance(r, dict) and "readStatus" in r}
 
     def thumbnail(self, book_id) -> tuple[bytes, str]:
         return self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}/thumbnail", raw=True, timeout=30)
@@ -324,6 +330,7 @@ def trim_book(b: dict) -> dict:
     elif b.get("seriesId") or b.get("seriesName"):
         series.append({"id": str(b.get("seriesId") or b.get("seriesName")), "name": b.get("seriesName"),
                        "index": b.get("seriesIndex"), "expected": None})
+    rs = read_status_of(b)
     return {
         "id": str(b.get("id")), "libraryId": str(b.get("libraryId")), "title": b.get("title") or "Untitled",
         "authors": [a if isinstance(a, str) else a.get("name", "") for a in b.get("authors") or []],
@@ -331,7 +338,7 @@ def trim_book(b: dict) -> dict:
         "epubSize": epub.get("sizeBytes") if epub else None, "hasCover": bool(b.get("hasCover")),
         "coverVersion": b.get("coverVersion"), "language": b.get("language"), "isbn13": b.get("isbn13"),
         "updatedAt": b.get("updatedAt"),
-        "readStatus": read_status_of(b)["status"], "finishedAt": read_status_of(b)["finishedAt"],
+        "readStatus": rs["status"], "finishedAt": rs["finishedAt"],
     }
 
 
