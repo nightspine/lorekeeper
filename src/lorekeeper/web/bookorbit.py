@@ -272,6 +272,14 @@ class BookOrbit:
                         "text": {"cfi": cfi}, "kobo": {"source": source, "contentPercent": pct}, "koreader": koreader})
         return out
 
+    def read_status(self, book_id) -> dict:
+        """The person's read status of one book, `{"status", "finishedAt"}` (a GET; nothing is ever written).
+
+        `GET /books/{id}` carries `readStatus` as an object; an older server may not carry it at all,
+        then the status is None.
+        """
+        return read_status_of(self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}"))
+
     def thumbnail(self, book_id) -> tuple[bytes, str]:
         return self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}/thumbnail", raw=True, timeout=30)
 
@@ -281,6 +289,28 @@ class BookOrbit:
                      token=self._access, timeout=8)
         except Exception:
             pass   # the local copy is deleted either way
+
+
+def read_status_of(b) -> dict:
+    """`{"status": lowercase str | None, "finishedAt": str | None}` from a book row or detail.
+
+    Detail answers carry `readStatus` as `{status, source, startedAt?, finishedAt?}` (or null); list rows
+    carry a plain string and `readFinishedAt`. Both are accepted; anything else reads as no status.
+    """
+    if not isinstance(b, dict):
+        return {"status": None, "finishedAt": None}
+    rs = b.get("readStatus")
+    finished = b.get("readFinishedAt")
+    if isinstance(rs, dict):
+        finished = rs.get("finishedAt", finished)
+        rs = rs.get("status")
+    status = rs.strip().lower() if isinstance(rs, str) and rs.strip() else None
+    return {"status": status, "finishedAt": finished if isinstance(finished, str) and finished else None}
+
+
+def is_finished(status) -> bool:
+    """Only `read` unlocks the whole index; `skimmed` and `abandoned` are not finishing it."""
+    return status == "read"
 
 
 def trim_book(b: dict) -> dict:
@@ -301,6 +331,7 @@ def trim_book(b: dict) -> dict:
         "epubSize": epub.get("sizeBytes") if epub else None, "hasCover": bool(b.get("hasCover")),
         "coverVersion": b.get("coverVersion"), "language": b.get("language"), "isbn13": b.get("isbn13"),
         "updatedAt": b.get("updatedAt"),
+        "readStatus": read_status_of(b)["status"], "finishedAt": read_status_of(b)["finishedAt"],
     }
 
 
