@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pictures - Lorekeeper docs</title>
+<meta name="description" content="Generated chapter pictures and character portraits for a book, shown in the Reader only from the point they belong to.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="ask.html">Ask about a book</a></li><li><a href="pictures.html" aria-current="page">Pictures</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Pictures</h1>
+<p class="lede">Lorekeeper can draw pictures for a book: one for each chapter, more for the moments worth seeing, and a portrait of each character. The Reader shows a picture only once you have read up to the point it belongs to.</p>
+
+<p>Pictures are off until you ask for them. They need an image provider, which is a Gemini or OpenAI key, and a cloud text model to write the prompts. Claude cannot draw, but it can write the prompts while Gemini or OpenAI draws. Pictures are kept beside the index, never inside it, so an index you share or install stays text only.</p>
+
+<h2 id="what">What can be drawn</h2>
+<ul>
+<li><strong>Chapter pictures.</strong> One picture for the main moment of a chapter. It sits under the chapter's title on the Chapters tab.</li>
+<li><strong>Moments.</strong> A picture for another moment of a chapter, shown at the left of its event on the Timeline.</li>
+<li><strong>Portraits.</strong> One for each person or creature the book describes. It sits beside "Who they are" in the entry, and a small round one replaces the type mark in the Cast list. When the character's look changes, for example after a wound or a death, a new portrait is drawn and the old one moves to "Earlier impressions". A character has at most three portraits per book.</li>
+<li><strong>Places and things.</strong> These are never drawn ahead of time, but you can draw any of them on demand from its entry.</li>
+</ul>
+<p>A character the text never describes gets no portrait. The run's report says "skipped: no look described" and does not try again.</p>
+
+<h3 id="how-many">How many pictures a chapter gets</h3>
+<p>Before drawing a chapter, a cheap text call reads the chapter's events and picks the ones that can be drawn: a moment with a place, people or things in view. "Harker finds every door locked" can be drawn. "Harker concludes he is a prisoner" cannot. Small moments are never drawn. That count is the most pictures the chapter can have.</p>
+<p>When you build, you choose one of two levels:</p>
+<ul>
+<li><strong>The main moment of each chapter</strong> draws one picture per chapter. It is the chapter's turning point when one can be drawn, else the moment the chapter recap says most about, else the recap itself.</li>
+<li><strong>Every moment worth drawing</strong> draws all the moments the check picked.</li>
+</ul>
+<p>A chapter with no events gets no picture. In the Reader, the picture sheet for a chapter says how many moments it has so far and how many are drawn, for example "4 moments in this chapter so far, 1 drawn", and you can draw the rest one at a time.</p>
+
+<h2 id="styles">Styles</h2>
+<p>Nine styles come with Lorekeeper: Digital art, Comic strip, Anime, Realism, Hand-drawn, Oil painting, Epic sci-fi, Watercolour and Ink. Each is one sentence added to every prompt, such as "Black ink drawing, fine cross-hatching, strong contrast, aged paper." for Ink. Choose Custom to write your own sentence, for example "linocut, two colours". Describe the look, never an artist's name.</p>
+<p>Each style is a separate set of pictures. You can draw a book in Ink and again in Watercolour, and the Reader's style menu switches between them.</p>
+
+<h2 id="consistency">Keeping one world and one face</h2>
+<p>Each picture is drawn on its own, so the prompts carry what must stay the same. Three things do that work.</p>
+<ul>
+<li><strong>The world note.</strong> A short description of the book's world: the era and its technology, the buildings, the clothing, the landscape, the light. It is written once from the first chapters of the story, until they add up to at least 1,500 words, and added word for word to every prompt. That is why a fortress in a science-fiction novel stays a science-fiction fortress when the passage only says "the fortress", and why a castle in a gothic novel stays gothic. You can read and change the note in the picture sheet, and a note you changed is never rewritten.</li>
+<li><strong>The appearance note.</strong> A short description of how a character, place or thing looks, written once, the first time it is needed. Every prompt it appears in gets the same words. When the look changes, a sentence is added ("The same man, now ...") and the old words stay.</li>
+<li><strong>The portrait as a reference.</strong> When a scene shows a character who has a portrait, that portrait is sent with the prompt as a picture to follow. A scene sends at most four, for the characters it shows, most connected first. A new portrait after a change of look is drawn with the earlier one as a reference, so the same face ages rather than a new one appearing.</li>
+</ul>
+<p>This gives a character you can recognise from picture to picture. It does not give the same face every time. A new pose or new light can still drift, and in a crowded scene the image model may follow a reference loosely or not at all.</p>
+<p>The prompt never names anyone. It describes people by their look and role, since a name invites the image model to draw what it remembers of the book. A prompt with a name in it is written once more, and then the picture is skipped.</p>
+
+<h2 id="series">In a series</h2>
+<p>A later book builds on the earlier books' pictures. It starts from their world note and appearance notes, and a character who already has a portrait is not drawn again unless the book records a change of look. Scenes in book five use the portrait from book one, or its latest version. A later book may add one sentence to the world note when its own opening shows a change of world. Pictures before that sentence's point use the older note.</p>
+<p>What you see still follows what you have finished. A picture from an earlier book shows once you mark that book finished. Text from a book you have not finished stays hidden: the world note's part from that book, and the prompt under "How this was drawn" when the prompt used that book, which instead says "How this was drawn is hidden until you finish" and the book's title. When you draw on demand, the prompt is written without anything from an unfinished book.</p>
+
+<h2 id="spoilers">Spoilers</h2>
+<p>Every picture belongs to a point in the book, the same kind of point a name, a detail or an event has. A chapter picture belongs to the end of its chapter, a moment to the moment, and a portrait to the description it was drawn from. The Reader shows a picture only once your position reaches that point. Before then it is not on the page, not in the counts and not behind the lightbox's arrows. Moving back hides it again.</p>
+<p>A prompt is written only from what comes at or before its point: the passage, and the index as it stands there. Pictures drawn early on wait a little longer. Because the world note is written from the opening chapters, a picture drawn from those chapters, usually a portrait, shows from the end of that opening stretch.</p>
+<p>The prompt is checked before it is sent. It is written once more if it uses a name the book has not used yet, reads with hindsight ("would later", "turns out"), or states a family tie the passage does not. If the second try fails too, the picture is skipped. A picture is less exact than text, which helps, but a model that knows the book could still put something later into a scene without naming anyone, and no check catches that.</p>
+
+<h2 id="sent">What is sent where</h2>
+<ul>
+<li><strong>The text model</strong> writes the prompt. It gets the passage the picture shows, at most 600 words and never past the picture's point, and the index text visible there: the event, the chapter so far, the profiles and details of the people in it, the world note and their appearance notes. If the book was built on the same cloud provider, it already read that text then. It is the cheap model of the run's own cloud provider, else of the first one set up in Settings.</li>
+<li><strong>The image provider</strong> gets only the written prompt and the reference portraits. It never gets the book's text or the EPUB.</li>
+</ul>
+<p>Pictures stay on your server. They are not part of share bundles or the community registry.</p>
+
+<h2 id="cost">What it costs</h2>
+<p>Prices come from the providers' published rates.</p>
+<div class="table-wrap"><table><thead><tr><th>Model</th><th>Draft</th><th>Standard</th><th>Best</th></tr></thead><tbody>
+<tr><td>Gemini Nano Banana 2.1 (the default)</td><td>$0.034</td><td>$0.034</td><td>$0.050</td></tr>
+<tr><td>Gemini Nano Banana 2 Lite</td><td>$0.034</td><td>$0.034</td><td>not offered</td></tr>
+<tr><td>Gemini Nano Banana Pro</td><td>$0.134</td><td>$0.134</td><td>$0.134</td></tr>
+<tr><td>OpenAI GPT Image 2</td><td>$0.005 to $0.006</td><td>$0.041 to $0.053</td><td>$0.165 to $0.211</td></tr>
+<tr><td>OpenAI GPT Image 2.6 Flare and Sunburst</td><td colspan="3">No published price per picture</td></tr>
+</tbody></table></div>
+<p>GPT Image 2 costs a little more for a square picture than for a portrait or a landscape. OpenAI bills GPT Image 2.6 by tokens and publishes no price per picture, so Lorekeeper shows "price unknown" before you draw. It works out the cost of each picture afterwards from the tokens OpenAI reports.</p>
+<p>For a whole book: <em>Dracula</em> at the main level, with portraits, is 28 chapter pictures and 48 portraits, 76 pictures in all, and comes to about $2.55 on Nano Banana 2.1 at standard quality. Every moment worth drawing can cost several times that. Writing the prompts adds a fraction of a cent per picture on a cheap model. In a series, a later book draws only the new faces and the changed ones.</p>
+<p>Every run has a cap. The build form sets it to $10, and you can set it from just above $0 to $500. A run that reaches the cap stops drawing and keeps what it drew. The cap counts the pictures, the prompts and any call that may have been billed though no picture came back. Drawing one picture on demand has no cap: the sheet shows the price before you choose Draw.</p>
+
+<h2 id="refusals">When a provider refuses</h2>
+<p>Image models refuse some scenes, mostly violence, gore and horror. The staking in <em>Dracula</em> and much of a war novel are likely to be refused. During a run, a refused picture is written once more as a quieter composition. If that is refused too, the picture is skipped and the report gives the provider's reason. A skipped picture is not tried again on resume, and the chapter has no picture rather than a wrong one.</p>
+<p>A picture you draw from the Reader is drawn from the prompt the sheet shows, and that prompt is never rewritten. If it is refused, the sheet says so in one sentence with the provider's reason and keeps your prompt so you can change it.</p>
+
+<h2 id="build">Drawing a whole book</h2>
+<p>There are two ways to draw a whole book.</p>
+<ul>
+<li><strong>When you build.</strong> Open <strong>Options</strong> on the build form, then <strong>Pictures</strong>, and tick <strong>Draw pictures</strong>. Choose the style, "The main moment of each chapter" or "Every moment worth drawing", whether to draw "Portraits of the characters", the quality, the image provider when you have more than one, and where to stop. The form shows an estimate such as "About 52 pictures, about $1.75". Pictures are drawn after the index is written, as the last stage of the run.</li>
+<li><strong>For a book that already has an index.</strong> The book page has <strong>Add pictures</strong>, or <strong>More pictures</strong> once it has some. It opens the same choices and starts a run that draws without building the index again.</li>
+</ul>
+<p>The Runs page shows "Drawing pictures" as the run's last phase, with a line such as "Pictures 12 of 52, $0.40 on pictures". A run can be stopped and resumed. A resume draws the rest and never draws a picture twice. If the drawing fails, the index stays as the run wrote it, with every picture drawn so far.</p>
+
+<h2 id="on-demand">Drawing one picture</h2>
+<p>In the Reader, <strong>Draw a picture</strong> is a quiet button under a chapter's recap, at the end of a Timeline row (shown when you point at the row, or tap it on a touch screen), and under an entry's name when it has no picture yet. It appears when an image provider is set up or the book already has pictures, and only when the server has the book file.</p>
+<p>It opens a sheet. The sheet writes a prompt from what you have read, which takes a few seconds and costs a fraction of a cent. For a chapter, it lists the moments you can draw. You can then:</p>
+<ul>
+<li>change the prompt, or choose <strong>Write it again</strong>;</li>
+<li>pick a style, which writes the prompt again since it carries the style (it asks first when you changed the prompt);</li>
+<li>pick the shape and the quality;</li>
+<li>read the world note and change it;</li>
+<li>see the price, then choose <strong>Draw</strong>.</li>
+</ul>
+<p>The picture is filed where it belongs in the book, not at your position, so it shows at the same place for every reader of that index.</p>
+
+<h2 id="change">Redraw, delete and undo</h2>
+<p>Click a picture to open it full size. The arrows step through the other pictures of that chapter or entry that you can see. <strong>How this was drawn</strong> shows the prompt, the style, the model, the quality, the cost and the date. <strong>Redraw</strong> draws it again from the same prompt and references, with an optional note put first, such as "in daylight, closer to the face". The new picture replaces the old one. <strong>Delete</strong> asks first.</p>
+<p>Each change can be undone from the message that confirms it. Undo uses the same history as hand edits and duplicate merges, and it reverts only the pictures that change touched, so pictures drawn since are kept.</p>
+
+<h2 id="reader">Showing and hiding pictures</h2>
+<p>When a book has pictures, the Reader's head row has a <strong>Pictures</strong> switch, and a style menu when the book has been drawn in more than one style. On a phone both are in the ⋯ menu. Your choices are remembered in this browser. With pictures off, no picture shows, and the Draw a picture buttons stay. A book with no pictures and no image provider looks as it always did.</p>
+
+<h2 id="settings">Settings</h2>
+<p>Under Settings, <strong>Cloud models</strong> has an Images column. It names each provider's image model and its price for one picture, or says "Can't draw".</p>
+<p><strong>Pictures</strong> holds the defaults that new pictures start from: the style, the quality, where a run stops, and the image provider. They are kept in this browser. Below them is a list of the pictures on this server, by book, with their styles and size, and <strong>Remove pictures</strong>, which asks first and can be undone. A book cannot lose its pictures while a run is drawing for it.</p>
+
+<h2 id="cli">From the command line</h2>
+<p><code>lorekeeper illustrate</code> draws a set of pictures for an index into <code>art/&lt;textHash&gt;/&lt;style&gt;/</code> beside it. It never writes the index, and a second run resumes where the first stopped. Pass the EPUB the index was built from:</p>
+<pre><code>uv run --extra claude lorekeeper illustrate examples/dracula/dracula.json \
+  --epub corpus/pg345/pg345.epub --style ink --level main --provider gemini --quality draft --cap 3</code></pre>
+<p><code>--level all</code> draws every moment worth drawing, <code>--no-portraits</code> leaves out the portraits, <code>--chapters 4-6</code> limits the run to those table of contents entries (see <code>lorekeeper toc</code>), and <code>--limit N</code> draws at most N pictures. The image key comes from <code>GEMINI_API_KEY</code> or <code>OPENAI_API_KEY</code>, or from <code>--api-key-file</code>. The prompts are written by Claude's cheap model when <code>ANTHROPIC_API_KEY</code> is set, else by the image provider's cheap text model; <code>--text-provider</code> and <code>--text-model</code> choose another. For a series, pass the books in reading order with one <code>--epub</code> each and <code>--series</code>, or pass earlier books with <code>--prior</code> to read their pictures and notes without drawing them.</p>
+<p><code>lorekeeper draw</code> draws one picture from a prompt you give, which is a quick way to try a provider or a style:</p>
+<pre><code>uv run lorekeeper draw "A ruined castle on a crag at dusk, one lit window." -o castle --provider gemini --shape landscape</code></pre>
+<p>It writes the file with the extension of the format the provider sent and prints the model, size and cost. <code>--ref FILE</code> adds a picture to follow, up to six.</p>
+
+<h2 id="api">For developers</h2>
+<p>Pictures are not part of the index format or the <a href="protocol.html">/v0 protocol</a>, and the specification does not cover them. In this version they are a feature of the web app only. Each set is a folder per book edition and style, with an <code>art.json</code> manifest that lists each picture with its kind, what it shows, its <code>from</code> anchor, the prompt as sent, the provider, the model and the cost. The Reader compares a picture's <code>from</code> anchor with the reader's position exactly as it compares any other item's.</p>
+
+</main>
+</div>
+</body>
+</html>
