@@ -351,6 +351,7 @@ export function mountLibrary(root) {
               // The series repeats here only when the Series column is hidden (narrow, or the pane is open).
               inSeries ? null : b.series ? h("span.t-series", `, ${seriesText(b)}`) : null,
               kindOf(b) ? h("span.t-kind", `, ${kindOf(b)}`) : null,
+              b.finished ? h("span.t-fin", ". Finished.") : null,
               warn ? h("span.row-warn", `. ${warn}.`) : null)))),
       h("td.c-series.muted", inSeries ? bookNo(b.series) ? cap(bookNo(b.series)) : "" : seriesText(b)),
       h("td.c-status", statusChip(b)),
@@ -493,6 +494,7 @@ export function mountLibrary(root) {
       h("h2", { tabindex: "-1" }, b.title),
       h("p.by", b.authors.join(", ") || "Unknown author"),
       h("p.pane-state", stateSentence(b, d)),
+      b.finished ? h("p.pane-state.pane-finished", "You finished it in Book Orbit.") : null,
       h("div.btns.pane-actions",
         href ? h("a.btn.primary", { href, dataset: { act: "read" }, "aria-label": `Read ${b.title}` }, "Read") : null,
         build),
