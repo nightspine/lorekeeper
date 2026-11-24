@@ -412,6 +412,9 @@ def test_trim_book_and_read_status_shapes():
         {"status": "read", "finishedAt": "2026-11-02T00:00:00Z"}
     for none in ({}, {"readStatus": None}, {"readStatus": ""}, {"readStatus": 3}, "x", None):
         assert bo.read_status_of(none) == {"status": None, "finishedAt": None}
+    card = bo.trim_book({"id": 1, "libraryId": 1,
+                         "readStatus": {"status": "read", "finishedAt": "2026-11-01T10:00:00Z"}})   # a BookCard
+    assert card["readStatus"] == "read" and card["finishedAt"] == "2026-11-01T10:00:00Z"
     t = bo.trim_book({"id": 1, "libraryId": 1, "readStatus": "rereading"})
     assert t["readStatus"] == "rereading" and t["finishedAt"] is None
     assert bo.trim_book({"id": 1, "libraryId": 1})["readStatus"] is None   # an older server
@@ -426,7 +429,7 @@ def test_client_reads_status_with_a_get_only(monkeypatch):
                         {"readStatus": {"status": "read", "source": "manual", "finishedAt": "2026-11-01T10:00:00Z"}})
     client = bo.BookOrbit(bo.Session("https://x", "r", None, "u"), lambda s: None)
     client._access, client._access_until = "t", 1e12
-    assert client.read_status(11) == {"status": "read", "finishedAt": "2026-11-01T10:00:00Z"}
+    assert client.read_status(11) == {"status": "read", "finishedAt": "2026-11-01T10:00:00Z", "known": True}
     assert sent == [("GET", "https://x/api/v1/books/11")]
 
 
@@ -478,6 +481,41 @@ def test_position_finished_in_book_orbit(client, bo_server, tmp_path):
     assert client.get(url).json()["finished"] is False
     FakeBookOrbit.detail = None
     assert client.get(url).json()["finished"] is False
+
+
+def test_position_null_status_clears_the_cache_but_a_missing_field_keeps_it(client, bo_server, tmp_path):
+    FakeBookOrbit.row_status = "read"
+    key = _indexed_orbit_book(client, bo_server, tmp_path)
+    url = f"/api/library/{key}/position"
+    FakeBookOrbit.progress = [{"fileId": "f1", "percentage": 40, "updatedAt": "2026-10-21T09:30:00Z"}]
+    FakeBookOrbit.detail = None                  # newer server, no status now: not finished
+    r = client.get(url).json()
+    assert r["finished"] is False and r["percentage"] == 40
+    FakeBookOrbit.detail = "missing"             # older server: the cached read stays
+    assert client.get(url).json()["finished"] is True
+
+
+def test_position_unreachable_server_skips_the_second_call(client, bo_server, tmp_path, monkeypatch):
+    from lorekeeper.web import bookorbit as bo
+    FakeBookOrbit.row_status = "read"
+    key = _indexed_orbit_book(client, bo_server, tmp_path)
+    url = f"/api/library/{key}/position"
+    calls = []
+
+    def down(self, method, path, *a, **k):
+        calls.append(path)
+        raise bo.BookOrbitUnreachable("Couldn't reach Book Orbit.")
+    monkeypatch.setattr(bo.BookOrbit, "_call", down)
+    assert client.get(url).json()["finished"] is True
+    assert len(calls) == 1 and calls[0].startswith("/books/11")
+    calls.clear()
+
+    def other(self, method, path, *a, **k):         # a non-connection error still goes on to progress
+        calls.append(path)
+        raise bo.BookOrbitError("Book Orbit couldn't find that item.")
+    monkeypatch.setattr(bo.BookOrbit, "_call", other)
+    client.get(url)
+    assert len(calls) >= 2 and calls[0].startswith("/books/11") and "progress" in calls[1]
 
 
 def test_position_status_falls_back_to_the_cache(client, bo_server, tmp_path):
