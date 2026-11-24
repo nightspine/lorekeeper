@@ -89,7 +89,7 @@ This needs a one-time setup per machine, outside the repository: `cursor-agent` 
 - **Later rounds** (checking a fix list against a small diff): `composer-2.5`. It is fast and cheap, and the question is narrower: was every item fixed, and did the fix break anything near it.
 - Not the older `cursor-grok-4.5`/`4.6` models: Grok 4.7 replaces them.
 
-Because Grok and Composer miss big-picture context more often than Sol, the lead's own `/code-review` in step 5 is never skipped while they stand in. Say on each review which model ran it. If Cursor itself is not available, say so to the person and fall back to the Claude reviewer for that round: `claude --agent code-reviewer --model opus --permission-mode auto --add-dir ~/projects/lorekeeper/corpus`, which writes the review file itself.
+Because Grok and Composer miss big-picture context more often than Sol, use `grok-4.7-xhigh` rather than `-high` whenever a change is large or touches the spoiler rule, and ask for another round rather than reviewing it yourself. Say on each review which model ran it. If Cursor itself is not available, say so to the person and fall back to the Claude reviewer for that round: `claude --agent code-reviewer --model opus --permission-mode auto --add-dir ~/projects/lorekeeper/corpus`, which writes the review file itself.
 
 Read the verdict. On CHANGES REQUESTED, send the findings back to the worker whose area they fall in. Its Claude is still open in its tab:
 
@@ -99,7 +99,7 @@ hc send <worker terminal> "Review round 1 requested changes: $BRIEF/review-$ROLE
 
 (If the tab was closed, start a new one named `fix: <role> round 2`.) Then a new reviewer pane beside it for round 2. Stop after three rounds and bring the disagreement to the person.
 
-**5. The lead's own review.** With a PASS in hand, in the `lead` tab: read `git diff main...feat/$SLUG` yourself, run `/code-review high feat/$SLUG` for a second reading, by Claude this time and not anchored on the reviewer's, and run the checks (`uv run pytest -q`, `uv run lorekeeper conformance`, `node tests/js/run_conformance.mjs`). Decide: ship, send back for one more round, or stop and ask the person.
+**5. The lead's check.** With a PASS in hand, in the `lead` tab. The lead does not review code: reviewing belongs to the dedicated reviewers in step 4 (the person said on 2026-11-24 "why would you review the code? ... you are the lead"), and the lead does not run `/code-review` or a second reading of the diff. The lead runs the checks (`uv run pytest -q`, `uv run lorekeeper conformance`, `node tests/js/run_conformance.mjs`), checks the feature working in the browser or the CLI as the person would use it, and reads the reviewers' findings to decide on each one. If the lead doubts something, it asks for another review round instead of reviewing. Decide: ship, send back for one more round, or stop and ask the person.
 
 **6. Ship.** Pull requests are squash-merged and the title is the commit message, in Conventional Commits form. The body: the brief's goal, the handoff's Verified section, the review verdict, and what was left out. Never an attribution trailer.
 
