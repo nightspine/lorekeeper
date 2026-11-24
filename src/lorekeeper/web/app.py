@@ -15,10 +15,12 @@ import json
 import logging
 import os
 import re
+import shutil
 import threading
 import time
 import urllib.request
 import uuid
+from collections import OrderedDict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -26,16 +28,18 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from .. import art as artmod
 from .. import ask as askmod
-from .. import epub, gating, llm, text
+from .. import epub, gating, images, llm, text
 from ..generate import slug
+from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import BookStore, JobManager, describe
+from .jobs import BookStore, JobManager, art_config, describe
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -185,6 +189,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                       keys=keys.get, provider_config=keys.config,
                       prior_for=lambda job: catalog.prior_indexes(job.config.get("catalog_key", "")),
                       distinct_for=lambda job: distinct_for(job))
+    arts = artstore.ArtStore(data_dir)
+    jobs.art_store = arts
     library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
                        *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
@@ -217,7 +223,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return none
         if llm.DEFAULT_MODEL not in models:
             return none
-        busy = any(j.status in ("running", "stopping") and j.config.get("provider") in (None, "ollama")
+        # A pictures run writes its prompts with a cloud model: it counts only when its text provider is Ollama.
+        busy = any(j.status in ("running", "stopping")
+                   and (j.config.get("provider") or ("" if j.kind == "art" else "ollama")) == "ollama"
                    for j in jobs.jobs.values())
         # one Ollama model at a time: don't compete with a running build
         return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
@@ -429,7 +437,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return response
 
     def job_json(job) -> dict:
-        return {**asdict(job), "output_name": Path(job.output).name}
+        return {**asdict(job), "output_name": Path(job.output).name,
+                **({"index": job.config.get("index_key")} if job.kind == "art" else {})}
 
     @app.get("/")
     def root():
@@ -625,6 +634,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(422, "book_kind must be \"auto\" or the name of a kind, like \"fiction\".")
         if bk is not None:
             config["book_kind"] = bk.strip()
+        if config.get("art"):
+            try:
+                config["art"] = art_config(config["art"])
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
 
     @app.post("/api/jobs")
     async def create_job(request: Request):
@@ -1107,6 +1121,583 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(404, "no such entry at this position")
         return mentions_body(book, sections_story(p, book), mentions.count(book.blocks, book.chapters, names, seq), entity)
 
+    # ---- pictures: art sets in the art store, never in the index (art.py, web/art.py, CLAUDE.md §8f) ----------------
+
+    def art_error(status: int, code: str, detail: str) -> JSONResponse:
+        return JSONResponse({"detail": detail, "code": code}, status_code=status)
+
+    class ArtRefusal(Exception):
+        def __init__(self, status: int, code: str, detail: str) -> None:
+            super().__init__(detail)
+            self.status, self.code, self.detail = status, code, detail
+
+    QUALITIES = ("draft", "standard", "best")
+
+    def art_index(key: str) -> dict:
+        """The one index a pictures route works on (no library scan: only the series prior needs one)."""
+        item = library.get(key)
+        if item is None or item["doc"].get("kind") != "index":
+            raise ArtRefusal(404, "not-found", "no such index")
+        h = artstore.text_hash(item["doc"])
+        if not artstore.HASH.fullmatch(h):
+            raise ArtRefusal(409, "no-edition", "This index names no edition, so it can't have pictures.")
+        return {"item": item, "doc": item["doc"], "hash": h}
+
+    def art_epub(ctx: dict) -> epub.Book:
+        p = library.edition_path(ctx["hash"])
+        if p is None:
+            raise ArtRefusal(404, "no-edition", "The book file for this index is not here, so pictures can't be made for it.")
+        return parsed(p)
+
+    def art_prior(ctx: dict) -> list[dict]:
+        """The earlier books of the series, in its default reading order, whose indexes are in the library."""
+        sref = ctx["doc"].get("series")
+        if not sref:
+            return []
+        manifest, siblings = proto.series_parts(ctx["item"], library.scan())
+        if not manifest:
+            return []
+        order = manifest["doc"]["orders"].get(manifest["doc"].get("defaultOrder"), [])
+        earlier = order[:order.index(sref["book"])] if sref["book"] in order else []
+        by = {c["doc"]["series"]["book"]: c["doc"] for c in siblings}
+        return [by[k] for k in earlier if k in by]
+
+    def art_inputs(job):
+        ctx = art_index(job.config["index_key"])
+        return ctx["doc"], art_epub(ctx), art_prior(ctx)
+
+    def art_key_for(job) -> str | None:
+        """The library key of the index a job draws for: the pictures run's own, else the build's output."""
+        if job.kind == "art":
+            return job.config.get("index_key")
+        try:
+            rel = Path(job.output).relative_to(data_dir / "indexes").with_suffix("").as_posix()
+        except ValueError:
+            return None
+        return f"generated--{rel.replace('/', '--')}"
+
+    def art_journal(job, h: str, slug_: str, added: list[str]) -> str | None:
+        """A run's pictures as one journal entry: its undo takes out exactly those."""
+        key = art_key_for(job)
+        if not key or library.get(key) is None:
+            return None
+        return journal_art(key, [], {"op": "add", "textHash": h, "style": slug_, "added": added},
+                           f"drew {len(added)} picture{'s' if len(added) != 1 else ''}")["id"]
+    jobs.art_inputs, jobs.art_journal = art_inputs, art_journal
+
+    def journal_art(key: str, keep: list[Path], art: dict, what: str) -> dict:
+        return identity.snapshot(key, keep, {"kind": "art", "what": what, "art": art})
+
+    def art_revert(entry: dict, snap: Path) -> None:
+        """Undo one pictures entry, touching only the records it names: what it added is taken out, what it removed is put
+        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay."""
+        a = entry["art"]
+        h = a["textHash"]
+        if a.get("op") == "remove-sets":
+            for slug_ in a["sets"]:
+                src = snap / slug_
+                with arts.lock(h, slug_):
+                    if arts.manifest(h, slug_) is None:
+                        dst = arts.folder(h, slug_)
+                        dst.mkdir(parents=True, exist_ok=True)
+                        for f in src.iterdir():
+                            if not (dst / f.name).exists():
+                                shutil.copy2(f, dst / f.name)
+                    else:
+                        arts.put_back(h, slug_, json.loads((src / "art.json").read_text()).get("pictures", []), src)
+            return
+        slug_ = a["style"]
+        with arts.lock(h, slug_):
+            if a.get("added"):
+                arts.take_out(h, slug_, a["added"])
+            if a.get("removed"):
+                arts.put_back(h, slug_, a["removed"], snap)
+            if a.get("op") == "world":
+                m = arts.manifest(h, slug_)
+                if m is not None:
+                    m["world"] = a.get("before")
+                    arts.save(h, slug_, m)
+
+    def art_finished(ctx: dict, body: dict) -> list[str] | None:
+        """The reader's finished books (`finished`: series book keys, each an earlier book of this one); None = the Reader's
+        default, every earlier book."""
+        fin = body.get("finished")
+        if fin is None:
+            return None
+        if not isinstance(fin, list) or not all(isinstance(k, str) for k in fin):
+            raise ArtRefusal(422, "bad-position", "finished must be a list of book keys.")
+        earlier = [(d.get("series") or {}).get("book") for d in art_prior(ctx)]
+        if any(k not in earlier for k in fin):
+            raise ArtRefusal(422, "bad-position", "Only earlier books of this series can be finished.")
+        return sorted(set(fin))
+
+    def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
+                    portraits: bool = True):
+        """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
+        pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
+        if provider is not None and provider not in llm.IMAGE_PROVIDERS:
+            raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
+        if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
+            raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
+        if quality not in QUALITIES:
+            raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
+        text_model = jobs.cheap_model(None) if text_needed else None
+        if text_model is None and text_needed:
+            raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
+        try:
+            image = jobs.image_model(provider, model)
+        except ValueError as e:
+            raise ArtRefusal(422, "bad-model", str(e)) from e
+        slug_, style = arts.resolve(ctx["hash"], style)
+        books_ = []
+        for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
+            ph = artstore.text_hash(d)
+            if artstore.HASH.fullmatch(ph):
+                books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
+        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
+        return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
+                                  log=lambda m: None, pause=0), image, slug_
+
+    def art_style(raw) -> str:
+        style = " ".join(str(raw or "").split())
+        if not style or len(style) > 200:
+            raise ArtRefusal(422, "bad-style", "Choose a style, or write one of at most 200 characters.")
+        return style
+
+    def art_position(ctx: dict, body: dict) -> tuple[bool, str | None]:
+        """(given, anchor) of the reader's position `p`: an anchor id, or the fraction of the book's words read (as the
+        Reader's address), gated in "finished" mode like `/v0` with a `block` locator."""
+        p = body.get("p", body.get("anchor"))
+        if p is None:
+            return False, None
+        if isinstance(p, str):
+            if p not in {a["id"] for a in ctx["doc"]["anchors"]}:
+                raise ArtRefusal(422, "bad-position", "The position is not understood.")
+            return True, p
+        if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
+            raise ArtRefusal(422, "bad-position", "The position is not understood.")
+        book = art_epub(ctx)
+        total = sum(len(b.words) for b in book.blocks)
+        seq, done = len(book.blocks) - 1, 0
+        for b in book.blocks:
+            if done + len(b.words) > p * total:
+                seq = b.seq
+                break
+            done += len(b.words)
+        # The block being read does not count, unless the whole book is read.
+        pos = protocol.make_position(block=str(seq), textHash=ctx["hash"], inclusive="true" if p >= 1 else "false")
+        try:
+            anchor, _ = proto.locate_anchor(ctx["item"], pos, False)
+        except protocol.Problem as e:
+            raise ArtRefusal(422, "bad-position", e.detail or e.title) from e
+        return True, anchor
+
+    def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None):
+        if kind not in artmod.SHAPE_OF:
+            raise ArtRefusal(422, "bad-kind", "kind must be plate, event, portrait, place or thing.")
+        if not isinstance(target, str) or not target:
+            raise ArtRefusal(422, "bad-target", "Say what the picture is of.")
+        if shape is not None and shape not in ("square", "portrait", "landscape"):
+            raise ArtRefusal(422, "bad-shape", "shape must be square, portrait or landscape.")
+        if given and at is None:
+            raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+        try:
+            return il.job(kind, target, at=at, shape=shape, finished=None if finished is None else set(finished))
+        except artmod.NotVisible as e:
+            raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+        except artmod.TextFailed as e:      # the on-demand plate's screening call failed twice
+            raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+        except (KeyError, StopIteration, ValueError) as e:
+            raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
+
+    def draw_given(il, job, pr, text_: str) -> dict:
+        """Draw the prompt as given (the person's own or edited text, or an old prompt): with `text` the pipeline never
+        softens it, and a refusal is raised with the provider's reason and recorded as no skip, so the person may try again."""
+        try:
+            rec = il.draw(job, prompt=pr, text=text_)
+        except images.ImageRefused as e:
+            raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
+        if rec is None:
+            why = il.report.reasons[-1]["reason"] if il.report.reasons else next(iter(il.report.skipped), "skipped")
+            raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
+        return rec
+
+    def picture_json(h: str, slug_: str, rec: dict) -> dict:
+        return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
+
+    def ref_json(il, refs, slug_: str) -> list[dict]:
+        return [{"id": r["id"], "kind": r["kind"], "target": r["target"],
+                 "url": f"/api/art/{artstore.text_hash(il.books[j].doc)}/{slug_}/{r['id']}"} for j, r in refs]
+
+    def art_busy(h: str) -> None:
+        if jobs.drawing(h):
+            raise ArtRefusal(409, "busy", "Pictures are being drawn for this book. Try again once that run has finished.")
+
+    def art_route(fn):
+        """Run a pictures route off the event loop (they read books and wait on models), answering refusals as
+        {detail, code}."""
+        import functools
+
+        @functools.wraps(fn)
+        async def wrapped(*args, **kwargs):
+            def work():
+                try:
+                    return fn(*args, **kwargs)
+                except ArtRefusal as e:
+                    return art_error(e.status, e.code, e.detail)
+                except llm.ProviderError as e:
+                    return art_error(502, "model-failed", str(e)[:200])
+            return await asyncio.get_running_loop().run_in_executor(None, work)
+        return wrapped
+
+    # The prompt route's Prompt, reused by draw when the job matches (an hour, the 32 latest), behind one lock.
+    prompts: OrderedDict[tuple, tuple[float, object]] = OrderedDict()
+    prompts_lock = threading.Lock()
+
+    def remember_prompt(k: tuple, pr) -> None:
+        with prompts_lock:
+            prompts[k] = (time.time(), pr)
+            prompts.move_to_end(k)
+            while len(prompts) > 32:
+                prompts.popitem(last=False)
+
+    def recall_prompt(k: tuple):
+        with prompts_lock:
+            hit = prompts.get(k)
+        return copy.copy(hit[1]) if hit and time.time() - hit[0] < 3600 else None
+
+    app.state.art_prompts = (remember_prompt, recall_prompt, prompts)   # for tests
+
+    @app.get("/api/art")
+    def art_sets():
+        """Every art set on this server, per book, for Settings: the index it belongs to, its styles and their size."""
+        found: dict[str, dict] = {}
+        for it in library.scan().values():
+            if it["doc"].get("kind") == "index":
+                h = artstore.text_hash(it["doc"])
+                if h not in found or (it["source"] == "generated" and found[h]["source"] != "generated"):
+                    found[h] = it
+        out = []
+        for h in arts.editions():
+            it = found.get(h)
+            styles = [{k: s[k] for k in ("style", "slug", "pictures", "bytes")} for s in arts.styles(h)]
+            out.append({"key": it["key"] if it else None, "title": (it["doc"].get("work") or {}).get("title") if it else None,
+                        "textHash": h, "styles": styles, "bytes": sum(s["bytes"] for s in styles)})
+        return out
+
+    @app.delete("/api/art/{text_hash}")
+    def art_remove_sets(text_hash: str, style: str | None = None):
+        """Remove a book's pictures (one style with `?style=`), kept for undo in the journal of an index of that edition."""
+        try:
+            if not artstore.HASH.fullmatch(text_hash):
+                raise ArtRefusal(404, "no-set", "no pictures for that book")
+            slugs = [s["slug"] for s in arts.styles(text_hash) if style is None or s["slug"] == artmod.style_slug(style)]
+            if not slugs:
+                raise ArtRefusal(404, "no-set", "no pictures for that book")
+            art_busy(text_hash)
+            key = next((it["key"] for it in library.scan().values() if it["doc"].get("kind") == "index"
+                        and artstore.text_hash(it["doc"]) == text_hash), None)
+            entry = None
+            if key:
+                entry = journal_art(key, [], {"op": "remove-sets", "textHash": text_hash, "sets": slugs},
+                                    f"removed the pictures ({', '.join(slugs)})")
+            for slug_ in slugs:
+                with arts.lock(text_hash, slug_):
+                    folder = arts.folder(text_hash, slug_)
+                    if entry:
+                        shutil.copytree(folder, identity.dir / entry["id"] / slug_)
+                    shutil.rmtree(folder)
+            parent = arts.root / text_hash
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        return {"removed": slugs, "undo": entry["id"] if entry else None}
+
+    @app.get("/api/library/{key}/art")
+    def library_art(key: str, style: str | None = None):
+        """The art set of one style, whole (the Reader gates every picture by its `from`), with the styles present."""
+        try:
+            ctx = art_index(key)
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        h = ctx["hash"]
+        styles = arts.styles(h)
+        slug_ = artmod.style_slug(style) if style else (styles[0]["slug"] if styles else None)
+        m = arts.manifest(h, slug_) if slug_ else None
+        body = copy.deepcopy(m) if m else artmod.blank(h, style or "")
+        body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
+        return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
+
+    def chapter_events(ctx: dict, il) -> dict[str, int]:
+        """Non-minor events per chapter title of the plan (the EPUB's chapters, a repeated title as "Title (2)")."""
+        book, seen, out = art_epub(ctx), {}, {}
+        ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+        seq_of = {a["id"]: a.get("seq") for a in ctx["doc"]["anchors"]}
+        for c, end in zip(book.chapters, ends):
+            n = sum(1 for e in ctx["doc"].get("events", []) if e.get("kind") != "minor"
+                    and seq_of.get(e["from"]) is not None and c.start <= seq_of[e["from"]] < end)
+            seen[c.title] = seen.get(c.title, 0) + 1
+            out[c.title if seen[c.title] == 1 else f"{c.title} ({seen[c.title]})"] = n
+        return out
+
+    @app.get("/api/art/estimate")
+    @art_route
+    def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: bool = True,
+                     provider: str | None = None, model: str | None = None, quality: str = "standard"):
+        """How many pictures a run would draw and what they would cost, without a model call: the screened moments
+        when the set has them, else the chapters' turning points (main) or non-minor events (all)."""
+        ctx = art_index(key)
+        if level not in artmod.LEVELS:
+            raise ArtRefusal(422, "bad-config", "level must be main or all.")
+        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=portraits)
+        got = il.counts()
+        # `drawable` is the screening's count, None before a chapter is screened; then a level "all" run draws up to the
+        # chapter's non-minor events (read from the index, not from the pipeline's internals).
+        events = chapter_events(ctx, il)
+        chapters, plates = [], got["plates"]
+        if level == "all":
+            plates = sum(max(1, c["drawable"] if c["drawable"] is not None else events.get(c["title"], 0))
+                         for c in got["chapters"])
+        chapters = [{"title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
+                     "events": events.get(c["title"], 0)} for c in got["chapters"]]
+        ports = got["portraits"]
+        prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+        name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
+        each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
+        price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
+            round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
+        return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
+                "model": name, "chapters": chapters}
+
+    @app.get("/api/art/{text_hash}/{style}/{pid}")
+    def art_file(text_hash: str, style: str, pid: str):
+        try:
+            p = arts.path(text_hash, style, pid)
+        except KeyError:
+            p = None
+        if p is None:
+            raise HTTPException(404, "no such picture")
+        media = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(p.suffix, "application/octet-stream")
+        return FileResponse(p, media_type=media, headers={"Cache-Control": "max-age=86400", "X-Content-Type-Options": "nosniff"})
+
+    @app.post("/api/library/{key}/art/run")
+    async def art_run(key: str, request: Request):
+        """Pictures for this index as a run on the queue (the build form's pictures stage, on an existing index)."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            art_epub(ctx)
+            owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
+            try:
+                job = jobs.submit_art(key, body.get("art", body), index_path=str(ctx["item"]["path"]),
+                                      book_id=(owner or {}).get("localId") or "", text_hash=ctx["hash"],
+                                      title=ctx["doc"].get("work", {}).get("title") or key)
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            except RuntimeError as e:
+                raise ArtRefusal(409, "busy", str(e)) from e
+            return job_json(job)
+        return await work()
+
+    @app.post("/api/library/{key}/art/prompt")
+    async def art_prompt(key: str, request: Request):
+        """Write the prompt for one picture (one text call, nothing drawn): {prompt, anchor, references, price}."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            style = art_style(body.get("style"))
+            art_busy(ctx["hash"])
+            quality = body.get("quality") or "standard"
+            fin = art_finished(ctx, body)
+            slug_ = arts.resolve(ctx["hash"], style)[0]
+            with arts.lock(ctx["hash"], slug_):
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+                given, at = art_position(ctx, body)
+                args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
+                job = art_job(*args)                     # not visible even before a world note holds it: no call at all
+                # The world note this reader's pictures use (the book's own when an earlier one is unfinished), written once
+                # as a run writes it; a new one is kept only when the picture is then still visible.
+                before = arts.manifest(ctx["hash"], slug_)
+                il.world(len(il.books) - 1, finished=None if fin is None else set(fin))
+                if arts.manifest(ctx["hash"], slug_) != before:
+                    try:
+                        job = art_job(*args)
+                    except ArtRefusal:
+                        folder = arts.folder(ctx["hash"], slug_)
+                        if before is None:
+                            (folder / "art.json").unlink(missing_ok=True)
+                            if folder.is_dir() and not any(folder.iterdir()):
+                                folder.rmdir()
+                        else:
+                            arts.save(ctx["hash"], slug_, before)
+                        raise
+                try:
+                    pr = il.make_prompt(job)
+                except artmod.NotVisible as e:
+                    raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+                except artmod.TextFailed as e:
+                    raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+                except ValueError as e:
+                    raise ArtRefusal(422, "dropped", str(e)) from e
+            # The price of the chosen provider and quality, also before its key is added.
+            prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+            name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
+            out = {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
+                   "target": job.target, "references": ref_json(il, pr.references, slug_), "provider": prov, "model": name,
+                   "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+                   "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
+            remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))), pr)
+            return out
+        return await work()
+
+    @app.post("/api/library/{key}/art/draw")
+    async def art_draw(key: str, request: Request):
+        """Draw one picture with the given prompt (the person may have edited it) and file it: the new record, undone like an edit."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            style = art_style(body.get("style"))
+            text_ = " ".join(str(body.get("prompt") or "").split())
+            if not text_ or len(text_) > 4000:
+                raise ArtRefusal(422, "bad-prompt", "Give the prompt to draw, at most 4,000 characters.")
+            art_busy(ctx["hash"])
+            fin = art_finished(ctx, body)
+            slug_ = arts.resolve(ctx["hash"], style)[0]
+            with arts.lock(ctx["hash"], slug_):
+                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
+                                               body.get("model"))
+                if image is None:
+                    raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
+                given, at = art_position(ctx, body)
+                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
+                pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))))
+                if pr is None:
+                    try:
+                        pr = il.make_prompt(job)   # for its anchor and references; the person's text is drawn
+                    except artmod.TextFailed as e:
+                        raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+                    except ValueError as e:
+                        raise ArtRefusal(422, "dropped", str(e)) from e
+                rec = draw_given(il, job, pr, text_)
+                entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_, "added": [rec["id"]]},
+                                    f"drew a picture ({rec['kind']})")
+            return {**picture_json(ctx["hash"], slug_, rec), "undo": entry["id"]}
+        return await work()
+
+    def art_record(ctx: dict, pid: str) -> tuple[str, dict]:
+        hit = arts.find(ctx["hash"], pid)
+        if hit is None:
+            raise ArtRefusal(404, "no-picture", "no such picture")
+        return hit
+
+    @app.delete("/api/library/{key}/art/{pid}")
+    def art_delete(key: str, pid: str):
+        """Remove a picture; undone like an edit (`POST /api/library/{key}/undo/{id}`)."""
+        try:
+            ctx = art_index(key)
+            slug_, rec = art_record(ctx, pid)
+            art_busy(ctx["hash"])
+            with arts.lock(ctx["hash"], slug_):
+                f = arts.path(ctx["hash"], slug_, pid)
+                entry = journal_art(key, [f] if f else [], {"op": "delete", "textHash": ctx["hash"], "style": slug_,
+                                                            "removed": [rec]}, f"removed a picture ({rec['kind']})")
+                try:
+                    arts.remove(ctx["hash"], slug_, pid)
+                except Exception:
+                    identity.discard(entry["id"])
+                    raise
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        return {"removed": pid, "undo": entry["id"]}
+
+    @app.post("/api/library/{key}/art/{pid}/redraw")
+    async def art_redraw(key: str, pid: str, request: Request):
+        """Draw a picture again, with the person's note put first in its prompt; the new record `replaces` the old,
+        which leaves the set and is kept for undo."""
+        body = await json_body(request) if int(request.headers.get("content-length") or 0) else {}
+        note = " ".join(str(body.get("note") or "").split())
+
+        @art_route
+        def work():
+            if len(note) > 300:
+                raise ArtRefusal(422, "bad-note", "Keep the note to 300 characters.")
+            ctx = art_index(key)
+            slug_, rec = art_record(ctx, pid)
+            art_busy(ctx["hash"])
+            with arts.lock(ctx["hash"], slug_):
+                prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
+                mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
+                qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
+                il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod)
+                if image is None:
+                    raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
+                if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in il.books[-1].ord_of:
+                    raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
+                job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
+                refs = [(j, r) for j in range(len(il.books)) for r in il.man[j]["pictures"]
+                        if r["id"] in set(rec.get("references") or []) and r["id"] != pid]
+                text_ = (note.rstrip(".") + ". " if note else "") + rec["prompt"]
+                pr = artmod.Prompt(text_, text_, rec["from"], rec.get("shape") or job.shape,
+                                   [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
+                                   list(rec.get("sources") or [rec["from"]]))
+                new = draw_given(il, job, pr, text_)
+                old = arts.path(ctx["hash"], slug_, pid)
+                entry = journal_art(key, [old] if old and old.name != new["file"] else [],
+                                    {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
+                                     "added": [new["id"]]}, f"drew a picture again ({rec['kind']})")
+                try:
+                    man = arts.manifest(ctx["hash"], slug_)
+                    for r in man["pictures"]:
+                        if r["id"] == new["id"]:
+                            r["replaces"] = pid
+                    man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
+                    man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
+                    arts.save(ctx["hash"], slug_, man)
+                    if old is not None and new["file"] != old.name:
+                        old.unlink(missing_ok=True)
+                except Exception:
+                    identity.discard(entry["id"])
+                    raise
+            return {**picture_json(ctx["hash"], slug_, {**new, "replaces": pid}), "undo": entry["id"]}
+        return await work()
+
+    @app.put("/api/library/{key}/art/world")
+    async def art_world(key: str, request: Request):
+        """The person's own world note for a style's set (`edited: true`: never rewritten by a run)."""
+        body = await json_body(request)
+        try:
+            ctx = art_index(key)
+            style = art_style(body.get("style"))
+            text_ = " ".join(str(body.get("text") or "").split())
+            if not text_ or len(text_) > artstore.MAX_WORLD:
+                raise ArtRefusal(422, "bad-text", f"Write the world note in 1 to {artstore.MAX_WORLD} characters.")
+            art_busy(ctx["hash"])
+            slug_, style = arts.resolve(ctx["hash"], style)
+            with arts.lock(ctx["hash"], slug_):
+                m = arts.manifest(ctx["hash"], slug_)
+                if m is None:   # a new set; an existing one is never replaced by an empty manifest
+                    m = artmod.blank(next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")),
+                                          ctx["hash"]), style)
+                entry = journal_art(key, [], {"op": "world", "textHash": ctx["hash"], "style": slug_, "before": m.get("world")},
+                                    "changed the world note")
+                # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
+                m["world"] = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
+                try:
+                    arts.save(ctx["hash"], slug_, m)
+                except Exception:
+                    identity.discard(entry["id"])
+                    raise
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        return {"world": m["world"], "undo": entry["id"]}
+
     # ---- duplicate entities ----------------------------------------------------------------------
 
     def not_community(key: str) -> None:
@@ -1164,9 +1755,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.post("/api/library/{key}/merge/{merge_id}/undo")
     @app.post("/api/library/{key}/undo/{merge_id}")
     def undo_change(key: str, merge_id: str):
-        """Undo the latest journal entry, a merge or a hand edit (both routes do the same)."""
-        not_community(key)
+        """Undo the latest journal entry, a merge, a hand edit or a change to the pictures (both routes do the same).
+        Pictures are not part of the index, so their changes undo on a community index too."""
         try:
+            last = identity.latest(key)
+        except KeyError as e:
+            raise HTTPException(404, "no such index") from e
+        art_entry = (last or {}).get("kind") == "art" and last["id"] == merge_id
+        if not art_entry:
+            not_community(key)
+        elif jobs.drawing(last["art"]["textHash"]):
+            raise HTTPException(409, "Pictures are being drawn for this book. Undo once that run has finished.")
+        try:
+            if art_entry:   # only the records the entry touched: pictures drawn since stay
+                return identity.undo(key, merge_id, revert=art_revert)
             return editor.undo(key, merge_id)
         except KeyError as e:
             raise HTTPException(404, "no such index") from e

@@ -114,7 +114,7 @@ class Text:
         if "Which of them are a visible moment" in prompt:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
-            return {"moments": [{"event": n, "frame": f"Something is in frame {n}."} for n in keep]}
+            return {"moments": keep}
         if "This is the opening of a later book" in prompt:
             return {"text": ""}
         if "visual world note" in prompt:
@@ -154,7 +154,7 @@ class Image:
 
 @pytest.fixture(autouse=True)
 def short_world(monkeypatch):
-    monkeypatch.setattr(art, "WORLD_CHAPTERS", 1)    # the world note ends with chapter one: nothing is held back
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 1)    # the world note ends with chapter one: nothing is held back
     monkeypatch.setattr(art, "MIN_GAP", 2)
 
 
@@ -190,11 +190,11 @@ def test_main_level_draws_a_plate_per_chapter_and_a_portrait_per_character():
 def test_the_main_moment_is_the_turning_point_and_all_level_adds_the_other_drawable_ones():
     il, rep, sink, t, im = run()
     one = next(p for p in pics(sink, "plate") if p["target"] == "One")
-    assert "Something is in frame" in next(s for s in t.scenes() if "chapter" in s) and one["from"] == "a5"
+    assert "main moment of a chapter: Oren the miller comes out" in next(s for s in t.scenes() if "chapter" in s) and one["from"] == "a5"
     _, _, sink2, _, _ = run(level="all")
     events = [p["target"] for p in pics(sink2, "event")]
     assert events == ["e1", "e5", "e6"] or set(events) == {"e1", "e5", "e6"}   # e2 and e4 are the plates; e3 is minor
-    assert sink2.m["screened"]["One"] and "e3" not in {m["event"] for ms in sink2.m["screened"].values() for m in ms}
+    assert sink2.m["screened"]["One"]["events"] and "e3" not in {x for ms in sink2.m["screened"].values() for x in ms["events"]}
 
 
 def test_a_chapter_with_nothing_drawable_gets_its_recap_as_a_plate():
@@ -237,7 +237,7 @@ def test_no_picture_is_written_from_text_after_its_anchor():
 
 
 def test_pictures_of_the_first_chapters_are_held_to_the_world_notes_anchor(monkeypatch):
-    monkeypatch.setattr(art, "WORLD_CHAPTERS", 2)
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 100)    # chapter one is shorter: the note takes chapter two too
     bk = book(("One", CH1), ("Two", CH2))
     d = base_doc(bk)
     il, rep, sink, t, im = run(d, bk)
@@ -280,12 +280,13 @@ def test_a_refusal_gets_one_quieter_rewrite_then_a_recorded_skip():
     t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
     im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30]) and n <= 1])
     il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
-    assert rep.refused == 1 and any(c["prompt"].startswith(quiet) for c in im.calls)
+    assert rep.refused == 0 and rep.softened == 1 and any(c["prompt"].startswith(quiet) for c in im.calls)
     assert len(pics(sink, "plate")) == 2
     t2 = Text()
     im2 = Image(refuse=[lambda prompt, n: True])
     il, rep, sink2, t2, im2 = run(text_=t2, image=im2, portraits=False)
-    assert not pics(sink2) and rep.refused == 4                      # two plates, each drawn and refused twice
+    assert not pics(sink2) and rep.refused == 2 and not rep.skipped   # two plates, each refused twice: counted once, not as skips
+    assert len(im2.calls) == 4
     assert {s["reason"] for s in sink2.m["skipped"]} == {"refused: provider declined"} and all(s["final"] for s in sink2.m["skipped"])
     assert any("safety: violence" in r["reason"] for r in rep.reasons)
     before = len(im2.calls)
@@ -293,14 +294,37 @@ def test_a_refusal_gets_one_quieter_rewrite_then_a_recorded_skip():
     assert len(im2.calls) == before
 
 
-def test_a_provider_error_is_retried_once_then_skipped():
+def test_a_provider_error_is_sent_again_only_when_it_never_reached_the_provider():
     class Flaky(Image):
-        def draw(self, prompt, **kw):
-            self.calls.append(prompt)
-            raise llm.ProviderError("HTTP 500")
-    im = Flaky()
-    il, rep, sink, t, im = run(image=im, portraits=False)
-    assert len(im.calls) == 4 and not pics(sink) and rep.skipped["skipped: provider error"] == 2
+        def __init__(self, sent):
+            super().__init__()
+            self.sent = sent
+
+        def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
+            if shape == "portrait":
+                return super().draw(prompt, shape=shape, quality=quality, references=references)
+            self.calls.append({"prompt": prompt, "shape": shape})
+            raise llm.ProviderError("could not reach the host" if self.sent is False else "the request failed after it was sent",
+                                    None, self.sent)
+    il, rep, sink, t, im = run(image=Flaky(False))                  # refused connection, 429: never sent, so sent once more
+    assert sum(c["shape"] == "landscape" for c in im.calls) == 4 and not pics(sink, "plate")
+    assert rep.skipped["skipped: provider error"] == 2 and rep.at_risk == 0
+    il, rep, sink, t, im = run(image=Flaky(None))                   # a timeout after sending: maybe billed, never sent twice
+    assert sum(c["shape"] == "landscape" for c in im.calls) == 2 and rep.skipped["skipped: provider error"] == 2
+    assert rep.at_risk == pytest.approx(0.1) and "failed after sending" in rep.lines()[0]
+
+
+def test_a_call_that_failed_after_sending_counts_against_the_cap():
+    class Lost(Image):
+        sends = 0
+
+        def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
+            self.sends += 1
+            if self.sends > 1:
+                raise llm.ProviderError("the request failed after it was sent: timed out")
+            return super().draw(prompt, shape=shape, quality=quality, references=references)
+    il, rep, sink, t, im = run(image=Lost(cost=0.4), cap=1.0)
+    assert rep.drawn == 1 and rep.at_risk == pytest.approx(0.4) and im.sends == 2 and "cost cap" in rep.stopped
 
 
 def test_the_cost_cap_stops_the_run_and_keeps_what_was_drawn():
@@ -496,7 +520,8 @@ def test_illustrate_command_writes_the_art_set_beside_the_index_and_never_the_in
     from lorekeeper import cli
     bk = book(("One", CH1), ("Two", CH2))
     d = base_doc(bk)
-    d["editions"] = [{"textHash": "sha256:abc", "builtFrom": True}]
+    th = text.text_hash(b.words for b in bk.blocks)
+    d["editions"] = [{"textHash": th, "builtFrom": True}]
     idx = tmp_path / "mill.lore.json"
     idx.write_text(json.dumps(d))
     before = idx.read_bytes()
@@ -506,10 +531,453 @@ def test_illustrate_command_writes_the_art_set_beside_the_index_and_never_the_in
     monkeypatch.setattr(epub, "read", lambda p: bk)
     monkeypatch.setenv("GEMINI_API_KEY", "x")
     assert cli.main(["illustrate", str(idx), "--epub", "x.epub", "--style", "comic-strip", "--text-provider", "gemini", "--cap", "5"]) == 0
-    out = tmp_path / "art" / "sha256-abc" / "comic-strip"
+    out = tmp_path / "art" / th / "comic-strip"
     m = json.loads((out / "art.json").read_text())
     assert m["style"] == "comic-strip" and len(m["pictures"]) == len(im.calls) and all((out / p["file"]).exists() for p in m["pictures"])
     assert idx.read_bytes() == before and "drawn" in capsys.readouterr().out
     n = len(im.calls)
     assert cli.main(["illustrate", str(idx), "--epub", "x.epub", "--style", "comic-strip", "--text-provider", "gemini"]) == 0
     assert len(im.calls) == n                                                    # resumed: nothing drawn twice
+
+
+# ---- round 2: each of these fails on the first version of art.py
+
+
+def test_a_plate_never_shows_from_before_the_event_it_shows():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["recaps"][0]["from"] = d["recaps"][0]["evidence"][0] = "a2"      # the chapter's recap comes before its turning point
+    d["events"][1].update({"from": "a3", "evidence": ["a3"]})
+    il, rep, sink, t, im = run(d, bk)
+    o = ordinal(d)
+    one = next(p for p in pics(sink, "plate") if p["target"] == "One")
+    assert o[one["from"]] >= o["a3"] and "a3" in one["sources"]
+    assert all(o[a] <= o[p["from"]] for p in sink.m["pictures"] for a in p["sources"])
+    assert o[il.job("plate", "One").anchor] >= o["a3"]                    # on demand too
+    with pytest.raises(art.NotVisible):
+        il.job("plate", "One", at="a2")
+    # a plate with no drawable event takes its figures from every event of the chapter: it shows from after all of them
+    _, _, sink2, _, _ = run(d, bk, text_=Text(screen=lambda ns, p: []))
+    assert o[next(p for p in pics(sink2, "plate") if p["target"] == "One")["from"]] >= o["a4"]
+
+
+def test_screening_only_chooses_and_nothing_it_writes_reaches_a_prompt():
+    class Framing(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "Which of them are a visible moment" in prompt:
+                self.prompts.append(prompt)
+                ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
+                return {"moments": [{"event": n, "frame": "Zephyr the storm breaks over the mill."} for n in ns]}
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(text_=Framing(), level="all")
+    assert pics(sink, "event") and not any("Zephyr the storm breaks" in s for s in t.scenes())
+    assert "Zephyr the storm breaks" not in str(sink.m["screened"])
+    e1 = next(s for s in t.scenes() if "this moment: Mira walks to the mill" in s)
+    assert "Gabriel" not in e1 and "silver coin" not in e1
+
+
+def test_the_world_note_comes_from_the_first_story_chapter_unless_it_is_short(monkeypatch):
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 50)
+    il, rep, sink, t, im = run(d, bk)
+    assert sink.m["world"]["from"] == "a5" and rep.held == 2               # the portraits at a3 and a4; the plate of One is at a5
+    world = next(p for p in t.prompts if "visual world note" in p)
+    assert "Zephyr" not in world and "Two" not in world
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 100)
+    _, _, sink2, _, _ = run(base_doc(bk), bk)
+    assert sink2.m["world"]["from"] == "a11"
+
+
+def test_look_changes_held_to_one_anchor_give_one_portrait(monkeypatch):
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 100)                        # everything is held to a11
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append(portrait("mira", "a10", "A scarred young woman, older than she was, who keeps a coin.", 2))
+    il, rep, sink, t, im = run(d, bk)
+    ms = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert [p["from"] for p in ms] == ["a11"]
+    froms = [(p["target"], p["from"]) for p in pics(sink, "portrait")]
+    assert len(froms) == len(set(froms))
+
+
+def test_a_look_word_gained_once_counts_once():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    mira = d["entities"][0]
+    mira["facets"] += [portrait("mira", "a7", "A scarred young woman who carries baskets to the mill.", 2),
+                       portrait("mira", "a10", "A scarred young woman in a new coat who keeps a coin.", 3)]
+    il, rep, sink, t, im = run(d, bk)
+    assert [p["from"] for p in pics(sink, "portrait") if p["target"] == "mira"] == ["a5", "a7"]
+
+
+def test_anchors_without_seq_hints_are_found_in_the_epub():
+    bk = book(("One", CH1), ("Two", CH2))
+    _, _, sink, _, _ = run(base_doc(bk), bk)
+    d = base_doc(bk)
+    for a in d["anchors"]:
+        del a["seq"]
+    _, rep, sink2, _, _ = run(d, bk)
+    assert [(p["kind"], p["target"], p["from"]) for p in pics(sink2)] == [(p["kind"], p["target"], p["from"]) for p in pics(sink)]
+    other = book(("X", ["Nothing in this book matches the index at all, not one paragraph of it."] * 3))
+    with pytest.raises(ValueError, match="edition"):
+        art.Illustrator([art.Book(d, other, Mem())], Text(), Image(), "ink")
+
+
+def test_a_text_model_failure_skips_that_picture_and_the_run_goes_on():
+    class Failing(Text):
+        def __init__(self, every=True):
+            super().__init__()
+            self.every, self.failed = every, 0
+
+        def complete(self, system, prompt, schema, prefix=None):
+            if "main moment of a chapter: Oren the miller" in prompt and (self.every or not self.failed):
+                self.failed += 1
+                raise llm.ProviderError("HTTP 429: slow down")
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(text_=Failing())
+    assert "One" not in {p["target"] for p in pics(sink, "plate")} and "Two" in {p["target"] for p in pics(sink, "plate")}
+    assert rep.skipped["skipped: text model failed"] == 1 and t.failed == 2 and pics(sink, "portrait")
+    assert any("HTTP 429" in r["reason"] for r in rep.reasons)
+    il, rep, sink, t, im = run(text_=Failing(every=False))                   # a passing failure is retried once
+    assert "One" in {p["target"] for p in pics(sink, "plate")} and not rep.skipped
+
+
+def test_an_empty_shows_list_means_no_figures():
+    il, rep, sink, t, im = run(text_=Text(shows=[]))
+    for p in pics(sink, "plate"):
+        assert "Figures:" not in p["prompt"] and p["references"] == []
+    assert all(NOTES[n].rstrip(".") in p["prompt"] for p in pics(sink, "portrait") for n in ["Mira"] if p["target"] == "mira")
+
+
+def test_an_empty_appearance_note_is_stored_and_not_asked_for_again():
+    t = Text(notes={"Oren": ""})
+    il, rep, sink, t, im = run(text_=t, level="all")
+    asked = [p for p in t.prompts if "appearance note for Oren" in p]
+    assert len(asked) == 1 and [n["text"] for n in sink.m["appearance"]["oren"]] == [""]
+    assert rep.skipped["skipped: no look described"] == 1
+
+
+def test_a_later_book_knows_the_words_of_the_books_the_reader_finished():
+    bk1, d1, bk2, d2 = series_docs()
+    scene = SCENE + " A storm the farmers call Zephyr gathers far off."
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], Text(scene=lambda p: scene), Image(), "ink",
+                         portraits=False, workers=1, log=lambda *_: None, pause=0)
+    rep = il.run()
+    assert [p["target"] for p in pics(s1, "plate")] == ["Two"]               # Zephyr is not named before a8 in book one
+    assert [p["target"] for p in pics(s2, "plate")] == ["Three"]             # book two never names it, book one did
+
+
+def test_a_rebuilt_index_screens_its_chapters_again():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    il, rep, sink, t, im = run(d, bk, level="all")
+    d2 = base_doc(bk)
+    d2["events"] = [e for e in d2["events"] if e["id"] != "e5"]
+    d2["events"][-1]["id"] = "e9"
+    il2, rep2, _, t2, _ = run(d2, bk, sink, level="all")
+    screens = [p for p in t2.prompts if "Which of them are a visible moment" in p]
+    assert len(screens) == 1 and "Mira finds a silver coin" in screens[0]
+    assert sink.m["screened"]["Two"]["events"] == ["e4", "e9"]
+    sink.m["screened"] = {"One": [{"event": "e1", "frame": "old"}], "Two": [{"event": "e5", "frame": "old"}]}   # round 1's shape
+    _, _, _, t3, _ = run(d2, bk, sink, level="all")
+    assert len([p for p in t3.prompts if "Which of them are a visible moment" in p]) == 2
+
+
+def test_a_series_book_draws_a_portrait_the_earlier_book_planned_but_did_not_draw():
+    bk1, d1, bk2, d2 = series_docs()
+    seen = {"n": 0}
+
+    class RefuseOrenOnce(Image):
+        def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
+            if shape == "portrait" and NOTES["Oren"].rstrip(".") in prompt and seen["n"] < 2:
+                seen["n"] += 1
+                self.calls.append({"prompt": prompt, "shape": shape, "references": []})
+                raise images.ImageRefused("safety")
+            return super().draw(prompt, shape=shape, quality=quality, references=references)
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2)], Text(), RefuseOrenOnce(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    rep = il.run()
+    assert "oren" not in {p["target"] for p in pics(s1, "portrait")} and rep.refused == 1
+    assert "oren" in {p["target"] for p in pics(s2, "portrait")}
+
+
+def test_on_demand_job_refuses_an_unknown_chapter_and_finds_an_earlier_books_entity():
+    bk1, d1, bk2, d2 = series_docs()
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    with pytest.raises(ValueError, match="no such chapter"):
+        il.job("plate", "Nowhere")
+    with pytest.raises(ValueError, match="no such event"):
+        il.job("event", "e99")
+    j = il.job("portrait", "stranger", at="b2.a2")
+    assert j.bi == 0 and j.anchor in ordinal(d1)
+
+
+def test_three_workers_draw_what_one_does():
+    _, rep1, s1, _, _ = run(level="all")
+    _, rep3, s3, _, _ = run(level="all", workers=3)
+    key = lambda s: sorted((p["kind"], p["target"], p["from"]) for p in pics(s))   # noqa: E731
+    assert key(s1) == key(s3) and rep1.drawn == rep3.drawn
+
+
+def _cli_index(tmp_path, d, bk, name):
+    import json
+    d["editions"] = [{"textHash": text.text_hash(b.words for b in bk.blocks), "builtFrom": True}]
+    p = tmp_path / name
+    p.write_text(json.dumps(d))
+    return p
+
+
+def test_illustrate_command_refuses_a_quality_the_model_lacks_and_another_edition(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    idx = _cli_index(tmp_path, base_doc(bk), bk, "mill.lore.json")
+    im = Image()
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: im)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    with pytest.raises(SystemExit, match="draft, standard"):
+        cli.main(["illustrate", str(idx), "--epub", "x.epub", "--model", "gemini-3.1-flash-lite-image", "--quality", "best"])
+    other = book(("One", CH2), ("Two", CH1))
+    monkeypatch.setattr(epub, "read", lambda p: other)
+    with pytest.raises(SystemExit, match="not the edition"):
+        cli.main(["illustrate", str(idx), "--epub", "x.epub"])
+    assert not im.calls
+
+
+def test_illustrate_command_gives_earlier_books_portraits_only_unless_a_level_is_given(tmp_path, monkeypatch):
+    import json
+
+    from lorekeeper import cli
+    bk1, d1, bk2, d2 = series_docs()
+    i1, i2 = _cli_index(tmp_path, d1, bk1, "b1.lore.json"), _cli_index(tmp_path, d2, bk2, "b2.lore.json")
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: Image())
+    monkeypatch.setattr(epub, "read", lambda p: {"1.epub": bk1, "2.epub": bk2}[p])
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert cli.main(["illustrate", str(i1), str(i2), "--epub", "1.epub", "--epub", "2.epub", "--out", str(tmp_path / "o")]) == 0
+    m1 = json.loads(next((tmp_path / "art").glob("*/digital-art/art.json")).read_text())
+    m2 = json.loads((tmp_path / "o" / "art.json").read_text())
+    assert {p["kind"] for p in m1["pictures"]} == {"portrait"} and "plate" in {p["kind"] for p in m2["pictures"]}
+
+
+# ---- round 3
+
+
+def series_shared_ids():
+    """Two books whose anchors have the same ids (the generator's tocNN.paraMM repeat in every book of a series)."""
+    bk1, d1, _, _ = series_docs()
+    bk2 = book(("Three", ["Mira came back to the mill years later with a new coat and a basket of eggs."] + CH1[1:]),
+               ("Four", CH2))
+    ents = [ent("mira", "Mira", facets=[portrait("mira", "a3", "A slight young woman of about twenty who carries baskets.", 1, "b2")]),
+            ent("oren", "Oren", frm="a1", facets=[portrait("oren", "a2", "The old miller, white haired and broad, who runs the mill.", 1, "b2")])]
+    evs = [event(1, 1, "Oren the miller greets her at the door of the mill.", ["oren", "mira"], "turn"),
+           event(2, 3, "The hooded stranger is seen again on the road by the mill.", ["stranger", "mira"], "turn"),
+           event(3, 8, "Mira walks to the well behind the mill.", ["mira"], "turn")]
+    d2 = doc(bk2, "b2", "", ents, evs, [recap(1, 5, "Three"), recap(2, 11, "Four")])
+    for e in d2["entities"]:
+        for n in e["names"]:
+            n["from"] = e["from"]
+    return bk1, d1, bk2, d2
+
+
+def test_anchor_ids_shared_by_two_books_are_never_confused(monkeypatch):
+    bk1, d1, bk2, d2 = series_shared_ids()
+    d1["entities"][3]["facets"][0].update({"from": "a7", "evidence": ["a7"]})   # the stranger's book-one profile at a7
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2, "all")], Text(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    rep = il.run()
+    assert s1.m["world"]["from"] == "a5" and s2.m["world"]["book"] == "b1" and s2.m["world"]["inherited"]
+    assert not rep.skipped.get("dropped: written from content after its anchor")
+    o = ordinal(d2)
+    early = [p for p in pics(s2) if o[p["from"]] < o["a5"]]
+    assert {p["target"] for p in early} >= {"e2"}                            # book two's opening is drawn, held to nothing
+    e2 = next(p for p in pics(s2) if p["target"] == "e2")
+    assert "a7" not in e2["sources"] and all(o[a] <= o[e2["from"]] for a in e2["sources"])
+
+
+def test_with_a_picture_limit_only_the_pictures_drawn_get_notes_and_screening():
+    il, rep, sink, t, im = run(max_pictures=1)
+    notes = [p for p in t.prompts if "fixed appearance note" in p]
+    assert rep.drawn == 1 and len(notes) == 1 and not any("Which of them are a visible moment" in p for p in t.prompts)
+
+
+def test_text_spent_on_notes_counts_against_the_cap():
+    class Usage:
+        cost_usd = 0.0
+
+    class Costly(Text):
+        usage = Usage()
+
+        def complete(self, system, prompt, schema, prefix=None):
+            self.usage.cost_usd += 0.3
+            return super().complete(system, prompt, schema, prefix)
+    t = Costly()
+    il, rep, sink, _, im = run(text_=t, cap=1.0)
+    notes = [p for p in t.prompts if "fixed appearance note" in p]
+    assert "cost cap" in rep.stopped and len(notes) <= 1 and not im.calls
+
+
+def test_a_reservation_is_released_by_the_amount_it_reserved():
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         Text(), Image(), "ink", cap=10, log=lambda *_: None, pause=0)
+    _, a = il._reserve(0.0)                    # an unknown price, nothing drawn yet: reserves 0
+    il.last_cost = 0.04
+    _, b = il._reserve(0.0)                    # reserves the last picture's cost
+    il._release(a)
+    assert il.reserved == pytest.approx(0.04) and b == pytest.approx(0.04)
+    il._release(b)
+    assert il.reserved == 0 and il.in_flight == 0
+
+
+def test_an_on_demand_picture_of_a_read_only_book_saves_that_books_set():
+    bk1, d1, bk2, d2 = series_docs()
+    s1 = Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1, None, draw=False), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    rec = il.draw(il.job("portrait", "stranger", at="b2.a3"))
+    assert rec and s1.m and [p["id"] for p in s1.m["pictures"]] == [rec["id"]] and rec["file"] in s1.files
+
+
+def test_a_set_is_the_same_for_every_style_text_with_its_slug_and_belongs_to_one_edition():
+    sink = Mem()
+    run(sink=sink, style="Chalk on a blackboard, smudged white lines.", portraits=False)
+    n = len(pics(sink))
+    il, rep, _, _, im = run(sink=sink, style="chalk on a BLACKBOARD smudged white lines", portraits=True)
+    assert sink.m["style"] == "Chalk on a blackboard, smudged white lines." and len(pics(sink)) > n
+    assert all("Chalk on a blackboard, smudged white lines." in c["prompt"] for c in im.calls)
+    with pytest.raises(ValueError, match="another style"):
+        run(sink=sink, style="ink")
+    other = base_doc(book(("One", CH1), ("Two", CH2)))
+    other["editions"] = [{"textHash": "sha256:else", "builtFrom": True}]
+    with pytest.raises(ValueError, match="another edition"):
+        run(other, sink=sink, style="Chalk on a blackboard, smudged white lines.")
+
+
+def test_several_standalone_indexes_are_refused(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    with pytest.raises(ValueError, match="one series"):
+        art.Illustrator([art.Book(base_doc(bk), bk, Mem()), art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink")
+    a, b = _cli_index(tmp_path, base_doc(bk), bk, "a.lore.json"), _cli_index(tmp_path, base_doc(bk), bk, "b.lore.json")
+    im = Image()
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: im)
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    with pytest.raises(SystemExit, match="one series"):
+        cli.main(["illustrate", str(a), str(b), "--epub", "1.epub", "--epub", "2.epub"])
+    assert not im.calls
+
+
+def test_a_trailing_anchor_not_in_the_epub_is_never_reached():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["anchors"][-1]["fp"] = "0000000000000000"
+    d["anchors"][-2]["fp"] = "0000000000000001"
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", log=lambda *_: None)
+    b = il.books[0]
+    assert b.seq_of["a11"] == b.seq_of["a10"] == len(bk.blocks) and b.hi == len(bk.blocks) - 1 and b.seq_of["a9"] == 9
+
+
+def test_ordinary_words_of_a_group_name_are_not_names():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("order", "The Order of the Dawn", "group"))
+    dawn = "Dawn breaks over a grey stone mill " + SCENE[SCENE.index("beside") + 21:]
+    il, rep, sink, t, im = run(d, bk, text_=Text(scene=lambda p: dawn), portraits=False)
+    assert len(pics(sink, "plate")) == 2
+    named = dawn + " A banner of the Order of the Dawn hangs there."
+    il, rep, sink, t, im = run(d, bk, text_=Text(scene=lambda p: named), portraits=False)
+    assert not pics(sink, "plate") and il.names[0].find(named) == "Order of the Dawn"
+    assert il.names[0].find("They meet Mira's brother.") == "Mira" and il.names[0].find("Stranger things wait. Grey hills.") == ""
+    assert il.names[0].find("They watch the Stranger.") == "Stranger"
+
+
+def test_an_on_demand_plate_screens_its_chapter_and_shows_the_turning_point():
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    j = il.job("plate", "One")
+    assert j.event and j.event["id"] == "e2"
+
+
+def test_counts_need_no_model_call():
+    bk = book(("One", CH1), ("Two", CH2))
+    t = Text()
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    c = il.counts()
+    assert c == {"plates": 2, "portraits": 4, "chapters": [{"title": "One", "drawable": None}, {"title": "Two", "drawable": None}]}
+    assert not t.prompts
+    il.run()
+    n = len(t.prompts)
+    assert [x["drawable"] for x in il.counts()["chapters"]] == [2, 3] and len(t.prompts) == n
+
+
+def test_an_edited_prompt_is_never_softened_and_its_refusal_is_raised():
+    bk = book(("One", CH1), ("Two", CH2))
+    t, im = Text(), Image(refuse=[lambda prompt, n: True])
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    with pytest.raises(images.ImageRefused):
+        il.draw(il.job("plate", "One"), text="My own words: a mill at dusk, a woman at the gate, nothing else in view at all.")
+    assert len(im.calls) == 1 and not any("quieter composition" in p for p in t.prompts) and il.report.refused == 1
+    assert not il.man[0]["skipped"]                    # the person may try again
+
+
+# ---- round 3, item 13: what a prompt inherits from earlier books, and readers who have not finished them
+
+OWN_WORLD = ("A river valley seen years later: the same stone mills and cottages, some roofs mended with new slate, carts and "
+             "a few iron tools. People wear wool coats. The light is clear and cold, the fields worked hard, the mood watchful.")
+
+
+class TwoWorlds(Text):
+    def complete(self, system, prompt, schema, prefix=None):
+        if "visual world note" in prompt and "Three" in prompt:
+            self.prompts.append(prompt)
+            return {"text": OWN_WORLD}
+        return super().complete(system, prompt, schema, prefix)
+
+
+def test_every_picture_says_which_earlier_books_its_prompt_inherits():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    il.run()
+    assert all(p["inherits"] == [] for p in pics(s1))
+    assert pics(s2) and all(p["inherits"] == ["b1"] and not p.get("partial") for p in pics(s2))   # book one's world note
+    assert WORLD in pics(s2, "plate")[0]["prompt"]
+
+
+def test_a_reader_who_has_not_finished_the_earlier_book_gets_nothing_from_it():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+    t, im = TwoWorlds(), Image()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il.run()                                                     # a build: book one counts as read
+    full = next(p for p in pics(s2, "plate"))
+    with pytest.raises(art.NotVisible):
+        il.job("portrait", "stranger", at="b2.a5", finished=set())       # only book one has the stranger
+    job = il.job("plate", "Three", at="b2.a5", finished=set())
+    pr = il.make_prompt(job)
+    assert pr.partial and pr.inherits == [] and WORLD not in pr.text and OWN_WORLD in pr.text
+    assert s2.m["worldOwn"]["text"] == OWN_WORLD and s2.m["world"]["inherited"]               # the set's note is unchanged
+    assert all(j == 1 for j, _ in pr.references)                # no picture of book one as a reference
+    oren = [n for n in s2.m["appearance"]["oren"] if n.get("partial")]
+    assert oren and oren[0]["inherits"] == []                   # written again from book two alone
+    rec = il.draw(job, pr)
+    assert rec["partial"] and rec["inherits"] == []
+    # a reader who finished book one gets the set's own prompt, and a resumed build never counts the partial picture as drawn
+    pr2 = il.make_prompt(il.job("plate", "Three", at="b2.a5", finished={"b1"}))
+    assert not pr2.partial and pr2.inherits == ["b1"] and WORLD in pr2.text
+    assert (rec["kind"], rec["target"], rec["from"]) not in il._have(1) or full["from"] == rec["from"]
+    n = len(im.calls)
+    art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), im, "ink", workers=1, log=lambda *_: None,
+                    pause=0).run()
+    assert len(im.calls) == n                                   # the full plate was already there

@@ -221,9 +221,10 @@ class Claude:
 class ProviderError(RuntimeError):
     """An HTTP-level failure from a provider. The message never contains the API key."""
 
-    def __init__(self, message: str, status: int | None = None) -> None:
+    def __init__(self, message: str, status: int | None = None, sent: bool | None = None) -> None:
         super().__init__(message)
         self.status = status
+        self.sent = sent        # False: the request surely never reached the provider (safe to send again); None: unknown
 
 
 def _http(method: str, url: str, headers: dict, body: bytes | None, timeout: float) -> tuple[int, dict | str]:
