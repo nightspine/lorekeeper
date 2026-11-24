@@ -607,6 +607,49 @@ def _picture_path(out: Path, mime: str) -> Path:
     return out.with_name(out.name + want)
 
 
+def _llm_images():
+    from . import llm
+    return llm.IMAGE_PROVIDERS
+
+
+def cmd_illustrate(args) -> int:
+    """Draw an art set for one or more indexes (series reading order): chapter pictures and portraits, resumable. The index is never written."""
+    import copy
+
+    from . import art, epub, llm
+    paths = [Path(x) for x in args.index]
+    if len(args.epub or []) != len(paths):
+        raise SystemExit("error: pass one --epub per INDEX, in the same order")
+    docs = [json.loads(p.read_text()) for p in paths]
+    prior = [(Path(x), json.loads(Path(x).read_text())) for x in args.prior or []]
+    series = json.loads(Path(args.series).read_text()) if args.series else None
+    spec = llm.image_spec(args.provider)
+    key = Path(args.api_key_file).read_text().strip() if args.api_key_file else llm.env_key(args.provider)
+    if not key:
+        raise SystemExit(f"error: no API key for {spec['label']}: set {spec['key_env']} or pass --api-key-file")
+    try:
+        image = llm.make_image(args.provider, args.model, api_key=key)
+    except ValueError as e:
+        raise SystemExit(f"error: {e}") from e
+    tp = args.text_provider or ("claude" if llm.env_key("claude") else args.provider)
+    targs = copy.copy(args)
+    if tp != args.provider:
+        targs.api_key_file = None
+    text = _make_model(targs, args.text_model or (llm.PROVIDERS[tp]["cheap"] if tp in llm.PROVIDERS else None), tp)
+    books = [art.Book(d, None, art.FileSink(art.default_dir(p, d, args.style)), None, draw=False) for p, d in prior]
+    for i, (p, d) in enumerate(zip(paths, docs)):
+        out = Path(args.out) if args.out and i == len(paths) - 1 else art.default_dir(p, d, args.style)
+        books.append(art.Book(d, epub.read(args.epub[i]), art.FileSink(out), args.level))
+    chapters = set(_parse_ranges(args.chapters)) if args.chapters else None
+    il = art.Illustrator(books, text, image, args.style, portraits=args.portraits, quality=args.quality, cap=args.cap,
+                         max_pictures=args.limit, chapters=chapters, series=series, log=lambda m: print(m, file=sys.stderr))
+    rep = il.run()
+    for line in rep.lines():
+        print(line)
+    print(f"art set: {books[-1].sink.dir}")
+    return 0
+
+
 def cmd_draw(args) -> int:
     """Draw one picture from a prompt (and optional reference pictures) and write it to a file."""
     import mimetypes
@@ -836,6 +879,28 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write the results to this directory instead of in place")
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_arcs)
+
+    s = sub.add_parser("illustrate", help="draw chapter pictures and portraits for an index (Gemini or OpenAI for the pictures, a cheap text model for the prompts)")
+    s.add_argument("index", nargs="+", help="index files of the run, in series reading order")
+    s.add_argument("--epub", action="append", help="each index's EPUB, in the same order (required)")
+    s.add_argument("--series", help="the series manifest, when the indexes are series books")
+    s.add_argument("--prior", action="append", help="an earlier series book's index, read only: its art set (if any) is inherited (repeatable, reading order)")
+    s.add_argument("--style", default="digital-art", help="one of: " + ", ".join(__import__("lorekeeper.art", fromlist=["STYLES"]).STYLES)
+                   + "; or your own sentence describing the look (never an artist's name)")
+    s.add_argument("--level", choices=["main", "all"], default="main", help="main: one picture per chapter; all: every drawable moment")
+    s.add_argument("--portraits", action=argparse.BooleanOptionalAction, default=True, help="draw a portrait per character (default: yes)")
+    s.add_argument("--provider", choices=list(_llm_images()), default="gemini", help="image provider (Claude cannot draw)")
+    s.add_argument("--model", default=None, help="image model (default: the provider's own default)")
+    s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
+    s.add_argument("--api-key-file", metavar="PATH", help="file holding the image provider's key (default: its environment variable)")
+    s.add_argument("--text-provider", default=None, help="provider of the model that writes the prompts (default: claude when a key exists, else the image provider)")
+    s.add_argument("--text-model", default=None, help="that model (default: the provider's cheap model)")
+    s.add_argument("--base-url", default=None, help=argparse.SUPPRESS)
+    s.add_argument("--cap", type=float, default=10.0, help="stop when the run has cost this many dollars (default 10); what was drawn is kept")
+    s.add_argument("--limit", type=int, default=None, help="draw at most this many pictures")
+    s.add_argument("--chapters", help="table-of-contents entries to draw chapter pictures for, e.g. 5-7 (see `toc`)")
+    s.add_argument("--out", help="where to write the art set of the last index (default: art/<textHash>/<style>/ beside the index)")
+    s.set_defaults(fn=cmd_illustrate)
 
     s = sub.add_parser("draw", help="draw one picture from a prompt with an image model (Gemini or OpenAI, your own key)")
     from . import llm as _llm
