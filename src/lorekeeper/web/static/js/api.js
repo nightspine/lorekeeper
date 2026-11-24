@@ -158,6 +158,29 @@ export const api = {
   shareCheck: (libraryKey) => request("POST", `/api/community/share/${encodeURIComponent(libraryKey)}/check`),
   shareAudit: (libraryKey) => request("POST", `/api/community/share/${encodeURIComponent(libraryKey)}/audit`),
   shareBundleUrl: (libraryKey) => `/api/community/share/${encodeURIComponent(libraryKey)}/bundle`,
+  // ---- pictures (art sets beside an index; the Reader gates them by `from`, see art.js) ----
+  /** The art set of an index in one style (the server's default without one): the manifest, the styles present, `screened`.
+   *  Null when the index has no art set or the server has no picture routes (an older server). */
+  art: async (key, style = null) => {
+    const res = await fetch(`/api/library/${encodeURIComponent(key)}/art${style ? `?style=${encodeURIComponent(style)}` : ""}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(res.statusText);
+    return res.json();
+  },
+  /** Write the prompt for one picture (one text call, nothing drawn). `p` is the reader's frontier anchor. */
+  artPrompt: (key, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/prompt`, body),
+  /** Draw a picture from the given (possibly edited) prompt and file it; a refusal is a 422 with code "refused". */
+  artDraw: (key, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body),
+  artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
+  artRedraw: (key, id, note) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`, { note }),
+  artWorld: (key, text) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, { text }),
+  /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */
+  artEstimate: (q) => request("GET", `/api/art/estimate?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]))}`),
+  /** The standalone "Add pictures" run on an existing index: a job of kind "art". */
+  artRun: (key, art) => request("POST", `/api/library/${encodeURIComponent(key)}/art/run`, { art }),
+  /** Every art set on disk, per book: { books: [{ key, title, textHash, styles, size }] }. */
+  artSets: () => request("GET", "/api/art"),
+  artRemove: (textHash) => request("DELETE", `/api/art/${encodeURIComponent(textHash)}`),
   edition: async (hash) => {
     const res = await fetch(`/api/editions/${hash}`);
     return res.ok ? res.json() : null;

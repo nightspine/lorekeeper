@@ -167,7 +167,7 @@ function hops(root, edges, max) {
 /**
  * Paint the Connections view into `panel`.
  * ctx: { view, types (Set, shared with Cast & World), gs (persistent graph state), chapterMentions,
- *        revealed(id) → { where, isNew } | null, hereLabel, openEntity(id, el), repaint() }
+ *        revealed(id) → { where, isNew } | null, hereLabel, openEntity(id, el), repaint(), portrait(id) → node | null }
  */
 export function renderConnections(panel, ctx) {
   const { view, types, gs } = ctx;
@@ -442,7 +442,10 @@ export function renderConnections(panel, ctx) {
       if (dy > 80 || (dy > 30 && dy / Math.max(1, ev.timeStamp - t) > 0.5)) dismiss();
     };
     side.onpointerup = endDrag; side.onpointercancel = endDrag;
+    // The entry's latest visible portrait at the top (the Reader gates it; the map itself keeps dots).
+    const face = ctx.portrait ? ctx.portrait(sel) : null;
     clear(side,
+      face,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
         h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", { tabindex: "-1" }, e.name)),
         h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: clearSel } }, icon("x"))),
