@@ -30,9 +30,7 @@ class GeminiFake(Image):
 
 @pytest.fixture(autouse=True)
 def short_world(monkeypatch):
-    # The world note ends with chapter one, so nothing is held back (the name changed in the pipeline's round 2).
-    monkeypatch.setattr(art, "WORLD_CHAPTERS", 1, raising=False)
-    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 1, raising=False)
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 1)    # the world note ends with chapter one: nothing is held back
     monkeypatch.setattr(art, "MIN_GAP", 2)
     for var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -127,12 +125,6 @@ def test_a_record_naming_another_file_is_never_served(tmp_path):
     m["pictures"][0]["file"] = "art.json"
     s.save(h, "ink", m)
     assert s.path(h, "ink", "p0000aaaa") is None
-
-
-def test_screened_counts_read_the_cache_by_chapter_title():
-    assert store_mod.screened_count({"One": [{"event": "e1"}, {"event": "e2"}]}, "One") == 2
-    assert store_mod.screened_count({"One|3f2a": {"moments": ["e1"]}}, "One") == 1
-    assert store_mod.screened_count({"One (2)": []}, "One") is None
 
 
 # ---- the standalone run
@@ -693,11 +685,13 @@ def series_env(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: GeminiFake())
     seen = []
 
-    class Spy(art.Illustrator):
-        def __init__(self, books, *a, **kw):
-            seen.append({"books": [b.doc["id"] for b in books], "finished": kw.get("finished")})
-            super().__init__(books, *a, **kw)
-    monkeypatch.setattr(web_app.artmod, "Illustrator", Spy)
+    real = art.Illustrator.make_prompt
+
+    def spy(self, job, finished=None):
+        pr = real(self, job, finished)
+        seen.append({"books": [b.doc["id"] for b in self.books], "finished": job.finished, "inherits": pr.inherits})
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", spy)
     app = web_app.create_app(tmp_path / "data", [("examples", idx)], [epubs], ollama_url="http://127.0.0.1:9",
                              allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
@@ -711,10 +705,22 @@ def test_the_prompt_route_reads_only_the_books_the_reader_finished(series_env):
         r = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, **({"finished": fin} if fin is not None else {})})
         assert r.status_code == 200, r.text
         got, s = r.json(), seen[-1]
-        assert ("one" in s["books"] and s["finished"] in (None, {"one"})) if read else \
-            ("one" not in s["books"] or s["finished"] == set())
-        assert got["slug"] == "ink" and isinstance(got["inherits"], list)
+        # Every earlier book finished is the pipeline's None (a run's view); none finished is the empty set.
+        assert s["books"] == ["one", "mill"] and s["finished"] == (None if read else frozenset())
+        assert got["slug"] == "ink" and got["inherits"] == s["inherits"]
+        assert got["inherits"] == [] if not read else set(got["inherits"]) <= {"one"}
+        assert got["partial"] is (not read)
         assert got["price"] == llm.image_price("openai", llm.IMAGE_PROVIDERS["openai"]["default"], "draft", got["shape"])
     for bad in (["two"], ["nope"], "one"):
         r = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "finished": bad})
         assert r.status_code == 422 and r.json()["code"] == "bad-position", bad
+
+
+def test_a_text_model_failure_is_a_502_not_a_missing_target(env, monkeypatch):
+    env.key()
+
+    def fails(self, job, finished=None):
+        raise art.TextFailed("the text model failed twice")
+    monkeypatch.setattr(art.Illustrator, "make_prompt", fails)
+    r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"})
+    assert r.status_code == 502 and r.json()["code"] == "model-failed"

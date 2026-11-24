@@ -201,16 +201,3 @@ class ArtStore:
         sink.save(m)
         return n
 
-
-def screened_count(screened: dict, title: str) -> int | None:
-    """How many drawable moments the set's screening found in a chapter, or None when it was not screened. The cache is
-    keyed by the chapter title (a key may carry more after the title, such as a stamp of the chapter's events) and holds
-    a list of moments, or an object with one."""
-    hit = screened.get(title)
-    if hit is None:
-        hit = next((v for k, v in screened.items() if isinstance(k, str) and k.startswith(title)
-                    and k[len(title):len(title) + 1] in ("|", "#", "@", "\t", "\x1f")), None)
-    if isinstance(hit, dict):
-        hit = next((v for k in ("moments", "events", "chosen", "drawable") if isinstance(v := hit.get(k), list)), None)
-    return len(hit) if isinstance(hit, list) else None
-

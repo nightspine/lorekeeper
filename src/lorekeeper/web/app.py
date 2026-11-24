@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import copy
 import hashlib
-import inspect
 import json
 import logging
 import os
@@ -1233,7 +1232,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return sorted(set(fin))
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    finished: list[str] | None = None):
+                    portraits: bool = True):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
@@ -1250,17 +1249,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         except ValueError as e:
             raise ArtRefusal(422, "bad-model", str(e)) from e
         slug_, style = arts.resolve(ctx["hash"], style)
-        takes = "finished" in inspect.signature(artmod.Illustrator).parameters
         books_ = []
-        for d in art_prior(ctx):
+        for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
             ph = artstore.text_hash(d)
-            # An earlier book the reader has not finished is not read at all, unless the pipeline gates by `finished` itself.
-            if artstore.HASH.fullmatch(ph) and (takes or finished is None or (d.get("series") or {}).get("book") in finished):
+            if artstore.HASH.fullmatch(ph):
                 books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
         books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
-        kw = {"finished": set(finished)} if takes and finished is not None else {}
-        return artmod.Illustrator(books_, text_model, image, style, quality=quality, log=lambda m: None, pause=0, **kw), \
-            image, slug_
+        return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
+                                  log=lambda m: None, pause=0), image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1296,7 +1292,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-position", e.detail or e.title) from e
         return True, anchor
 
-    def art_job(il, kind: str, target, given: bool, at: str | None, shape=None):
+    def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None):
         if kind not in artmod.SHAPE_OF:
             raise ArtRefusal(422, "bad-kind", "kind must be plate, event, portrait, place or thing.")
         if not isinstance(target, str) or not target:
@@ -1306,31 +1302,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if given and at is None:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
         try:
-            return il.job(kind, target, at=at, shape=shape)
+            return il.job(kind, target, at=at, shape=shape, finished=None if finished is None else set(finished))
         except artmod.NotVisible as e:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+        except artmod.TextFailed as e:      # the on-demand plate's screening call failed twice
+            raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
         except (KeyError, StopIteration, ValueError) as e:
             raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
 
-    def draw_given(il, job, pr, text_: str | None = None) -> dict:
-        """Draw the prompt as given (the person's own or edited text, or an old prompt): a refusal is answered with the
-        provider's reason and never softened into another text. Nothing is recorded as skipped for a later run."""
-        m = il.man[-1]
-        skipped = len(m.get("skipped", []))
+    def draw_given(il, job, pr, text_: str) -> dict:
+        """Draw the prompt as given (the person's own or edited text, or an old prompt): with `text` the pipeline never
+        softens it, and a refusal is raised with the provider's reason and recorded as no skip, so the person may try again."""
         try:
-            if "soften" in inspect.signature(il.draw).parameters:
-                rec = il.draw(job, prompt=pr, text=text_, soften=False)
-            else:
-                # TODO(lead): remove this branch once art.py takes soften=False (pipeline round 3, item 12).
-                il._write = lambda *a, **kw: (None, "the given prompt is drawn as it is")
-                rec = il.draw(job, prompt=pr, text=text_)
+            rec = il.draw(job, prompt=pr, text=text_)
         except images.ImageRefused as e:
             raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
         if rec is None:
             why = il.report.reasons[-1]["reason"] if il.report.reasons else next(iter(il.report.skipped), "skipped")
-            if len(m.get("skipped", [])) > skipped:   # an on-demand refusal must not stop a run drawing that picture
-                del m["skipped"][skipped:]
-                il.books[-1].b.sink.save(m)
             raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
         return rec
 
@@ -1441,6 +1429,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
+    def chapter_events(ctx: dict, il) -> dict[str, int]:
+        """Non-minor events per chapter title of the plan (the EPUB's chapters, a repeated title as "Title (2)")."""
+        book, seen, out = art_epub(ctx), {}, {}
+        ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
+        seq_of = {a["id"]: a.get("seq") for a in ctx["doc"]["anchors"]}
+        for c, end in zip(book.chapters, ends):
+            n = sum(1 for e in ctx["doc"].get("events", []) if e.get("kind") != "minor"
+                    and seq_of.get(e["from"]) is not None and c.start <= seq_of[e["from"]] < end)
+            seen[c.title] = seen.get(c.title, 0) + 1
+            out[c.title if seen[c.title] == 1 else f"{c.title} ({seen[c.title]})"] = n
+        return out
+
     @app.get("/api/art/estimate")
     @art_route
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: bool = True,
@@ -1450,28 +1450,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main or all.")
-        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False)
-        bi = len(il.books) - 1
-        if hasattr(il, "counts"):   # art.py round 3: the counts without a model call
-            got = il.counts(bi, level=level, portraits=portraits) if "level" in inspect.signature(il.counts).parameters \
-                else il.counts(bi)
-            plates, ports = got["plates"], (got["portraits"] if portraits else 0)
-            chapters = [{"title": c["title"], "drawable": c.get("drawable"), "screened": c.get("drawable") is not None}
-                        for c in got["chapters"]]
-        else:
-            b, man = il.books[bi], il.man[bi]
-            chapters, plates = [], 0
-            for ch in b.chapters:
-                n = artstore.screened_count(man.get("screened") or {}, ch["title"])
-                evs = [e for e in ch["events"] if e.get("kind") != "minor"]
-                drawable = n if n is not None else len([e for e in evs if e.get("kind") == "turn"] if level == "main" else evs)
-                chapters.append({"title": ch["title"], "drawable": drawable, "screened": n is not None})
-                if ch["events"]:   # as the plan: a chapter with no events gets no picture
-                    plates += 1 if level == "main" else max(1, drawable)
-            try:
-                ports = len(il._portrait_jobs(bi)) if portraits else 0
-            except Exception:  # noqa: BLE001 - an estimate is never worth an error
-                ports = 0
+        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=portraits)
+        got = il.counts()
+        # `drawable` is the screening's count, None before a chapter is screened; then a level "all" run draws up to the
+        # chapter's non-minor events (read from the index, not from the pipeline's internals).
+        events = chapter_events(ctx, il)
+        chapters, plates = [], got["plates"]
+        if level == "all":
+            plates = sum(max(1, c["drawable"] if c["drawable"] is not None else events.get(c["title"], 0))
+                         for c in got["chapters"])
+        chapters = [{"title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
+                     "events": events.get(c["title"], 0)} for c in got["chapters"]]
+        ports = got["portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
         each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
@@ -1526,14 +1516,15 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), finished=fin)
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
                 given, at = art_position(ctx, body)
-                args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
+                args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job = art_job(*args)                     # not visible even before a world note holds it: no call at all
-                if not il.man[-1].get("world"):
-                    # The set's world note, once, as a run writes it; kept only when the picture is then still visible.
-                    before = arts.manifest(ctx["hash"], slug_)
-                    il.world(len(il.books) - 1)
+                # The world note this reader's pictures use (the book's own when an earlier one is unfinished), written once
+                # as a run writes it; a new one is kept only when the picture is then still visible.
+                before = arts.manifest(ctx["hash"], slug_)
+                il.world(len(il.books) - 1, finished=None if fin is None else set(fin))
+                if arts.manifest(ctx["hash"], slug_) != before:
                     try:
                         job = art_job(*args)
                     except ArtRefusal:
@@ -1549,6 +1540,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     pr = il.make_prompt(job)
                 except artmod.NotVisible as e:
                     raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+                except artmod.TextFailed as e:
+                    raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
                 except ValueError as e:
                     raise ArtRefusal(422, "dropped", str(e)) from e
             # The price of the chosen provider and quality, also before its key is added.
@@ -1557,7 +1550,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             out = {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
                    "target": job.target, "references": ref_json(il, pr.references, slug_), "provider": prov, "model": name,
                    "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
-                   "inherits": list(getattr(pr, "inherits", None) or []), "finished": fin}
+                   "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
             remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))), pr)
             return out
         return await work()
@@ -1579,15 +1572,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"), finished=fin)
+                                               body.get("model"))
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
-                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
+                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))))
                 if pr is None:
                     try:
                         pr = il.make_prompt(job)   # for its anchor and references; the person's text is drawn
+                    except artmod.TextFailed as e:
+                        raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
                     except ValueError as e:
                         raise ArtRefusal(422, "dropped", str(e)) from e
                 rec = draw_given(il, job, pr, text_)
@@ -1652,7 +1647,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 pr = artmod.Prompt(text_, text_, rec["from"], rec.get("shape") or job.shape,
                                    [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
                                    list(rec.get("sources") or [rec["from"]]))
-                new = draw_given(il, job, pr)
+                new = draw_given(il, job, pr, text_)
                 old = arts.path(ctx["hash"], slug_, pid)
                 entry = journal_art(key, [old] if old and old.name != new["file"] else [],
                                     {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
