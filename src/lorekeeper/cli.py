@@ -590,20 +590,37 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+_IMAGE_SUFFIX = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+
+
+def _picture_path(out: Path, mime: str) -> Path:
+    """The path to write: a wrong image suffix is replaced by the one for the bytes, another suffix gets it appended."""
+    want = _IMAGE_SUFFIX.get(mime)
+    if want is None:
+        import mimetypes
+        want = mimetypes.guess_extension(mime) or ".img"
+    have = out.suffix.lower()
+    if have == want or (have == ".jpeg" and want == ".jpg"):
+        return out
+    if have in (".png", ".jpg", ".jpeg", ".webp", ""):
+        return out.with_suffix(want)
+    return out.with_name(out.name + want)
+
+
 def cmd_draw(args) -> int:
     """Draw one picture from a prompt (and optional reference pictures) and write it to a file."""
     import mimetypes
     import time
     from . import images, llm
-    key = Path(args.api_key_file).read_text().strip() if args.api_key_file else None
+    spec = llm.image_spec(args.provider)
+    try:
+        key = Path(args.api_key_file).read_text().strip() if args.api_key_file else None
+        refs = [(Path(f).read_bytes(), mimetypes.guess_type(f)[0] or "image/png") for f in args.ref or []]
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
     key = key or llm.env_key(args.provider)
     if key is None:
-        var = llm.IMAGE_PROVIDERS[args.provider]["key_env"]
-        raise SystemExit(f"error: no API key for {llm.IMAGE_PROVIDERS[args.provider]['label']}: set {var} or pass --api-key-file")
-    refs = []
-    for f in args.ref or []:
-        mime = mimetypes.guess_type(f)[0] or "image/png"
-        refs.append((Path(f).read_bytes(), mime))
+        raise SystemExit(f"error: no API key for {spec['label']}: set {spec['key_env']} or pass --api-key-file")
     try:
         model = llm.make_image(args.provider, args.model, api_key=key)
         t = time.time()
@@ -613,12 +630,14 @@ def cmd_draw(args) -> int:
         return 2
     except (ValueError, llm.ProviderError) as e:
         raise SystemExit(f"error: {e}") from e
-    out = Path(args.output)
-    if not out.suffix:
-        out = out.with_suffix(mimetypes.guess_extension(pic.mime) or ".img")
-    out.write_bytes(pic.data)
+    out = _picture_path(Path(args.output), pic.mime)
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(pic.data)
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
     size = f"{pic.width}x{pic.height}" if pic.width else "size not reported"
-    price = llm.image_price(args.provider, pic.model, args.quality)
+    price = llm.image_price(args.provider, pic.model, args.quality, args.shape)
     cost = f"${pic.cost:.4f}" if pic.cost else "price unknown"
     print(f"{out}: {pic.model}, {size}, {pic.mime}, {len(pic.data):,} bytes, {cost}"
           + ("" if price is not None or not pic.cost else " (from the response's token usage)")
