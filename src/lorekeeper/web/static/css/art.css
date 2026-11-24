@@ -38,6 +38,11 @@
   li.tl-ev:hover .tl-draw, li.tl-ev:focus-within .tl-draw, .tl-draw:focus-visible { opacity: 1; }
   .tl-draw:hover { color: var(--beacon); }
 }
+/* Without hover it appears on the row the reader tapped (the row takes focus), never on every row at once. */
+@media (hover: none) {
+  li.tl-ev.can-draw:not(:focus-within) .tl-draw { visibility: hidden; }
+  li.tl-ev.can-draw { cursor: pointer; }
+}
 .timeline li.tl-ev.has-pic { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; }
 .timeline .tl-thumb { width: 48px; height: 48px; }
 
