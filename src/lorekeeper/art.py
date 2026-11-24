@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Protocol
 
+from . import anchors as A
 from . import epub, gating, images, llm
 from . import portraits as P
 from .generate import ABOUT_THE_TEXT
@@ -52,7 +53,7 @@ LEVELS = ("main", "all")
 NOTE_TYPES = ("person", "creature", "place", "object")
 PORTRAIT_TYPES = ("person", "creature")
 
-WORLD_CHAPTERS = 3     # chapters the world note is written from
+WORLD_MIN_WORDS = 1500  # the world note is written from the first story chapter, and the next ones until this many words
 MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
@@ -79,16 +80,14 @@ SCENE_SCHEMA = {"type": "object", "required": ["text"], "properties": {"text": {
 
 SCREEN = """These are the events of {where}, numbered. Which of them are a visible moment: a place, people or things that could be
 seen in one picture ("the innkeeper presses a crucifix into Harker's hand" is; "Harker concludes he is a prisoner" and
-"the war is declared" are not)? For each one that is, give one sentence of what is in frame.
+"the war is declared" are not)?
 
-Return "moments": a list of {{"event": the number, "frame": the sentence}}, in order, leaving out events that are not a visible moment.
-Do not name anyone in a frame; say who they are by role ("a young solicitor").
+Return "moments": the numbers of the events that are a visible moment, in order, leaving out the others.
 
 Events:
 {events}"""
-SCREEN_SCHEMA = {"type": "object", "required": ["moments"], "properties": {"moments": {"type": "array", "items": {
-    "type": "object", "required": ["event", "frame"],
-    "properties": {"event": {"type": "integer"}, "frame": {"type": "string"}}}}}}
+# The screening call only chooses: what it sees of the whole chapter never reaches a picture's prompt.
+SCREEN_SCHEMA = {"type": "object", "required": ["moments"], "properties": {"moments": {"type": "array", "items": {"type": "integer"}}}}
 
 WORLD = """Below is the opening of a novel as a reader's companion records it: the recaps of its first chapters, where scenes
 are set, and a few passages. Write the visual world note an illustrator needs to draw anything in this book consistently.
@@ -151,7 +150,7 @@ Rules:
 """
 KINDS_WHAT = {
     "plate": "the main moment of a chapter: {frame}",
-    "event": "this moment: {frame}",
+    "event": "this moment: {frame}",   # frame = the event's own summary
     "portrait": "a portrait of {who}, as they are at this point: head and shoulders or half length, a simple background that suits the world.",
     "place": "{who}, a place, as it looks at this point; people only if the passages put them there.",
     "thing": "{who}, an object, as it looks at this point, in a setting that suits the world.",
@@ -260,13 +259,14 @@ def _words(text: str) -> int:
 
 
 class Known:
-    """The capitalised words the book has used up to a block: the set `portraits._checked` wants, by position."""
+    """The capitalised words the book has used up to a block, plus every word of the earlier books of the series (which the
+    reader has finished): the set `portraits._checked` wants, by position."""
 
-    def __init__(self, first: dict[str, int], at: int) -> None:
-        self.first, self.at = first, at
+    def __init__(self, first: dict[str, int], at: int, earlier: frozenset[str] = frozenset()) -> None:
+        self.first, self.at, self.earlier = first, at, earlier
 
     def __contains__(self, w: str) -> bool:
-        return self.first.get(w, 1 << 30) <= self.at
+        return w in self.earlier or self.first.get(w, 1 << 30) <= self.at
 
 
 @dataclass
@@ -288,7 +288,6 @@ class Job:
     anchor: str               # the anchor the picture shows from (before any hold, see Illustrator._anchor)
     event: dict | None = None
     chapter: dict | None = None
-    frame: str = ""
     change: str = ""          # a portrait's reason for a new version (what changed), "" for the first
     shape: str = ""
 
@@ -309,22 +308,24 @@ class Prompt:
 @dataclass
 class Report:
     drawn: int = 0
-    refused: int = 0
+    refused: int = 0            # pictures given up after the provider refused (each counted once; a refusal is not also a skip)
+    softened: int = 0           # pictures drawn from a quieter rewrite after a refusal
     skipped: Counter = field(default_factory=Counter)
     cost: float = 0.0           # image calls
     text_cost: float = 0.0
     stopped: str = ""           # why the run stopped early ("" = it did not)
-    held: int = 0               # pictures moved later to the world note's anchor
+    held: int = 0               # pictures moved later to the world note's anchor (the end of its first story chapter)
     reasons: list[dict] = field(default_factory=list)
 
     def lines(self) -> list[str]:
-        out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}; images ${self.cost:.2f}"
+        out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}"
+               + (f" ({self.softened} drawn quieter after a refusal)" if self.softened else "") + f"; images ${self.cost:.2f}"
                + (f", text ${self.text_cost:.4f}" if self.text_cost else "")]
         if self.stopped:
             out.append(f"stopped: {self.stopped}")
         if self.held:
-            out.append(f"{self.held} picture(s) at the start of the book are held to the end of chapter {WORLD_CHAPTERS}, "
-                       "where the world note ends")
+            out.append(f"{self.held} picture(s) at the start of the book are held to the end of the chapter the world note is "
+                       "written from")
         out += [f"  {n} x {why}" for why, n in sorted(self.skipped.items())]
         out += [f"  - {r['target']}: {r['reason']}" for r in self.reasons]
         return out
@@ -333,6 +334,32 @@ class Report:
 class NotVisible(ValueError):
     """The picture asked for sits after the reader's position."""
 
+
+class TextFailed(ValueError):
+    """The text model failed twice on one call: that picture (or note) is skipped, the run goes on."""
+
+    def __init__(self, detail: str = "") -> None:
+        super().__init__("skipped: text model failed")
+        self.detail = detail
+
+
+def _seqs(anchors: list[dict], ep: epub.Book | None) -> dict[str, int]:
+    """Block of every anchor. With the EPUB, resolved by fingerprint (the `seq` hint is optional in the schema); an anchor
+    that cannot be found takes the next found one's block, as a reader's client would (SPEC §3.6). Without it, the hints,
+    else the anchors' order (an earlier book that is only read needs no more)."""
+    if ep is None:
+        if all("seq" in a for a in anchors):
+            return {a["id"]: a["seq"] for a in anchors}
+        return {a["id"]: n for n, a in enumerate(anchors)}
+    found = A.resolve(anchors, ep.blocks)
+    if not any(v is not None for v in found.values()):
+        raise ValueError("none of the index's anchors is in this EPUB: is it the edition the index was built from?")
+    out, nxt = {}, ep.blocks[-1].seq if ep.blocks else 0
+    for a in reversed(anchors):
+        if found[a["id"]] is not None:
+            nxt = found[a["id"]]
+        out[a["id"]] = nxt
+    return out
 
 
 
@@ -343,13 +370,15 @@ class _B:
         self.i, self.b, self.doc, self.epub = i, b, b.doc, b.epub
         d = self.doc
         self.anchors = d["anchors"]
-        self.seq_of = {a["id"]: a["seq"] for a in self.anchors}
+        if not self.anchors:
+            raise ValueError(f"{d.get('work', {}).get('title', 'the index')}: the index has no anchors")
+        self.seq_of = _seqs(self.anchors, self.epub)
         self.ord_of = {a["id"]: n for n, a in enumerate(self.anchors)}
-        self.aseqs = [a["seq"] for a in self.anchors]
+        self.aseqs = [self.seq_of[a["id"]] for a in self.anchors]
         self.ents = {e["id"]: e for e in d["entities"]}
         self.events = {e["id"]: e for e in d.get("events", [])}
-        self.lo = self.anchors[0]["seq"]
-        self.hi = self.seq_of.get(d.get("coverage", {}).get("through"), self.anchors[-1]["seq"])
+        self.lo = self.aseqs[0]
+        self.hi = max(self.seq_of.get(d.get("coverage", {}).get("through"), self.aseqs[-1]), self.lo)
         self.text: dict[int, str] = {}
         self.first: dict[str, int] = {}
         if self.epub is not None:
@@ -357,6 +386,9 @@ class _B:
             for s, t in self.text.items():
                 for w in set(P._CAPS.findall(t)):
                     self.first.setdefault(w, s)
+        else:                              # only ever a finished earlier book: every word of its index was read
+            for w in set(P._CAPS.findall(json.dumps(d, ensure_ascii=False))):
+                self.first.setdefault(w, self.lo)
         self.pats = P._patterns(d)
         self._hits: dict[str, list[tuple[int, int]]] = {}
         self.chapters = self._chapters()
@@ -395,8 +427,11 @@ class _B:
                 continue
             seen[title] += 1
             key = title if seen[title] == 1 else f"{title} ({seen[title]})"
-            last = max([r["from"] for r in rcs] or [e["from"] for e in evs], key=self.ord_of.get)
-            out.append({"n": n + 1, "title": key, "lo": start, "hi": end, "events": evs, "recaps": rcs, "last": last})
+            # the chapter's last anchor: its recaps' and every event's (an event may come after the last recap), so a plate,
+            # whose moment, figures and passage come from any of them, is never written from content after it
+            last = max([r["from"] for r in rcs] + [e["from"] for e in evs], key=self.ord_of.get)
+            words = sum(_words(t) for s, t in self.text.items() if start <= s <= end)
+            out.append({"n": n + 1, "title": key, "lo": start, "hi": end, "events": evs, "recaps": rcs, "last": last, "words": words})
         return out
 
     def chapter_of(self, anchor: str) -> dict | None:
@@ -443,8 +478,9 @@ class Illustrator:
         self.done = self.total = 0
         self._usage0 = self._usage()
         self._views: dict[tuple, dict] = {}
+        self._view_locks: dict[tuple, threading.Lock] = {}
         self._entity_locks: dict[str, threading.Lock] = {}
-        self._pictured: set[str] = set()
+        self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self.man: list[dict] = []
         for b in self.books:
             m = b.b.sink.manifest()
@@ -468,8 +504,18 @@ class Illustrator:
             self.books[bi].b.sink.save(self.man[bi])
 
     def _complete(self, prompt: str, schema: dict = SCHEMA) -> dict:
-        out = self.text.complete(SYSTEM, prompt, schema)
-        return out if isinstance(out, dict) else {}
+        """One text call; a failure (provider error, timeout, a reply that is not JSON) is retried once, then TextFailed."""
+        for attempt in (0, 1):
+            try:
+                out = self.text.complete(SYSTEM, prompt, schema)
+                return out if isinstance(out, dict) else {}
+            except llm.Cancelled:
+                raise
+            except Exception as e:      # noqa: BLE001 - every backend has its own errors; one picture never stops the run
+                if attempt:
+                    raise TextFailed(f"{type(e).__name__}: {str(e)[:160]}") from e
+                time.sleep(self.pause)
+        return {}
 
     def _usage(self) -> float:
         return float(getattr(getattr(self.text, "usage", None), "cost_usd", 0.0) or 0.0)
@@ -498,7 +544,7 @@ class Illustrator:
             return None, "too short"
         if n > words[1]:
             return None, "too long"
-        got, why = P._checked(text, Known(self.books[bi].first, self.books[bi].seq_of[anchor]), source or None, None,
+        got, why = P._checked(text, Known(self.books[bi].first, self.books[bi].seq_of[anchor], self._earlier[bi]), source or None, None,
                               limit=words[1] * 9)
         if got is None:
             return None, why
@@ -527,7 +573,11 @@ class Illustrator:
     def view(self, bi: int, anchor: str) -> dict:
         """The gated view of books 0..bi at an anchor of book bi: what a reader there may know."""
         key = (bi, anchor)
-        with self.lock:
+        with self.lock:              # the global lock only finds the key's own lock: views at other anchors are built at once
+            if key in self._views:
+                return self._views[key]
+            lk = self._view_locks.setdefault(key, threading.Lock())
+        with lk:
             if key not in self._views:
                 docs = [b.doc for b in self.books[:bi + 1]]
                 if len(docs) == 1:
@@ -572,8 +622,18 @@ class Illustrator:
 
     # ---- the world note
 
-    def _story_chapters(self, bi: int, n: int) -> list[dict]:
-        return [c for c in self.books[bi].chapters if c["events"]][:n]
+    def _story_chapters(self, bi: int) -> list[dict]:
+        """The chapters the world note is written from: the first one with a story event, then the next ones until they hold
+        WORLD_MIN_WORDS words of story."""
+        out, words = [], 0
+        for c in self.books[bi].chapters:
+            if not c["events"] and not out:
+                continue
+            out.append(c)
+            words += c["words"]
+            if words >= WORLD_MIN_WORDS:
+                break
+        return out
 
     def world(self, bi: int) -> dict | None:
         """The book's world note: written once from its first chapters; in a series the first book's, to which a later book may
@@ -582,17 +642,34 @@ class Illustrator:
         if m.get("world"):
             return m["world"]
         base = next((self.man[j]["world"] for j in range(bi - 1, -1, -1) if self.man[j].get("world")), None)
-        chs = self._story_chapters(bi, WORLD_CHAPTERS)
+        chs = self._story_chapters(bi)
         if not chs:
             return base
         b = self.books[bi]
-        at = max((c["last"] for c in chs), key=b.ord_of.get)
+        at = max((c["last"] for c in chs), key=b.ord_of.get)     # a chapter's last anchor is at or after all its events
+        set_at = [e for c in chs for e in c["events"][:3] if e.get("setting")]
         recaps = "\n".join(f"- {c['title']}: " + " ".join(r["text"] for r in c["recaps"]) + "".join(
             f" (set at {e['setting']['text']})" for e in c["events"][:3] if e.get("setting")) for c in chs)
         turns = [e for c in chs for e in c["events"] if e.get("kind") == "turn"][:3] or [e for c in chs for e in c["events"]][:2]
         passages, used = self.passage(bi, [b.seq_of[a] for e in turns for a in e["evidence"] if a in b.seq_of], b.seq_of[at], 450)
-        sources = sorted({c["last"] for c in chs} | {b.anchor_at(s) for s in used}, key=b.ord_of.get)
+        sources = sorted({c["last"] for c in chs} | {b.anchor_at(s) for s in used} | {e["from"] for e in set_at + turns}
+                         | {r["from"] for c in chs for r in c["recaps"]}, key=b.ord_of.get)
+        if any(b.ord_of[a] > b.ord_of[at] for a in sources):    # by construction never; kept as the rule's last guard
+            raise ValueError("world note written from content after its anchor")
         body = f"Recaps and settings:\n{recaps}\n\nPassages:\n{passages}"
+        try:
+            w = self._world_write(bi, base, body, recaps, passages, at, sources)
+        except TextFailed as e:
+            self.log(f"  world note: text model failed ({e.detail})")
+            self._skip(bi, "world note", str(e))
+            return base
+        if w is None:
+            return None
+        m["world"] = w
+        self._save(bi)
+        return w
+
+    def _world_write(self, bi, base, body, recaps, passages, at, sources) -> dict | None:
         if base:
             w = {"text": base["text"], "edited": base.get("edited", False), "from": base["from"], "inherited": True}
             if not base.get("edited"):
@@ -608,8 +685,6 @@ class Illustrator:
                 self._skip(bi, "world note", _reason(why).replace("prompt", "world note"))
                 return None
             w = {"text": got, "edited": False, "from": at, "sources": sources}
-        m["world"] = w
-        self._save(bi)
         return w
 
     def _world_text(self, bi: int, pos: tuple[int, int]) -> tuple[str, str | None]:
@@ -633,61 +708,79 @@ class Illustrator:
 
     # ---- screening and choosing
 
-    def drawable(self, bi: int, chapter: dict) -> list[dict]:
-        """The chapter's visible moments, [{"event", "frame"}]: one cheap call, cached in the manifest (never a minor event)."""
+    @staticmethod
+    def _screen_key(evs: list[dict]) -> str:
+        """What a chapter's screening was made from: a rebuilt index (other events, other ids, other words) screens again."""
+        h = hashlib.sha256(json.dumps([[e["id"], e["from"], e["summary"]] for e in evs], ensure_ascii=False).encode())
+        return h.hexdigest()[:16]
+
+    def drawable(self, bi: int, chapter: dict) -> list[str]:
+        """The ids of the chapter's visible moments, in order (never a minor event): one cheap call that only chooses, cached in
+        the manifest as `screened[title] = {"key", "events"}`; a key that no longer matches the chapter's events screens again.
+        Raises TextFailed when the text model fails twice."""
         m = self.man[bi]
-        if chapter["title"] in m["screened"]:
-            return m["screened"][chapter["title"]]
         evs = [e for e in chapter["events"] if e.get("kind") != "minor"]
-        moments: list[dict] = []
+        key = self._screen_key(evs)
+        got = m["screened"].get(chapter["title"])
+        if isinstance(got, dict) and got.get("key") == key and all(x in self.books[bi].events for x in got.get("events", [])):
+            return list(got["events"])
+        ids: list[str] = []
         if evs:
             lines = "\n".join(f"{n}. {e['summary']}" + (f" (at {e['setting']['text']})" if e.get("setting") else "")
                               for n, e in enumerate(evs, 1))
             out = self._complete(SCREEN.format(where=chapter["title"], events=lines), SCREEN_SCHEMA)
             for x in out.get("moments", []) if isinstance(out.get("moments"), list) else []:
                 try:
-                    n, frame = int(x["event"]), " ".join(str(x.get("frame", "")).split())
-                except (KeyError, TypeError, ValueError, AttributeError):
+                    n = int(x["event"] if isinstance(x, dict) else x)
+                except (KeyError, TypeError, ValueError):
                     continue
-                if 1 <= n <= len(evs) and frame and not any(mm["event"] == evs[n - 1]["id"] for mm in moments):
-                    moments.append({"event": evs[n - 1]["id"], "frame": frame})
-        m["screened"][chapter["title"]] = moments
-        self._save(bi)
-        return moments
+                if 1 <= n <= len(evs) and evs[n - 1]["id"] not in ids:
+                    ids.append(evs[n - 1]["id"])
+        with self.lock:
+            m["screened"][chapter["title"]] = {"key": key, "events": ids}
+            self._save(bi)
+        return ids
 
-    def _main_moment(self, bi: int, chapter: dict, moments: list[dict]) -> dict | None:
-        """The one picture of a chapter: its turning point, else the drawable event its recap gives the most words to."""
+    def _main_moment(self, bi: int, chapter: dict, moments: list[str]) -> str | None:
+        """The event id of the one picture of a chapter: its turning point, else the drawable event its recap gives the most
+        words to."""
         b = self.books[bi]
-        by = {mm["event"]: mm for mm in moments}
-        turns = [by[e["id"]] for e in chapter["events"] if e["id"] in by and e.get("kind") == "turn"]
+        chosen = set(moments)
+        turns = [e["id"] for e in chapter["events"] if e["id"] in chosen and e.get("kind") == "turn"]
         if turns or not moments:
             return turns[0] if turns else None
         recap = set(re.findall(r"[a-z]{4,}", " ".join(r["text"] for r in chapter["recaps"]).lower()))
-        return max(moments, key=lambda mm: (len(set(re.findall(r"[a-z]{4,}", b.events[mm["event"]]["summary"].lower())) & recap),
-                                            -b.ord_of[b.events[mm["event"]]["from"]]))
+        return max(moments, key=lambda x: (len(set(re.findall(r"[a-z]{4,}", b.events[x]["summary"].lower())) & recap),
+                                           -b.ord_of[b.events[x]["from"]]))
 
-    def plan(self, bi: int) -> list[Job]:
-        """Every picture a book is to have: chapter plates (and the other drawable moments at level "all"), then portraits."""
+    def plan(self, bi: int, record: bool = True) -> list[Job]:
+        """Every picture a book is to have: chapter plates (and the other drawable moments at level "all"), then portraits.
+        `record` False plans without reporting skips (the first count of a series run, planned again before drawing)."""
         b, jobs = self.books[bi], []
         level = b.b.level
         for ch in b.chapters if level else ():
             if self.chapter_filter and ch["n"] not in self.chapter_filter:
                 continue
             if not ch["events"]:
-                self._skip(bi, ch["title"], "skipped: chapter has no events")
+                if record:
+                    self._skip(bi, ch["title"], "skipped: chapter has no events")
                 continue
-            moments = self.drawable(bi, ch)
+            try:
+                moments = self.drawable(bi, ch)
+            except TextFailed as e:
+                if record:
+                    self._skip(bi, ch["title"], str(e), detail=e.detail)
+                continue
             main = self._main_moment(bi, ch, moments)
             if main:
-                jobs.append(Job("plate", ch["title"], bi, ch["last"], event=b.events[main["event"]], chapter=ch,
-                                frame=main["frame"], shape="landscape"))
+                jobs.append(Job("plate", ch["title"], bi, ch["last"], event=b.events[main], chapter=ch, shape="landscape"))
             elif ch["recaps"]:
                 jobs.append(Job("plate", ch["title"], bi, ch["last"], chapter=ch, shape="landscape"))
             if level == "all":
-                for mm in moments:
-                    if not main or mm["event"] != main["event"]:
-                        ev = b.events[mm["event"]]
-                        jobs.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, frame=mm["frame"], shape="landscape"))
+                for x in moments:
+                    if x != main:
+                        ev = b.events[x]
+                        jobs.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
         if self.portraits:
             ports = self._portrait_jobs(bi)
             if self.chapter_filter:      # a run limited to some chapters draws portraits only up to the last of them
@@ -722,35 +815,41 @@ class Illustrator:
             written = [p for p in mine if ".portrait-" in p[2]["id"]]
             if not profs or not (written or named[eid] >= 2):
                 continue
-            before = eid in self._pictured or any(r["kind"] == "portrait" and r["target"] == eid
-                                                  for j in range(bi) for r in self.man[j]["pictures"])
-            versions: list[tuple[str, str]] = []
-            last_seq, last_text = -MIN_GAP, ""
+            # only a drawn picture counts: one planned in an earlier book and then skipped does not
+            before = any(r["kind"] == "portrait" and r["target"] == eid for j in range(bi) for r in self.man[j]["pictures"])
+            looks = lambda t: {w.lower() for w in LOOK_PROFILE.findall(t)}     # noqa: E731
             if before:
-                last_text = next((p[2]["text"] for p in reversed(profs) if p[0] < bi), "")
+                start, seen = None, looks(next((p[2]["text"] for p in reversed(profs) if p[0] < bi), ""))
             elif mine:
                 first = (written or mine)[0][2]
-                versions.append((first["from"], ""))
-                last_seq, last_text = b.seq_of[first["from"]], first["text"]
+                start, seen = first, looks(first["text"])
             else:
                 continue
-            changes: list[tuple[int, str, str]] = []
+            changes: list[tuple[int, str, str, set]] = []
             for _, o, f in mine:
-                gained = {w.lower() for w in LOOK_PROFILE.findall(P._first(f["text"]))} - {w.lower() for w in LOOK_PROFILE.findall(last_text)}
-                if gained:
-                    changes.append((o, f["from"], P._first(f["text"])))
+                if start is None or o > b.ord_of[start["from"]]:
+                    changes.append((o, f["from"], P._first(f["text"]), looks(P._first(f["text"]))))
             standing = [(f["from"], f["text"]) for f in e["facets"] if f.get("kind") not in ("profile", "arc")]
             standing += [(ev["from"], ev["summary"]) for ev in b.doc.get("events", []) if ev.get("kind") == "turn" and eid in ev.get("entities", [])]
-            changes += [(b.ord_of[a], a, t) for a, t in standing
+            changes += [(b.ord_of[a], a, t, None) for a, t in standing
                         if a in b.ord_of and P.changes_standing(t) and LOOK_STANDING.search(P.HEDGED.sub(" ", t))]
-            for o, a, why in sorted(changes):
-                if len(versions) >= MAX_VERSIONS or b.seq_of[a] - last_seq < MIN_GAP:
+            # versions are compared on the anchors they will show from (after the hold to the world note), so two never share one
+            versions: list[list] = [[start["from"], "", self._anchor(bi, start["from"])]] if start else []
+            for o, a, why, words in sorted(changes, key=lambda c: c[0]):
+                if words is not None:
+                    gained = words - seen
+                    if not gained:
+                        continue
+                held = self._anchor(bi, a)
+                if versions and versions[-1][2] == held:
+                    versions[-1] = [a, why if (len(versions) > 1 or before) else "", held]   # the later one stands for both
+                elif len(versions) >= MAX_VERSIONS or (versions and b.seq_of[held] - b.seq_of[versions[-1][2]] < MIN_GAP):
                     continue
-                versions.append((a, why))
-                last_seq = b.seq_of[a]
-            jobs += [Job("portrait", eid, bi, a, change=why, shape="portrait") for a, why in versions]
-            if versions:
-                self._pictured.add(eid)     # a later book's plan (made before any drawing) sees it as drawn
+                else:
+                    versions.append([a, why, held])
+                if words is not None:
+                    seen |= gained          # a look word counts once
+            jobs += [Job("portrait", eid, bi, a, change=why, shape="portrait") for a, why, _ in versions]
         return jobs
 
     # ---- notes, pictures and references (a later book reads the earlier books' manifests)
@@ -791,7 +890,11 @@ class Illustrator:
             hit = self.latest_note(eid, pos)
             cur = hit[1] if hit else None
             if cur and (not change or (hit[0] == bi and cur["from"] == anchor)):
+                if not cur["text"]:          # the text shows no look: remembered, not asked again until a look change
+                    return None, "empty", []
                 return cur["text"], "", (cur.get("sources", []) if hit[0] == bi else [])
+            if cur and not cur["text"]:
+                cur = None                   # nothing to amend: the note is written afresh
             view = self.view(bi, anchor)
             ve = next((x for x in view["entities"] if x["id"] == eid), None)
             e = b.ents.get(eid) or next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
@@ -808,13 +911,13 @@ class Illustrator:
                                    passages=passages or "(no passage names it)")
             got, why = self._write(prompt, bi, anchor, "\n".join([passages] + [f["text"] for f in shown] + ([cur["text"]] if cur else [])),
                                    NOTE_WORDS)
-            if got is None:
-                return None, why, []
             sources = sorted(srcs, key=b.ord_of.get)
+            if got is None and why != "empty":
+                return None, why, []
             with self.lock:
-                self.man[bi]["appearance"].setdefault(eid, []).append({"from": anchor, "text": got, "sources": sources})
+                self.man[bi]["appearance"].setdefault(eid, []).append({"from": anchor, "text": got or "", "sources": sources})
                 self._save(bi)
-            return got, "", sources
+            return (got, "", sources) if got else (None, "empty", [])
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES."""
@@ -833,24 +936,39 @@ class Illustrator:
         """The job for a picture of any kind: an event id, a chapter title, or an entity id (the anchor is the latest facet or
         profile visible at `at`). A target after `at` raises NotVisible."""
         bi = len(self.books) - 1 if bi < 0 else bi
+        at_bi = bi
+        if kind not in SHAPE_OF:
+            raise ValueError(f"no such kind of picture: {kind}")
         b = self.books[bi]
         shape = shape or SHAPE_OF[kind]
         if kind == "event":
+            if target not in b.events:
+                raise ValueError("no such event")
             ev = b.events[target]
-            job = Job("event", target, bi, ev["from"], event=ev, chapter=b.chapter_of(ev["from"]), frame=ev["summary"], shape=shape)
+            job = Job("event", target, bi, ev["from"], event=ev, chapter=b.chapter_of(ev["from"]), shape=shape)
         elif kind == "plate":
-            ch = next(c for c in b.chapters if c["title"] == target)
-            main = self._main_moment(bi, ch, self.man[bi]["screened"].get(target) or [])
-            job = Job("plate", target, bi, ch["last"], event=b.events[main["event"]] if main else None, chapter=ch,
-                      frame=main["frame"] if main else "", shape=shape)
+            ch = next((c for c in b.chapters if c["title"] == target), None)
+            if ch is None:
+                raise ValueError("no such chapter")
+            got = self.man[bi]["screened"].get(target)
+            moments = [x for x in got.get("events", []) if x in b.events] if isinstance(got, dict) \
+                and got.get("key") == self._screen_key([e for e in ch["events"] if e.get("kind") != "minor"]) else []
+            main = self._main_moment(bi, ch, moments)
+            job = Job("plate", target, bi, ch["last"], event=b.events[main] if main else None, chapter=ch, shape=shape)
         else:
+            if target not in b.ents:       # an entity of an earlier book only: its picture is that (finished) book's
+                bi = next((j for j in range(bi - 1, -1, -1) if target in self.books[j].ents), -1)
+                if bi < 0:
+                    raise ValueError("no such entry")
+                b = self.books[bi]
             e = b.ents[target]
-            anchor = e["from"]
+            anchor = e["from"] if e["from"] in b.ord_of else b.anchors[0]["id"]
             for f in e.get("facets", []):
-                if f["from"] in b.ord_of and b.ord_of[f["from"]] >= b.ord_of[anchor] and (at is None or b.ord_of[f["from"]] <= b.ord_of[at]):
+                if f["from"] in b.ord_of and b.ord_of[f["from"]] >= b.ord_of[anchor] and (
+                        at is None or bi < at_bi or b.ord_of[f["from"]] <= b.ord_of[at]):
                     anchor = f["from"]
             job = Job(kind, target, bi, anchor, shape=shape)
-        if at is not None and b.ord_of[self._anchor(bi, job.anchor)] > b.ord_of[at]:
+        if at is not None and bi == at_bi and b.ord_of[self._anchor(bi, job.anchor)] > b.ord_of[at]:
             raise NotVisible(target)
         return job
 
@@ -874,6 +992,8 @@ class Illustrator:
         vis = {x["id"]: x for x in view["entities"]}
         world, wfrom = self._world_text(bi, pos)
         sources = {job.anchor} | ({wfrom} if wfrom else set())
+        if job.event:                      # the moment shown: its text, setting and figures reach the prompt
+            sources |= {job.event["from"]} | {a for a in job.event.get("evidence", []) if a in b.ord_of}
         ids = [x for x in self._figures(job) if x in vis]
         figures: list[tuple[str, str]] = []
         for eid in ids:
@@ -895,6 +1015,9 @@ class Illustrator:
             cited = job.event["evidence"] if job.event else [a for e2 in (job.chapter or {}).get("events", [])[:6] for a in e2["evidence"]]
             seqs = [b.seq_of[a] for a in cited if a in b.seq_of and b.seq_of[a] <= upto]
             who = ""
+            if not job.event and job.chapter:   # a plate with no event: its figures and passage come from the chapter's events
+                sources |= {e2["from"] for e2 in job.chapter["events"] if e2.get("kind") != "minor"}
+                sources |= {e2["from"] for e2 in job.chapter["events"][:6]}
         passage, used = self.passage(bi, seqs, upto)
         sources |= {b.anchor_at(s) for s in used}
         ctx: list[str] = []
@@ -917,7 +1040,7 @@ class Illustrator:
             ctx.append(line)
             own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             sources |= {own[f["id"]] for f in ([v["profile"]] if v["profile"] else []) + v["facets"][:4] if f["id"] in own}
-        what = KINDS_WHAT[job.kind].format(frame=job.frame or (job.event or {}).get("summary", ""), who=who)
+        what = KINDS_WHAT[job.kind].format(frame=(job.event or {}).get("summary", ""), who=who)
         if job.kind == "plate" and not job.event:
             what = "the main moment of a chapter, as its recap tells it."
         fig = "\n".join(f"- {vis[eid]['name']}: {note}" for eid, note in figures)
@@ -928,7 +1051,8 @@ class Illustrator:
         scene, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA)
         if scene is None:
             raise ValueError(_reason(why))
-        figures, ids = self._shown(out, figures, ids, vis)
+        if job.kind not in ENTITY_KINDS:   # an entity's own picture always shows it
+            figures, ids = self._shown(out, figures, ids, vis)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise ValueError("dropped: written from content after its anchor")
         refs: list[tuple[int, dict]] = []
@@ -942,10 +1066,13 @@ class Illustrator:
 
     @staticmethod
     def _shown(out: dict, figures: list[tuple[str, str]], ids: list[str], vis: dict) -> tuple[list, list]:
-        """Keep only the figures the writer says are in its picture (matched by their visible names); all of them when it names none."""
+        """Keep only the figures the writer says are in its picture (matched by their visible names): none for an empty list, all
+        of them when the reply has no list or a list that matches no one (a name it mistyped)."""
         shows = out.get("shows")
         if not isinstance(shows, list):
             return figures, ids
+        if not shows:
+            return [], []
         named = {str(x).strip().lower() for x in shows}
         keep = {eid for eid in ids if eid in vis and ({vis[eid]["name"].lower()} | {a.lower() for a in vis[eid]["aliases"]}) & named}
         if not keep:
@@ -963,11 +1090,17 @@ class Illustrator:
 
     # ---- cost and the cap
 
-    def _skip(self, bi: int, target: str, reason: str, final: bool = False, kind: str = "", anchor: str = "") -> None:
-        """Record a skip with its reason. A `final` one (a refusal) is kept in the manifest and not tried again on resume."""
+    def _skip(self, bi: int, target: str, reason: str, final: bool = False, kind: str = "", anchor: str = "",
+              detail: str = "", refused: bool = False) -> None:
+        """Record a skip with its reason (and the provider's or model's own words in `detail`), all under the lock. A `final`
+        one (a refusal, no look described) is kept in the manifest and not tried again on resume. A refusal counts once, as
+        refused, never also as a skip."""
         with self.lock:
-            self.report.skipped[reason] += 1
-            self.report.reasons.append({"target": target, "reason": reason})
+            if refused:
+                self.report.refused += 1
+            else:
+                self.report.skipped[reason] += 1
+            self.report.reasons.append({"target": target, "reason": f"{reason} ({detail})" if detail else reason})
             if final:
                 self.man[bi]["skipped"].append({"target": target, "reason": reason, "kind": kind, "from": anchor, "final": True})
                 self._save(bi)
@@ -1013,7 +1146,8 @@ class Illustrator:
         try:
             pr = prompt or self.make_prompt(job)
         except ValueError as e:
-            self._skip(bi, job.target, str(e), final=str(e) == "skipped: no look described", kind=job.kind, anchor=job.anchor)
+            self._skip(bi, job.target, str(e), final=str(e) == "skipped: no look described", kind=job.kind, anchor=job.anchor,
+                       detail=getattr(e, "detail", ""))
             self.log(f"    skipped {job.kind} {job.target}: {e}")
             return None
         if text:
@@ -1023,20 +1157,23 @@ class Illustrator:
         while True:
             refs = [(d, r["mime"]) for j, r in pr.references if (d := self.books[j].b.sink.read(r["file"]))][:images.MAX_REFERENCES]
             if self._reserve(price):
-                self.report.skipped[f"stopped: {self.stop}"] += 1
+                with self.lock:
+                    self.report.skipped[f"stopped: {self.stop}"] += 1
                 return None
             try:
                 pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs)
             except images.ImageRefused as e:
                 self._release(price)
-                self.report.refused += 1
                 soft = None
                 if not softened:
                     softened = True
-                    soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS)
+                    try:
+                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS)
+                    except TextFailed:
+                        soft = None
                 if not soft:
-                    self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor)
-                    self.report.reasons[-1]["reason"] = f"refused: {e.reason[:160]}"
+                    self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor,
+                               detail=e.reason[:160], refused=True)
                     return None
                 pr.scene = soft
                 pr.text = self._assemble(soft, [n for _, n in pr.notes], self._world_text(bi, self._pos(bi, pr.anchor))[0])
@@ -1044,8 +1181,7 @@ class Illustrator:
             except llm.ProviderError as e:
                 self._release(price)
                 if retried:
-                    self._skip(bi, job.target, "skipped: provider error", kind=job.kind, anchor=job.anchor)
-                    self.report.reasons[-1]["reason"] = f"provider error: {str(e)[:160]}"
+                    self._skip(bi, job.target, "skipped: provider error", kind=job.kind, anchor=job.anchor, detail=str(e)[:160])
                     return None
                 retried = True
                 time.sleep(self.pause)
@@ -1057,6 +1193,7 @@ class Illustrator:
             self.books[bi].b.sink.put(rec["file"], pic.data)
             self.man[bi]["pictures"].append(rec)
             self.report.drawn += 1
+            self.report.softened += softened
             self.report.cost += pic.cost
             self.last_cost = pic.cost or self.last_cost
             self.man[bi]["cost"] = round(sum(r["cost"] for r in self.man[bi]["pictures"]), 6)
@@ -1103,22 +1240,26 @@ class Illustrator:
             for _, a, change in sorted(set(item[1])):
                 if self.stop:
                     return
-                self.ensure_note(bi, item[0], a, change)
+                try:
+                    self.ensure_note(bi, item[0], a, change)
+                except TextFailed as e:     # the picture that needs it tries once more, then is skipped
+                    self.log(f"  note for {item[0]}: text model failed ({e.detail})")
         with ThreadPoolExecutor(self.workers) as pool:
             list(pool.map(entity, needs.items()))
 
     def _run(self) -> None:
-        plans: list[list[Job]] = []
-        for bi, b in enumerate(self.books):
-            if not b.b.draw or b.epub is None:
-                plans.append([])
-                continue
+        drawn = [bi for bi, b in enumerate(self.books) if b.b.draw and b.epub is not None]
+        first: dict[int, int] = {}
+        for bi in drawn:                   # a first count for the progress total
             self.world(bi)
+            first[bi] = len(self.plan(bi, record=False))
+        self.total = sum(first.values())
+        for bi in drawn:
+            # planned again now that the earlier books are drawn: only a drawn portrait spares a later book's
             jobs = self.plan(bi)
+            with self.lock:
+                self.total += len(jobs) - first[bi]
             self.report.held += sum(1 for j in jobs if self._anchor(bi, j.anchor) != j.anchor)
-            plans.append(jobs)
-        self.total = sum(len(j) for j in plans)
-        for bi, jobs in enumerate(plans):
             if not jobs:
                 continue
             b = self.books[bi]
