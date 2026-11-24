@@ -1,7 +1,7 @@
 import { api } from "./api.js";
 import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
-import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
+import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -10,6 +10,7 @@ import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
+import { createAsk } from "./ask.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -70,6 +71,8 @@ class PositionMap {
   }
 }
 
+const toastedMerges = new Set();   // merge ids whose phone toast has been shown
+
 export function mountReader(root) {
   const { route, parts, params } = parseHash();
   // A community index being tried before it is added: #/preview/<digest>?catalog=<book>&listing=<id>.
@@ -81,7 +84,7 @@ export function mountReader(root) {
     // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
     // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
     p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : (readingList().find((e) => e.key === params.get("i"))?.p ?? 0),
-    tab: "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null,
+    tab: !preview && params.get("tab") === "ask" ? "ask" : "chapters", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null, bkAll: new Set(), bkOpen: new Set(),
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
     earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
@@ -95,6 +98,16 @@ export function mountReader(root) {
   root.append(wrap);
   let disposed = false;
 
+  // Ask: questions answered from the index's notes at the position (ask.js). The thread lives in that closure.
+  const ask = createAsk({
+    key: () => s.key,
+    position: askPosition,
+    view: () => s.view,
+    examples: askExamples, canOpen: canOpenCite, open: openCite,
+    onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
+  });
+  if (!preview) ask.refreshStatus();
+
   // The first load: a spinner after a moment, and a page that says what failed with a way to try again.
   const openingText = preview ? "Downloading the index and checking it against your copy…" : "Opening the book…";
   const retryStart = () => { clear(wrap, loading(openingText)); start(); };
@@ -105,7 +118,7 @@ export function mountReader(root) {
       try { preview.info = { catalog: preview.catalog, ...await fetchPreview(preview.catalog, preview.listing, preview.hex) }; }
       catch (e) { if (!disposed) clear(wrap, previewError(e, preview.catalog)); return; }
       s.lib = { indexes: [], series: [] };
-      api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+      api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); if (s.view && !s.edit && (s.tab === "chapters" || s.tab === "timeline")) paintTabs(); }).catch(() => {});
       await load(s.key, { keepPosition: true });
       return;
     }
@@ -116,7 +129,7 @@ export function mountReader(root) {
         h("a.btn.primary", { href: "#/library?show=ready" }, icon("layers"), "Books ready to read")));
       return;
     }
-    api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); }).catch(() => {});
+    api.catalogShared().then((c) => { s.catalog = c; if (el.headLine) paintHead(); if (s.view && !s.edit && (s.tab === "chapters" || s.tab === "timeline")) paintTabs(); }).catch(() => {});
     await load(s.key, { keepPosition: true });
   }
 
@@ -128,6 +141,8 @@ export function mountReader(root) {
     const mine = ++loadSeq;
     const stale = () => disposed || mine !== loadSeq;
     const meta = s.lib.indexes.find((i) => i.key === key);
+    // Book Orbit's answer is slow and needs nothing from the index: ask now so it overlaps everything below.
+    const posReq = preview ? null : api.position(key).catch(() => ({ synced: false, reason: "unreachable" }));
     let doc;
     try { doc = preview ? await api.communityPreview(preview.hex) : await api.index(key); } catch (e) {
       if (stale()) return false;
@@ -141,32 +156,40 @@ export function mountReader(root) {
     forgetMentions();   // an edit or merge reloads the index: counts made for the old one may name what is now hidden
     s.series = null; s.seriesDocs = new Map();
     const sid = preview ? null : s.doc.series?.id;
-    if (sid) {
-      const man = s.lib.series.find((x) => x.id === sid);
-      if (man) {
-        s.series = man;
-        const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
-        for (const b of man.books) {
-          const cands = siblings.filter((i) => i.series.book === b.key);
-          const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
-          if (!choice) continue;
-          s.seriesDocs.set(b.key, choice.key === key ? s.doc : await api.index(choice.key).catch(() => null));
-          if (stale()) return false;
-        }
-        if (!s.order || !man.orders[s.order]) s.order = man.defaultOrder;
+    // The other books of the series and the edition do not depend on each other: fetch them together.
+    const man = sid ? s.lib.series.find((x) => x.id === sid) : null;
+    const siblingReqs = [];
+    if (man) {
+      s.series = man;
+      const siblings = s.lib.indexes.filter((i) => i.series?.id === sid);
+      for (const b of man.books) {
+        const cands = siblings.filter((i) => i.series.book === b.key);
+        const choice = b.key === s.doc.series.book ? meta : cands.find((c) => c.source === meta.source) || cands[0];
+        if (!choice) continue;
+        siblingReqs.push([b.key, choice.key === key ? Promise.resolve(s.doc) : api.index(choice.key).catch(() => null)]);
       }
     }
-    s.book = book || s.doc.series?.book || null;
     // seq hints are only valid for the edition the index was built from.
     const hashes = (s.doc.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash);
-    let edition = null;
-    s.hash = null;
-    for (const hsh of hashes) { edition = await api.edition(hsh); if (stale()) return false; if (edition) { s.hash = hsh; break; } }
+    const findEdition = async () => {
+      for (const hsh of hashes) { const ed = await api.edition(hsh); if (ed) return { ed, hsh }; }
+      return { ed: null, hsh: null };
+    };
+    const [sibDocs, found] = await Promise.all([Promise.all(siblingReqs.map(([, p]) => p)), findEdition()]);
+    if (stale()) return false;
+    // Not preview: the duplicates check is slow on a big series and only paints a notice, so it never blocks the page;
+    // it starts once the edition has settled so the two do not compete for the server's CPU on a cold start.
+    const dupReq = preview ? null : api.duplicates(key).catch(() => null);
+    siblingReqs.forEach(([bk], i) => s.seriesDocs.set(bk, sibDocs[i]));
+    if (man && (!s.order || !man.orders[s.order])) s.order = man.defaultOrder;
+    s.book = book || s.doc.series?.book || null;
+    const edition = found.ed;
+    s.hash = found.hsh;
     s.map = new PositionMap(s.doc, edition);
     // Another book of the series: the position last set for it, else its start.
     if (!keepPosition) s.p = readingList().find((e) => e.key === key)?.p ?? 0;
     s.prevIds = null; s.prevP = null; s.fresh = new Set();
-    s.reveals = null; s.docOrds = null;
+    s.reveals = null; s.docOrds = null; s.profileIds = null;
     s.sync = { on: false, override: false, ahead: false, wantAhead: null };
     if (preview) {
       // The horizon the preview starts at: the end of the third story chapter. Past it needs a deliberate "Show me anyway".
@@ -179,13 +202,22 @@ export function mountReader(root) {
       s.p = Math.min(preview.horizon, params.has("p") ? s.p : preview.horizon);
       s.sync = { on: true, preview: true, override: false, ahead: false, wantAhead: null, p: preview.horizon, percentage: null };
     }
-    s.dupes = preview ? null : await api.duplicates(key).catch(() => null);
-    if (stale()) return false;
-    watchDupes(key);
+    s.dupes = null;   // writableNow() uses the library entry until the reply comes
+    s.editAsked = s.edit;   // render() drops edit mode when the book cannot be edited; remember it was asked for
+    clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
+    ask.check();   // another index: nothing asked about the last one stays
     render();
     saveUrl();   // also puts the book at the top of the rail's Reading list (never a preview)
-    if (!preview) await syncPosition(key);
+    if (dupReq) dupReq.then((d) => {
+      if (stale() || !d) return;
+      const was = canEdit();
+      s.dupes = d;
+      watchDupes(key);
+      syncEditAvailability(was);
+      repaintDupes();   // only the notice, and only when it differs: the tabs (and a search being typed in) stay as they are
+    });
+    if (!preview) await syncPosition(key, { reply: posReq, stale });
     return !stale();
   }
 
@@ -213,11 +245,11 @@ export function mountReader(root) {
       ...v.entities.flatMap((e) => e.facets.map((f) => f.id)), ...v.entities.filter((e) => e.profile).map((e) => e.profile.id)]);
   }
 
-  async function syncPosition(key, { poll = false } = {}) {
+  async function syncPosition(key, { poll = false, reply = null, stale = () => false } = {}) {
     if (preview) return;
     let r;
-    try { r = await api.position(key); } catch { r = { synced: false, reason: "unreachable" }; }
-    if (disposed || s.key !== key) return;
+    try { r = await (reply || api.position(key)); } catch { r = { synced: false, reason: "unreachable" }; }
+    if (disposed || s.key !== key || stale()) return;   // a reply for a load that has been replaced never touches s.sync or pendingMove
     if (!r || !r.synced) {
       if (!poll || !s.sync.on) { s.sync = { on: false, override: false, reason: r?.reason }; paintSource(); }
       return;
@@ -403,13 +435,70 @@ export function mountReader(root) {
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
+      if (s.tab === "ask") q.tab = "ask";
       setParams(q);
       // The rail's "Reading" list: the title and the position the person set, nothing from the index.
       const back = { ...q };
       delete back.edit;   // reopening from the rail reads; it does not reopen edit mode
+      delete back.tab;
       rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p) ? tidyTitle(s.map.chapterAt(s.p).title) : null,
         hash: `#/reader?${new URLSearchParams(back)}` });
     }, 250);
+  }
+
+  // ---- phone: the ruler's Jump sheet, the overflow menu and the series line ----------------------
+
+  const phone = () => matchMedia("(max-width: 640px)").matches;
+  /** Two small icons the shared set lacks (a chevron down, three dots), built as SVG nodes. */
+  function glyph(d) {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("class", "svg-icon"); svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+    for (const part of d) { const n = document.createElementNS(ns, part.startsWith("c") ? "circle" : "path"); if (part.startsWith("c")) { const [cx, cy] = part.slice(1).split(","); n.setAttribute("cx", cx); n.setAttribute("cy", cy); n.setAttribute("r", "1.6"); n.setAttribute("fill", "currentColor"); } else n.setAttribute("d", part); svg.append(n); }
+    return svg;
+  }
+  const chevronDown = () => glyph(["m6 9 6 6 6-6"]);
+  const dots = () => glyph(["c5,12", "c12,12", "c19,12"]);
+  /** The chapter the ruler names: a span beside the track on desktop, the Jump button's text on a phone. */
+  function setChap(text) {
+    el.chap.textContent = text;
+    if (el.chapText) el.chapText.textContent = text;
+  }
+  let top = null;   // the one Reader sheet that is open (Jump, More, series)
+  function openSheet(opts) {
+    top = sheet({ ...opts, onClose: () => { top = null; opts.onClose?.(); } });
+    return top;
+  }
+  function closeTop() { top?.close(true); }
+
+  /** Jump to a chapter or a percentage. Every move goes through moveTo, which asks before dropping an edit form. */
+  function openJump() {
+    const go = (p) => { closeTop(); moveTo(p); };
+    const pct = h("input.input.jump-pct", { type: "number", inputmode: "numeric", min: "0", max: "100", step: "1", value: String(Math.round(s.p * 100)), "aria-label": "Percent of the book" });
+    const submit = () => go(Math.min(100, Math.max(0, +pct.value || 0)) / 100);
+    pct.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); submit(); } });
+    const here = s.map.exact ? s.map.chapterAt(s.p) : null;
+    const rows = s.map.exact ? s.map.chapters.map((c, i) => {
+      const next = s.map.chapters[i + 1]?.start;
+      const nowHere = here && here.start === c.start;
+      return h(`li.jump-row${nowHere ? ".now" : ""}`,
+        h("button.jump-go", { type: "button", "aria-current": nowHere ? "true" : null, on: { click: () => go(s.map.blockStart(c.start)) } }, h("span.jump-name", tidyTitle(c.title))),
+        h("button.jump-end", { type: "button", "aria-label": `End of ${tidyTitle(c.title)}`, on: { click: () => go(next != null ? s.map.blockStart(next) : 1) } }, "End"));
+    }) : [];
+    const list = rows.length ? h("ol.jump-list", rows) : h("p.hint", "Chapter marks need the book file in the library.");
+    const sh = openSheet({ title: "Jump to", focus: pct,
+      content: [h("div.jump-field", h("label.label", { for: "jump-pct" }, "Percent of the book"), h("div.jump-pct-row", pct, h("button.btn.primary", { type: "button", on: { click: submit } }, "Go"))), list] });
+    pct.id = "jump-pct";
+    queueMicrotask(() => sh.el.querySelector(".jump-row.now .jump-go")?.scrollIntoView({ block: "center" }));
+    return sh;
+  }
+
+  /** The overflow: Edit and Switch book, which have no room on the phone's ruler. */
+  function openMore() {
+    const items = [];
+    if (canEdit()) items.push(h("button.more-item", { type: "button", on: { click: () => { closeTop(); setEdit(!s.edit); } } }, icon(s.edit ? "check" : "pen"), s.edit ? "Done editing" : "Edit this index"));
+    if (!preview) items.push(h("button.more-item", { type: "button", on: { click: () => { closeTop(); pickBook(); } } }, icon("layers"), "Switch book"));
+    openSheet({ title: s.doc.work.title, content: h("div.more-list", items) });
   }
 
   // ---- layout ----------------------------------------------------------------------------
@@ -428,6 +517,11 @@ export function mountReader(root) {
     el.pctNum = document.createTextNode("");
     el.pct = h("span.pct.num", el.pctNum, h("span.pct-unit", "%"));
     el.chap = h("span.chap");
+    // On a phone the chapter name is the way into the Jump sheet (chapter list and percent field); the span stays for desktop.
+    el.chapText = h("span.jt-text");
+    el.jumpBtn = h("button.jump-btn", { type: "button", "aria-haspopup": "dialog", "aria-label": "Jump to a chapter or a percentage", on: { click: openJump } },
+      el.chapText, chevronDown());
+    el.moreBtn = h("button.icon-btn.rbtn.more-btn", { type: "button", "aria-haspopup": "dialog", "aria-label": "More", title: "More", on: { click: openMore } }, dots());
     el.source = h("div.pos-source");
     el.range = h("input.range", { type: "range", min: "0", max: "1000", step: "1", value: String(Math.round(s.p * 1000)),
       "aria-label": "Reading position in the book" });
@@ -451,14 +545,14 @@ export function mountReader(root) {
       const r = el.range.getBoundingClientRect();
       const at = Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
       const c = s.map.chapterAt(at);
-      el.chap.textContent = c ? tidyTitle(c.title) : "Before the first chapter";
+      setChap(c ? tidyTitle(c.title) : "Before the first chapter");
       el.chap.classList.add("hovering");
     });
     el.range.addEventListener("pointerleave", () => {
       if (!el.chap.classList.contains("hovering")) return;
       el.chap.classList.remove("hovering");
       const ch = s.map.chapterAt(s.p);
-      el.chap.textContent = ch ? tidyTitle(ch.title) : el.chap.title;
+      setChap(ch ? tidyTitle(ch.title) : el.chap.title);
     });
     // Dragging past where Book Orbit says you are stops at that line; letting go there asks first (moveTo).
     el.range.addEventListener("input", () => {
@@ -505,7 +599,7 @@ export function mountReader(root) {
     el.track = h("div.track", h("div.rail", { "aria-hidden": "true" }, el.ticks), el.range);
     el.jump = h("div.jump-group", el.chapSel, h("span.pct-group", el.pctInput, h("span.subtle", "%")));
     el.position = h("section.ruler", { "aria-label": "Reading position" },
-      h("div.step-btns", prev, next), el.pct, el.chap, el.track, el.jump);
+      h("div.step-btns", prev, next), el.pct, el.chap, el.jumpBtn, el.track, el.jump);
     // Secondary lines sit under the ruler only when they have something to say.
     el.sub = h("div.ruler-sub", el.source, el.hint, el.setting, el.headFacts, el.notice);
     placeJump();
@@ -520,6 +614,9 @@ export function mountReader(root) {
     el.split = h("div.rd-split", h("section.rd-list", el.tabs, el.panel), el.pane, el.mapSide);
     el.panel.addEventListener("keydown", onListKey);
 
+    // The overflow (Edit, Switch book) lives in the phone app bar's slot; the slot is hidden beside the rail and emptied on every route change.
+    // A read-only community preview has neither Edit nor Switch book: no button then.
+    document.getElementById("appbar-slot")?.replaceChildren(...(canEdit() || !preview ? [el.moreBtn] : []));
     clear(wrap, head, preview ? previewStrip(preview.info) : null, el.position, el.sub, el.series, el.split);
     paintTicks();
     paintChapters();
@@ -533,7 +630,46 @@ export function mountReader(root) {
   // ---- edit mode ---------------------------------------------------------------------------
   // Only an index built here can be changed, and only with its book file on disk (reveal points are
   // chosen by paragraph). Turning it on adds pen and trash controls to every row and "Add" buttons.
-  const canEdit = () => Boolean(s.dupes?.writable && s.map?.exact && s.hash);
+  // `writable` comes with the library entry (the server's rule for the book's series group) so the first render
+  // already knows; the duplicates reply, when it arrives, has the final word.
+  const writableNow = () => (s.dupes ? s.dupes.writable === true : s.lib.indexes.find((i) => i.key === s.key)?.writable === true);
+  const canEdit = () => Boolean(writableNow() && s.map?.exact && s.hash);
+  /** The duplicates reply may disagree with the library entry: bring the Edit control, edit mode and the open
+   *  entry's merge footer in line. Nothing here rebuilds the tabs. */
+  function syncEditAvailability(was) {
+    if (was !== canEdit() && el.headActions) {
+      const old = el.headActions.querySelector(".edit-toggle");
+      if (canEdit()) {
+        const b = editButton(); if (b && !old) el.headActions.prepend(b);
+        if (s.editAsked && !s.edit) setEdit(true);   // the address asked for edit mode and the first answer said no
+      } else {
+        old?.remove();
+        if (s.edit) {
+          // Typed text is not dropped silently: the entry closes through the usual refresh, with a toast saying why.
+          const dirty = drawerDirty();
+          s.edit = false; wrap.classList.remove("editing"); paintTabs();
+          // A dirty form closes the entry the way Close does (focus back to its row); a clean one refreshes into view mode.
+          if (s.drawer) { if (dirty) closeDrawer(); else openDrawer(s.drawer, { refresh: true }); }
+          saveUrl();
+          if (dirty) toast("Editing is not available for this book, so the entry was closed.", "error");
+        }
+      }
+    }
+    syncFooter();
+  }
+  /** The open entry's "Same as another entry" footer follows `writable` without rebuilding the entry. */
+  function syncFooter() {
+    const box = host();
+    if (!box || !s.drawer || s.edit) return;
+    const foot = box.querySelector(".drawer-foot");
+    if (!writableNow()) { foot?.remove(); return; }
+    const body = box.querySelector(".body");
+    if (!foot && body) body.append(mergeFooter(s.drawer));
+  }
+  const mergeFooter = (id) => h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
+    closeDrawer({ focus: false });
+    mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
+  } } }, icon("layers"), "Same as another entry…"));
   const editor = createEditor({
     key: () => s.key, hash: () => s.hash, chapters: () => s.map.chapters, seqAt: () => s.map.seqAt(s.p),
     docs: () => currentIndexes(), view: () => s.view, book: () => s.book,
@@ -547,6 +683,7 @@ export function mountReader(root) {
   });
   async function setEdit(on) {
     if (on && !canEdit()) return;
+    s.editAsked = false;
     // Done with typed text in a form: ask, as closing the entry does.
     if (!on && drawerDirty() && !(await confirmDialog({ title: "Discard what you wrote?", message: "Leaving edit mode closes the form you were editing.",
       confirmLabel: "Discard", cancelLabel: "Keep editing" }))) return;
@@ -656,21 +793,22 @@ export function mountReader(root) {
         h("option", { value: `end:${c.start}` }, `End of ${c.title}`))));
   }
 
-  function paintSeries() {
-    if (!s.series) return clear(el.series);
+  /** The series controls: which book, the reading order, and which earlier books are finished. They sit in a bar on
+   *  a wide screen and in a sheet on a phone; each change goes through okToMove. */
+  function seriesControls() {
     const order = s.series.orders[s.order];
     const seg = h("div.series-chips", { role: "group", "aria-label": "Book in series" }, order.map((k, i) => {
       const b = s.series.books.find((x) => x.key === k);
       const has = s.seriesDocs.get(k);
       const text = `${i + 1}. ${b?.title || k}`;
       return k === s.book ? h("span.chip", { "aria-current": "true" }, text)
-        : h("button.chip", { type: "button", disabled: !has, title: has ? b.title : "No index for this book", on: { click: () => switchBook(k) } }, text);
+        : h("button.chip", { type: "button", disabled: !has, title: has ? b.title : "No index for this book", on: { click: () => { closeTop(); switchBook(k); } } }, text);
     }));
     const orderSel = Object.keys(s.series.orders).length > 1 && h("select.select", { "aria-label": "Reading order", style: { width: "auto" },
       on: { change: async (e) => {
         const want = e.target.value;
         if (!(await okToMove("Changing the reading order closes the form you were editing."))) { e.target.value = s.order; return; }
-        s.order = want; render(); saveUrl();
+        closeTop(); s.order = want; render(); saveUrl();
       } } },
       Object.keys(s.series.orders).map((o) => h("option", { value: o, selected: o === s.order }, `${o} order`)));
     const before = order.slice(0, order.indexOf(s.book));
@@ -687,6 +825,27 @@ export function mountReader(root) {
       });
       return h("label.chip", { style: { cursor: "pointer" } }, box, `Finished ${b?.title || k}`);
     });
+    return { seg, orderSel, boxes };
+  }
+
+  function paintSeries() {
+    if (!s.series) return clear(el.series);
+    if (phone()) {
+      // One line: "Book 2 of 7 in Harry Potter", a tap opens the books, the reading order and the Finished boxes.
+      const order = s.series.orders[s.order];
+      const at = order.indexOf(s.book);
+      const name = s.series.title || s.series.name || "this series";
+      const btn = h("button.series-line", { type: "button", "aria-haspopup": "dialog",
+        on: { click: () => {
+          const { seg, orderSel, boxes } = seriesControls();
+          openSheet({ title: name, content: h("div.series-sheet", h("p.hint", "Pick the book to read. Earlier books you have finished add what you know from them."),
+            seg, orderSel ? h("div.series-order", h("label.label", "Reading order"), orderSel) : null,
+            boxes.length ? h("div.series-fin", h("p.label", "Earlier books you have finished"), boxes) : null) });
+        } } },
+        h("span.sl-text", at >= 0 ? `Book ${at + 1} of ${order.length} in ${name}` : `In the series ${name}`), chevronDown());
+      return clear(el.series, btn);
+    }
+    const { seg, orderSel, boxes } = seriesControls();
     clear(el.series, h("div.series-bar", h("span.eyebrow", { title: s.series.title }, "In this series"), seg, orderSel, boxes));
   }
 
@@ -731,7 +890,7 @@ export function mountReader(root) {
     el.hint.hidden = !(s.p === 0 && !v.entities.length && !v.events.length && !v.chapters.length);
     el.hint.textContent = el.hint.hidden ? "" : "Drag the slider to where you are in the book. Everything below updates to what you've read, and nothing further.";
     const ch = s.map.chapterAt(s.p);
-    el.chap.textContent = ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal";
+    setChap(ch ? tidyTitle(ch.title) : anchor ? `after paragraph ${anchor}` : "before the first reveal");
     el.chap.title = el.chap.textContent;
     paintSource();
     paintLastSetting();
@@ -757,6 +916,7 @@ export function mountReader(root) {
       }, 400);
     }
     s.prevIds = ids;
+    ask.check();   // moved back, a book unticked or switched: the thread goes
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -777,22 +937,32 @@ export function mountReader(root) {
 
   function paintTabs() {
     const v = s.view;
-    wrap.classList.toggle("wide", s.tab === "links");   // the map alone gets the full width
+    wrap.classList.toggle("wide", s.tab === "links");
+    wrap.classList.toggle("asking-tab", s.tab === "ask");   // the map alone gets the full width
     // The short names are for a phone, where all four tabs share one row without scrolling sideways.
     const tabs = [["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
       ["timeline", "Timeline", v.events.length, "Timeline"], ["links", "Connections", v.relations.length, "Map"]];
+    // Ask needs a library key (not a community preview) and a model; opened by address it explains instead of hiding.
+    const askInfo = ask.available;
+    if (!preview && (s.tab === "ask" || (askInfo && (askInfo.available || askInfo.reason === "ollama-busy")))) tabs.push(["ask", "Ask", null, "Ask"]);
     const keys = tabs.map((x) => x[0]);
-    const select = (k, focus) => { s.tab = k; paintTabs(); if (focus) document.getElementById(`tab-${k}`)?.focus(); };
+    el.tabs.classList.toggle("five", tabs.length > 4);   // a phone has no room for the counts beside five names
+    const select = (k, focus) => {
+      const was = s.tab;
+      s.tab = k; paintTabs();
+      if (k === "ask" || was === "ask") saveUrl();
+      if (focus) document.getElementById(`tab-${k}`)?.focus();
+    };
     clear(el.tabs, tabs.map(([k, label, n, short]) => h("button", { type: "button", role: "tab", id: `tab-${k}`, "aria-controls": "panel-view",
       "aria-selected": String(s.tab === k), tabindex: s.tab === k ? "0" : "-1",
       on: { click: () => select(k, false), keydown: (ev) => {
         const i = keys.indexOf(k);
         const to = { ArrowRight: keys[(i + 1) % keys.length], ArrowLeft: keys[(i + keys.length - 1) % keys.length], Home: keys[0], End: keys[keys.length - 1] }[ev.key];
         if (to) { ev.preventDefault(); select(to, true); }
-      } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), h("span.count", String(n)))));
+      } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), n == null ? null : h("span.count", String(n)))));
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
     if (s.tab !== "links") { clear(el.mapSide); el.split.classList.remove("has-side"); }
-    ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks })[s.tab]();
+    ({ chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks, ask: () => ask.mount(el.panel) })[s.tab]();
     el.panel.prepend(h("h2.sr-only", tabs.find((x) => x[0] === s.tab)[1]));
   }
 
@@ -846,9 +1016,10 @@ export function mountReader(root) {
           h("ul.cast-rows", rows.map((e) => h("li", row(e)))));
       }));
     }
-    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), dupesNotice(),
+    clear(el.panel, h("div.filters", h("div.search", icon("search"), search), h("div.type-chips", { role: "group", "aria-label": "Show types" }, chips, earlierChip), sort), el.dupesSlot = h("div.dupes-slot", dupesNotice()),
       s.edit ? editor.addEntityButton() : null, list);
     paintList();
+    el.dupesSlot.dataset.key = dupesKey();
   }
 
   /** After a merge or undo: reload the (rewritten) indexes and stay where the reader is. */
@@ -866,14 +1037,61 @@ export function mountReader(root) {
       if (!next) return;
       if (next.undo?.auto && next.undo.id !== before) { s.autoShown = null; return reloadAfterMerge(); }
       s.dupes = next;
-      if (next.checking) watchDupes(key); else paintTabs();
+      if (next.checking) watchDupes(key); else { syncEditAvailability(canEdit()); repaintDupes(); }
     }, 3000);
+  }
+
+  /** What dupesNotice() would show, as a string: the slot is rebuilt only when this changes. */
+  function dupesKey() {
+    const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo.id : "";
+    const n = s.dupes?.writable && !s.dupesDismissed ? openPairs(visiblePairs(s.dupes, s.view)).length : 0;
+    return `${auto}|${n}`;
+  }
+  function repaintDupes() {
+    if (!el.dupesSlot?.isConnected || el.dupesSlot.dataset.key === dupesKey()) return;
+    clear(el.dupesSlot, dupesNotice());
+    el.dupesSlot.dataset.key = dupesKey();
+  }
+  /** The phone's "Merged N obvious duplicates" toast with Undo: in the open entry sheet's own host while that modal
+   *  is up (the page behind it is inert), gone after about 10 seconds or when the Reader is left. If the sheet closes
+   *  first the toast moves to the page for the time it has left; if the Reader is left while it is still showing, the
+   *  merge is forgotten so the toast comes back on return. */
+  function showMergeToast(auto, remaining = 10000) {
+    const n = auto.keepNames.length;
+    const dlg = document.querySelector("dialog.drawer[open]");
+    let host = null;
+    if (dlg) { host = dlg.querySelector(".drawer-toasts"); if (!host) { host = h("div.drawer-toasts"); dlg.append(host); } }
+    s.dropMergeToast?.();
+    const dismiss = toast(`Merged ${n} obvious duplicate${n === 1 ? "" : "s"}.`, "ok", { host, action: { label: "Undo", run: async () => {
+      try { await api.undoMerge(s.key, auto.id); toast("Undone"); reloadAfterMerge(); } catch (e) { toast(e.message, "error"); }
+    } } });
+    const node = (host || document.getElementById("toasts")).lastElementChild;
+    const timer = setTimeout(() => { dismiss(); s.mergeToast = null; }, remaining);
+    s.mergeToast = { auto, host, node, until: Date.now() + remaining };
+    s.dropMergeToast = () => { clearTimeout(timer); dismiss(); s.mergeToast = null; s.dropMergeToast = null; };
+  }
+  /** The entry sheet opened or closed: a merge toast still showing moves to where it can be reached (into the open
+   *  sheet, or back to the page), keeping the time it has left. */
+  function rehomeMergeToast() {
+    const m = s.mergeToast;
+    if (!m || disposed) return;
+    const wantSheet = Boolean(document.querySelector("dialog.drawer[open]"));
+    if (wantSheet === Boolean(m.host)) return;
+    const left = m.until - Date.now();
+    const kept = m.host ? m.host.contains(m.node) : m.node.isConnected;   // false once the person dismissed it
+    s.dropMergeToast?.();
+    if (kept && left > 500) showMergeToast(m.auto, left);
   }
 
   function dupesNotice() {
     const auto = s.dupes?.undo?.auto && s.autoShown !== s.dupes.undo.id ? s.dupes.undo : null;
     let merged = null;
-    if (auto) {
+    if (auto && phone()) {
+      // On a phone the merge is a toast with Undo, never a line in the middle of the list.
+      // Once per merge (autoShown), gone after about 10 seconds, and gone when the Reader is left.
+      s.autoShown = auto.id;
+      if (!toastedMerges.has(auto.id)) { toastedMerges.add(auto.id); showMergeToast(auto); }   // once per merge in this visit
+    } else if (auto) {
       const dismiss = () => { clearTimeout(s.autoTimer); s.autoShown = auto.id; paintTabs(); };
       if (s.autoTimerFor !== auto.id) { s.autoTimerFor = auto.id; clearTimeout(s.autoTimer); s.autoTimer = setTimeout(() => { if (!disposed && s.autoShown !== auto.id) dismiss(); }, 20000); }
       const n = auto.keepNames.length;
@@ -925,7 +1143,7 @@ export function mountReader(root) {
       h("span.ent-meta",
         from ? h("span.book-label.ent-from", { title: sleeping ? "Met in an earlier book; not in this one yet" : "Met in an earlier book" }, `from ${bookShort(from)}`) : null,
         e.facets.length ? [h("span.num", String(e.facets.length)), e.facets.length === 1 ? " detail" : " details"] : null,
-        e.history.length ? h("span.hist", { title: `${e.history.length} earlier impression${e.history.length === 1 ? "" : "s"}` }, icon("refresh")) : null));
+        impressionsOf(e).length ? h("span.hist", { title: `${impressionsOf(e).length} earlier impression${impressionsOf(e).length === 1 ? "" : "s"}` }, icon("refresh")) : null));
     if (fresh) rowEl.addEventListener("animationend", () => rowEl.classList.remove("arrive"), { once: true });
     return rowEl;
   }
@@ -935,14 +1153,27 @@ export function mountReader(root) {
   /** Visible chapter recaps, with the parts of one long chapter joined: [{ key, title, book, parts, ids }]. */
   function chapterGroups() {
     const out = [];
+    // The map chapter a recap of the book being read ends in (parts of one long chapter share it; two chapters with
+    // the same title do not). Unknown for earlier books and without a position for its anchor.
+    const docRecaps = new Map((s.doc.recaps || []).map((r) => [r.id, r]));
+    const chapterOf = (c) => {
+      if (s.series && c.book && c.book !== s.book) return null;
+      const at = s.map.anchorPos(docRecaps.get(c.id)?.from);
+      return Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+    };
     for (const c of s.view.chapters || []) {
       const last = out[out.length - 1];
-      if (last && last.title === c.title && last.book === c.book) { last.parts.push(c.text); last.ids.push(c.id); }
-      else out.push({ key: c.id, title: c.title || "Untitled section", book: c.book, parts: [c.text], ids: [c.id] });
+      const ch = chapterOf(c);
+      // With a chapter map, parts join only inside one mapped chapter; a recap that has no position there is a row of
+      // its own. Without one (an earlier book, or no book file) nothing can tell parts of "Interlude" from two
+      // chapters called "Interlude", so consecutive same-title recaps are parts of one chapter.
+      const mapped = !(s.series && c.book && c.book !== s.book) && (s.map.chapters || []).length > 0;
+      const same = last && last.title === c.title && last.book === c.book && (!mapped || (ch && last.ch && ch.start === last.ch.start));
+      if (same) { last.parts.push(c.text); last.ids.push(c.id); last.ch ||= ch; }
+      else out.push({ key: c.id, title: c.title || "Untitled section", book: c.book, parts: [c.text], ids: [c.id], ch });
     }
     return out;
   }
-
 
   /** Entities named in a piece of text: whole names and aliases, or a surname no other entity shares. */
   function mentions(text) {
@@ -964,28 +1195,136 @@ export function mountReader(root) {
     }));
   }
 
-  /** One book's chapters as a list; numbering restarts per book. */
-  function chapterList(groups, { current }) {
+  // ---- book blocks: the one structure both the Chapters and the Timeline tabs use --------------
+
+  const NEAR = 5;   // chapters shown per book before "Show all"
+  const bkKey = (k) => k || "_";
+
+  /** The book's cover URL (from the API, never from the index), or null. */
+  function bookCover(key) {
+    let b = null;
+    if (!s.series || !key || key === s.book) b = catalogBook();
+    else {
+      const idx = s.lib.indexes.find((i) => i.series?.id === s.series.id && i.series.book === key);
+      b = idx && s.catalog?.books.find((x) => x.versions.some((v) => v.key === idx.key));
+    }
+    const url = b?.cover;
+    return typeof url === "string" && url.startsWith("/api/") ? url : null;
+  }
+  const bookTitleOf = (key) => (s.series && key ? s.series.books.find((x) => x.key === key)?.title || key : s.doc.work.title);
+  const bookNoLabel = (key) => {
+    if (!s.series || !key) return null;
+    const i = (s.series.orders[s.order] || []).indexOf(key);
+    return i < 0 ? null : `Book ${i + 1}`;
+  };
+
+  /** The cover fading into the ground with the book's title over it. As a summary it opens a collapsed book. */
+  function bookBanner(key, { summary = false } = {}) {
+    const cov = bookCover(key), label = bookNoLabel(key);
+    const img = cov ? h("img.banner-img", { src: cov, alt: "", loading: "lazy" }) : null;
+    if (img) img.addEventListener("error", () => img.remove());
+    return h(`${summary ? "summary" : "div"}.book-banner${cov ? ".has-cover" : ""}`, img,
+      h("span.banner-text", label ? h("span.banner-no", label) : null, h("span.banner-title", bookTitleOf(key))),
+      summary ? icon("chevron") : null);
+  }
+
+  /** One book on the rail. `items` ([{ label, title, body, cls, id, badge, pin }]) are in display order: the fold keeps the first `NEAR`
+   *  and any `pin`ned item. `newest` only picks the word in the expanded button; `raw` is an earlier book's events block ({ total, build(full) }). */
+  function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none, raw }) {
+    const all = s.bkAll.has(bkKey(key));
+    const folded = !all && items.length > NEAR;
+    const shown = !folded ? items : items.filter((it, i) => i < NEAR || it.pin);
+    const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
+      it.label ? h("span.ch-label", it.label) : null,
+      it.title ? h("div.ch-name", it.title, it.badge || null) : null,
+      it.body))) : none ? h("p.muted.book-none", none) : null;
+    const total = raw ? raw.total : items.length;
+    const toggle = total > NEAR ? h("button.btn.ch-all", { type: "button", dataset: { book: bkKey(key) }, "aria-expanded": String(all),
+      on: { click: () => {
+        all ? s.bkAll.delete(bkKey(key)) : s.bkAll.add(bkKey(key));
+        repaint();
+        el.panel.querySelector(`.ch-all[data-book="${CSS.escape(bkKey(key))}"]`)?.focus({ preventScroll: true });
+      } } }, all ? `Show only the ${newest ? "latest" : "first"} ${NEAR}` : `Show all ${total} ${noun}${total === 1 ? "" : "s"}`) : null;
+    const content = raw ? raw.build(all) : rail;
+    if (current) return h("section.book-block.stack-book.current", { "aria-label": bookTitleOf(key) }, bookBanner(key), content, toggle);
+    return h("details.book-block.stack-book.earlier", { "aria-label": bookTitleOf(key), open: s.bkOpen.has(bkKey(key)) ? "" : null,
+      on: { toggle: (ev) => { ev.currentTarget.open ? s.bkOpen.add(bkKey(key)) : s.bkOpen.delete(bkKey(key)); } } },
+      bookBanner(key, { summary: true }), content, toggle);
+  }
+
+  /** "Chapter 7" over a title that does not say what it is; no label when the title carries its own number or kind. */
+  const SELF_NAMED = /^\s*(chapter|part|book|prologue|epilogue|preface|introduction|foreword|afterword|section|letter)\b/i;
+  const chapterLabel = (title, n) => (SELF_NAMED.test(tidyTitle(title) || "") ? null : `Chapter ${n}`);
+
+  /** Chapter rows of the book being read, oldest first, the same on both tabs: every revealed recap, the chapter the
+   *  position is in (title only until its recap is revealed) and any chapter an event happens in. */
+  function currentRows(groups) {
+    const rows = [], byKey = new Map();
+    const create = (key, title, ch) => { const r = { key, title, ch, group: null, events: [] }; byKey.set(key, r); rows.push(r); return r; };
+    // A row is a chapter, never a title: two chapters called "Interlude" stay two rows.
+    const forChapter = (ch) => {
+      const r = byKey.get(`c${ch.start}`);
+      if (r) return r;
+      return create(`c${ch.start}`, ch.title, ch);
+    };
+    for (const g of groups) {
+      const r = g.ch ? forChapter(g.ch) : create(`g:${g.key}`, g.title, null);
+      if (!r.group) r.title = g.title;   // the recap's own title, as the Chapters tab always showed
+      r.group = r.group ? { ...r.group, parts: [...r.group.parts, ...g.parts], ids: [...r.group.ids, ...g.ids] } : g;
+    }
     const here = s.map.chapterAt(s.p);
-    const numbered = groups.map((g, i) => ({ ...g, n: i + 1, last: i === groups.length - 1 }));
-    const ordered = s.chaptersNewest ? [...numbered].reverse() : numbered;
-    return h("ol.chapter-list", ordered.map((g) => {
-      // Still inside this chapter: its summary covers only what has been read.
-      const ongoing = current && g.last && here && here.title === g.title;
-      const fresh = g.ids.some((id) => s.fresh.has(id));
-      const who = mentions(g.parts.join(" "));
-      const det = h(`details.chapter${fresh ? ".fresh" : ""}`, { "data-chapter": g.key, open: (current && g.last) || ordered.length <= 3 ? "" : null },
-        h("summary", h("span.ch-num.num", String(g.n)), h("span.ch-title", tidyTitle(g.title)),
-          ongoing ? h("span.chip.ch-ongoing", "So far") : null, fresh ? h("span.new-badge", "New") : null),
-        h("div.ch-body", g.parts.map((t, i) => {
+    if (here) forChapter(here).now = true;
+    for (const ev of s.view.events) {
+      if (s.series && ev.book && ev.book !== s.book) continue;
+      const ch = eventChapter(ev);
+      if (ch) forChapter(ch).events.push(ev);
+      else (rows.loose ||= []).push(ev);
+    }
+    const chapters = s.map.chapters || [];
+    // Book order by chapter; a recap with no position there follows the nearest row before it.
+    let prev = -0.5;
+    const key = new Map(rows.map((r) => {
+      const i = r.ch ? chapters.findIndex((c) => c.start === r.ch.start) : -1;
+      if (i >= 0) prev = i; else if (r.ch) prev = Infinity; else prev += 1e-3;
+      return [r, r.ch && i < 0 ? Infinity : prev];
+    }));
+    if (chapters.length) rows.sort((a, b) => key.get(a) - key.get(b));
+    return rows;
+  }
+
+  /** An earlier book's rows from its own chapter recaps; each event goes to the first recap at or after the point it
+   *  is revealed (a recap is revealed where its chapter ends). [] when that index has no chapter recaps. */
+  function earlierRows(b, groups) {
+    const rows = groups.map((g) => ({ title: g.title, group: g, events: [] }));
+    const d = s.seriesDocs.get(b);
+    if (!rows.length || !d) return rows;
+    const ord = new Map((d.anchors || []).map((a, i) => [a.id, i]));
+    const recapOrd = new Map((d.recaps || []).filter((r) => r.scope === "chapter").map((r) => [r.id, ord.get(r.from) ?? Infinity]));
+    const rowOrd = rows.map((r) => Math.max(...r.group.ids.map((id) => recapOrd.get(id) ?? -1)));
+    for (const ev of s.view.events) {
+      if (ev.book !== b) continue;
+      const at = ord.get(revealInfo(ev.id)?.from) ?? Infinity;
+      const i = rowOrd.findIndex((o) => o >= at);
+      rows[i < 0 ? rows.length - 1 : i].events.push(ev);
+    }
+    return rows;
+  }
+
+  /** The chapters tab's rail items for rows. */
+  function chapterItems(rows) {
+    return rows.map((r, i) => {
+      const g = r.group, parts = g ? g.parts : [];
+      const fresh = (g && g.ids.some((id) => s.fresh.has(id))) || false;
+      const who = parts.length ? mentions(parts.join(" ")) : [];
+      return { id: g ? g.key : null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), cls: r.now ? "now" : fresh ? "fresh" : "",
+        badge: r.now ? h("span.chip.ch-ongoing", "So far") : fresh ? h("span.new-badge", "New") : null,
+        body: parts.length ? h("div.ch-body", parts.map((t, k) => {
           if (!s.edit) return h("p", t);
           const part = h("div.ch-part");
-          clear(part, h("p", t), editor.recapRowActions({ id: g.ids[i], text: t }, part, { scope: "chapter", title: g.title }));
+          clear(part, h("p", t), editor.recapRowActions({ id: g.ids[k], text: t }, part, { scope: "chapter", title: g.title }));
           return part;
-        }),
-          who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null));
-      return h("li", det);
-    }));
+        }), who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null) : null };
+    });
   }
 
   /** Two buttons, each with its own pressed state, instead of one that relabels itself. The repaint
@@ -1019,38 +1358,33 @@ export function mountReader(root) {
     // In a series, each book's chapters are their own block on one rail that runs down to the book being read.
     const mine = groups.filter((g) => !s.series || !g.book || g.book === s.book);
     const earlierBooks = s.series ? (s.series.orders[s.order] || []).filter((b) => b !== s.book && groups.some((g) => g.book === b)) : [];
-    if (!groups.length || (!mine.length && !earlierBooks.length)) {
+    const rows = currentRows(mine);
+    if (!rows.length && !earlierBooks.length) {
       return clear(el.panel, story, addRecap, h("div.empty", h("div.art", icon("book-open")),
         h("h3", hasAny ? "No chapters finished yet" : "No chapter recaps in this index"),
         h("p", hasAny ? "Each chapter's summary appears once you've read past it." : s.edit ? "Add a recap for each chapter as you finish it." : "This index was built before chapter recaps existed. Build a new version to get a summary of every chapter.")));
     }
+    const earlierRowsBy = new Map(earlierBooks.map((b) => [b, earlierRows(b, groups.filter((g) => g.book === b))]));
+    const earlierTotal = [...earlierRowsBy.values()].reduce((n, r) => n + r.length, 0);
     const toggle = orderToggle(s.chaptersNewest, (v) => { s.chaptersNewest = v; paintChapterRecaps(); });
     const seriesChip = earlierBooks.length ? h("button.filter-chip.ch-series", { type: "button", "aria-pressed": String(s.chSeries),
       title: s.chSeries ? "Show this book's chapters only" : "Show the earlier books' chapters too",
       on: { click: () => { s.chSeries = !s.chSeries; try { localStorage.setItem("lk-ch-series", s.chSeries ? "1" : "0"); } catch {} paintChapterRecaps(); } } },
-      icon("layers"), "Whole series", h("span.n", String(groups.length - mine.length))) : null;
-    const count = `${mine.length} chapter${mine.length === 1 ? "" : "s"} so far`;
+      icon("layers"), "Whole series", h("span.n", String(earlierTotal))) : null;
+    const count = `${rows.length} chapter${rows.length === 1 ? "" : "s"} so far`;
+    const repaint = () => paintChapterRecaps();
+    const ordered = (items) => (s.chaptersNewest ? [...items].reverse() : items);
+    const currentBlock = bookBlock(s.series ? s.book : null, ordered(chapterItems(rows)), { current: true, newest: s.chaptersNewest, repaint,
+      none: "No chapter finished in this book yet. Its summaries appear as you read past each chapter." });
     if (!earlierBooks.length) {
-      return clear(el.panel, story, h("div.toolbar.chapters-bar", h("span.hint", count), addRecap, toggle), chapterList(mine, { current: true }));
+      return clear(el.panel, story, h("div.toolbar.chapters-bar", h("span.hint", count), addRecap, toggle), h("div.book-stack", currentBlock));
     }
-    const title = (b) => s.series.books.find((x) => x.key === b)?.title || b;
-    const currentBlock = h("section.book-block.current", { "aria-label": title(s.book) },
-      h("div.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(s.book)),
-        h("span.hint", mine.length ? `reading now, ${count}` : "reading now")),
-      mine.length ? chapterList(mine, { current: true })
-        : h("p.muted.book-none", "No chapter finished in this book yet. Its summaries appear as you read past each chapter."));
-    const earlierBlocks = earlierBooks.map((b) => {
-      const bg = groups.filter((g) => g.book === b);
-      return h("details.book-block.earlier", { "aria-label": title(b) },
-        h("summary.book-head", h("span.book-dot", { "aria-hidden": "true" }), h("span.book-title", title(b)),
-          h("span.hint", `finished, ${bg.length} chapter${bg.length === 1 ? "" : "s"}`), icon("chevron")),
-        chapterList(bg, { current: false }));
-    });
+    const earlierBlocks = earlierBooks.map((b) => bookBlock(b, ordered(chapterItems(earlierRowsBy.get(b))), { current: false, newest: s.chaptersNewest, repaint }));
     // Newest first puts the book being read at the top and the earlier books beneath it, latest first.
     const blocks = s.chSeries ? (s.chaptersNewest ? [currentBlock, ...earlierBlocks.reverse()] : [...earlierBlocks, currentBlock]) : [currentBlock];
     clear(el.panel, story,
-      h("div.toolbar.chapters-bar", h("span.hint", s.chSeries ? `${count} in this book, ${groups.length - mine.length} in earlier books` : count), seriesChip, addRecap, toggle),
-      h(`div.series-rail${s.chaptersNewest ? ".newest" : ""}`, blocks));
+      h("div.toolbar.chapters-bar", h("span.hint", s.chSeries ? `${count} in this book, ${earlierTotal} in earlier books` : count), seriesChip, addRecap, toggle),
+      h("div.book-stack", blocks));
   }
 
   const nameOf = (id) => s.view.entities.find((e) => e.id === id);
@@ -1089,10 +1423,10 @@ export function mountReader(root) {
     return runs;
   }
   /** One timeline row: turning points stand out, small moments stay quiet. */
-  function eventRow(ev, { chips = true } = {}) {
-    const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`);
+  function eventRow(ev, { chips = true, book = true } = {}) {
+    const li = h(`li.tl-ev${ev.kind ? `.${ev.kind}` : ""}${s.fresh.has(ev.id) ? ".fresh" : ""}`, { dataset: { ev: ev.id }, tabindex: "-1" });
     clear(li, ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
-      chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : bookLabel(ev.book),
+      chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : book ? bookLabel(ev.book) : null,
       s.edit ? editor.eventRowActions(ev, li) : null);
     return li;
   }
@@ -1113,31 +1447,44 @@ export function mountReader(root) {
       title: s.tlMinor ? "Hide the small moments that don't change the story" : "Show the small moments too",
       on: { click: () => { s.tlMinor = !s.tlMinor; remember("lk-tl-minor", s.tlMinor); paintTimeline(); } } },
       "Small moments", h("span.n", String(minor))) : null;
-    // Events are grouped under the chapter they happen in (another book's events under that book).
-    const groups = [];
-    for (const ev of evs) {
-      const other = s.series && ev.book && ev.book !== s.book;
-      const ch = other ? null : eventChapter(ev);
-      const key = other ? `book:${ev.book}` : ch ? `ch:${ch.start}` : "none";
-      const last = groups[groups.length - 1];
-      if (last && last.key === key) last.events.push(ev);
-      else groups.push({ key, label: other ? `From ${bookShort(ev.book)}` : ch ? tidyTitle(ch.title) : null, events: [ev] });
-    }
+    // The same book -> chapters rows as the Chapters tab. The chips filter the events inside the rows; they never
+    // change which chapters are listed or the "Show all" count.
+    const keep = new Set(shown);
+    const inRow = (events) => { const e = events.filter((ev) => keep.has(ev)); return s.newestFirst ? e.reverse() : e; };
+    const rowBody = (events, total = events.length) => (events.length ? h("ol.tl-list", sceneRuns(events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev))]))
+      : h("p.muted.tl-none", total ? "Nothing to show with these filters." : "No events in this chapter."));
+    const rowItems = (rows) => rows.map((r, i) => {
+      const evs = inRow(r.events);
+      return { id: null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title),
+        cls: r.now ? "now" : r.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "", body: rowBody(evs, r.events.length) };
+    });
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
       : s.tlTurns ? ["No turning points yet", "Nothing read so far has changed the course of the story."]
         : ["Only small moments so far", "Turn on small moments to see them."];
-    // Deep into a book the timeline runs to hundreds of rows, so only the chapters nearest the position show until
-    // the reader asks for the rest; the fold sits on the far side, where the earlier chapters are.
-    const KEEP = 3, folded = !s.tlAll && groups.length > KEEP + 1;
-    const near = !folded ? groups : s.newestFirst ? groups.slice(0, KEEP) : groups.slice(-KEEP);
-    const hiddenEvents = groups.length - near.length && groups.filter((g) => !near.includes(g)).reduce((n, g) => n + g.events.length, 0);
-    const earlier = folded ? h("button.btn.ghost.tl-earlier", { type: "button", on: { click: () => { s.tlAll = true; paintTimeline(); } } },
-      `Show ${groups.length - KEEP} earlier chapter${groups.length - KEEP === 1 ? "" : "s"} (${hiddenEvents} event${hiddenEvents === 1 ? "" : "s"})`) : null;
+    const repaint = () => paintTimeline();
+    const ordered = (items) => (s.newestFirst ? [...items].reverse() : items);
+    const rows = currentRows(chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book));
+    const loose = (rows.loose || []).filter((ev) => keep.has(ev));
+    const currentItems = ordered(rowItems(rows));
+    if (loose.length) {   // no chapter to put them in (no book file): one block of their own
+      const item = { label: null, title: null, cls: "", pin: true, body: rowBody(s.newestFirst ? [...loose].reverse() : loose) };
+      currentItems[s.newestFirst ? "unshift" : "push"](item);
+    }
+    const currentBlock = currentItems.length ? bookBlock(s.series ? s.book : null, currentItems, { current: true, newest: s.newestFirst, repaint }) : null;
+    const order = s.series ? s.series.orders[s.order] || [] : [];
+    const earlierKeys = order.filter((b) => b !== s.book && all.some((ev) => ev.book === b));
+    const earlierBlocks = (s.newestFirst ? [...earlierKeys].reverse() : earlierKeys).map((b) => {
+      const rowsB = earlierRows(b, chapterGroups().filter((g) => g.book === b));
+      if (rowsB.length) return bookBlock(b, ordered(rowItems(rowsB)), { current: false, newest: s.newestFirst, repaint });
+      // That index has no chapter recaps: its events as one block with scene runs.
+      const evs = inRow(all.filter((ev) => ev.book === b));
+      if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
+      return bookBlock(b, [], { current: false, newest: s.newestFirst, noun: "event", repaint,
+        raw: { total: evs.length, build: (full) => h("div.ch-body.tl-flat", rowBody(full ? evs : evs.slice(0, NEAR))) } });
+    });
+    const blocks = (s.newestFirst ? [currentBlock, ...earlierBlocks] : [...earlierBlocks, currentBlock]).filter(Boolean);
     clear(el.panel, h("div.toolbar.tl-bar", toggle, turnChip, minorChip, s.edit ? editor.addEventButton() : null),
-      evs.length ? [s.newestFirst ? null : earlier, h("ol.timeline", near.map((g) => [
-        g.label ? h("li.tl-chapter", g.label) : null,
-        sceneRuns(g.events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev))]),
-      ])), s.newestFirst ? earlier : null]
+      blocks.some(Boolean) ? h("div.book-stack", blocks.filter(Boolean))
         : h("div.empty", h("div.art", icon("timeline")), h("h3", empty[0]), h("p", empty[1])));
   }
 
@@ -1154,9 +1501,13 @@ export function mountReader(root) {
 
   /** The series book that introduces an entity (or relation) and the anchor it is revealed at. */
   function revealInfo(id) {
-    if (!s.reveals) {
-      s.reveals = new Map();
-      const docs = s.series ? [...s.seriesDocs.entries()] : [[null, s.doc]];
+    // Only the book being read and the finished ones count, walked in the reading order: an entity first met in a book the
+    // reader has not finished (or that the order puts after this one) is not "from" that book as far as the reader knows.
+    const key = s.series ? `${s.order}|${[...(finishedSet() || []), s.book].join(",")}` : "";
+    if (!s.reveals || s.revealsKey !== key) {
+      s.reveals = new Map(); s.revealsKey = key;
+      const known = new Set([...(finishedSet() || []), s.book]);
+      const docs = s.series ? (s.series.orders[s.order] || []).filter((b) => known.has(b)).map((b) => [b, b === s.book ? s.doc : s.seriesDocs.get(b)]) : [[null, s.doc]];
       for (const [book, d] of docs) {
         if (!d) continue;
         for (const e of d.entities || []) if (!s.reveals.has(e.id)) s.reveals.set(e.id, { book, from: e.from });
@@ -1262,7 +1613,7 @@ export function mountReader(root) {
     // position ("Van Helsing" becomes "Abraham Van Helsing"), so a later name must not stay on screen either.
     const others = [...new Set([...rels.flatMap((r) => [r.src, r.dst]), ...evs.flatMap((ev) => ev.entities)])].filter((x) => x !== e.id);
     return [`name:${e.name}`, ...e.aliases.map((a) => `name:${a}`), e.profile ? `p:${e.profile.id}` : null,
-      ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`),
+      ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`), ...(e.arcs || []).map((a) => `a:${a.id}`),
       ...rels.map((r) => `r:${r.id}`), ...evs.map((ev) => `e:${ev.id}`),
       ...others.map((x) => `other:${x}:${nameOf(x)?.name ?? ""}`)].filter(Boolean);
   }
@@ -1295,7 +1646,7 @@ export function mountReader(root) {
     const id = s.drawer;
     const d = document.querySelector("dialog.drawer");
     s.drawer = null;
-    if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); }
+    if (d) { d.removeEventListener("close", onDialogClose); if (d.open) d.close(); d.remove(); rehomeMergeToast(); }
     if (el.pane && !el.pane.hidden) { el.pane.hidden = true; clear(el.pane); el.split.classList.remove("has-entry"); }
     markOpenRow();
     checkPending();
@@ -1330,15 +1681,15 @@ export function mountReader(root) {
     next.focus();
     if (s.drawer && !el.pane.hidden) openDrawer(next.dataset.ent, { from: next, keepFocus: true });
   }
-  /** On a phone the ruler is one line; the chapter select and the percent field go to the line under it. */
+  /** On a phone the ruler is two lines and the chapter select and percent field give way to the Jump sheet (css hides
+   *  them); a sheet left open across the 640px line closes, and the series line is painted in the form that fits. */
+  let phoneWas = phone();
   function placeJump() {
-    if (!el.jump) return;
-    const phone = matchMedia("(max-width: 640px)").matches;
-    const target = phone ? el.sub : el.position;
-    if (el.jump.parentNode !== target) target.append(el.jump);
-    // On a phone the head row goes (the app bar has the title): Edit and Switch book end the jump row.
-    const actionsAt = phone ? el.jump : el.headActions?.parentNode === el.jump ? wrap.querySelector(".rd-head") : null;
-    if (actionsAt && el.headActions && el.headActions.parentNode !== actionsAt) actionsAt.append(el.headActions);
+    const now = phone();
+    if (now === phoneWas) return;
+    phoneWas = now;
+    closeTop();
+    if (el.series && s.series) paintSeries();
   }
   // The width can cross 1100px with an entry open: move it to the other form.
   let modeWas = paneMode();
@@ -1353,6 +1704,32 @@ export function mountReader(root) {
   };
   window.addEventListener("resize", onResize);
 
+  /** On a phone the entry is a bottom sheet: a swipe down on its header (the handle) follows the finger and closes it
+   *  past 90px or on a quick flick, through requestCloseDrawer so typed text still asks first. */
+  function swipeToClose(dlg) {
+    let drag = null;
+    dlg.addEventListener("pointerdown", (ev) => {
+      if (!phone() || !ev.target.closest("header") || ev.target.closest("button, a, input, textarea, select") || (ev.pointerType === "mouse" && ev.button !== 0)) return;
+      drag = { y: ev.clientY, t: ev.timeStamp, dy: 0, id: ev.pointerId };
+      // captured on the header, not the dialog: the click that follows a tap or a short drag then lands on the header and is not read as a tap on the scrim
+      ev.target.closest("header").setPointerCapture?.(ev.pointerId);
+      dlg.style.transition = "none";
+    });
+    dlg.addEventListener("pointermove", (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      drag.dy = Math.max(0, ev.clientY - drag.y);
+      dlg.style.transform = `translateY(${drag.dy}px)`;
+    });
+    const end = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      const { dy, t } = drag; drag = null;
+      dlg.style.transition = ""; dlg.style.transform = "";
+      if (dy > 90 || (dy > 30 && dy / Math.max(1, ev.timeStamp - t) > 0.5)) requestCloseDrawer();
+    };
+    dlg.addEventListener("pointerup", end);
+    dlg.addEventListener("pointercancel", end);
+  }
+
   /** Move the open entry between the pane and the modal drawer as it is: the same nodes, so typed text, open
    *  folds and listeners come along. */
   function moveEntry(toPane) {
@@ -1365,6 +1742,7 @@ export function mountReader(root) {
       dlg.removeEventListener("close", onDialogClose);
       if (dlg.open) dlg.close();
       dlg.remove();
+      rehomeMergeToast();
       el.pane.className = `entry-pane drawer ${type || ""}`;
       el.pane.hidden = false;
       el.pane.append(...nodes);
@@ -1378,12 +1756,124 @@ export function mountReader(root) {
         on: { input: markDirty, change: markDirty, click: (ev) => { checkPending(); if (ev.target === d) requestCloseDrawer(); }, keyup: checkPending, close: onDialogClose,
           cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } } } }, nodes);
       document.body.append(d);
-      d.showModal();
+      swipeToClose(d);
+      showModalLocked(d);
+      rehomeMergeToast();
       markOpenRow();
     }
     // Keep focus inside the entry: the field being typed in, else the heading.
     const target = (toPane ? el.pane : document.querySelector("dialog.drawer"));
     (target.querySelector("[data-dirty='1'] textarea, [data-dirty='1'] input") || target.querySelector("#drawer-title"))?.focus({ preventScroll: true });
+  }
+
+
+  // ---- an entry across a series: who they are, then one card per book -----------------------------
+
+  /** Is this facet a profile? The view does not say which history items are, so the kind is read from the document of
+   *  the facet's own book (its facets, plus the current book's carried entries, which stand in for an origin document that is missing). Safe because it is only asked about facets the view
+   *  already shows, whose books are the current one or finished ones; no other book's document is ever opened, and
+   *  nothing but the kind of an id already on screen is taken from it. */
+  function factKind(f) {
+    if (!s.profileIds) s.profileIds = new Map();
+    if (!s.profileIds.has(f.book)) {
+      const kinds = new Map();
+      const d = !f.book || f.book === s.book ? s.doc : s.seriesDocs.get(f.book);
+      for (const en of [...(d?.entities || []), ...(d?.carried || []), ...(s.doc?.carried || [])]) for (const x of en.facets || []) if (x.kind === "profile" || x.kind === "arc") kinds.set(x.id, x.kind);
+      s.profileIds.set(f.book, kinds);
+    }
+    return s.profileIds.get(f.book).get(f.id) || "";
+  }
+  const isProfile = (f) => factKind(f) === "profile";
+  /** Earlier arcs of a book sit in `history` beside earlier profiles; they are replaced text, never an impression. */
+  const impressionsOf = (e) => e.history.filter((f) => factKind(f) !== "arc");
+  /** "In this book" for the book being read or a standalone index; another book's arc names its own book. */
+  const arcLabel = (a) => (a.book && a.book !== s.book ? `In ${s.series?.books.find((x) => x.key === a.book)?.title || a.book}` : "In this book");
+  /** The arc paragraph, clamped to 4 lines behind "Read more" (shown only while the text is cut off). */
+  function arcParagraph(text, eyebrow) {
+    const p = h("p.arc-text.clamp", text);
+    const more = h("button.linkish.arc-more", { type: "button", "aria-expanded": "false", on: { click: () => {
+      const open = p.classList.toggle("clamp") === false;
+      more.setAttribute("aria-expanded", String(open)); more.textContent = open ? "Show less" : "Read more"; } } }, "Read more");
+    // The width changes (pane, drawer, rotation), so it is measured again whenever the paragraph is resized, and the
+    // watcher goes when the card leaves the page.
+    if (typeof ResizeObserver === "function") {
+      let seen = false;
+      const ro = new ResizeObserver(() => {
+        if (!p.isConnected) { if (seen) ro.disconnect(); return; }
+        seen = true;
+        if (p.classList.contains("clamp")) more.hidden = p.scrollHeight <= p.clientHeight + 1;
+      });
+      ro.observe(p);
+    }
+    return h("div.arc-desc", eyebrow ? h("span.eyebrow", eyebrow) : null, p, more);
+  }
+
+  /** The cards of an entry that spans books, newest first (the book being read on top), as `{ nodes, count }` (the
+   *  quiet cards do not count), or null when the entry is shown as before: not a series, or nothing it shows comes from
+   *  another book, or no book has anything to put in a card. Decided from the `book` of the view's own items only. */
+  function arcCards(e, evs) {
+    if (!s.series) return null;
+    const order = s.series.orders[s.order] || [];
+    const evIn = (b) => evs.filter((ev) => ev.book === b);
+    const present = new Set([...e.facets, ...e.history, ...(e.arcs || []), ...evs, ...(e.profile ? [e.profile] : [])].map((x) => x.book).filter(Boolean));
+    const asleep = dormant(e);
+    if (!asleep && ![...present].some((b) => b !== s.book)) return null;
+    const rank = (b) => { const i = order.indexOf(b); return i < 0 ? order.length : i; };
+    const books = [s.book, ...[...present].filter((b) => b !== s.book).sort((a, b) => rank(b) - rank(a))];
+    const real = books.map((b) => buildCard(e, b, evIn(b), order)).filter(Boolean);
+    if (!real.length && !asleep) return null;
+    const title = s.series.books.find((x) => x.key === s.book)?.title || s.book;
+    const quiet = (text) => h("section.book-block.arc-card.current.quiet", { "aria-label": title }, h("div.book-head", h("span.book-title", { title }, text)));
+    const nodes = [...real];
+    if (asleep) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}: not in this book yet.`));
+    else if (inThisBook(e.id) && !real.some((c) => c.classList.contains("current"))) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}, so far: appears, nothing new yet.`));
+    return { nodes, count: real.length };
+  }
+  const bookNumber = (b, order) => (order.indexOf(b) >= 0 ? `Book ${order.indexOf(b) + 1}, ` : "");
+
+  /** One book's card, or null when it has nothing to show (the profile under "Who they are" does not count). */
+  function buildCard(e, b, bookEvents, order) {
+    const now = b === s.book;
+    const full = s.series.books.find((x) => x.key === b)?.title || b;
+    const heading = `${bookNumber(b, order)}${full}${now ? ", so far" : ""}`;
+    // Profiles of this book, in view order. The latest one overall is already shown under "Who they are".
+    const profiles = [...e.history.filter((f) => f.book === b && isProfile(f)), ...(e.profile && e.profile.book === b ? [e.profile] : [])];
+    const ending = !now && profiles.length && profiles[profiles.length - 1] !== e.profile ? profiles[profiles.length - 1] : null;
+    const impressions = impressionsOf(e).filter((f) => f.book === b && f !== ending);
+    const details = e.facets.filter((f) => f.book === b);
+    const cardFact = (f) => h("li", f.text, f.basis === "inferred" ? h("span.inferred", { title: "A careful reader would conclude this; the text doesn't say it outright." }, "inferred") : null);
+    const list = (xs) => foldList(xs.map(cardFact), (nodes) => h("ul.fact-list", nodes), { show: 6, noun: "details" });
+
+    // The book's arc (written from the index) comes first; then, for a finished book, how its last profile ended.
+    const arc = (e.arcs || []).find((a) => a.book === b);
+    const arcNode = arc ? arcParagraph(arc.text) : null;
+    const desc = ending ? arcParagraph(ending.text, `At the end of ${full}`) : null;
+
+    // Main events: turning points first (up to 4), then the latest ordinary ones; small moments sit behind the fold.
+    const kinds = bookEvents.some((ev) => ev.kind);
+    const main = bookEvents.filter((ev) => !kinds || ev.kind !== "minor");
+    const turns = main.filter((ev) => ev.kind === "turn").slice(-4);
+    const shownEv = turns.length >= 4 ? new Set(turns) : new Set([...turns, ...main.filter((ev) => ev.kind !== "turn").slice(-(4 - turns.length))]);
+    const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
+    const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
+
+    if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length) return null;
+    return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full, dataset: { book: b } },
+      h("div.book-head", h("h3.book-title", { title: full }, heading)),
+      arcNode, desc, eventsNode,
+      details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${full}`), list(details)) : null,
+      impressions.length ? h("details.history", h("summary", `Earlier impressions (${impressions.length})`), list(impressions)) : null);
+  }
+
+  /** A list of event rows with some hidden behind one control; with nothing to hide it is just the list. */
+  function eventFold(rows, visible, label) {
+    const make = (all) => h("ol.timeline", rows.filter((r, i) => all || visible[i]));
+    if (visible.every(Boolean) || rows.length <= 5) return make(true);   // one over the limit shows whole, like foldList
+    const wrap = h("div.fold");
+    const paint = (all) => clear(wrap, visible.some(Boolean) || all ? make(all) : null,
+      h("button.linkish.fold-more", { type: "button", "aria-expanded": String(all), on: { click: () => paint(!all) } }, all ? "Show fewer" : label));
+    paint(false);
+    return wrap;
   }
 
   function openDrawer(id, { from = null, refresh = false, discard = false, keepFocus = false } = {}) {
@@ -1409,23 +1899,31 @@ export function mountReader(root) {
       bookLabel(f.book) && h("span", " ", bookLabel(f.book)));
     const facts = (list, show = 4) => foldList(list.map(factNode), (nodes) => h("ul.fact-list", nodes), { show, noun: "details" });
     const eyebrow = (label, n) => h("span.eyebrow", label, n > 1 ? h("span.n", String(n)) : null);
-    const body = s.edit ? editor.drawerBody(e, rels, evs, { entityChip, bookLabel }) : h("div.body",
+    const cards = s.edit ? null : arcCards(e, evs);
+    // A standalone book's arc sits under the profile as "In this book", unless it only repeats it. (Hand-read on the Sherlock
+    // example: the profile says who he is, the arc what happens to him, so it is kept.)
+    const inThisBookArc = !cards && (e.arcs || [])[0] && !(e.profile && e.profile.text.includes(e.arcs[0].text)) ? e.arcs[0] : null;
+    const connections = rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
+      foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
+      currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null;
+    const body = s.edit ? editor.drawerBody({ ...e, history: impressionsOf(e) }, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h("div.profile", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
-        bookLabel(e.profile.book)) : null,
+        cards && e.profile.book ? h("span.book-label", `From ${s.series.books.find((x) => x.key === e.profile.book)?.title || e.profile.book}`) : bookLabel(e.profile.book)) : null,
+      inThisBookArc ? h("div.d-sec", { dataset: { jump: "arc" } }, arcParagraph(inThisBookArc.text, arcLabel(inThisBookArc))) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
-      h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
-        e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
-      e.history.length ? h("details.history", h("summary", `Earlier impressions (${e.history.length})`), facts(e.history, 6)) : null,
-      rels.length ? h("div.d-sec", { dataset: { jump: "rels" } }, eyebrow("Connections", rels.length),
-        foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
-        currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null,
-      evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
+      cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", cards.count ? h("span.n", String(cards.count)) : null),
+        h("div.series-rail.newest.arc-rail", cards.nodes))
+        : [h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
+          e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
+        impressionsOf(e).length ? h("details.history", h("summary", `Earlier impressions (${impressionsOf(e).length})`), facts(impressionsOf(e), 6)) : null],
+      connections,
+      cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
-      s.dupes?.writable ? h("div.drawer-foot", h("button.btn.ghost", { type: "button", on: { click: () => {
-        closeDrawer({ focus: false });
-        mergeWith({ key: s.key, view: s.view, id, onChanged: reloadAfterMerge });
-      } } }, icon("layers"), "Same as another entry…")) : null);
+      writableNow() ? mergeFooter(id) : null);
+    // Arcs are written by the generator and the server refuses edits to them, so in edit mode they show read-only.
+    if (s.edit && (e.arcs || []).length) body.querySelector(".edit-help")?.after(h("div.d-sec", { dataset: { jump: "arc" } },
+      ...e.arcs.map((a) => arcParagraph(a.text, `${arcLabel(a)}, written by the generator`))));
     // "Where it comes up": counted by the server from the book text, through the last block the reader has finished.
     // Without the book file there is no section. It sits after the details, before Connections (read-only in edit mode too).
     if (s.map?.cum) {
@@ -1436,14 +1934,18 @@ export function mountReader(root) {
         || body.querySelector(".drawer-foot");
       if (nextSec) nextSec.before(sec); else body.append(sec);
     }
-    const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) ? "" : ". Not in this book yet."}`) : null;
+    const origin = carried(id) ? h("p.d-from", `First met in ${bookShort(revealInfo(id).book)}${inThisBook(id) || cards ? "" : ". Not in this book yet."}`) : null;
     // Jump links under the name, so a long entry (most of them, on a phone) is one tap from each section.
-    const jumps = [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]].filter((j) => j[2]);
+    const jumps = (cards ? [["books", "Books", cards.count], ["rels", "Connections", rels.length]]
+      : [["facts", "Details", e.facets.length], ["rels", "Connections", rels.length], ["events", "Events", evs.length]]).filter((j) => j[2]);
     const jumpNav = !s.edit && jumps.length > 1 ? h("nav.d-jumps", { "aria-label": "Sections" }, jumps.map(([k, label, n]) =>
       h("button.linkish", { type: "button", on: { click: () => body.querySelector(`[data-jump="${k}"]`)?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" }) } },
         label, h("span.n", String(n))))) : null;
-    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin)
-      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav);
+    // A quiet way into the Ask tab with this entry's question typed, not sent.
+    const askLink = !preview && ask.available?.available ? h("p.d-ask", h("button.linkish", { type: "button",
+      on: { click: () => showAsk({ text: `What do I know about ${e.name} so far?` }) } }, `Ask about ${e.name}`)) : null;
+    const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin, askLink)
+      : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav, askLink);
     const content = [h("header", title, closeBtn), body];
     s.drawerShows = entryIds(e);
 
@@ -1481,19 +1983,122 @@ export function mountReader(root) {
       on: { input: markDirty, change: markDirty, keyup: checkPending, close: onDialogClose, cancel: (ev) => { if (drawerDirty()) { ev.preventDefault(); requestCloseDrawer(); } },
         click: (ev) => { checkPending(); if (ev.target === dlg) requestCloseDrawer(); } } }, content);
     document.body.append(dlg);
-    dlg.showModal();
-    if (!refresh) closeBtn.focus();
+    swipeToClose(dlg);
+    showModalLocked(dlg);
+    rehomeMergeToast();
+    if (!refresh) dlg.querySelector("#drawer-title")?.focus({ preventScroll: true });   // the heading is announced; × shows a ring only for keyboard focus
+  }
+
+  /** Where the view on screen is computed: what the request sends, and what the thread is compared against. */
+  function askPosition() {
+    const anchor = s.map.frontier(s.p);
+    const order = s.series ? s.series.orders[s.order] : null;
+    const finished = s.series ? finishedSet() : null;
+    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
+      rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
+  }
+  // ---- Ask: examples, sources, entry points -----------------------------------------------------
+
+  /** Three questions built only from the gated view: the most known person, a second one, the last chapter read. */
+  function askExamples() {
+    if (!s.view) return [];
+    const people = castEntities().filter((e) => e.type === "person").sort((a, b) => b.facets.length - a.facets.length);
+    const out = [];
+    if (people[0]) out.push(`Who is ${people[0].name}?`);
+    const second = people[1] || people[0];
+    if (second) out.push(`What has happened to ${second.name} so far?`);
+    const last = chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book).pop();
+    if (last) {
+      const t = tidyTitle(last.title);
+      out.push(`What happened in ${/^[IVXLCDM\d]+\.?$/i.test(t) ? `chapter ${t.replace(/\.$/, "")}` : t}?`);
+    }
+    return out;
+  }
+  const entryOfCite = (c) => {
+    if (c.entity && nameOf(c.entity)) return c.entity;
+    if (c.kind === "relation") { const r = s.view.relations.find((x) => x.id === c.id); return r && nameOf(r.src) ? r.src : null; }
+    if (c.kind === "facet") return s.view.entities.find((e) => e.profile?.id === c.id || e.facets.some((f) => f.id === c.id) || e.history.some((f) => f.id === c.id))?.id ?? null;
+    if (c.kind === "entity") return nameOf(c.id) ? c.id : null;
+    if (c.kind === "arc") return arcEntity(c.id);
+    return null;
+  };
+  /** The entity whose current view carries this arc (an arc replaced since, or past the position, is not there). */
+  const arcEntity = (id) => { const e = s.view.entities.find((x) => (x.arcs || []).some((a) => a.id === id)); return e && nameOf(e.id) ? e.id : null; };
+  /** A source is a link only while the item is in the view on screen. */
+  function canOpenCite(c) {
+    if (disposed || !s.view) return false;
+    if (c.kind === "event") return s.view.events.some((ev) => ev.id === c.id);
+    if (c.kind === "chapter") return chapterGroups().some((g) => g.ids.includes(c.id));
+    if (c.kind === "recap") return s.view.recap?.id === c.id;   // the recap is replaced as the story goes on: the old one is plain text
+    return entryOfCite(c) != null;
+  }
+  async function openCite(c) {
+    if (!canOpenCite(c)) return;
+    if (c.kind === "event") {
+      s.tab = "timeline"; saveUrl();
+      paintTabs();
+      let li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
+      if (!li) {   // behind a filter or a fold: show it for this visit, without changing what the person remembered
+        const ev = s.view.events.find((x) => x.id === c.id);
+        s.tlAll = true; s.tlTurns = false; if (ev?.kind === "minor") s.tlMinor = true;
+        paintTabs();
+        li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
+      }
+      li?.scrollIntoView({ block: "center" });
+      li?.focus({ preventScroll: true });
+    } else if (c.kind === "chapter") {
+      const g = chapterGroups().find((x) => x.ids.includes(c.id));
+      if (s.series && g.book && g.book !== s.book) s.chSeries = true;
+      s.tab = "chapters"; saveUrl();
+      openChapter(g.key);
+    } else if (c.kind === "recap") {
+      s.tab = "chapters"; saveUrl(); paintTabs();
+      const story = el.panel.querySelector(".story-now");
+      story?.scrollIntoView({ block: "start" });
+    } else if (c.kind === "arc") {
+      const id = arcEntity(c.id);
+      const arc = s.view.entities.find((x) => x.id === id).arcs.find((a) => a.id === c.id);
+      openDrawer(id, { from: document.activeElement });
+      // The book's card, or "In this book" in the flat view.
+      const box = host();
+      const target = (arc.book && [...(box?.querySelectorAll(".arc-card[data-book]") || [])].find((n) => n.dataset.book === arc.book)) || box?.querySelector('[data-jump="arc"]');
+      target?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+    } else openDrawer(entryOfCite(c), { from: document.activeElement });
+  }
+  /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */
+  async function showAsk({ text = null } = {}) {
+    if (preview) return;
+    if (!(await okToMove("Opening Ask closes the form you were editing."))) return;
+    if (!paneMode() && s.drawer) closeDrawer({ focus: false });
+    s.tab = "ask"; saveUrl();
+    paintTabs();
+    if (text != null) ask.prefill(text); else ask.focus();
+    el.panel.scrollIntoView?.({ block: "nearest" });
   }
 
   // ---- command palette ----------------------------------------------------------------------
   const clip = (x, n = 60) => (x.length > n ? `${x.slice(0, n - 1).trimEnd()}…` : x);
   function openChapter(key) {
-    s.tab = "chapters"; paintTabs();
-    const det = [...el.panel.querySelectorAll("details.chapter")].find((d) => d.dataset.chapter === key);
-    if (!det) return;
-    det.open = true;
-    det.scrollIntoView({ block: "start" });
-    det.querySelector("summary")?.focus({ preventScroll: true });
+    s.tab = "chapters";
+    const find = () => [...el.panel.querySelectorAll("li.ch-item")].find((d) => d.dataset.chapter === key);
+    paintTabs();
+    let item = find();
+    if (!item) {   // behind "Show all" in the current book
+      s.bkAll.add(bkKey(s.series ? s.book : null));
+      paintTabs();
+      item = find();
+    }
+    if (!item) {   // in a collapsed earlier book or with the earlier books hidden
+      if (s.series && !s.chSeries) { s.chSeries = true; try { localStorage.setItem("lk-ch-series", "1"); } catch {} }
+      for (const b of [s.series ? s.book : null, ...(s.series?.books || []).map((x) => x.key)]) { s.bkAll.add(bkKey(b)); if (b) s.bkOpen.add(bkKey(b)); }
+      paintTabs();
+      item = find();
+    }
+    if (!item) return;
+    item.closest("details.book-block")?.setAttribute("open", "");
+    item.scrollIntoView({ block: "start" });
+    item.tabIndex = -1;
+    item.focus({ preventScroll: true });
   }
   function paletteItems() {
     if (disposed || !s.view || !s.map) return [];
@@ -1507,9 +2112,11 @@ export function mountReader(root) {
     }
     out.push(
       { id: "reader:jump", label: "Jump to chapter…", group: "Reading", keywords: "go chapter position",
-        run: () => setTimeout(() => el.chapSel?.focus(), 60) },
+        run: () => setTimeout(() => (phone() ? openJump() : el.chapSel?.focus()), 60) },
       { id: "reader:next", label: "Next reveal", group: "Reading", keywords: "forward step", run: () => stepReveal(1) },
       { id: "reader:prev", label: "Previous reveal", group: "Reading", keywords: "back step", run: () => stepReveal(-1) });
+    if (!preview && ask.available?.available) out.push({ id: "reader:ask", label: "Ask about this book", group: "Reading",
+      keywords: "ask question who what happened answer", run: () => showAsk() });
     if (currentFamilies().length) out.push({ id: "reader:trees", label: "Family trees", group: "Reading", keywords: "family tree kin relatives genealogy connections", run: () => showFamilyTree() });
     if (canEdit()) out.push({ id: "reader:edit", label: s.edit ? "Stop editing this index" : "Edit this index", group: "Reading",
       keywords: "edit change fix entry", run: () => setEdit(!s.edit) });
@@ -1517,12 +2124,12 @@ export function mountReader(root) {
   }
   // For tests only: with window.__lkTest set before the page loads, the safety net can be exercised by changing the
   // position past every guard (setP directly).
-  if (window.__lkTest) window.__lkTest.reader = { setP: (p) => setP(p), state: s };
+  if (window.__lkTest) window.__lkTest.reader = { setP: (p) => setP(p), state: s, mergeToast: () => showMergeToast({ id: "test", keepNames: ["a", "b"] }) };
   let unregister = null;
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };

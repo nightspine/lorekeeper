@@ -14,7 +14,7 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html" aria-current="page">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="ask.html">Ask about a book</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html" aria-current="page">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Conformance</h1>
@@ -36,7 +36,7 @@
               &quot;entities&quot;: [ ... ], &quot;relations&quot;: [ ... ], &quot;relationHistory&quot;: [ ... ],
               &quot;events&quot;: [ ... ], &quot;recap&quot;: null, &quot;chapters&quot;: [ ... ] }
 }</code></pre>
-<p>The inputs are the index files, the optional series manifest, a reading order (<code>null</code> for the default), a list of finished books (<code>null</code> for the default of every book before the current one) and the position. <code>expect</code> is the whole view, in the shape of <code>schema/view.schema.json</code>. There are fourteen cases, including a position before the first anchor, replacement across books, a book whose index is missing, an unfinished earlier book, and profiles inherited from an earlier book.</p>
+<p>The inputs are the index files, the optional series manifest, a reading order (<code>null</code> for the default), a list of finished books (<code>null</code> for the default of every book before the current one) and the position. <code>expect</code> is the whole view, in the shape of <code>schema/view.schema.json</code>. There are nineteen cases, including a position before the first anchor, replacement across books, a book whose index is missing, an unfinished earlier book, profiles inherited from an earlier book, and book arcs (one per book, one replaced within a book, an unfinished earlier book's arc hidden, one past the position hidden, and a standalone index).</p>
 
 <h2 id="locator-cases">Locator case shape</h2>
 <pre><code>{

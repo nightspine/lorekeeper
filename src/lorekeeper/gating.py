@@ -144,15 +144,26 @@ def view(
         # later one is visible; earlier profiles are history.
         profiles = [t for t in mine if t[2].get("kind") == "profile"]
         profile = profiles[-1] if profiles else None
+        # Arcs (rule 5): the last visible arc of each book, by position whatever `replaces` says;
+        # never inherited into another book's slot. Every other visible arc is history.
+        last_arc: dict = {}
+        for t in mine:
+            if t[2].get("kind") == "arc":
+                last_arc[t[3]] = t
+        arcs = sorted(last_arc.values(), key=lambda t: t[0])
+        shown = {t[2]["id"] for t in arcs} | ({profile[2]["id"]} if profile else set())
         out_entities.append({
             "id": eid,
             "type": ent["type"],
             "name": display,
             "aliases": aliases,
             "profile": _facet(profile[2], profile[3]) if profile else None,
-            "facets": [_facet(f, b) for _, _, f, b in mine if f["id"] not in replaced and f.get("kind") != "profile"],
+            "arcs": [_facet(f, b) for _, _, f, b in arcs],
+            "facets": [_facet(f, b) for _, _, f, b in mine
+                       if f["id"] not in replaced and f.get("kind") not in ("profile", "arc")],
             "history": [_facet(f, b) for t in mine for _, _, f, b in [t]
-                        if t is not profile and (f["id"] in replaced or f.get("kind") == "profile")],
+                        if f["id"] not in shown
+                        and (f["id"] in replaced or f.get("kind") in ("profile", "arc"))],
         })
 
     visible_ids = {e["id"] for e in out_entities}

@@ -511,6 +511,57 @@ def cmd_portraits(args) -> int:
     return 0
 
 
+def cmd_arcs(args) -> int:
+    """Write a short arc per entity per book from the index's own events (series reading order), in place."""
+    import shutil
+    import time
+
+    from . import arcs, epub, llm
+    paths = [Path(x) for x in args.index]
+    docs = [json.loads(p.read_text()) for p in paths]
+    books = [epub.read(Path(args.epub[i])) if args.epub and i < len(args.epub) else None for i in range(len(docs))]
+    before = {i: {str(e) for e in validate.check_index(d) if e.level == "error"} for i, d in enumerate(docs)}
+    if args.redo:
+        print(f"redo: removed {sum(arcs.clear(d) for d in docs)} existing arcs")
+    model = _make_model(args, args.model or (llm.PROVIDERS[args.provider]["cheap"] if args.provider in llm.PROVIDERS else None))
+    prior = [json.loads(Path(x).read_text()) for x in args.prior or []]
+    stats = arcs.arcs(list(zip(docs, books)), model, log=lambda m: print(m, file=sys.stderr), prior=prior)
+    if any(b is None for b in books):
+        print("note: no EPUB given for every book, so the 8-word copy check was skipped (pass --epub)", file=sys.stderr)
+    drops = ", ".join(f"{v} {k}" for k, v in sorted(stats.items()) if k.startswith(("dropped:", "rewritten:")))
+    cost = f"${model.usage.cost_usd:.2f}" if model.usage.cost_usd else "price unknown"
+    print(f"arcs: {stats.get('arcs', 0)} written ({stats.get('superseded', 0)} superseded by a later one at the same point), "
+          f"{stats.get('dropped', 0)} dropped"
+          + (f" ({drops})" if drops else "") + f"; {model.usage.calls} calls, cost {cost}")
+    for i, d in enumerate(docs):
+        # One bad arc must not sink the book: drop the arcs the new errors name, and keep the rest.
+        for _ in range(5):
+            errs = [e for e in validate.check_index(d) if e.level == "error" and str(e) not in before[i]]
+            if not errs:
+                break
+            gone = arcs.drop_named(d, [str(e) for e in errs])
+            if not gone:
+                print(f"error: {paths[i].name} would become invalid: {errs[0]}", file=sys.stderr)
+                return 1
+            print(f"note: {paths[i].name}: dropped {gone} arc(s) the validator refused", file=sys.stderr)
+    if args.out:
+        out = Path(args.out)
+        out.mkdir(parents=True, exist_ok=True)
+        for p, d in zip(paths, docs):
+            (out / p.name).write_text(_dump(d))
+        print(f"wrote {len(docs)} file(s) to {out}")
+        return 0
+    backup = Path(args.backup) / time.strftime("%Y%m%d-%H%M%S")
+    backup.mkdir(parents=True, exist_ok=True)
+    for p, d in zip(paths, docs):
+        shutil.copy2(p, backup / p.name)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(_dump(d))
+        tmp.replace(p)
+    print(f"wrote {len(docs)} file(s); originals in {backup}")
+    return 0
+
+
 def cmd_conformance(args) -> int:
     failed = 0
     for path in conformance.cases(args.dir):
@@ -537,6 +588,61 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, "") or default)
     except ValueError:
         return default
+
+
+_IMAGE_SUFFIX = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+
+
+def _picture_path(out: Path, mime: str) -> Path:
+    """The path to write: a wrong image suffix is replaced by the one for the bytes, another suffix gets it appended."""
+    want = _IMAGE_SUFFIX.get(mime)
+    if want is None:
+        import mimetypes
+        want = mimetypes.guess_extension(mime) or ".img"
+    have = out.suffix.lower()
+    if have == want or (have == ".jpeg" and want == ".jpg"):
+        return out
+    if have in (".png", ".jpg", ".jpeg", ".webp", ""):
+        return out.with_suffix(want)
+    return out.with_name(out.name + want)
+
+
+def cmd_draw(args) -> int:
+    """Draw one picture from a prompt (and optional reference pictures) and write it to a file."""
+    import mimetypes
+    import time
+    from . import images, llm
+    spec = llm.image_spec(args.provider)
+    try:
+        key = Path(args.api_key_file).read_text().strip() if args.api_key_file else None
+        refs = [(Path(f).read_bytes(), mimetypes.guess_type(f)[0] or "image/png") for f in args.ref or []]
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
+    key = key or llm.env_key(args.provider)
+    if key is None:
+        raise SystemExit(f"error: no API key for {spec['label']}: set {spec['key_env']} or pass --api-key-file")
+    try:
+        model = llm.make_image(args.provider, args.model, api_key=key)
+        t = time.time()
+        pic = model.draw(args.prompt, shape=args.shape, quality=args.quality, references=refs)
+    except images.ImageRefused as e:
+        print(f"refused: {e.reason}", file=sys.stderr)
+        return 2
+    except (ValueError, llm.ProviderError) as e:
+        raise SystemExit(f"error: {e}") from e
+    out = _picture_path(Path(args.output), pic.mime)
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(pic.data)
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
+    size = f"{pic.width}x{pic.height}" if pic.width else "size not reported"
+    price = llm.image_price(args.provider, pic.model, args.quality, args.shape)
+    cost = f"${pic.cost:.4f}" if pic.cost else "price unknown"
+    print(f"{out}: {pic.model}, {size}, {pic.mime}, {len(pic.data):,} bytes, {cost}"
+          + ("" if price is not None or not pic.cost else " (from the response's token usage)")
+          + f", {time.time() - t:.1f}s")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -719,6 +825,30 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write the results to this directory instead of in place")
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_portraits)
+
+    s = sub.add_parser("arcs", help="write a short arc per entity per book from the index's events (a cloud model)")
+    s.add_argument("index", nargs="+", help="index files, in series reading order")
+    s.add_argument("--epub", action="append", help="each index's EPUB, in the same order, for exact chapter ends (default: the index's chapter recaps)")
+    _add_provider_args(s, "claude")
+    s.add_argument("--model", default=None, help="model name (default: the provider's cheap model)")
+    s.add_argument("--prior", action="append", help="an earlier series book's index, read only (repeatable, reading order)")
+    s.add_argument("--redo", action="store_true", help="remove existing arcs first")
+    s.add_argument("--out", help="write the results to this directory instead of in place")
+    s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
+    s.set_defaults(fn=cmd_arcs)
+
+    s = sub.add_parser("draw", help="draw one picture from a prompt with an image model (Gemini or OpenAI, your own key)")
+    from . import llm as _llm
+    s.add_argument("prompt")
+    s.add_argument("-o", "--output", required=True, help="where to write the picture (an extension is added from its type if missing)")
+    s.add_argument("--provider", choices=list(_llm.IMAGE_PROVIDERS), default="gemini",
+                   help="gemini or openai; Claude cannot draw. Keys come from --api-key-file or GEMINI_API_KEY / OPENAI_API_KEY.")
+    s.add_argument("--model", help="image model id (default: the provider's default)")
+    s.add_argument("--shape", choices=["square", "portrait", "landscape"], default="landscape")
+    s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
+    s.add_argument("--ref", action="append", metavar="FILE", help="a picture the result should resemble (repeatable, at most 6)")
+    s.add_argument("--api-key-file", metavar="PATH", help="file holding the API key (default: the provider's environment variable)")
+    s.set_defaults(fn=cmd_draw)
 
     s = sub.add_parser("conformance", help="run (or regenerate) conformance cases")
     s.add_argument("dir", nargs="?", default="conformance")

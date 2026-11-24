@@ -49,6 +49,7 @@ const ICONS = {
   pulse: '<path d="M3 12h4l3-7 4 14 3-7h4"/>',
   file: '<path d="M7 3h7l5 5v13H7z"/><path d="M14 3v5h5"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
   pin: '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.800 12 21 12 21z"/><circle cx="12" cy="9.500" r="2.500"/>',
   feather: '<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
 };
@@ -191,6 +192,145 @@ export function crumbs(items, nav = h("nav.crumbs", { "aria-label": "Breadcrumb"
     nav.append(it.href ? h("a", { href: it.href }, it.label) : h("span", { "aria-current": current }, it.label));
   });
   return nav;
+}
+
+/** `dlg.showModal()` with the page locked behind it; released once when the dialog closes or is removed while open
+ *  (a removed open dialog fires no close event). Use this for every modal dialog instead of calling showModal() directly. */
+const releases = new WeakMap();
+export function showModalLocked(dlg) {
+  if (dlg.open) return;
+  lockScroll();
+  let released = false;
+  const release = () => { if (released) return; released = true; mo.disconnect(); dlg.removeEventListener("close", release); releases.delete(dlg); unlockScroll(); };
+  releases.set(dlg, release);
+  const mo = new MutationObserver(() => { if (!dlg.isConnected) release(); });
+  mo.observe(document.body, { childList: true, subtree: true });
+  dlg.addEventListener("close", release);
+  dlg.showModal();
+}
+
+/** Close a dialog opened with showModalLocked and release the page lock at once (the `close` event comes later, and a
+ *  command run right after closing, such as the palette scrolling to a chapter, must not meet a pinned page). */
+export function closeLocked(dlg) {
+  releases.get(dlg)?.();
+  if (dlg.open) dlg.close();
+}
+
+/**
+ * A bottom sheet on a native <dialog> (focus trap, Escape, inert page and scroll lock come from
+ * showModal). Full width, rounded top corners, a grab handle, its own scroll, closed by the handle
+ * area's Close button, Escape, a tap on the scrim, or a swipe down on the grab handle or header.
+ * Focus goes to `focus` (an element or selector inside), else the title, and returns to the
+ * element that had it when the sheet opened.
+ *
+ *   const s = sheet({ title: "Jump to", content: node, onClose, label, footer, focus, beforeClose });
+ *   s.el          the <dialog class="sheet">
+ *   s.body        the scrolling body element (content is already in it); repaint with s.set(...nodes)
+ *   s.toasts      a host for toast(msg, kind, { host: s.toasts }) (a modal makes the page inert)
+ *   s.close()     close it (runs beforeClose first; returns false if it refused)
+ *   s.setTitle(t) change the title
+ *   s.closed      a Promise that resolves when the sheet has closed
+ * `beforeClose()` may return false to keep the sheet open (a dirty form asking first); `onClose()`
+ * runs once after it closed. Only one sheet is open at a time: opening another closes the first.
+ */
+let openSheet = null;
+
+/** Lock the page behind an open modal (iOS Safari lets the page move behind a <dialog> otherwise): the body is
+ *  pinned where it was and put back, at the same scroll position, when the last lock is released. */
+let locks = 0, lockedAt = 0;
+export function lockScroll() {
+  if (locks++) return;
+  lockedAt = window.scrollY;
+  const b = document.body;
+  b.style.top = `-${lockedAt}px`;
+  b.classList.add("scroll-locked");
+}
+export function unlockScroll() {
+  if (!locks || --locks) return;
+  const b = document.body;
+  b.classList.remove("scroll-locked");
+  b.style.top = "";
+  window.scrollTo(0, lockedAt);
+}
+export function sheet({ title = "", content = null, footer = null, onClose = null, beforeClose = null, label = null, focus = null, className = "" } = {}) {
+  if (openSheet) openSheet.close(true);
+  const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  const titleEl = h("h2.sheet-title", { tabindex: "-1" }, title);
+  const closeBtn = h("button.icon-btn.sheet-close", { type: "button", "aria-label": "Close", title: "Close" }, icon("x"));
+  const grab = h("div.sheet-grab", { "aria-hidden": "true" }, h("span.sheet-handle"));
+  const head = h("header.sheet-head", grab, titleEl, closeBtn);
+  const body = h("div.sheet-body", content);
+  const toasts = h("div.toasts.sheet-toasts", { "aria-live": "polite" });
+  const panel = h("div.sheet-panel", head, body, footer ? h("footer.sheet-foot", footer) : null, toasts);
+  const dlg = h("dialog.sheet", { "aria-label": label || title || "Panel", class: className }, panel);
+  let done, finished = false, closing = false;
+  const closed = new Promise((r) => { done = r; });
+  const api = {
+    el: dlg, body, toasts, closed,
+    set: (...nodes) => clear(body, ...nodes),
+    setTitle: (t) => { titleEl.textContent = t; if (!label) dlg.setAttribute("aria-label", t || "Panel"); },
+    close(force = false) {
+      if (finished) return true;
+      if (closing) return true;
+      if (!force && beforeClose && beforeClose() === false) return false;
+      if (!dlg.open) { finish(); return true; }
+      // Slide out for 200 ms (not under reduced motion, and not when another sheet replaces this one), then close.
+      if (force || matchMedia("(prefers-reduced-motion: reduce)").matches) { closeLocked(dlg); return true; }
+      closing = true;
+      panel.style.transition = "transform 200ms ease-in, opacity 200ms ease-in";
+      panel.style.transform = "translateY(100%)";
+      panel.style.opacity = "0";
+      dlg.classList.add("closing");
+      setTimeout(() => { if (dlg.open) closeLocked(dlg); else finish(); }, 200);
+      return true;
+    },
+  };
+  function finish() {
+    if (finished) return;
+    finished = true;
+    if (openSheet === api) openSheet = null;
+    dlg.remove();
+    if (returnTo?.isConnected) { try { returnTo.focus({ preventScroll: true }); } catch { /* element gone */ } }
+    done();
+    onClose?.();
+  }
+  dlg.addEventListener("close", finish);
+  // Escape asks first, like the close button (the browser's own Escape would close it unasked).
+  dlg.addEventListener("cancel", (e) => { e.preventDefault(); api.close(); });
+  closeBtn.addEventListener("click", () => api.close());
+  // A tap on the scrim lands on the dialog itself: the panel fills it, the scrim is the rest.
+  dlg.addEventListener("click", (e) => { if (e.target === dlg) api.close(); });
+
+  // Swipe down from the grab handle or header: the panel follows the finger; past 90px or a quick flick it closes.
+  let drag = null;
+  head.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button, a, input, select, textarea") || (e.pointerType === "mouse" && e.button !== 0)) return;
+    drag = { y: e.clientY, t: e.timeStamp, dy: 0, id: e.pointerId };
+    head.setPointerCapture?.(e.pointerId);
+    panel.style.transition = "none";
+  });
+  head.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag.dy = Math.max(0, e.clientY - drag.y);
+    panel.style.transform = `translateY(${drag.dy}px)`;
+  });
+  const release = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    const { dy, t } = drag; drag = null;
+    panel.style.transition = "";
+    const fast = dy > 30 && dy / Math.max(1, e.timeStamp - t) > 0.5;
+    if ((dy > 90 || fast) && api.close()) return;
+    panel.style.transform = "";
+  };
+  head.addEventListener("pointerup", release);
+  head.addEventListener("pointercancel", release);
+
+  document.body.append(dlg);
+  showModalLocked(dlg);
+  openSheet = api;
+  const target = typeof focus === "string" ? dlg.querySelector(focus) : focus;
+  (target || titleEl).focus({ preventScroll: true });
+  return api;
 }
 
 export const STATUS_LABEL = { queued: "Queued", running: "Running", stopping: "Stopping", stopped: "Stopped", done: "Done", failed: "Failed", interrupted: "Interrupted" };

@@ -1,5 +1,5 @@
 // Command palette (Cmd/Ctrl+K). Providers register sync functions returning items; see registerProvider.
-import { h, icon, clear, announce } from "./dom.js";
+import { h, icon, clear, announce, showModalLocked, closeLocked } from "./dom.js";
 import { api } from "./api.js";
 
 const MAX_PER_GROUP = 8, MAX_TOTAL = 24;
@@ -139,7 +139,8 @@ function build() {
   });
   list = h("div.palette-list#palette-list", { role: "listbox", "aria-label": "Results" });
   dialog = h("dialog.palette", { "aria-label": "Command palette" },
-    h("div.palette-field", icon("search"), input), list);
+    h("div.palette-field", icon("search"), input,
+      h("button.icon-btn.palette-close", { type: "button", "aria-label": "Close", title: "Close", on: { click: () => closePalette() } }, icon("x"))), list);
   dialog.addEventListener("click", (e) => { if (e.target === dialog) closePalette(); });
   dialog.addEventListener("close", () => { input.setAttribute("aria-expanded", "false"); });
   input.addEventListener("compositionstart", () => { composing = true; });
@@ -201,7 +202,7 @@ function onKey(e) {
 
 export function openPalette(initialQuery = "") {
   if (!dialog) build();
-  if (!dialog.open) dialog.showModal();
+  if (!dialog.open) showModalLocked(dialog);
   input.setAttribute("aria-expanded", "true");
   input.value = initialQuery;
   active = 0;
@@ -212,7 +213,7 @@ export function openPalette(initialQuery = "") {
 }
 
 export function closePalette() {
-  if (dialog?.open) dialog.close();
+  if (dialog?.open) closeLocked(dialog);
 }
 
 // ---- wiring --------------------------------------------------------------------------------

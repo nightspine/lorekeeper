@@ -1,0 +1,81 @@
+{
+  "description": "A standalone index: arcs holds one item with book null, the latest visible arc; the earlier one is history and the one past the position is invisible.",
+  "indexes": [
+    "fixtures/standalone-arcs.json"
+  ],
+  "order": null,
+  "finished": null,
+  "position": {
+    "book": null,
+    "anchor": "p3"
+  },
+  "expect": {
+    "lorekeeper": "0.1",
+    "kind": "view",
+    "position": {
+      "book": null,
+      "anchor": "p3"
+    },
+    "coverage": {
+      "complete": true,
+      "through": "p4",
+      "exhausted": false
+    },
+    "entities": [
+      {
+        "id": "ada",
+        "type": "person",
+        "name": "Ada",
+        "aliases": [],
+        "profile": null,
+        "arcs": [
+          {
+            "id": "x.ada.a2",
+            "text": "She loses her ferry in a storm and takes work on a rival's boat.",
+            "basis": "stated",
+            "book": null
+          }
+        ],
+        "facets": [
+          {
+            "id": "x.ada.1",
+            "text": "A ferry pilot on the northern lakes.",
+            "basis": "stated",
+            "book": null
+          }
+        ],
+        "history": [
+          {
+            "id": "x.ada.a1",
+            "text": "She loses her ferry in a storm.",
+            "basis": "stated",
+            "book": null
+          }
+        ]
+      }
+    ],
+    "relations": [],
+    "relationHistory": [],
+    "events": [
+      {
+        "id": "x.ev.storm",
+        "summary": "Ada's ferry sinks in a storm.",
+        "entities": [
+          "ada"
+        ],
+        "book": null,
+        "kind": "turn"
+      },
+      {
+        "id": "x.ev.work",
+        "summary": "Ada takes work on a rival's boat.",
+        "entities": [
+          "ada"
+        ],
+        "book": null
+      }
+    ],
+    "recap": null,
+    "chapters": []
+  }
+}

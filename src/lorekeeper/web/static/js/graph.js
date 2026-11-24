@@ -19,6 +19,7 @@ const ANCHOR = { person: [0, 0], creature: [0, -0.9], place: [-1, -0.55], group:
 const SPREAD = 420;
 const KEY_FIGURES = 60;   // larger maps start with the most present entities only
 
+let offSelEsc = null;   // drops the Escape listener of the phone selection sheet when the map is painted again
 function s(tag, attrs = {}, ...children) {
   const el = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) {
@@ -351,7 +352,15 @@ export function renderConnections(panel, ctx) {
         } } }, h("span", h("span.g-long", "Family "), "trees"), h("span.n", String(fams.length))) : null),
     h("div.g-display", h("span.g-summary", { "aria-live": "polite" }, summary), dispBtn, dispPanel));
 
-  function select(id) { gs.sel = id; if (id && types.size && !types.has(graph.ents.get(id).type)) types.add(graph.ents.get(id).type); ctx.repaint(); }
+  /** Every way of letting go of the selection (Escape, ×, a swipe down, a tap on the blank map) comes here, and focus
+   *  goes back to the node that was selected (found by entity id). */
+  function clearSel() {
+    const id = gs.sel;
+    gs.sel = null; gs.mode = "map"; gs.focusSel = null;
+    ctx.repaint();
+    if (id) setTimeout(() => panel.querySelector(`.g-node[data-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true }), 0);
+  }
+  function select(id) { if (id == null && gs.sel) return clearSel(); gs.sel = id; if (id && types.size && !types.has(graph.ents.get(id).type)) types.add(graph.ents.get(id).type); ctx.repaint(); }
   const nameOf = (id) => graph.ents.get(id)?.name || id;
 
   if (!laid.size) {
@@ -361,6 +370,7 @@ export function renderConnections(panel, ctx) {
 
   // ---- side panel ------------------------------------------------------------------------
   const side = h("aside.g-panel", { "aria-label": "Details" });
+  if (!sel) { gs.focusSel = null; if (offSelEsc) offSelEsc(); }
   if (sel) {
     const e = graph.ents.get(sel);
     const r = ctx.revealed(sel);
@@ -402,10 +412,40 @@ export function renderConnections(panel, ctx) {
     } } }, "Read the whole description") : null;
     const n = degree(sel);
     side.classList.add("has-sel");
+    // On a phone the selection is a bottom sheet over the map (css): Escape and a swipe down on its head clear it.
+    const phoneSheet = () => matchMedia("(max-width: 640px)").matches;
+    const dismiss = clearSel;
+    // a selection that just opened takes focus on its heading, so it is announced
+    if (phoneSheet() && gs.focusSel !== sel) { gs.focusSel = sel; setTimeout(() => side.querySelector("h3")?.focus({ preventScroll: true }), 0); }
+    if (offSelEsc) offSelEsc();
+    const onEsc = (ev) => { if (!side.isConnected) { offSelEsc?.(); return; } if (ev.key === "Escape" && phoneSheet() && !ev.defaultPrevented && !document.querySelector("dialog[open]")) { ev.preventDefault(); dismiss(); } };
+    document.addEventListener("keydown", onEsc);
+    const onHash = () => offSelEsc?.();
+    window.addEventListener("hashchange", onHash);
+    offSelEsc = () => { document.removeEventListener("keydown", onEsc); window.removeEventListener("hashchange", onHash); offSelEsc = null; };
+    let drag = null;
+    side.onpointerdown = (ev) => {
+      if (!phoneSheet() || !ev.target.closest(".g-head") || ev.target.closest("button, a") || side.scrollTop > 0) return;
+      drag = { y: ev.clientY, t: ev.timeStamp, dy: 0, id: ev.pointerId };
+      side.setPointerCapture?.(ev.pointerId);
+      side.style.transition = "none";
+    };
+    side.onpointermove = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      drag.dy = Math.max(0, ev.clientY - drag.y);
+      side.style.transform = `translateY(${drag.dy}px)`;
+    };
+    const endDrag = (ev) => {
+      if (!drag || ev.pointerId !== drag.id) return;
+      const { dy, t } = drag; drag = null;
+      side.style.transition = ""; side.style.transform = "";
+      if (dy > 80 || (dy > 30 && dy / Math.max(1, ev.timeStamp - t) > 0.5)) dismiss();
+    };
+    side.onpointerup = endDrag; side.onpointercancel = endDrag;
     clear(side,
       h("div.g-head", h(`span.g-badge.t-${e.type}`, icon(e.type)),
-        h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", e.name)),
-        h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: () => { gs.sel = null; gs.mode = "map"; ctx.repaint(); } } }, icon("x"))),
+        h("div", h("span.eyebrow", TYPE_LABEL[e.type], r?.isNew ? h("span.new-badge", "New") : null), h("h3", { tabindex: "-1" }, e.name)),
+        h("button.icon-btn.small", { type: "button", "aria-label": "Clear selection", on: { click: clearSel } }, icon("x"))),
       h("div.g-actions",
         h("button.btn.primary", { type: "button", on: { click: () => { gs.mode = focus ? "map" : "focus"; gs.list = false; if (gs.mode === "focus") gs.trees = false; ctx.repaint(); } } },
           icon(focus ? "layers" : "eye"), focus ? "Full map" : "Focus"),
@@ -546,7 +586,7 @@ export function renderConnections(panel, ctx) {
     const isNew = ctx.revealed(id)?.isNew;
     const showLabel = labelFits.has(id);
     const g = s("g", { class: `g-node t-${e.type}${id === sel ? " sel" : ""}${dist && !inHood(id) ? " dim" : ""}${isNew ? " new" : ""}`,
-      transform: `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`, tabindex: 0, role: "button",
+      transform: `translate(${p.x.toFixed(1)},${p.y.toFixed(1)})`, tabindex: 0, role: "button", "data-id": id,
       "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}, ${degree(id)} connection${degree(id) === 1 ? "" : "s"}${isNew ? ", new" : ""}`,
       "aria-pressed": String(id === sel) });
     if (isNew) g.append(s("circle", { class: "g-halo", r: r + 10 }));
@@ -602,7 +642,7 @@ export function renderConnections(panel, ctx) {
     if (Math.abs(ev.clientX - drag.x) + Math.abs(ev.clientY - drag.y) > 4) drag.moved = true;
     if (drag.moved) setVb({ ...drag.vb, x: drag.vb.x - dx, y: drag.vb.y - dy });
   });
-  svg.addEventListener("pointerup", () => { if (drag && !drag.moved && gs.sel) { gs.sel = null; gs.mode = "map"; ctx.repaint(); } drag = null; });
+  svg.addEventListener("pointerup", () => { if (drag && !drag.moved && gs.sel) clearSel(); drag = null; });
 
   const zoomBtn = (label, ic, fn) => h("button.icon-btn.small", { type: "button", "aria-label": label, title: label, on: { click: fn } }, ic);
   const head = h("div.g-stage-head",

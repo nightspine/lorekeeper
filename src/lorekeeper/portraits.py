@@ -177,7 +177,7 @@ def name_of(e: dict, names: list[str]) -> str:
 
 
 def _checked(text: str, known: set[str], source: str | None = None,
-             book: set[tuple[str, ...]] | None = None) -> tuple[str | None, str]:
+             book: set[tuple[str, ...]] | None = None, limit: int = MAX_CHARS) -> tuple[str | None, str]:
     """(text, "") if the portrait is usable, else (None, reason). `known` holds the capitalised
     words of the book up to this point; `source` is the passage text the portrait was written
     from, when given, and a tie word (wife, brother...) must occur in it; `book` is the book's
@@ -186,7 +186,7 @@ def _checked(text: str, known: set[str], source: str | None = None,
     text = " ".join(text.split())
     if not text:
         return None, "empty"
-    if len(text) > MAX_CHARS:
+    if len(text) > limit:
         return None, "too long"
     if book:
         runs = text_.copied_runs(text, book, MAX_COPY)
@@ -270,7 +270,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 turns.setdefault(eid, []).append((seq_of[ev["from"]], ev["summary"]))
     standing: dict[str, list[tuple[int, str]]] = {
         e["id"]: sorted([(seq_of[f["from"]], f["text"]) for f in e["facets"]
-                         if f.get("kind") != "profile" and f["from"] in seq_of and changes_standing(f["text"])]
+                         if f.get("kind") not in ("profile", "arc") and f["from"] in seq_of and changes_standing(f["text"])]
                         + turns.get(e["id"], []))
         for e in d["entities"]}
     status: dict[str, list[int]] = {eid: [q for q, _ in xs] for eid, xs in standing.items()}
@@ -313,7 +313,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             prev = last_text.get(eid)
             # The companion's own checked notes up to here: a status fact ("has died") may sit in a
             # paragraph that never names the entity, so the passages alone can miss it.
-            noted = [f["text"] for f in e["facets"] if f.get("kind") != "profile"
+            noted = [f["text"] for f in e["facets"] if f.get("kind") not in ("profile", "arc")
                      and seq_of.get(f["from"], hi) <= mark][-MAX_NOTES:]
             prompt = PORTRAIT.format(
                 name=names[0] if names else e["names"][0]["value"], kind=KINDS.get(e["type"], e["type"]),
@@ -340,7 +340,8 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                            "nothing the passages and notes do not show.")
             # A tie may rest on what the companion already checked up to here (notes, earlier profiles, the last
             # portrait), not only on the sampled passages: Lucy's "engaged" sits in letters the sample can miss.
-            source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"] if seq_of.get(f["from"], hi) <= mark])
+            source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"]
+                                                    if f.get("kind") != "arc" and seq_of.get(f["from"], hi) <= mark])
             out = model.complete(SYSTEM, prompt, SCHEMA)
             got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             if changes and got[0] and not _opens_with(" ".join(changes), got[0]):

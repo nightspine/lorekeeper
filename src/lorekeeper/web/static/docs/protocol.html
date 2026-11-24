@@ -14,7 +14,7 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html" aria-current="page">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="ask.html">Ask about a book</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html" aria-current="page">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Protocol reference</h1>
@@ -100,7 +100,7 @@ HTTP/1.1 304 Not Modified</code></pre>
 {&quot;position&quot;:&quot;ch1.para14&quot;,
  &quot;entities&quot;:[{&quot;id&quot;:&quot;holmes&quot;,&quot;type&quot;:&quot;person&quot;,&quot;name&quot;:&quot;Sherlock Holmes&quot;,&quot;aliases&quot;:[],&quot;profile&quot;:null,
    &quot;facets&quot;:[{&quot;id&quot;:&quot;sis.holmes.1&quot;,&quot;text&quot;:&quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, ...&quot;,&quot;basis&quot;:&quot;stated&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;}],
-   &quot;history&quot;:[],&quot;relations&quot;:[],&quot;events&quot;:[]}],
+   &quot;history&quot;:[],&quot;arcs&quot;:[],&quot;relations&quot;:[],&quot;events&quot;:[]}],
  &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para14&quot;,&quot;seq&quot;:44,&quot;basis&quot;:&quot;cfi&quot;,&quot;exact&quot;:true}}</code></pre>
 <p>Each element of <code>entities</code> has the members of a view entity, plus <code>relations</code> and <code>events</code> listing the visible ones that involve it. The array is empty when nothing matches. Errors are those of the view route, plus <code>400</code> when <code>name</code> is missing.</p>
 

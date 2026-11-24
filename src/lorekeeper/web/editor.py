@@ -39,6 +39,9 @@ LIMITS = {"detail": (280, "a detail"), "profile": (800, "a description"), "event
 MAX_PASSAGE = 60   # paragraphs either side in one passage request
 
 
+ARC_READ_ONLY = "book arcs are written from the events and can't be edited by hand; edit the events and rebuild, or run lorekeeper arcs"
+
+
 class EditError(ValueError):
     """A malformed or impossible edit (HTTP 400)."""
 
@@ -520,6 +523,8 @@ class Editor:
         eid, s, seq = self._need(op, "entity", "text", "seq")
         ent = ctx.entity(eid)
         basis = self._choice(op, "basis", BASES, "stated")
+        if op.get("kind") == "arc":
+            raise EditError(ARC_READ_ONLY)
         profile = op.get("kind") == "profile"
         anchor = ctx.reveal(seq)
         s = self._text(ctx, "profile" if profile else "detail", s, anchor)
@@ -542,6 +547,8 @@ class Editor:
     def _op_edit_facet(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
         iid, = self._need(op, "id")
         j, f, ent = ctx.item("facet", iid)
+        if f.get("kind") == "arc":
+            raise EditError(ARC_READ_ONLY)
         if j != ctx.i:
             raise EditError("that detail belongs to another book of the series; open that book to edit it")
         old = f["text"]
@@ -561,6 +568,8 @@ class Editor:
     def _op_delete_facet(self, ctx: _Ctx, op: dict) -> tuple[str, dict]:
         iid, = self._need(op, "id")
         j, f, ent = ctx.item("facet", iid)
+        if f.get("kind") == "arc":
+            raise EditError(ARC_READ_ONLY)
         ent["facets"].remove(f)
         for d in ctx.docs:
             for e in d.get("entities", []):

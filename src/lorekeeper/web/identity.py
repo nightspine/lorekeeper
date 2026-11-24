@@ -8,6 +8,7 @@ restores. Hand edits (`editor.py`) go through the same `_commit` and journal, so
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -48,6 +49,7 @@ class Identity:
         self._checking: dict[str, str] = {}   # group id → model name while a check runs
         self._check_error: dict[str, str] = {}
         self._tried: set[str] = set()          # groups checked automatically this session
+        self._cands: dict[str, tuple[tuple, list[dict]]] = {}   # group id → (key, merge.candidates result)
 
     # ---- which files ---------------------------------------------------------------------------
 
@@ -70,6 +72,21 @@ class Identity:
                    and (it["doc"].get("series") or {}).get("id") == sid]
         rank = lambda it: order.index(it["doc"]["series"]["book"]) if it["doc"]["series"]["book"] in order else len(order)  # noqa: E731
         return f"series:{sid}", sorted(members, key=lambda it: (rank(it), it["key"]))
+
+    def _candidates(self, gid: str, items: list[dict]) -> list[dict]:
+        """`merge.candidates` for a group, remembered while the bytes of its index files (the digest
+        `Library.scan` took of what it parsed) and its "not the same" pairs are unchanged. Every write
+        (merge, edit, undo, a build) changes the bytes, so the next call recomputes. Callers get a
+        copy: they add verdicts to the pairs."""
+        distinct = self.distinct(gid)
+        # The stamp is a digest `Library.scan` took of the very bytes it parsed, so the key always
+        # describes what the candidates were computed from, whatever happens to the file meanwhile.
+        stamp = tuple((str(it["path"]), it["stamp"]) for it in items)   # KeyError if an item has none: fail loudly
+        key = (stamp, frozenset(distinct))
+        hit = self._cands.get(gid)
+        if hit is None or hit[0] != key:
+            hit = self._cands[gid] = (key, merge.candidates([it["doc"] for it in items], distinct))
+        return copy.deepcopy(hit[1])
 
     def _busy(self, items: list[dict]) -> bool:
         paths = {str(it["path"]) for it in items}
@@ -131,7 +148,7 @@ class Identity:
         gid, items = self.group(key)
         writable = all(it["source"] == "generated" for it in items)
         docs = [it["doc"] for it in items]
-        pairs = merge.candidates(docs, self.distinct(gid))
+        pairs = self._candidates(gid, items)
         # Pairs a model found from descriptions ("Mr. Dursley" / "Uncle Vernon"): judged like the rest,
         # and merged automatically only when every name involved is a proper name (see `auto_ok`).
         have = {frozenset((p["keep"], p["drop"])) for p in pairs} | self.distinct(gid)
@@ -193,7 +210,7 @@ class Identity:
 
         def due(k: str) -> bool:
             return k not in done or (done[k] == "unsure" and not texted.get(k) and have_books)
-        candidates = merge.candidates(docs, self.distinct(gid))
+        candidates = self._candidates(gid, items)
         stored = [q for q in self._proposals(gid, docs) or [] if q["keep"] in alive and q["drop"] in alive]
         stale = self._proposals(gid, docs) is None
         if not stale and not any(due(f"{p['keep']}|{p['drop']}") for p in [*candidates, *stored]):
@@ -253,7 +270,7 @@ class Identity:
         verdicts = self.verdicts(gid)
         because = self.catalog.state().get("because", {}).get(gid, {})
         hidden = self.catalog.state().get("hidden", {}).get(gid, {})   # the book conceals the link at first
-        cands = merge.candidates(docs, self.distinct(gid))
+        cands = self._candidates(gid, items)
         ents = merge._entities(docs)
         alive = set(ents)
         seen = {frozenset((p["keep"], p["drop"])) for p in cands}

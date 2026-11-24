@@ -32,6 +32,7 @@ export function toggleTheme() {
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem("lk-theme", next); } catch {}
   paintToggles();
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) { m.media = ""; m.content = next === "light" ? "#FFFFFF" : "#11141A"; }
 }
 document.addEventListener("click", (e) => { if (e.target.closest?.("[data-theme-toggle]")) toggleTheme(); });
 
@@ -69,7 +70,6 @@ function paintReading() {
   tabBook.hidden = !book;
   if (book) {
     tabBook.href = book.hash;
-    tabBook.querySelector(".tab-book-title").textContent = book.title;
     tabBook.setAttribute("aria-label", `${book.title}, ${readingLine(book)}`);
   }
   paintTitle();
@@ -266,6 +266,8 @@ function render() {
   paintCurrent(route, section);
   if (unmount) unmount();
   main.replaceChildren();
+  // Pages may put their own actions in the phone app bar (the Reader's overflow menu); each page starts with it empty.
+  document.getElementById("appbar-slot").replaceChildren();
   main.dataset.route = route in VIEWS ? route : "library";
   const [mount, title] = VIEWS[route] || VIEWS.library;
   pageTitle = title;

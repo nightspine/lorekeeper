@@ -14,7 +14,7 @@
 <div class="docs">
 <nav class="docs-nav" aria-label="Documentation">
 <a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
-<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html" aria-current="page">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="ask.html">Ask about a book</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html" aria-current="page">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
 </nav>
 <main class="docs-main " id="main">
 <h1>Integrate a reader app</h1>
@@ -85,7 +85,8 @@ console.log(index.lookup(&quot;Holmes&quot;, { cfi }));</code></pre>
       &quot;profile&quot;: null,
       &quot;facets&quot;: [{ &quot;id&quot;: &quot;sis.holmes.1&quot;, &quot;basis&quot;: &quot;stated&quot;, &quot;book&quot;: &quot;study-in-scarlet&quot;,
                    &quot;text&quot;: &quot;A man Stamford knows from the hospital&#x27;s chemical laboratory, who is looking for someone to split the cost of a set of rooms.&quot; }],
-      &quot;history&quot;: []
+      &quot;history&quot;: [],
+      &quot;arcs&quot;: []
     },
     &quot;facets&quot;: [ ...the same facets array... ],
     &quot;relations&quot;: [],
@@ -161,7 +162,7 @@ curl -G &quot;http://localhost:8765/v0/indexes/examples--sherlock-holmes--study-
 {&quot;position&quot;:&quot;ch1.para06&quot;,
  &quot;entities&quot;:[{&quot;id&quot;:&quot;watson&quot;,&quot;type&quot;:&quot;person&quot;,&quot;name&quot;:&quot;John H. Watson&quot;,&quot;aliases&quot;:[&quot;Watson&quot;],
    &quot;profile&quot;:null,&quot;facets&quot;:[{&quot;id&quot;:&quot;sis.watson.1&quot;,&quot;basis&quot;:&quot;stated&quot;,&quot;book&quot;:&quot;study-in-scarlet&quot;,&quot;text&quot;:&quot;The narrator. Qualified as a doctor ...&quot;}, ...],
-   &quot;history&quot;:[],&quot;relations&quot;:[...],&quot;events&quot;:[...]}],
+   &quot;history&quot;:[],&quot;arcs&quot;:[],&quot;relations&quot;:[...],&quot;events&quot;:[...]}],
  &quot;locator&quot;:{&quot;position&quot;:&quot;ch1.para06&quot;,&quot;seq&quot;:36,&quot;basis&quot;:&quot;xpointer&quot;,&quot;exact&quot;:true}}
 
 # a spine document and a word offset

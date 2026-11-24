@@ -127,11 +127,19 @@ export function view(indexes, position, series = null, order = null, finished = 
       // later one is visible; earlier profiles are history.
       const profiles = mine.filter((t) => t[2].kind === "profile");
       const profile = profiles.length ? profiles[profiles.length - 1] : null;
+      // Arcs (rule 5): the last visible arc of each book, by position whatever `replaces` says;
+      // never inherited into another book's slot. Every other visible arc is history.
+      const lastArc = new Map();
+      for (const t of mine) if (t[2].kind === "arc") lastArc.set(t[3], t);
+      const arcs = [...lastArc.values()].sort((a, b) => cmp(a[0], b[0]));
+      const shown = new Set(arcs.map((t) => t[2].id));
+      if (profile) shown.add(profile[2].id);
       return {
         id: ent.id, type: ent.type, name: display, aliases,
         profile: profile ? facetOut(profile[2], profile[3]) : null,
-        facets: mine.filter((t) => !replaced.has(t[2].id) && t[2].kind !== "profile").map((t) => facetOut(t[2], t[3])),
-        history: mine.filter((t) => t !== profile && (replaced.has(t[2].id) || t[2].kind === "profile")).map((t) => facetOut(t[2], t[3])),
+        arcs: arcs.map((t) => facetOut(t[2], t[3])),
+        facets: mine.filter((t) => !replaced.has(t[2].id) && t[2].kind !== "profile" && t[2].kind !== "arc").map((t) => facetOut(t[2], t[3])),
+        history: mine.filter((t) => !shown.has(t[2].id) && (replaced.has(t[2].id) || t[2].kind === "profile" || t[2].kind === "arc")).map((t) => facetOut(t[2], t[3])),
       };
     });
 
