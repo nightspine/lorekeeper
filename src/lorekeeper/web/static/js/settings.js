@@ -409,18 +409,26 @@ export function mountSettings(root) {
       return;
     }
     if (disposed) return;
-    const books = Array.isArray(r?.books) ? r.books : [];
+    // [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }] (an older shape { books } is read too).
+    const books = (Array.isArray(r) ? r : Array.isArray(r?.books) ? r.books : []).filter((b) => b && typeof b.textHash === "string");
     const mb = (n) => (Number(n) >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round((Number(n) || 0) / 1e3))} KB`);
     clear(sets, books.length ? h("div.table-wrap", h("table.data.pic-table",
       h("caption.sr-only", "Pictures on this server, per book"),
       h("thead", h("tr", h("th", { scope: "col" }, "Book"), h("th", { scope: "col" }, "Styles"), h("th.r", { scope: "col" }, "Size"), h("th.r", { scope: "col" }, h("span.sr-only", "Action")))),
       h("tbody", books.map((b) => h("tr",
         h("th", { scope: "row" }, b.title || "Untitled"),
-        h("td", (Array.isArray(b.styles) ? b.styles : []).map((x) => styleLabel(typeof x === "string" ? x : x?.slug)).join(", ")),
-        h("td.r.num", mb(b.size)),
+        h("td", (Array.isArray(b.styles) ? b.styles : []).map((x) => (typeof x === "string" ? styleLabel(x) : styleLabel(x?.slug, x?.style))).join(", ")),
+        h("td.r.num", mb(b.bytes ?? b.size)),
         h("td.r", h("button.btn.quiet.danger", { type: "button", on: { click: async () => {
           if (!(await confirmDialog({ title: `Remove the pictures of ${b.title || "this book"}?`, message: "Every picture of this book, in every style, is deleted from this server. The index is not touched.", confirmLabel: "Remove pictures" }))) return;
-          try { await api.artRemove(b.textHash); toast("Pictures removed"); paintPictures(); } catch (e) { toast(e.message, "error"); }
+          try {
+            const res = await api.artRemove(b.textHash);
+            const undo = res?.undo ?? null;
+            toast("Pictures removed", "ok", { action: undo && b.key ? { label: "Undo", run: async () => {
+              try { await api.undo(b.key, undo); toast("Undone"); paintPictures(); } catch (e) { toast(e.message, "error"); }
+            } } : null });
+            paintPictures();
+          } catch (e) { toast(e.status === 409 ? "Pictures are being drawn for this book. Remove them once the run ends." : e.message, "error"); }
         } } }, "Remove pictures")))))))
       : h("p.set-note", "No pictures yet. Tick Pictures when you build an index, or use Add pictures on a book's page."));
   }

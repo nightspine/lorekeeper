@@ -168,19 +168,21 @@ export const api = {
     return res.json();
   },
   /** Write the prompt for one picture (one text call, nothing drawn). `p` is the reader's frontier anchor. */
-  artPrompt: (key, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/prompt`, body),
+  artPrompt: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/prompt`, body, { signal }),
   /** Draw a picture from the given (possibly edited) prompt and file it; a refusal is a 422 with code "refused". */
-  artDraw: (key, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body),
+  artDraw: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body, { signal }),
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
   artRedraw: (key, id, note) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`, { note }),
-  artWorld: (key, text) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, { text }),
+  /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
+  artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
   /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */
   artEstimate: (q) => request("GET", `/api/art/estimate?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]))}`),
   /** The standalone "Add pictures" run on an existing index: a job of kind "art". */
   artRun: (key, art) => request("POST", `/api/library/${encodeURIComponent(key)}/art/run`, { art }),
-  /** Every art set on disk, per book: { books: [{ key, title, textHash, styles, size }] }. */
+  /** Every art set on disk, per book: [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }]. */
   artSets: () => request("GET", "/api/art"),
-  artRemove: (textHash) => request("DELETE", `/api/art/${encodeURIComponent(textHash)}`),
+  /** Remove a book's pictures (one style with `style`); 409 while a run draws them; undoable. */
+  artRemove: (textHash, style = null) => request("DELETE", `/api/art/${encodeURIComponent(textHash)}${style ? `?style=${encodeURIComponent(style)}` : ""}`),
   edition: async (hash) => {
     const res = await fetch(`/api/editions/${hash}`);
     return res.ok ? res.json() : null;

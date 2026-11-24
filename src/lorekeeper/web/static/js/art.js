@@ -51,32 +51,9 @@ export function artDefaults() {
 }
 export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ ...artDefaults(), ...d }));
 
-// ---- the gating helper: the one rule ------------------------------------------------------------
+// ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-/**
- * The pictures of one book's art set that may show at the reader's position. `anchorsOrdinal` maps that book's anchor
- * ids to their ordinals; `position` is the ordinal of the reader's frontier in that book (-1 before the first anchor);
- * `finished` says the book is fully revealed (an earlier book the reader has finished). A picture shows only when its
- * `from` is an anchor of that book at or before the position, compared by ordinal as every `from` is; an unknown anchor
- * never shows. Everywhere a picture is placed, counted or stepped to goes through this.
- */
-export function visibleArt(manifest, anchorsOrdinal, position, finished) {
-  const pics = Array.isArray(manifest?.pictures) ? manifest.pictures : [];
-  const out = [];
-  for (const r of pics) {
-    if (!r || typeof r.id !== "string" || typeof r.from !== "string" || typeof r.kind !== "string") continue;
-    const o = anchorsOrdinal.get(r.from);
-    if (o == null) continue;
-    if (finished || (Number.isInteger(position) && position >= 0 && o <= position)) out.push(r);
-  }
-  return out;
-}
-
-/** Is a note with a `from` anchor (the world note) visible? Same rule, for one item. */
-export function visibleAt(from, anchorsOrdinal, position, finished) {
-  const o = typeof from === "string" ? anchorsOrdinal.get(from) : null;
-  return o != null && (finished || (position >= 0 && o <= position));
-}
+export { unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
 
@@ -122,6 +99,16 @@ export function levelsOf(p, model = null) {
   const m = p?.images?.models?.find((x) => x.id === (model || p.images.default));
   const lv = Array.isArray(m?.levels) && m.levels.length ? m.levels : ["draft", "standard", "best"];
   return QUALITIES.filter(([k]) => lv.includes(k));
+}
+/** USD for one picture with a provider's default image model at a quality and shape: a number, null when the table says
+ *  the price is unknown, undefined when the server sent no image table (then the prompt route's price stands). */
+export function imagePrice(p, quality = "standard", shape = "landscape") {
+  const m = p?.images?.models?.find((x) => x.id === p.images.default);
+  if (!m) return undefined;
+  const v = m.price && typeof m.price === "object" ? m.price[quality] : null;
+  if (typeof v === "number") return v;
+  if (v && typeof v === "object" && typeof v[shape] === "number") return v[shape];
+  return null;
 }
 /** The image model's label and its price for one picture at a quality ("Nano Banana 2.1, about 3 cents a picture"). */
 export function imageLine(p, quality = "standard") {
@@ -209,8 +196,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       ["Cost", typeof r.cost === "number" ? (r.cost > 0 ? money(r.cost).replace(/^about /, "") : "Price unknown") : null],
       ["Drawn", when(r.created)],
     ].filter(([, v]) => v);
+    // The prompt may carry an earlier book's world note or looks: it shows only once those books are finished.
+    const hiddenUntil = it.promptHiddenUntil ? it.promptHiddenUntil(r) : null;
     clear(how, h("details.lb-details", h("summary", icon("chevron"), "How this was drawn"),
-      h("div.lb-details-body",
+      hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h("dd", v)])))));
     clear(acts, it.canEdit ? [
@@ -220,7 +209,9 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
-    toast(done, "ok", { host: dlg.open ? toasts : null, action: id ? { label: "Undo", run: async () => {
+    // While the lightbox is open its own stack; after it closed, the modal it was opened from (the entry drawer, a sheet),
+    // since a modal makes the page's stack unreachable.
+    toast(done, "ok", { host: dlg.open ? toasts : modalToasts(), action: id ? { label: "Undo", run: async () => {
       try { await api.undo(it.key, id); forgetArt(it.key); toast("Undone"); onChanged?.(); } catch (e) { toast(e.message, "error"); }
     } } : null });
   }
@@ -267,6 +258,16 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   return { close };
 }
 
+/** A toast stack inside the topmost open modal (the entry drawer or a sheet), or null for the page's own. */
+export function modalToasts() {
+  const open = [...document.querySelectorAll("dialog[open]")].filter((d) => { try { return d.matches(":modal") && !d.classList.contains("lightbox"); } catch { return d.matches(".drawer, .sheet"); } });
+  const top = open.at(-1);
+  if (!top) return null;
+  let host = top.querySelector(":scope .drawer-toasts, :scope .sheet-toasts");
+  if (!host) { host = h("div.drawer-toasts"); top.append(host); }
+  return host;
+}
+
 // ---- the picture sheet: on-demand drawing --------------------------------------------------------
 
 /**
@@ -276,62 +277,102 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
  *   target       the chapter title, event id or entity id the server knows it by
  *   title        what the sheet is about ("Chapter V", "Jonathan Harker"), shown as the title
  *   p            the reader's frontier anchor (the server refuses a target not yet visible)
- *   style        the art set's current style slug (selected first)
- *   styles       the styles the art set has [{ slug, text }]
- *   world        the world note as visible at the position ({ text } or null: not shown)
+ *   finished     the series book keys the reader has finished (the prompt leaves out an unfinished book's world note)
+ *   style        the art set's current style slug (selected first); styles: the styles it has [{ slug, text }]
+ *   world        the world note as visible at the position ({ text, own } or null: not shown)
  *   moments      for a chapter: [{ kind, target, label }] the visible moments it may draw, the first being the chapter's main one
  *   drawnLine    for a chapter: "4 moments in this chapter, 1 drawn" (counted from visible content only)
- *   onDrawn(rec) after a picture was filed
+ *   srcFor(rec, slug), canShow(rec)   the URL of a filed picture, and whether it may show at the position
+ *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
+ * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
   const provs = await imageProviders({ fresh: true });
   if (!provs.length) {
-    return sheet({ title: "Draw a picture", className: "art-sheet",
+    const sh = sheet({ title: "Draw a picture", className: "art-sheet",
       content: h("div.art-sheet-body", h("p", "Pictures need a Gemini or OpenAI key."),
         h("p", h("a", { href: "#/settings/cloud" }, "Add one in Settings, Cloud models"))) });
+    sh.current = () => ({ kind: opts.kind, target: opts.target });
+    sh.listed = () => [sh.current()];
+    return sh;
   }
   const d = artDefaults();
   const st = {
     kind: opts.kind, target: opts.target,
     style: opts.style || d.style, custom: "", shape: SHAPE_OF[opts.kind] || "landscape",
     quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0],
-    prompt: "", written: "", price: null, busy: false,
+    prompt: "", written: "", price: null, asked: null, slug: null, promptStyle: null,
+    busy: false, closed: false,
   };
-  if (!STYLE_LABEL[st.style]) { st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " "); st.style = "custom"; }
+  if (!STYLE_LABEL[st.style]) {
+    st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
+    st.slug = STYLE_LABEL[st.style] ? null : opts.style;   // the art set's own slug for its custom style
+    st.style = "custom";
+  }
+  // The style as sent to the server (a known slug, or the person's words), and the folder slug pictures are filed under:
+  // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
+  const styleText = () => (st.style === "custom" ? st.custom.trim() : st.style);
+  const folder = () => (st.style === "custom" ? st.slug : st.style);
+  let ctrl = null, gen = 0;   // the request in flight and its generation: a late reply for a moment left behind is dropped
+  const abort = () => { gen++; ctrl?.abort(); ctrl = null; st.busy = false; };
+
   const body = h("div.art-sheet-body");
   const drawBtn = h("button.btn.primary", { type: "button", disabled: true }, icon("sparkle"), "Draw");
   const footNote = h("span.art-price.num", { role: "status" });
   const sh = sheet({ title: `Draw a picture${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
     footer: h("div.art-foot", footNote, drawBtn),
+    // Always closable: a prompt or a drawing in flight is abandoned (a drawing already sent may still be filed and show
+    // later); an edited prompt is asked about first.
     beforeClose: () => {
-      if (st.busy) return false;
+      if (st.busy) { abort(); return true; }
       if (!st.prompt || st.prompt === st.written) return true;
       confirmDialog({ title: "Discard your prompt?", message: "The prompt you changed is not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
         .then((ok) => { if (ok) { st.prompt = st.written; sh.close(true); } });
       return false;
-    } });
-  const styleSlug = () => (st.style === "custom" ? st.custom.trim() : st.style);
+    },
+    onClose: () => { st.closed = true; abort(); } });
+  sh.current = () => ({ kind: st.kind, target: st.target });
+  sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
 
   const textarea = h("textarea.input.art-prompt", { rows: "7", "aria-label": "Prompt", spellcheck: "true" });
   textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); });
   const err = h("div.art-error", { role: "alert" });
 
   async function write() {
+    abort();
+    const mine = ++gen;
+    ctrl = new AbortController();
     st.busy = true;
     clear(body, loading("Writing a prompt from what you have read…"));
-    drawBtn.disabled = true;
+    paintFoot();
+    const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, shape: st.shape };
     try {
-      const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: styleSlug(), shape: st.shape, p: opts.p ?? null });
+      const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
+        quality: asked.quality, provider: asked.provider, p: opts.p ?? null, finished: opts.finished || [] }, ctrl.signal);
+      if (mine !== gen || st.closed) return;
       st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
       st.price = typeof r.price === "number" ? r.price : null;
-      st.busy = false;
+      st.asked = asked;
+      st.promptStyle = asked.style;
+      if (st.style === "custom") st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
+      st.busy = false; ctrl = null;
       paint();
     } catch (e) {
-      st.busy = false;
+      if (mine !== gen || st.closed) return;
+      st.busy = false; ctrl = null;
       clear(body, h("div.art-error", { role: "alert" },
         h("p", e.code === "not-visible" ? "This isn't revealed at your position yet." : `Couldn't write a prompt: ${e.message}`)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
+      paintFoot();
     }
+  }
+  /** A new style needs a prompt written for it (the style sentence is part of the prompt). An edited prompt is asked about. */
+  async function restyle(apply) {
+    const edited = st.prompt && st.prompt !== st.written;
+    if (edited && !(await confirmDialog({ title: "Write the prompt again for this style?", message: "The prompt carries its style, so it is written again and your changes are replaced.",
+      confirmLabel: "Write it again", cancelLabel: "Keep this style", danger: false }))) { paint(); return; }
+    apply();
+    if (styleText()) write(); else paint();
   }
 
   const chip = (label, pressed, on) => h("button.filter-chip", { type: "button", "aria-pressed": String(pressed), on: { click: on } }, label);
@@ -339,10 +380,11 @@ export async function openPictureSheet(opts) {
   function paint() {
     textarea.value = st.prompt;
     const customField = h("input.input.art-custom", { value: st.custom, placeholder: "Describe the style, for example: linocut, two colours", "aria-label": "Custom style",
-      on: { input: (e) => { st.custom = e.target.value; paintFoot(); } } });
+      on: { input: (e) => { st.custom = e.target.value; paintFoot(); },
+        change: (e) => { const v = e.target.value; if (v.trim() && v.trim() !== st.promptStyle) restyle(() => { st.custom = v; st.slug = null; }); } } });
     const styleRow = h("div.art-chips", { role: "group", "aria-label": "Style" },
-      STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { st.style = slug; paint(); })),
-      chip("Custom…", st.style === "custom", () => { st.style = "custom"; paint(); body.querySelector(".art-custom")?.focus(); }));
+      STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { if (st.style !== slug) restyle(() => { st.style = slug; }); })),
+      chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; paint(); } body.querySelector(".art-custom")?.focus(); }));
     const seg = (label, list, value, set) => h("div.seg", { role: "group", "aria-label": label },
       list.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(value === k), on: { click: () => { set(k); paint(); } } }, l)));
     const levels = levelsOf(st.provider);
@@ -386,11 +428,11 @@ export async function openPictureSheet(opts) {
       const save = h("button.btn", { type: "button", on: { click: async () => {
         save.disabled = true;
         try {
-          await api.artWorld(opts.key, field.value.trim());
-          opts.world = { text: field.value.trim() };
+          await api.artWorld(opts.key, field.value.trim(), opts.style || styleText());   // the note of the art set shown, by its slug
+          opts.world = { ...opts.world, text: field.value.trim() };
           forgetArt(opts.key);
           toast("World note saved", "ok", { host: sh.toasts });
-          line.replaceWith(worldLine());
+          box.replaceWith(worldLine());
         } catch (e) { ferr.textContent = e.message; save.disabled = false; }
       } } }, "Save");
       const cancel = h("button.btn.quiet", { type: "button", on: { click: () => box.replaceWith(worldLine()) } }, "Cancel");
@@ -401,33 +443,55 @@ export async function openPictureSheet(opts) {
     }
     return line;
   }
+  /** The price for this picture as chosen now: the image table's, else the prompt route's when it was asked for the same choices. */
+  function price() {
+    const known = imagePrice(st.provider, st.quality, st.shape);
+    if (known !== undefined) return known;
+    const a = st.asked;
+    return a && a.quality === st.quality && a.provider === st.provider.id && a.shape === st.shape ? st.price : null;
+  }
   function paintFoot() {
-    const ok = st.prompt.trim().length > 0 && Boolean(styleSlug()) && !st.busy;
+    const stale = st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
+    const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !stale;
     drawBtn.disabled = !ok;
-    footNote.textContent = st.busy ? "" : st.price != null ? `${money(st.price)[0].toUpperCase()}${money(st.price).slice(1)} for this picture` : "Price unknown";
+    const pr = price();
+    // Without the image table the price is the prompt route's, for the choices it was asked with; other choices say so
+    // rather than show a number for the wrong quality or provider.
+    const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.shape === st.shape;
+    footNote.textContent = st.busy ? "" : stale ? "Write the prompt again for this style first."
+      : pr != null ? `${money(pr)[0].toUpperCase()}${money(pr).slice(1)} for this picture`
+        : imagePrice(st.provider, st.quality, st.shape) === undefined && st.asked && !asked ? "Write it again to see the price for these choices" : "Price unknown";
   }
 
   drawBtn.addEventListener("click", async () => {
     if (st.busy) return;
+    abort();
+    const mine = ++gen;
+    ctrl = new AbortController();
     st.busy = true; drawBtn.disabled = true;
     const keep = [...body.childNodes];
     clear(body, loading("Drawing the picture. This takes a few seconds…"));
     footNote.textContent = "";
     try {
-      const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleSlug(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id });
-      st.busy = false;
-      st.written = st.prompt;   // drawn: nothing to ask about on close
-      forgetArt(opts.key);
+      const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
+        prompt: st.prompt, provider: st.provider.id, p: opts.p ?? null, finished: opts.finished || [] }, ctrl.signal);
       const rec = r?.record || r;
-      const src = opts.srcFor ? opts.srcFor(rec, styleSlug()) : null;
+      const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
+      forgetArt(opts.key);
+      opts.onDrawn?.(rec, slug || null);
+      if (mine !== gen || st.closed) return;
+      st.busy = false; ctrl = null;
+      st.written = st.prompt;   // drawn: nothing to ask about on close
+      // The new picture shows here only if it may show at the position (its anchor is the item's own, which is visible,
+      // but the server decides the anchor; the Reader checks it as it checks every picture).
+      const src = slug && opts.srcFor && (!opts.canShow || opts.canShow(rec)) ? opts.srcFor(rec, slug) : null;
       clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
-        h("p", "Drawn and added to the art set."),
+        h("p", src ? "Drawn and added to the art set." : "Drawn and added to the art set. It shows where it belongs in the book."),
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
-      opts.onDrawn?.(rec, styleSlug());
     } catch (e) {
-      st.busy = false;
+      if (mine !== gen || st.closed) return;
+      st.busy = false; ctrl = null;
       clear(body, keep);
       clear(err, h("p", e.code === "refused" ? `The provider would not draw this: ${e.message}. Change the prompt and try again.` : `Couldn't draw it: ${e.message}`));
       paintFoot();

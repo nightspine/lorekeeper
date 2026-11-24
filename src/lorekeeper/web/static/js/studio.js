@@ -16,14 +16,17 @@ const PHASES = [
 ];
 // The pictures stage shows only for a run that draws them; an "Add pictures" run (kind "art") has no other stage.
 const ART_PHASE = { key: "art", label: "Drawing pictures", icon: "sparkle" };
-const phasesOf = (job) => (job.kind === "art" ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
+/** An "Add pictures" run: no reading, only the pictures stage, on an index that already exists (`index` is its library key). */
+const isArtJob = (job) => job.kind === "art" || job.config?.kind === "art";
+const phasesOf = (job) => (isArtJob(job) ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
 const DROP_COLORS = ["var(--t-person)", "var(--t-group)", "var(--t-concept)", "var(--t-object)", "var(--t-term)",
   "var(--t-place)", "var(--rose)", "var(--text-3)"];
 const statusBadge = (s) => h(`span.badge.${s}`, STATUS_LABEL[s] || s);
 // Provider id → label, fetched once, for the run's chip ("gemini-2.5-flash on Gemini").
 let providerLabels = null;
 const loadProviderLabels = () => (providerLabels ||= api.providers().then((r) => Object.fromEntries(r.providers.map((p) => [p.id, p.label]))).catch(() => ({})));
-export const libraryKey = (job) => (job.kind === "art" && job.index ? job.index : "generated--" + String(job.output_name || "").replace(/\.json$/, ""));
+export const libraryKey = (job) => (isArtJob(job) && (job.index || job.config?.index_key) ? job.index || job.config.index_key
+  : "generated--" + String(job.output_name || "").replace(/\.json$/, ""));
 
 // ---- the build form ---------------------------------------------------------------------------
 // A short form on its own page: #/build/<localBookId>?catalog=<catalogKey>&from=<jobId>.
@@ -587,7 +590,7 @@ export function mountStudio(root) {
           h("div.monitor-id", h("h2", job.book_title),
             h("p.run-meta",
               el.badge, el.model = h("span.run-model", job.config.model || "default model"),
-              job.kind === "art" ? h("span", "pictures for an existing index")
+              isArtJob(job) ? h("span", "pictures for an existing index")
                 : [h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
                   h("span", job.config.verify === false ? "no fact-check" : "fact-checked")],
               job.config.art ? h("span", "with pictures") : null)),
@@ -684,14 +687,14 @@ export function mountStudio(root) {
       // Drawing pictures: a count and the money spent on pictures, never what they show (that would reveal the book).
       const drawing = m.status === "running" && m.phase === "art" && m.art;
       clear(el.where,
-        job.kind === "art" ? null : h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
-        m.art && (drawing || job.kind === "art" || m.status !== "running") ? h("span", drawing ? "Drawing pictures " : "Pictures ", h("b.num", `${m.art[0]} of ${m.art[1]}`),
+        isArtJob(job) ? null : h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
+        m.art && (drawing || isArtJob(job) || m.status !== "running") ? h("span", drawing ? "Drawing pictures " : "Pictures ", h("b.num", `${m.art[0]} of ${m.art[1]}`),
           m.art[2] ? [", ", h("b.num", `$${m.art[2].toFixed(m.art[2] < 1 ? 3 : 2)}`), " on pictures"] : null) : null,
         describing && h("span", "Describing the cast ", h("b.num", `${m.portraits[0]} / ${m.portraits[1]}`), " chapters"),
         arcing && h("span", "Writing book arcs ", h("b.num", `${m.arcs[0]} / ${m.arcs[1]}`), " chapters"),
         cur && m.status === "running" && !describing && !arcing && !drawing && h("span", "Reading ", h("b", cur.chapter)),
         h("span", "Elapsed ", h("b.num", fmtDuration(elapsed))),
-        m.status === "running" && !describing && !arcing && !drawing && job.kind !== "art" && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
+        m.status === "running" && !describing && !arcing && !drawing && !isArtJob(job) && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
         rate ? h("span", h("b.num", `${Math.round(rate * 60)}`), " words/min") : null,
         m.usage && m.usage.seconds ? h("span", h("b.num", `${(m.usage.output_tokens / m.usage.seconds).toFixed(1)}`), " tokens/s") : null,
         m.usage && m.usage.cost_usd ? h("span", h("b.num", `$${m.usage.cost_usd.toFixed(m.usage.cost_usd < 1 ? 3 : 2)}`), " spent") : null,

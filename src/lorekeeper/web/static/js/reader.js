@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, setArtOn, setArtStyle, styleLabel, visibleArt, visibleAt } from "./art.js";
+import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -941,7 +941,7 @@ export function mountReader(root) {
       const shown = new Set(visiblePictures().map((p) => p.rec.id));
       if ([...s.art.lightbox.ids].some((x) => !shown.has(x))) { s.art.lightbox.close(); s.art.lightbox = null; }
     }
-    if (s.art.sheet && !sheetItemVisible(s.art.sheet)) { const o = s.art.sheet.opened; s.art.sheet = null; o.then((sh) => sh?.close(true)); }
+    if (s.art.sheet && !sheetVisible(s.art.sheet)) { const o = s.art.sheet.opened; s.art.sheet = null; o.then((sh) => sh?.close(true)); }
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1705,6 +1705,14 @@ export function mountReader(root) {
     paintArtControl();
     paintTabs();
     if (s.drawer && !drawerDirty()) openDrawer(s.drawer, { refresh: true });
+    else if (s.drawer) {
+      // An entry with typed text is not rebuilt: its pictures (another style, or Pictures off) leave it instead, and stop
+      // counting as something it shows, so the safety net never reads a picture change as the position moving back.
+      const box = host();
+      box?.querySelectorAll(".art-face-btn, .art-earlier, .tl-thumb, .profile.face-only").forEach((n) => n.remove());
+      box?.querySelectorAll(".has-face, .has-pic").forEach((n) => n.classList.remove("has-face", "has-pic"));
+      s.drawerShows = (s.drawerShows || []).filter((x) => !x.startsWith("pic:"));
+    }
   }
   /** Every picture the reader may see now, as [{ rec, book, set }]; memoised per view and art revision. */
   function visiblePictures() {
@@ -1784,7 +1792,8 @@ export function mountReader(root) {
   /** Lightbox items for pictures, with their captions (a chapter title or the entry's name, never the prompt). */
   function lightboxItems(pics, caption) {
     return pics.map((p) => ({ rec: p.rec, src: picSrc(p), srcFor: (rec) => picSrc({ ...p, rec }), caption: caption(p), key: p.set.key,
-      style: p.set.slug, styleText: p.set.manifest.style, canEdit: s.art.canDraw && p.set.key === s.key, canRedraw: Boolean(s.art.hasProvider) }));
+      style: p.set.slug, styleText: p.set.manifest.style, canEdit: s.art.canDraw && p.set.key === s.key, canRedraw: Boolean(s.art.hasProvider),
+      promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book) }));
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {
@@ -1829,35 +1838,50 @@ export function mountReader(root) {
       icon("sparkle"), "Draw a picture");
   }
   /** The world note as the reader may see it at the position (null when its anchor is ahead or it comes from a book not finished). */
+  /** The books of the reading order before `book` (the ones a later book's text may carry content from). */
+  const booksBefore = (book) => { if (!s.series) return []; const o = s.series.orders[s.order] || []; const i = o.indexOf(book); return i > 0 ? o.slice(0, i) : []; };
+  /** The world note as the reader may see it at the position, or null (artgate.visibleWorld: its anchor in this book is
+   *  reached and every earlier book it carries is finished; an inherited note is never compared with this book's anchors). */
   function visibleWorld(set) {
-    const w = set?.manifest?.world;
-    if (!w || typeof w.text !== "string") return null;
     const ords = ordsOf(s.doc);
     const front = s.map.frontier(s.p);
-    const pos = front == null ? -1 : ords.get(front) ?? -1;
-    if (ords.has(w.from)) {
-      if (visibleAt(w.from, ords, pos, false)) return { text: w.text, own: !w.inherited };
-      return null;   // the base text from an earlier book is used before an appended sentence: only if those books are finished
-    }
-    const order = s.series ? s.series.orders[s.order] || [] : [];
-    const before = order.slice(0, Math.max(0, order.indexOf(s.book)));
-    const fin = new Set(finishedSet() || []);
-    return before.length && before.every((b) => fin.has(b)) ? { text: w.base || w.text, own: false } : null;
+    return worldGate(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
+      book: s.series ? s.book : null, finished: finishedSet() || [], earlier: booksBefore(s.book) });
+  }
+  /** The title of the first earlier book a picture's prompt carries content from and the reader has not finished, or null. */
+  function promptHiddenUntil(rec, book) {
+    if (!s.series) return null;
+    const earlier = booksBefore(book);
+    const missing = unfinishedSources(rec?.inherits, { book: s.book, finished: finishedSet() || [], earlier, fallback: earlier.length > 0 });
+    return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
   function drawPicture({ kind, target, title, moments = null, drawnLine = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const world = visibleWorld(set);
     const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, p: s.map.frontier(s.p),
+      finished: s.series ? finishedSet() || [] : [],
       style: s.art.slug || null, styles: s.art.styles, world, canEditWorld: Boolean(world?.own),
-      srcFor: (rec, slug) => artUrl(rec, set?.manifest?.textHash || s.hash, slug),
+      // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
+      srcFor: (rec, slug) => (set?.manifest?.textHash ? artUrl(rec, set.manifest.textHash, slug) : null),
+      canShow: (rec) => {
+        const ords = ordsOf(s.doc);
+        const front = s.map.frontier(s.p);
+        return visibleArt({ pictures: [rec] }, ords, front == null ? -1 : ords.get(front) ?? -1, false).length === 1;
+      },
       onDrawn: (rec, slug) => {
         forgetArt(s.key);
         if (slug && slug !== s.art.slug) { s.art.style = slug; setArtStyle(slug); }
         refreshPictures();
       } });
-    s.art.sheet = { kind, target, opened };
-    opened.then((sh) => sh?.closed?.then(() => { if (s.art.sheet?.opened === opened) s.art.sheet = null; }));
+    const entry = { kind, target, opened, sh: null };
+    s.art.sheet = entry;
+    opened.then((sh) => { entry.sh = sh; sh?.closed?.then(() => { if (s.art.sheet === entry) s.art.sheet = null; }); });
+  }
+  /** Everything an open picture sheet names (the moment selected now and every moment listed) is still revealed. */
+  function sheetVisible(entry) {
+    const items = entry.sh?.listed ? entry.sh.listed() : [{ kind: entry.kind, target: entry.target }];
+    return items.every(sheetItemVisible);
   }
   /** Is the item a picture sheet was opened for still revealed? (A Book Orbit sync may move the position back.) */
   function sheetItemVisible({ kind, target }) {
@@ -1917,7 +1941,8 @@ export function mountReader(root) {
       ...e.facets.map((f) => `f:${f.id}`), ...e.history.map((f) => `h:${f.id}`), ...(e.arcs || []).map((a) => `a:${a.id}`),
       ...rels.map((r) => `r:${r.id}`), ...evs.map((ev) => `e:${ev.id}`),
       ...others.map((x) => `other:${x}:${nameOf(x)?.name ?? ""}`),
-      ...entityPictures(e.id).map((p) => `pic:${p.rec.id}`), ...evs.map(eventPicture).filter(Boolean).map((p) => `pic:${p.rec.id}`)].filter(Boolean);
+      // Pictures only where the entry shows them: not in edit mode, and none with Pictures off (visiblePictures is then empty).
+      ...(s.edit ? [] : [...entityPictures(e.id), ...evs.map(eventPicture).filter(Boolean)].map((p) => `pic:${p.rec.id}`))].filter(Boolean);
   }
   // From 1101px the entry opens in a pane on the right (not modal: the list stays usable, another row swaps it,
   // arrow keys in the list move it, Escape or Close returns focus to the row). Narrower, it is the modal drawer.
@@ -2159,10 +2184,11 @@ export function mountReader(root) {
     const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
     const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
-    // That book's portrait, when it has one and it is not the one shown at the top of the entry.
+    // That book's pictures of the entry, every version, oldest first, except the one shown at the top of the entry.
     const pics = entityPictures(e.id);
-    const mine = pics.filter((p) => p.book === b).at(-1);
-    const face = mine && mine !== pics.at(-1) ? pictureButton(pics, pics.indexOf(mine), () => `${e.name}, ${full}`, "art-thumb.card-face") : null;
+    const mine = pics.filter((p) => p.book === b && p !== pics.at(-1));
+    const face = mine.length ? h("div.art-earlier.card-faces", { role: "group", "aria-label": `Pictures from ${full}` },
+      mine.map((p) => pictureButton(pics, pics.indexOf(p), () => `${e.name}, ${full}`, "art-thumb.card-face"))) : null;
     if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length && !face) return null;
     return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full, dataset: { book: b } },
       h("div.book-head", h("h3.book-title", { title: full }, heading)),
@@ -2287,7 +2313,8 @@ export function mountReader(root) {
     if (refresh && dlg) {
       const keep = dlg.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id : null;
       dlg.className = `drawer t-${e.type}`;
-      clear(dlg, content);
+      const toasts = dlg.querySelector(":scope > .drawer-toasts");   // an Undo toast shown in the drawer outlives the refresh
+      clear(dlg, content, toasts);
       if (keep) document.getElementById(keep)?.focus();
       return;
     }
