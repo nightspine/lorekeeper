@@ -20,7 +20,7 @@ import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from .. import arcs as book_arcs, bookkind, epub, generate, llm, portraits, text, validate
+from .. import art as artmod, arcs as book_arcs, bookkind, epub, generate, llm, portraits, text, validate
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
@@ -179,6 +179,34 @@ class Job:
     report: dict | None = None
     progress: dict = field(default_factory=dict)   # latest chunk / phase / stats snapshot
     resume: bool = False
+    kind: str = "index"             # index: a build; art: pictures for an existing index (`output` is that index, never written)
+
+
+def art_config(raw) -> dict:
+    """The pictures part of a job config, checked: {style, level, portraits, quality, provider, model, cap}.
+    Raises ValueError with a sentence for the person."""
+    if not isinstance(raw, dict):
+        raise ValueError("art must be an object")
+    style = " ".join(str(raw.get("style") or "").split())
+    if not style or len(style) > 200:
+        raise ValueError("Choose a style, or write one of at most 200 characters.")
+    level = raw.get("level", "main")
+    if level not in artmod.LEVELS:
+        raise ValueError("level must be \"main\" or \"all\".")
+    provider = raw.get("provider")
+    if provider is not None and provider not in llm.IMAGE_PROVIDERS:
+        raise ValueError(f"No image provider {provider!r}.")
+    quality = raw.get("quality", "standard")
+    if quality not in ("draft", "standard", "best"):
+        raise ValueError("quality must be draft, standard or best.")
+    model = raw.get("model")
+    if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
+        raise ValueError(f"Unknown image model {model!r}.")
+    cap = raw.get("cap")   # required: a run never draws without a spending limit (the form fills in $10)
+    if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 < cap <= 500:
+        raise ValueError("The cost cap must be a number of dollars above 0 and at most 500.")
+    return {"style": style, "level": level, "portraits": bool(raw.get("portraits", True)), "quality": quality,
+            "provider": provider, "model": model, "cap": cap}
 
 
 class JobManager:
@@ -191,6 +219,9 @@ class JobManager:
         self.provider_config = provider_config   # provider id → {base_url, model} (the custom server)
         self.distinct_for = distinct_for   # job → pairs of entity ids a person marked "not the same"
         self.after_run = None   # job → dict, run on a finished index (the app sets editor.reapply)
+        self.art_store = None   # web.art.ArtStore, set by the app
+        self.art_inputs = None  # job → (index doc, epub.Book, earlier books' docs), set by the app
+        self.art_journal = None  # (job, text hash, slug, ids of the pictures drawn) → journal entry id, set by the app
         root.mkdir(parents=True, exist_ok=True)
         index_dir.mkdir(parents=True, exist_ok=True)
         self.jobs: dict[str, Job] = {}
@@ -255,6 +286,46 @@ class JobManager:
         self.queue.put(job_id)
         return job
 
+    def submit_art(self, key: str, config: dict, *, index_path: str, book_id: str, title: str, text_hash: str) -> Job:
+        """Queue pictures for an existing index (library key `key`): a job of kind "art" on the same queue and events as a
+        build. Refused (RuntimeError) while a run writes that index or pictures are already being drawn for that edition."""
+        cfg = art_config(config)
+        if self.writing(index_path):
+            raise RuntimeError("A build is writing this index. Add pictures once it has finished.")
+        if self.drawing(text_hash):
+            raise RuntimeError("Pictures are already being drawn for this book.")
+        job_id = uuid.uuid4().hex[:12]
+        image = cfg["provider"] or next((p for p in llm.IMAGE_PROVIDERS if self.keys(p)), None)
+        job = Job(id=job_id, book_id=book_id, book_title=title, output=index_path, kind="art",
+                  config={"art": cfg, "index_key": key, "text_hash": text_hash,
+                          "provider": self.text_provider(), "image_provider": image})
+        self.jobs[job_id] = job
+        self.events[job_id] = []
+        self._save(job)
+        self._emit(job, {"type": "queued"})
+        self.queue.put(job_id)
+        return job
+
+    def active(self):
+        return [j for j in list(self.jobs.values()) if j.status in ("queued", "running", "stopping")]
+
+    def writing(self, index_path) -> bool:
+        """A build (not a pictures run, which never writes the index) is writing or about to write this index file."""
+        return any(j.kind != "art" and j.output == str(index_path) for j in self.active())
+
+    def drawing(self, text_hash: str) -> bool:
+        """Pictures are being drawn, or will be, for this edition: an art run, or a build that ends with the pictures stage."""
+        for j in self.active():
+            if j.kind == "art" and j.config.get("text_hash") == text_hash:
+                return True
+            if j.kind != "art" and j.config.get("art"):
+                try:
+                    if self.books.get(j.book_id).get("textHash") == text_hash:
+                        return True
+                except (KeyError, OSError, ValueError):
+                    continue
+        return False
+
     def stop(self, job_id: str) -> Job:
         job = self.jobs[job_id]
         if job.status == "queued":
@@ -285,6 +356,8 @@ class JobManager:
         self.events.pop(job_id, None)
         for suffix in (".json", ".events.jsonl"):
             (self.root / f"{job_id}{suffix}").unlink(missing_ok=True)
+        if job.kind == "art":
+            return    # its output is the index it drew for, which belongs to the library, and its pictures stay
         out = Path(job.output)
         for p in (out, out.with_suffix(out.suffix + ".state"), out.with_suffix(out.suffix + ".report")):
             p.unlink(missing_ok=True)
@@ -313,7 +386,10 @@ class JobManager:
             job = self.jobs.get(job_id)
             if job is None or job.status != "queued":
                 continue
-            self._run(job)
+            if job.kind == "art":
+                self._run_art(job)
+            else:
+                self._run(job)
 
     def configured(self) -> list[str]:
         """Cloud providers that can be used right now, in registry order."""
@@ -324,6 +400,14 @@ class JobManager:
         """A backend for a registry provider, with its saved key and (for a custom server) URL and model."""
         cfg = self.provider_config(provider) or {}
         return llm.make(provider, model or cfg.get("model"), api_key=self.keys(provider), base_url=cfg.get("base_url"))
+
+    def text_provider(self, job_provider: str | None = None) -> str | None:
+        """The provider `cheap_model` would use: the run's own cloud provider, else the first configured one."""
+        order = ([job_provider] if job_provider in self.configured() else []) + self.configured()
+        for p in order:
+            if ((self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["cheap"]):
+                return p
+        return None
 
     def cheap_model(self, job_provider: str | None = None):
         """The cheap model for background writing (descriptions): the run's own cloud provider,
@@ -408,6 +492,146 @@ class JobManager:
         self._emit(job, {"type": "log", "line": f"book arcs: {stats.get('arcs', 0)} written ({cost})"})
         return {**stats, "cost_usd": round(model.usage.cost_usd, 4)}
 
+    def image_model(self, provider: str | None = None, model: str | None = None):
+        """An image backend with its key (saved in Settings or from the environment, as text keys): the named provider,
+        else the first image provider with a key. None when there is no key."""
+        for p in [provider] if provider else list(llm.IMAGE_PROVIDERS):
+            if p in llm.IMAGE_PROVIDERS and self.keys(p):
+                return llm.make_image(p, model or None, api_key=self.keys(p))
+        return None
+
+    def _art(self, job: Job, doc: dict, book, prior: list[dict], flag: threading.Event) -> dict:
+        """Draw the art set of an index (art.py): chapter pictures and portraits into the art store, keyed by edition and
+        style. The index is never written. Needs an image key and a cloud text model for the prompts; a failure or a stop
+        keeps the index and every picture drawn so far. The pictures it adds are one journal entry, so undo takes out
+        exactly those."""
+        from . import art as store_mod
+        cfg = art_config(job.config.get("art"))
+        h, added, slug = store_mod.text_hash(doc), [], None
+        try:
+            image = self.image_model(cfg["provider"], cfg["model"])
+            if image is None:
+                which = llm.PROVIDERS[cfg["provider"]]["label"] if cfg["provider"] else "Gemini or OpenAI"
+                self._emit(job, {"type": "log", "line": f"pictures: skipped (add a {which} key in Settings to draw them)"})
+                return {"skipped": "no image key"}
+            text_model = self.cheap_model(job.config.get("provider"))
+            if text_model is None:
+                self._emit(job, {"type": "log", "line": "pictures: skipped (add a cloud model key in Settings to write the prompts)"})
+                return {"skipped": "no cloud key"}
+            if self.art_store is None:
+                raise RuntimeError("no art store")
+            self._emit(job, {"type": "phase", "phase": "art"})
+            text_model.cancel = image.cancel = flag.is_set
+            store = self.art_store
+            slug, style = store.resolve(h, cfg["style"])    # one set per slug: "Ink" draws into the "ink" set
+            books = []
+            for d in prior:
+                ph = store_mod.text_hash(d)
+                if not store_mod.HASH.fullmatch(ph):
+                    title = (d.get("work") or {}).get("title") or "an earlier book"
+                    self._emit(job, {"type": "log", "line": f"pictures: {title} names no edition, so its pictures are not read"})
+                    continue
+                books.append(artmod.Book(d, None, store.sink(ph, store.resolve(ph, style)[1]), None, draw=False))
+            books.append(artmod.Book(doc, book, store.sink(h, slug), cfg["level"]))
+            box: dict = {}
+
+            def progress(done: int, total: int) -> None:
+                il = box.get("il")
+                if flag.is_set() and il is not None and not il.stop:
+                    il.stop = "stopped by request"
+                cost = round(il.report.cost + il.text_spent(), 4) if il else 0.0
+                job.progress = {**job.progress, "art": [done, total], "last": "art"}
+                self._emit(job, {"type": "art", "done": done, "total": total, "cost": cost})
+
+            def log(line: str) -> None:
+                if flag.is_set() and box.get("il") is not None and not box["il"].stop:
+                    box["il"].stop = "stopped by request"
+                self._emit(job, {"type": "log", "line": f"pictures: {line.strip()}"})
+            with store.lock(h, slug):
+                had = {r.get("id") for r in (store.manifest(h, slug) or {}).get("pictures", [])}
+                try:
+                    il = box["il"] = artmod.Illustrator(books, text_model, image, style, portraits=cfg["portraits"],
+                                                        quality=cfg["quality"], cap=cfg["cap"], log=log, progress=progress)
+                    rep = il.run()
+                finally:
+                    added = [r["id"] for r in (store.manifest(h, slug) or {}).get("pictures", []) if r.get("id") not in had]
+                    self._journal_art(job, h, slug, added)
+        except llm.Cancelled:
+            self._emit(job, {"type": "log", "line": "pictures: stopped; the pictures drawn so far are kept"})
+            return {"skipped": "stopped", "drawn": len(added), "style": slug, "textHash": h}
+        except Exception as e:  # noqa: BLE001 - the index itself is done; don't fail the run over this
+            self._emit(job, {"type": "log", "line": f"pictures: failed ({type(e).__name__}: {e}); the pictures drawn so far are kept"})
+            return {"failed": str(e), "drawn": len(added)}
+        out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
+               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, "held": rep.held,
+               "reasons": rep.reasons[:200], "style": slug, "textHash": h}
+        self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
+        for line in rep.lines()[:40]:
+            self._emit(job, {"type": "log", "line": f"pictures: {line.strip()}"})
+        return out
+
+    def _journal_art(self, job: Job, text_hash: str, slug: str, added: list[str]) -> None:
+        if not added or self.art_journal is None:
+            return
+        try:
+            entry = self.art_journal(job, text_hash, slug, added)
+            if entry:
+                job.progress = {**job.progress, "artUndo": entry}
+        except Exception as e:  # noqa: BLE001 - the pictures are drawn; only their undo is missing
+            self._emit(job, {"type": "log", "line": f"pictures: not added to the undo history ({type(e).__name__}: {e})"})
+
+    @staticmethod
+    def _art_stopped(got: dict) -> bool:
+        return got.get("skipped") == "stopped" or str(got.get("stopped") or "").startswith("stopped by")
+
+    def _finish_art(self, job: Job, report: dict, book, prior: list[dict], flag: threading.Event) -> None:
+        """A build's last stage. A stop here leaves the build stopped and resumable from the pictures (`resumeFrom`), so a
+        resume draws the rest without building the index again."""
+        job.progress = {**job.progress, "resumeFrom": "art"}
+        job.report = report
+        self._save(job)
+        report["art"] = got = self._art(job, json.loads(Path(job.output).read_text()), book, prior, flag)
+        if flag.is_set() or self._art_stopped(got):
+            report["stopped"] = True
+        else:
+            job.progress = {k: v for k, v in job.progress.items() if k != "resumeFrom"}
+        job.report = report
+        job.status = "stopped" if report.get("stopped") else "done"
+        self._emit(job, {"type": job.status, "report": report})
+
+    def _run_art(self, job: Job) -> None:
+        """A pictures run on an existing index: no generator, the same events as a build's pictures stage."""
+        flag = self.stop_flags[job.id] = threading.Event()
+        job.status, job.started = "running", job.started or _now()
+        self._save(job)
+        self._emit(job, {"type": "running", "resume": job.resume})
+        try:
+            for _ in range(100):     # a run resumed at start-up can reach the worker before the app is wired
+                if self.art_inputs is not None and self.art_store is not None:
+                    break
+                time.sleep(0.05)
+            if self.art_inputs is None:
+                raise RuntimeError("pictures are not available on this server")
+            doc, book, prior = self.art_inputs(job)
+            got = self._art(job, doc, book, prior, flag)
+            report = {"art": got}
+            if flag.is_set() or self._art_stopped(got):
+                report["stopped"] = True
+            if got.get("failed"):
+                job.status, job.error = "failed", got["failed"]
+            else:
+                job.status = "stopped" if report.get("stopped") else "done"
+            job.report = report
+            self._emit(job, {"type": job.status, "report": report} if job.status != "failed" else
+                         {"type": "failed", "error": job.error})
+        except Exception as e:  # surface every failure to the UI rather than killing the worker
+            job.status, job.error = "failed", f"{type(e).__name__}: {e}"
+            self._emit(job, {"type": "failed", "error": job.error, "trace": traceback.format_exc(limit=5)})
+        finally:
+            job.finished = _now()
+            job.resume = False
+            self._save(job)
+
     def _reapply_edits(self, job: Job) -> dict:
         """Put the person's recorded edits for this book back onto the fresh index (editor.reapply)."""
         try:
@@ -458,6 +682,13 @@ class JobManager:
             else:
                 raise ValueError(f"unknown provider {provider!r}")
 
+            if job.resume and job.progress.get("resumeFrom") == "art" and c.get("art") and Path(job.output).exists():
+                # The index and its stages were done when the run stopped in the pictures stage: carry on with the pictures.
+                report = {k: v for k, v in (job.report or {}).items() if k not in ("stopped", "art")}
+                self._emit(job, {"type": "log", "line": "the index is done; carrying on with the pictures"})
+                self._finish_art(job, report, book, opts.prior, flag)
+                return
+
             def on_event(e: dict) -> None:
                 if e["type"] in ("chunk", "phase", "chunk_done", "start"):
                     job.progress = {**job.progress, **{k: v for k, v in e.items() if k != "added"},
@@ -475,6 +706,9 @@ class JobManager:
                 report["edits"] = self._reapply_edits(job)
             if not report.get("stopped") and c.get("arcs", True):   # last: arcs tell the events as the person edited them
                 report["arcs"] = self._arcs(job, book, opts.prior, flag)
+            if not report.get("stopped") and c.get("art"):   # after arcs: pictures read the finished index
+                self._finish_art(job, report, book, opts.prior, flag)
+                return
             job.report = report
             job.status = "stopped" if report.get("stopped") else "done"
             self._emit(job, {"type": job.status, "report": report})
