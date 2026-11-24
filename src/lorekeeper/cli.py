@@ -590,6 +590,42 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def cmd_draw(args) -> int:
+    """Draw one picture from a prompt (and optional reference pictures) and write it to a file."""
+    import mimetypes
+    import time
+    from . import images, llm
+    key = Path(args.api_key_file).read_text().strip() if args.api_key_file else None
+    key = key or llm.env_key(args.provider)
+    if key is None:
+        var = llm.IMAGE_PROVIDERS[args.provider]["key_env"]
+        raise SystemExit(f"error: no API key for {llm.IMAGE_PROVIDERS[args.provider]['label']}: set {var} or pass --api-key-file")
+    refs = []
+    for f in args.ref or []:
+        mime = mimetypes.guess_type(f)[0] or "image/png"
+        refs.append((Path(f).read_bytes(), mime))
+    try:
+        model = llm.make_image(args.provider, args.model, api_key=key)
+        t = time.time()
+        pic = model.draw(args.prompt, shape=args.shape, quality=args.quality, references=refs)
+    except images.ImageRefused as e:
+        print(f"refused: {e.reason}", file=sys.stderr)
+        return 2
+    except (ValueError, llm.ProviderError) as e:
+        raise SystemExit(f"error: {e}") from e
+    out = Path(args.output)
+    if not out.suffix:
+        out = out.with_suffix(mimetypes.guess_extension(pic.mime) or ".img")
+    out.write_bytes(pic.data)
+    size = f"{pic.width}x{pic.height}" if pic.width else "size not reported"
+    price = llm.image_price(args.provider, pic.model, args.quality)
+    cost = f"${pic.cost:.4f}" if pic.cost else "price unknown"
+    print(f"{out}: {pic.model}, {size}, {pic.mime}, {len(pic.data):,} bytes, {cost}"
+          + ("" if price is not None or not pic.cost else " (from the response's token usage)")
+          + f", {time.time() - t:.1f}s")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lorekeeper")
     sub = p.add_subparsers(required=True)
@@ -781,6 +817,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write the results to this directory instead of in place")
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_arcs)
+
+    s = sub.add_parser("draw", help="draw one picture from a prompt with an image model (Gemini or OpenAI, your own key)")
+    from . import llm as _llm
+    s.add_argument("prompt")
+    s.add_argument("-o", "--output", required=True, help="where to write the picture (an extension is added from its type if missing)")
+    s.add_argument("--provider", choices=list(_llm.IMAGE_PROVIDERS), default="gemini",
+                   help="gemini or openai; Claude cannot draw. Keys come from --api-key-file or GEMINI_API_KEY / OPENAI_API_KEY.")
+    s.add_argument("--model", help="image model id (default: the provider's default)")
+    s.add_argument("--shape", choices=["square", "portrait", "landscape"], default="landscape")
+    s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
+    s.add_argument("--ref", action="append", metavar="FILE", help="a picture the result should resemble (repeatable, at most 6)")
+    s.add_argument("--api-key-file", metavar="PATH", help="file holding the API key (default: the provider's environment variable)")
+    s.set_defaults(fn=cmd_draw)
 
     s = sub.add_parser("conformance", help="run (or regenerate) conformance cases")
     s.add_argument("dir", nargs="?", default="conformance")

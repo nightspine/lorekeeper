@@ -525,3 +525,79 @@ def make(provider: str, model: str | None = None, api_key: str | None = None, ba
     if not name:
         raise ValueError(f"{spec['label']} needs a model name")
     return OpenAICompatible(name=name, base_url=url, api_key=api_key, provider=provider)
+
+
+# ---- Image providers --------------------------------------------------------------------------
+#
+# The second table, beside PROVIDERS: who can draw. Claude cannot. Keys are the text providers' keys
+# (same `key_env`), so a saved or environment key for Gemini or OpenAI serves both. `price` is USD
+# per picture for each quality level; None = not published ("price unknown", never $0 in an
+# estimate). `quality` and `shapes` map our levels (draft/standard/best) and shapes
+# (square/portrait/landscape = 1:1, 3:4, 16:9) onto the provider's own words, so a UI can show them.
+# Verified 2026-11-24 against:
+#   Gemini ids and prices   https://ai.google.dev/gemini-api/docs/pricing
+#   Gemini request fields   https://ai.google.dev/gemini-api/docs/generate-content/image-generation
+#   OpenAI ids and rates    https://developers.openai.com/api/docs/pricing and .../models/<id>
+#   OpenAI sizes, quality   https://developers.openai.com/api/docs/guides/image-generation
+
+def _images(*rows) -> list[dict]:
+    return [{"id": i, "label": label, "price": price, "tier": tier, **extra} for i, label, price, tier, extra in rows]
+
+
+_GEMINI_1K, _GEMINI_PRO = 0.0336, 0.134   # 1,120 image output tokens at $30/M; 1K and 2K both $0.134 on Pro
+
+IMAGE_PROVIDERS: dict[str, dict] = {
+    "gemini": {
+        "label": "Gemini", "kind": "gemini", "base_url": "https://generativelanguage.googleapis.com/v1beta",
+        "key_env": "GEMINI_API_KEY", "key_url": "https://aistudio.google.com/apikey",
+        "quality": {"draft": "1K", "standard": "1K", "best": "2K"},        # imageConfig.imageSize
+        "shapes": {"square": "1:1", "portrait": "3:4", "landscape": "16:9"},   # imageConfig.aspectRatio
+        "models": _images(
+            ("gemini-nano-banana-2.1", "Nano Banana 2.1", {"draft": _GEMINI_1K, "standard": _GEMINI_1K, "best": 0.0504}, "cheap", {}),
+            ("gemini-3.1-flash-lite-image", "Nano Banana 2 Lite", {"draft": _GEMINI_1K, "standard": _GEMINI_1K, "best": None}, "cheap", {}),
+            ("gemini-3-pro-image", "Nano Banana Pro", {"draft": _GEMINI_PRO, "standard": _GEMINI_PRO, "best": _GEMINI_PRO}, "strong", {}),
+        ),
+        "default": "gemini-nano-banana-2.1", "cheap": "gemini-nano-banana-2.1", "strong": "gemini-3-pro-image",
+    },
+    "openai": {
+        "label": "OpenAI", "kind": "openai", "base_url": "https://api.openai.com/v1", "key_env": "OPENAI_API_KEY",
+        "key_url": "https://platform.openai.com/api-keys",
+        "quality": {"draft": "low", "standard": "medium", "best": "high"},
+        "shapes": {"square": "1024x1024", "portrait": "1024x1536", "landscape": "1536x1024"},
+        # gpt-image-2.6 is billed per token ($5/M text in, $8/M image in, $30/M image out; the docs publish no
+        # per-picture table, only a calculator), so its price is None and the cost of a picture is worked out
+        # from the response's usage with `rates`. Flare is the one the docs call "fast", hence the default.
+        # gpt-image-2 prices are the guide's table for 1024x1024, the dearest shape (an upper bound).
+        "models": _images(
+            ("gpt-image-2.6-flare", "GPT Image 2.6 Flare", {"draft": None, "standard": None, "best": None}, "cheap",
+             {"rates": (5.0, 8.0, 30.0)}),
+            ("gpt-image-2.6-sunburst", "GPT Image 2.6 Sunburst", {"draft": None, "standard": None, "best": None}, "strong",
+             {"rates": (5.0, 8.0, 30.0)}),
+            ("gpt-image-2", "GPT Image 2", {"draft": 0.006, "standard": 0.053, "best": 0.211}, "cheap", {}),
+        ),
+        "default": "gpt-image-2.6-flare", "cheap": "gpt-image-2.6-flare", "strong": "gpt-image-2.6-sunburst",
+    },
+}
+
+
+def image_price(provider: str, model: str, quality: str = "standard") -> float | None:
+    """USD for one picture at a quality level, or None when the provider's price is not known."""
+    for m in IMAGE_PROVIDERS.get(provider, {}).get("models", []):
+        if m["id"] == model:
+            return m["price"].get(quality)
+    return None
+
+
+def make_image(provider: str, model: str | None = None, api_key: str | None = None, base_url: str | None = None):
+    """An image backend (`images.ImageModel`) by provider id: a key of IMAGE_PROVIDERS."""
+    if provider == "claude":
+        raise ValueError("Claude cannot draw")
+    spec = IMAGE_PROVIDERS.get(provider)
+    if spec is None:
+        raise ValueError(f"no image provider {provider}")
+    from . import images
+    name = model or spec["default"]
+    url = base_url or spec["base_url"]
+    key = api_key or env_key(provider)
+    cls = images.Gemini if spec["kind"] == "gemini" else images.OpenAIImages
+    return cls(name=name, base_url=url, api_key=key, provider=provider)
