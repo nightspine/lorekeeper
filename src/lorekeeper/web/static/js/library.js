@@ -351,7 +351,7 @@ export function mountLibrary(root) {
               // The series repeats here only when the Series column is hidden (narrow, or the pane is open).
               inSeries ? null : b.series ? h("span.t-series", `, ${seriesText(b)}`) : null,
               kindOf(b) ? h("span.t-kind", `, ${kindOf(b)}`) : null,
-              b.finished ? h("span.t-fin", ". Finished.") : null,
+              b.finished ? h("span.t-fin", warn ? ". Finished" : ". Finished.") : null,
               warn ? h("span.row-warn", `. ${warn}.`) : null)))),
       h("td.c-series.muted", inSeries ? bookNo(b.series) ? cap(bookNo(b.series)) : "" : seriesText(b)),
       h("td.c-status", statusChip(b)),
