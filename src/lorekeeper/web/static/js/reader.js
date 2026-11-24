@@ -1659,12 +1659,17 @@ export function mountReader(root) {
     const mine = (s.art.loadSeq = (s.art.loadSeq || 0) + 1);
     s.art.loadedBooks = pictureBooks().map(bkKey).join(",");
     const gone = () => stale() || disposed || mine !== s.art.loadSeq;
+    // "Draw a picture" shows when an image provider is set up, or when the book already has pictures (the sheet then says a key
+    // is needed). Drawing needs the book file (the prompt is written from the passage), so never without it.
+    const decide = () => {
+      const could = s.art.canDraw;
+      s.art.canDraw = (s.art.hasProvider || s.art.styles.length > 0) && Boolean(s.hash && s.map?.exact) && !preview;
+      return could !== s.art.canDraw;
+    };
     imageProviders().then((list) => {
       if (gone()) return;
-      const could = s.art.canDraw;
-      // Drawing needs the book file (the prompt is written from the passage), so it is offered only where edits are.
-      s.art.canDraw = list.length > 0 && Boolean(s.hash && s.map?.exact) && !preview;
-      if (could !== s.art.canDraw) repaintPictures();
+      s.art.hasProvider = list.length > 0;
+      if (decide()) repaintPictures();
     });
     const first = await loadArt(s.key, s.art.style);
     if (gone()) return;
@@ -1685,6 +1690,7 @@ export function mountReader(root) {
     }
     s.art.sets = sets;
     s.art.slug = want;
+    decide();
     s.art.memo = null; s.art.rev++;
     repaintPictures();
   }
@@ -1778,7 +1784,7 @@ export function mountReader(root) {
   /** Lightbox items for pictures, with their captions (a chapter title or the entry's name, never the prompt). */
   function lightboxItems(pics, caption) {
     return pics.map((p) => ({ rec: p.rec, src: picSrc(p), srcFor: (rec) => picSrc({ ...p, rec }), caption: caption(p), key: p.set.key,
-      style: p.set.slug, styleText: p.set.manifest.style, canEdit: s.art.canDraw && p.set.key === s.key }));
+      style: p.set.slug, styleText: p.set.manifest.style, canEdit: s.art.canDraw && p.set.key === s.key, canRedraw: Boolean(s.art.hasProvider) }));
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {

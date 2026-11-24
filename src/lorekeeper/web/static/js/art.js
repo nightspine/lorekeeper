@@ -5,7 +5,7 @@
 // /api/art/... URLs built here from ids the server sent, never from a path or URL found in the manifest.
 import { api } from "./api.js";
 import { confirmDialog } from "./build.js";
-import { clear, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
+import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 
 /** The styles the pipeline knows (art.STYLES), in the order the person sees them. Anything else is a custom style. */
 export const STYLES = [
@@ -80,16 +80,18 @@ export function visibleAt(from, anchorsOrdinal, position, finished) {
 
 // ---- the manifest cache --------------------------------------------------------------------------
 
-const cache = new Map();   // `${key}\n${style}` → Promise of { manifest, styles, screened } (null when the server has none)
+const cache = new Map();   // `${key}\n${style}` → { at, promise } of { manifest, styles, screened } (null when the server has none)
+const FRESH_MS = 30000;   // a run may add pictures meanwhile: an answer older than this is asked for again
 /** The art set of an index in one style (the server's default style when none is asked). Null without an art set, on an
  *  older server, or when the request fails: pictures are an extra, never a reason for the Reader to fail. */
 export function loadArt(key, style = null) {
   const k = `${key}\n${style || ""}`;
-  if (!cache.has(k)) {
-    const p = api.art(key, style).then((r) => (r && typeof r === "object" ? normalise(r) : null)).catch(() => null);
-    cache.set(k, p);
+  const hit = cache.get(k);
+  if (!hit || Date.now() - hit.at > FRESH_MS) {
+    const promise = api.art(key, style).then((r) => (r && typeof r === "object" ? normalise(r) : null)).catch(() => null);
+    cache.set(k, { at: Date.now(), promise });
   }
-  return cache.get(k);
+  return cache.get(k).promise;
 }
 function normalise(r) {
   const manifest = r.manifest && typeof r.manifest === "object" ? r.manifest : r;
@@ -212,7 +214,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h("dd", v)])))));
     clear(acts, it.canEdit ? [
-      h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
+      it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
     ] : null);
   }
@@ -333,6 +335,7 @@ export async function openPictureSheet(opts) {
   }
 
   const chip = (label, pressed, on) => h("button.filter-chip", { type: "button", "aria-pressed": String(pressed), on: { click: on } }, label);
+  let momentsOpen = false;
   function paint() {
     textarea.value = st.prompt;
     const customField = h("input.input.art-custom", { value: st.custom, placeholder: "Describe the style, for example: linocut, two colours", "aria-label": "Custom style",
@@ -348,11 +351,14 @@ export async function openPictureSheet(opts) {
       provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider.id }, p.label))) : null;
     const moments = (opts.moments || []).length > 1 ? h("div.art-field",
       h("span.label", "Moment"),
-      h("div.art-moments", { role: "radiogroup", "aria-label": "Moment to draw" }, opts.moments.map((m, n) => {
+      // The first few moments, the chosen one always among them; the rest behind "Show all".
+      foldList(opts.moments.map((m, n) => {
         const radio = h("input", { type: "radio", name: "art-moment", checked: m.kind === st.kind && m.target === st.target,
-          on: { change: () => { st.kind = m.kind; st.target = m.target; st.shape = SHAPE_OF[m.kind] || st.shape; write(); } } });
+          on: { change: () => { st.kind = m.kind; st.target = m.target; st.shape = SHAPE_OF[m.kind] || st.shape; momentsOpen = true; write(); } } });
         return h(`label.art-moment${m.kind === st.kind && m.target === st.target ? ".on" : ""}`, radio, h("span", m.label || (n ? "A moment" : "The chapter's main moment")));
-      }))) : null;
+      }), (nodes) => h("div.art-moments", { role: "radiogroup", "aria-label": "Moment to draw" }, nodes),
+      { show: 4, noun: "moments", open: momentsOpen, onToggle: (o) => { momentsOpen = o; },
+        keep: [opts.moments.findIndex((m) => m.kind === st.kind && m.target === st.target)] })) : null;
     clear(body,
       opts.drawnLine ? h("p.art-drawn.subtle", opts.drawnLine) : null,
       moments,

@@ -4,6 +4,7 @@ import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadEr
 import { confirmDialog, cover, partLine } from "./build.js";
 import { openShare, readyMade } from "./community.js";
 import { registerProvider } from "./palette.js";
+import { picturesForm } from "./art.js";
 
 const PHASES = [
   { key: "extract", label: "Reading", icon: "book-open" },
@@ -13,13 +14,16 @@ const PHASES = [
   { key: "portraits", label: "Writing descriptions", icon: "person" },
   { key: "arcs", label: "Writing book arcs", icon: "layers" },
 ];
+// The pictures stage shows only for a run that draws them; an "Add pictures" run (kind "art") has no other stage.
+const ART_PHASE = { key: "art", label: "Drawing pictures", icon: "sparkle" };
+const phasesOf = (job) => (job.kind === "art" ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
 const DROP_COLORS = ["var(--t-person)", "var(--t-group)", "var(--t-concept)", "var(--t-object)", "var(--t-term)",
   "var(--t-place)", "var(--rose)", "var(--text-3)"];
 const statusBadge = (s) => h(`span.badge.${s}`, STATUS_LABEL[s] || s);
 // Provider id → label, fetched once, for the run's chip ("gemini-2.5-flash on Gemini").
 let providerLabels = null;
 const loadProviderLabels = () => (providerLabels ||= api.providers().then((r) => Object.fromEntries(r.providers.map((p) => [p.id, p.label]))).catch(() => ({})));
-export const libraryKey = (job) => "generated--" + job.output_name.replace(/\.json$/, "");
+export const libraryKey = (job) => (job.kind === "art" && job.index ? job.index : "generated--" + String(job.output_name || "").replace(/\.json$/, ""));
 
 // ---- the build form ---------------------------------------------------------------------------
 // A short form on its own page: #/build/<localBookId>?catalog=<catalogKey>&from=<jobId>.
@@ -68,6 +72,7 @@ function configure(target, book, ctx, fromJob = null) {
   const maxWords = Math.max(1, ...book.chapters.map((c) => c.words));
   const catalogKey = ctx.catalog || fromJob?.config.catalog_key || null;
 
+  let pics = null;   // the Pictures choices (below); the estimate follows the chosen sections
   const summary = h("span.sec-summary");
   const optHint = h("span.sum-hint");
   const storySet = new Set(book.chapters.filter((c) => c.story).map((c) => c.n));
@@ -76,7 +81,7 @@ function configure(target, book, ctx, fromJob = null) {
     const row = h("label.chapter-row", { class: picked.has(c.n) ? "" : "off" },
       box, h("span.ch-title", { title: c.title }, h("span.subtle.num", `${String(c.n).padStart(2, "0")}  `), c.title),
       h("span.wordbar", h("i", h("b", { style: { width: `${Math.max(2, (c.words / maxWords) * 100)}%` } })), fmtInt(c.words)));
-    box.addEventListener("change", () => { box.checked ? picked.add(c.n) : picked.delete(c.n); row.classList.toggle("off", !box.checked); update(); });
+    box.addEventListener("change", () => { box.checked ? picked.add(c.n) : picked.delete(c.n); row.classList.toggle("off", !box.checked); update(); pics?.refresh(); });
     return { row, box, c };
   });
   const setAll = (fn) => () => { rows.forEach((r) => { r.box.checked = fn(r.c); r.box.dispatchEvent(new Event("change")); }); };
@@ -303,6 +308,7 @@ function configure(target, book, ctx, fromJob = null) {
       const job = await api.createJob(book.id, {
         ...cfg, chapters: [...picked].sort((a, b) => a - b),
         series_id: cfg.series_id || null, book_key: cfg.book_key || null,
+        ...(pics.config() ? { art: pics.config() } : {}),
         // From the Library: the server fills in the series and builds on earlier books' indexes.
         ...(catalogKey ? { catalog_key: catalogKey } : {}),
       });
@@ -361,6 +367,18 @@ function configure(target, book, ctx, fromJob = null) {
     api.book(catalogKey).then((b) => { if (b?.bookKind?.detected) paintKinds(b.bookKind); }).catch(() => {});
   }
 
+  // Pictures, closed and off by default: drawn after the index is written, as the run's last stage. The estimate asks the
+  // server (which counts from the book's current index when it has one); before a first build it is a rough count.
+  let indexKey = null;
+  if (catalogKey) api.book(catalogKey).then((b) => { indexKey = (b?.versions || []).find((v) => v.isDefault)?.key || null; pics.refresh(); }).catch(() => {});
+  pics = picturesForm({
+    estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", chapters: [...picked].filter((n) => storySet.has(n)).length, ...q }),
+    fallback: (st) => {
+      const n = [...picked].filter((n) => storySet.has(n)).length;
+      return `About ${n} chapter picture${n === 1 ? "" : "s"}${st.level === "all" ? " or more" : ""}${st.portraits ? ", plus portraits" : ""}; the count is set once the index is written.`;
+    },
+  });
+
   const storyCount = storySet.size;
   // The book is a link when its page exists; the page you are on (Build) is plain text.
   const trail = crumbs([{ label: "Library", href: "#/library" },
@@ -405,6 +423,7 @@ function configure(target, book, ctx, fromJob = null) {
           text("cfg-key", "Book key within that series", null, "book_key", "e.g. study-in-scarlet"),
           h("div.field", h("label", { for: "cfg-license" }, "Licence for the index"), license),
           ctxField)),
+      pics.el,
       h("details.sections",
         h("summary", icon("chevron"), summary),
         h("div.sections-body",
@@ -420,6 +439,7 @@ function configure(target, book, ctx, fromJob = null) {
           h("p", "On this computer, Ollama reads the book: free and private, and slow. A cloud model is much faster and costs a little per book, billed to your own account with that provider; book text is sent to it only when you build."),
           h("p", "Part size is how much text the model reads per call. A cloud model reads about a chapter at a time, so events and summaries come from one reading of it; a local model keeps to what its context window allows. \"Read whole chapters\" makes it one call per chapter however long, cutting a chapter over the model's limit at a scene break."),
           h("p", "The timeline gives the Reader a few key moments per chapter; turning it off saves a little time. The fact-check is a second pass over each passage that rejects unsupported claims and moves early ones later; it makes a build about a third slower. Accuracy depends most on it, so a stronger model there keeps more true facts and catches more errors."),
+          h("p", "Pictures are drawn after the index is written. The text model sees the passage each picture comes from, as it did while reading; the image provider sees only the written prompt, never the book text. The run stops drawing at the amount you set and keeps what it drew."),
           h("p", "Front and back matter (contents, acknowledgements, about the author, licences) is unchecked in Sections for you."),
           h("p", "Series id and book key are only needed when this book is part of a series you are indexing by hand. Books built from the Library get their series from it.")))),
     del);
@@ -567,8 +587,10 @@ export function mountStudio(root) {
           h("div.monitor-id", h("h2", job.book_title),
             h("p.run-meta",
               el.badge, el.model = h("span.run-model", job.config.model || "default model"),
-              h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
-              h("span", job.config.verify === false ? "no fact-check" : "fact-checked"))),
+              job.kind === "art" ? h("span", "pictures for an existing index")
+                : [h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
+                  h("span", job.config.verify === false ? "no fact-check" : "fact-checked")],
+              job.config.art ? h("span", "with pictures") : null)),
           el.actions),
         el.error,
         h("div.progress-hero",
@@ -659,19 +681,24 @@ export function mountStudio(root) {
       const cur = m.current;
       const describing = m.status === "running" && m.phase === "portraits" && m.portraits;
       const arcing = m.status === "running" && m.phase === "arcs" && m.arcs;
+      // Drawing pictures: a count and the money spent on pictures, never what they show (that would reveal the book).
+      const drawing = m.status === "running" && m.phase === "art" && m.art;
       clear(el.where,
-        h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
+        job.kind === "art" ? null : h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
+        m.art && (drawing || job.kind === "art" || m.status !== "running") ? h("span", drawing ? "Drawing pictures " : "Pictures ", h("b.num", `${m.art[0]} of ${m.art[1]}`),
+          m.art[2] ? [", ", h("b.num", `$${m.art[2].toFixed(m.art[2] < 1 ? 3 : 2)}`), " on pictures"] : null) : null,
         describing && h("span", "Describing the cast ", h("b.num", `${m.portraits[0]} / ${m.portraits[1]}`), " chapters"),
         arcing && h("span", "Writing book arcs ", h("b.num", `${m.arcs[0]} / ${m.arcs[1]}`), " chapters"),
-        cur && m.status === "running" && !describing && !arcing && h("span", "Reading ", h("b", cur.chapter)),
+        cur && m.status === "running" && !describing && !arcing && !drawing && h("span", "Reading ", h("b", cur.chapter)),
         h("span", "Elapsed ", h("b.num", fmtDuration(elapsed))),
-        m.status === "running" && !describing && !arcing && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
+        m.status === "running" && !describing && !arcing && !drawing && job.kind !== "art" && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
         rate ? h("span", h("b.num", `${Math.round(rate * 60)}`), " words/min") : null,
         m.usage && m.usage.seconds ? h("span", h("b.num", `${(m.usage.output_tokens / m.usage.seconds).toFixed(1)}`), " tokens/s") : null,
         m.usage && m.usage.cost_usd ? h("span", h("b.num", `$${m.usage.cost_usd.toFixed(m.usage.cost_usd < 1 ? 3 : 2)}`), " spent") : null,
         m.usage && m.usage.refusals ? h("span", h("b.num", String(m.usage.refusals)), " passages declined") : null);
-      const at = m.status === "running" ? PHASES.findIndex((x) => x.key === m.phase) : -1;
-      clear(el.phases, PHASES.map((p, i) => {
+      const phases = phasesOf(job);
+      const at = m.status === "running" ? phases.findIndex((x) => x.key === m.phase) : -1;
+      clear(el.phases, phases.map((p, i) => {
         const active = i === at, done = m.status === "done" || (at > 0 && i < at);
         return h(`li.phase${active ? ".active" : done ? ".done" : ""}`, { "aria-current": active ? "step" : null },
           icon(p.icon), p.label, done ? h("span.sr-only", " (done)") : null);
@@ -732,6 +759,7 @@ export function mountStudio(root) {
         case "phase": m.phase = e.phase; break;
         case "portraits": m.phase = "portraits"; m.portraits = [e.done, e.total]; break;
         case "arcs": m.phase = "arcs"; m.arcs = [e.done, e.total]; break;
+        case "art": m.phase = "art"; m.art = [Number(e.done) || 0, Number(e.total) || 0, Number(e.cost) || 0]; break;
         case "chunk_done":
           m.wordsDone += e.words; m.runWords += e.words; m.runSeconds += e.seconds; m.chunkTimes.push(e.seconds);
           m.stats = e.stats; m.lastDelta = e.delta || {}; m.usage = e.usage;

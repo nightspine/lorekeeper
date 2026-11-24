@@ -231,6 +231,9 @@ export const STATUS = {
  *  Stopped or failed: how many parts were finished. */
 export function partLine(pr, status) {
   pr = pr || {};
+  // Drawing pictures (the stage after the index, or an "Add pictures" run): "12 of 52 pictures".
+  const art = Array.isArray(pr.art) ? pr.art : null;
+  if (art && (pr.last === "art" || pr.phase === "art" || !(Number(pr.chunks) > 0))) return `${Number(art[0]) || 0} of ${Number(art[1]) || 0} pictures`;
   const n = Number(pr.chunks);
   if (!Number.isFinite(n) || n <= 0) return "";
   if (status === "done") return `${n} of ${n} parts`;
