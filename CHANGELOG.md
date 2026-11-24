@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/nightspine/lorekeeper/compare/v0.13.0...v0.14.0) (2026-11-24)
+
+
+### Features
+
+* books finished in Book Orbit open at the end with the whole index visible ([#93](https://github.com/nightspine/lorekeeper/issues/93)) ([17fce1f](https://github.com/nightspine/lorekeeper/commit/17fce1f288d71c54b88e1c238c8f385823e389bc))
+* image providers (Gemini and OpenAI) with reference pictures and a draw command ([#91](https://github.com/nightspine/lorekeeper/issues/91)) ([34c35a6](https://github.com/nightspine/lorekeeper/commit/34c35a60ded499a83d9d70480584940f2dbdc36d))
+
 ## [0.13.0](https://github.com/nightspine/lorekeeper/compare/v0.12.2...v0.13.0) (2026-11-21)
 
 
