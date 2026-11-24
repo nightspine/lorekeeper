@@ -985,11 +985,32 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                   for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
         if p is None:
             return {"synced": False, "reason": "no-edition"}
+        cached = next((b for b in catalog.bookorbit_books() if b["id"] == owner["bookorbitId"]), None) or {}
+        status, finished_at = cached.get("readStatus"), cached.get("finishedAt")
+        try:
+            live = bo_client().read_status(owner["bookorbitId"])
+            if live["status"] is not None:      # an older server has no status: keep what the sync saw
+                status, finished_at = live["status"], live["finishedAt"]
+        except bookorbit.BookOrbitError:
+            pass                                 # fall back to the cached status
+        items, error = [], None
         try:
             items = bo_client().progress(owner["bookorbitId"])
         except bookorbit.BookOrbitError as e:
-            return {"synced": False, "reason": "unreachable", "detail": str(e)}
-        file_id = next((b.get("epubFileId") for b in catalog.bookorbit_books() if b["id"] == owner["bookorbitId"]), None)
+            error = e
+        newest = max((i["updatedAt"] for i in items if i.get("updatedAt")), default=None)
+        if bookorbit.is_finished(status):
+            try:
+                blocks = parsed(p).blocks
+            except Exception as e:
+                return {"synced": False, "reason": "no-edition", "detail": str(e)}
+            if not blocks:
+                return {"synced": False, "reason": "no-edition"}
+            return {"synced": True, "source": "bookorbit", "finished": True, "percentage": 100, "p": 1.0,
+                    "seq": len(blocks) - 1, "basis": "finished", "updatedAt": finished_at or newest}
+        if error is not None:
+            return {"synced": False, "reason": "unreachable", "detail": str(error)}
+        file_id = cached.get("epubFileId")
         entry = next((i for i in items if file_id and str(i.get("fileId")) == str(file_id)), None) \
             or max((i for i in items if i.get("updatedAt")), key=lambda i: i["updatedAt"], default=None)
         if entry is None:
@@ -1000,7 +1021,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return {"synced": False, "reason": "no-edition", "detail": str(e)}
         if got["seq"] is None:
             return {"synced": False, "reason": "no-progress"}
-        return {"synced": True, "source": "bookorbit", "updatedAt": entry.get("updatedAt"),
+        return {"synced": True, "source": "bookorbit", "finished": False, "updatedAt": entry.get("updatedAt"),
                 "percentage": entry.get("percentage"), **got}
 
     # ---- mentions of an entry, per chapter, gated at the position ----------------------------------

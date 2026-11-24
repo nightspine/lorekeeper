@@ -169,7 +169,9 @@ class Catalog:
                                    if b.get("hasCover")
                                    else (f"/api/catalog/cover/up:{local}" if meta and meta.get("cover") else None),
                                    can_build=bool(b.get("epubFileId")) or bool(meta),
-                                   extra={"bookorbitId": b["id"], "language": b.get("language")}))
+                                   extra={"bookorbitId": b["id"], "language": b.get("language"),
+                                          "finished": b.get("readStatus") == "read",
+                                          "finishedAt": b.get("finishedAt") if b.get("readStatus") == "read" else None}))
         for bid, meta in uploads.items():
             if bid in linked:
                 continue   # a downloaded copy of a Book Orbit book, already listed above
