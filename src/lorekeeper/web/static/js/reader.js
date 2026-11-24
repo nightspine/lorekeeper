@@ -942,6 +942,11 @@ export function mountReader(root) {
       if ([...s.art.lightbox.ids].some((x) => !shown.has(x))) { s.art.lightbox.close(); s.art.lightbox = null; }
     }
     if (s.art.sheet && !sheetVisible(s.art.sheet)) { const o = s.art.sheet.opened; s.art.sheet = null; o.then((sh) => sh?.close(true)); }
+    else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
+      // The moments are still revealed but the prompt or the World line was written from further on: drop both and write
+      // the prompt again at the position now (the server refuses it if the picture itself is held past here).
+      s.art.sheet.sh.reposition(visibleWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
+    }
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1690,9 +1695,20 @@ export function mountReader(root) {
     }
     s.art.sets = sets;
     s.art.slug = want;
+    s.art.fresh = null;
     decide();
     s.art.memo = null; s.art.rev++;
     repaintPictures();
+    // A chapter's screening (`screened[title] = {key, events}`) counts only while it still matches the chapter's events; the
+    // key is the server's, so ask it which chapters' screenings are fresh now (the estimate reports that, with no model call).
+    const own = sets.get(bkKey(s.series ? s.book : null));
+    if (own && want && Object.keys(own.screened || {}).length) {
+      api.artEstimate({ key: s.key, style: want }).then((r) => {
+        if (gone() || !Array.isArray(r?.chapters)) return;
+        s.art.fresh = new Set(r.chapters.filter((c) => c && c.screened === true && typeof c.title === "string").map((c) => c.title));
+        repaintPictures();
+      }).catch(() => {});
+    }
   }
   /** The finished set or the style changed: fetch what is needed and repaint. */
   function refreshPictures({ forget = null } = {}) {
@@ -1824,9 +1840,13 @@ export function mountReader(root) {
     if (!s.art.canDraw || s.edit) return null;
     const key = artChapterKey(r);
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
-    const screened = Array.isArray(set?.screened?.[key]) ? set.screened[key] : null;
+    // The screened moments ({key, events: [ids]}), only when the server reports that screening fresh for this chapter now;
+    // otherwise every visible non-minor event is offered and no "N moments" line is shown.
+    const entry = set?.screened?.[key];
+    const screened = s.art.fresh?.has(key) && entry && Array.isArray(entry.events) ? entry.events.filter((x) => typeof x === "string") : null;
     const visibleEvs = new Map(r.events.map((ev) => [ev.id, ev]));
-    const moments = screened ? screened.filter((m) => m && visibleEvs.has(m.event)) : r.events.filter((ev) => ev.kind !== "minor").map((ev) => ({ event: ev.id }));
+    const moments = screened ? screened.filter((id) => visibleEvs.has(id)).map((id) => ({ event: id }))
+      : r.events.filter((ev) => ev.kind !== "minor").map((ev) => ({ event: ev.id }));
     const drawnEv = new Set(r.events.filter((ev) => eventPicture(ev)).map((ev) => ev.id));
     const choices = [];
     if (r.group && !r.now) choices.push({ kind: "plate", target: key, label: "The chapter's main moment" });
@@ -1859,8 +1879,9 @@ export function mountReader(root) {
   function drawPicture({ kind, target, title, moments = null, drawnLine = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const world = visibleWorld(set);
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, p: s.map.frontier(s.p),
-      finished: s.series ? finishedSet() || [] : [],
+    // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine,
+      position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       style: s.art.slug || null, styles: s.art.styles, world, canEditWorld: Boolean(world?.own),
       // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
       srcFor: (rec, slug) => (set?.manifest?.textHash ? artUrl(rec, set.manifest.textHash, slug) : null),
@@ -1882,6 +1903,15 @@ export function mountReader(root) {
   function sheetVisible(entry) {
     const items = entry.sh?.listed ? entry.sh.listed() : [{ kind: entry.kind, target: entry.target }];
     return items.every(sheetItemVisible);
+  }
+  /** Every anchor the sheet's text was written up to (the prompt's, the World line's) is reached in the book being read. */
+  function sheetTextVisible(sh) {
+    const anchors = sh.anchors ? sh.anchors() : [];
+    if (!anchors.length) return true;
+    const ords = ordsOf(s.doc);
+    const front = s.map.frontier(s.p);
+    const pos = front == null ? -1 : ords.get(front) ?? -1;
+    return anchors.every((a) => ords.has(a) && ords.get(a) <= pos);
   }
   /** Is the item a picture sheet was opened for still revealed? (A Book Orbit sync may move the position back.) */
   function sheetItemVisible({ kind, target }) {

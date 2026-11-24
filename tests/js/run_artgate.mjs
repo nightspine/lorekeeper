@@ -68,7 +68,7 @@ const at = (id) => book2.get(id);
 test("world note of this book: shown once its anchor is reached", () => {
   const w = { text: "Gaslit towns.", from: "ch2.para07" };
   assert.equal(visibleWorld(w, { ords: book2, position: at("ch1.para20") }), null);
-  assert.deepEqual(visibleWorld(w, { ords: book2, position: at("ch2.para07") }), { text: "Gaslit towns.", own: true });
+  assert.deepEqual(visibleWorld(w, { ords: book2, position: at("ch2.para07") }), { text: "Gaslit towns.", own: true, from: "ch2.para07" });
 });
 test("an appended note waits for the earlier books it carries", () => {
   const w = { text: "Book one's world. And a new sea.", from: "ch1.para20", base: "Book one's world.", inherits: ["b1"] };

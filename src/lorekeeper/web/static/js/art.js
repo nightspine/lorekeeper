@@ -319,6 +319,8 @@ export async function openPictureSheet(opts) {
   // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
   const styleText = () => (st.style === "custom" ? st.custom.trim() : st.style);
   const folder = () => (st.style === "custom" ? st.slug : st.style);
+  // Where the reader is now (asked at every call, never the position the sheet was opened at), and their finished books.
+  const here = () => { const at = opts.position ? opts.position() : { p: opts.p, finished: opts.finished }; return { p: at.p ?? null, finished: at.finished || [] }; };
   let ctrl = null, gen = 0;   // the request in flight and its generation: a late reply for a moment left behind is dropped
   const abort = () => { gen++; ctrl?.abort(); ctrl = null; st.busy = false; };
 
@@ -339,6 +341,16 @@ export async function openPictureSheet(opts) {
     onClose: () => { st.closed = true; abort(); } });
   sh.current = () => ({ kind: st.kind, target: st.target });
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
+  /** The anchors the text on screen was written up to: the prompt's (the picture's own, any world-note hold included) and
+   *  the world note's own anchor. The Reader checks them against the position as it checks the moments. */
+  sh.anchors = () => [st.anchor, opts.world?.from].filter((a) => typeof a === "string");
+  /** The position moved back before that text: drop the prompt and the World line and write a new prompt here. */
+  sh.reposition = (world) => {
+    opts.world = world || null;
+    st.prompt = st.written = "";
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null;
+    write();
+  };
 
   const textarea = h("textarea.input.art-prompt", { rows: "7", "aria-label": "Prompt", spellcheck: "true" });
   textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); });
@@ -354,10 +366,11 @@ export async function openPictureSheet(opts) {
     const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, shape: st.shape };
     try {
       const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
-        quality: asked.quality, provider: asked.provider, p: opts.p ?? null, finished: opts.finished || [] }, ctrl.signal);
+        quality: asked.quality, provider: asked.provider, ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
       st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
       st.price = typeof r.price === "number" ? r.price : null;
+      st.anchor = typeof r.anchor === "string" ? r.anchor : null;
       st.asked = asked;
       st.promptStyle = asked.style;
       st.promptFor = { kind: st.kind, target: st.target, style: st.style, custom: st.custom };
@@ -489,7 +502,7 @@ export async function openPictureSheet(opts) {
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, p: opts.p ?? null, finished: opts.finished || [] }, ctrl.signal);
+        prompt: st.prompt, provider: st.provider.id, ...here() }, ctrl.signal);
       const rec = r?.record || r;
       const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);

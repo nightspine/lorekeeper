@@ -52,5 +52,6 @@ export function visibleWorld(world, { ords, position, book = null, finished = []
   const carries = world.inherited === true || typeof world.base === "string";
   if (unfinishedSources(world.inherits, { book, finished, earlier, fallback: carries }).length) return null;
   if (world.inherited === true) return { text: world.text, own: false };
-  return visibleAt(world.from, ords || new Map(), position, false) ? { text: world.text, own: true } : null;
+  // `from` goes with a note of this book: text shown from it is dropped if the position moves back before it.
+  return visibleAt(world.from, ords || new Map(), position, false) ? { text: world.text, own: true, from: world.from } : null;
 }

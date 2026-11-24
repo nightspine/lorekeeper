@@ -667,10 +667,13 @@ export function mountStudio(root) {
         a.push(h("a.btn.quiet", { href: `/api/jobs/${jobId}/download`, download: "" }, icon("download"), "Download index"));
       }
       if (["done", "stopped", "interrupted", "failed"].includes(m.status)) {
-        a.push(h("a.btn.quiet", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
+        // A pictures run drew for an index that was already there: re-running it is "Add pictures" on the book page, not a build.
+        if (!isArtJob(job)) a.push(h("a.btn.quiet", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
         a.push(h("button.btn.quiet.danger", { type: "button", on: { click: async () => {
           if (!await confirmDialog({ title: "Delete this run?",
-            message: "Its generated index is deleted too. This can't be undone.", confirmLabel: "Delete run" })) return;
+            // The server deletes a build's index with its run, but never the index a pictures run drew for, nor its pictures.
+            message: isArtJob(job) ? "Only this run's record and log go. The index and the pictures it drew stay; remove pictures in Settings, Pictures."
+              : "Its generated index is deleted too. This can't be undone.", confirmLabel: "Delete run" })) return;
           try { await api.deleteJob(jobId); toast("Run deleted"); location.hash = "#/studio"; } catch (e) { toast(e.message, "error"); }
         } } }, icon("trash"), "Delete run"));
       }
