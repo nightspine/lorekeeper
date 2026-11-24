@@ -80,7 +80,8 @@ uv run lorekeeper validate examples/sherlock-holmes/*-*.json --series examples/s
 uv run lorekeeper view examples/sherlock-holmes/study-in-scarlet.json \
   --series examples/sherlock-holmes/series.json --book study-in-scarlet --anchor ch2.para21
 
-# Pictures: a chapter picture and portraits for the first chapters, then one picture from a prompt (GEMINI_API_KEY).
+# Pictures: chapter pictures for table of contents entries 4-6 (Chapters I to III) and portraits up to their end,
+# then one picture from a prompt (GEMINI_API_KEY).
 uv run --extra claude lorekeeper illustrate examples/dracula/dracula.json --epub corpus/pg345/pg345.epub \
   --style ink --level main --provider gemini --quality draft --chapters 4-6 --cap 1
 uv run lorekeeper draw "A ruined castle on a crag at dusk, one lit window." -o castle --provider gemini
