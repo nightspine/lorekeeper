@@ -1219,7 +1219,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     m["world"] = a.get("before")
                     arts.save(h, slug_, m)
 
-    def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True):
+    def art_finished(ctx: dict, body: dict) -> list[str] | None:
+        """The reader's finished books (`finished`: series book keys, each an earlier book of this one); None = the Reader's
+        default, every earlier book."""
+        fin = body.get("finished")
+        if fin is None:
+            return None
+        if not isinstance(fin, list) or not all(isinstance(k, str) for k in fin):
+            raise ArtRefusal(422, "bad-position", "finished must be a list of book keys.")
+        earlier = [(d.get("series") or {}).get("book") for d in art_prior(ctx)]
+        if any(k not in earlier for k in fin):
+            raise ArtRefusal(422, "bad-position", "Only earlier books of this series can be finished.")
+        return sorted(set(fin))
+
+    def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
+                    finished: list[str] | None = None):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
@@ -1236,13 +1250,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         except ValueError as e:
             raise ArtRefusal(422, "bad-model", str(e)) from e
         slug_, style = arts.resolve(ctx["hash"], style)
+        takes = "finished" in inspect.signature(artmod.Illustrator).parameters
         books_ = []
         for d in art_prior(ctx):
             ph = artstore.text_hash(d)
-            if artstore.HASH.fullmatch(ph):
+            # An earlier book the reader has not finished is not read at all, unless the pipeline gates by `finished` itself.
+            if artstore.HASH.fullmatch(ph) and (takes or finished is None or (d.get("series") or {}).get("book") in finished):
                 books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
         books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
-        return artmod.Illustrator(books_, text_model, image, style, quality=quality, log=lambda m: None, pause=0), image, slug_
+        kw = {"finished": set(finished)} if takes and finished is not None else {}
+        return artmod.Illustrator(books_, text_model, image, style, quality=quality, log=lambda m: None, pause=0, **kw), \
+            image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1505,9 +1523,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             style = art_style(body.get("style"))
             art_busy(ctx["hash"])
             quality = body.get("quality") or "standard"
+            fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), finished=fin)
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
                 job = art_job(*args)                     # not visible even before a world note holds it: no call at all
@@ -1532,11 +1551,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
                 except ValueError as e:
                     raise ArtRefusal(422, "dropped", str(e)) from e
-            prov, name = getattr(image, "provider", None), getattr(image, "name", None)
+            # The price of the chosen provider and quality, also before its key is added.
+            prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+            name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
             out = {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
                    "target": job.target, "references": ref_json(il, pr.references, slug_), "provider": prov, "model": name,
-                   "price": llm.image_price(prov, name, quality, pr.shape) if prov else None}
-            remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor), pr)
+                   "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+                   "inherits": list(getattr(pr, "inherits", None) or []), "finished": fin}
+            remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))), pr)
             return out
         return await work()
 
@@ -1553,15 +1575,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not text_ or len(text_) > 4000:
                 raise ArtRefusal(422, "bad-prompt", "Give the prompt to draw, at most 4,000 characters.")
             art_busy(ctx["hash"])
+            fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"))
+                                               body.get("model"), finished=fin)
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
                 job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"))
-                pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor))
+                pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))))
                 if pr is None:
                     try:
                         pr = il.make_prompt(job)   # for its anchor and references; the person's text is drawn

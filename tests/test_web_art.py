@@ -30,7 +30,9 @@ class GeminiFake(Image):
 
 @pytest.fixture(autouse=True)
 def short_world(monkeypatch):
-    monkeypatch.setattr(art, "WORLD_CHAPTERS", 1)    # the world note ends with chapter one: nothing is held back
+    # The world note ends with chapter one, so nothing is held back (the name changed in the pipeline's round 2).
+    monkeypatch.setattr(art, "WORLD_CHAPTERS", 1, raising=False)
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 1, raising=False)
     monkeypatch.setattr(art, "MIN_GAP", 2)
     for var in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(var, raising=False)
@@ -665,3 +667,54 @@ def test_a_pictures_job_names_its_index(env):
     done = run_set(env, portraits=False)
     assert done["index"] == KEY == done["config"]["index_key"]
     assert all("index" not in j or j["kind"] == "art" for j in env.c.get("/api/jobs").json())
+
+
+@pytest.fixture
+def series_env(tmp_path, monkeypatch):
+    """Millbrook as book two of a series whose book one is a slightly longer telling (its own edition and entity ids)."""
+    epubs, idx = tmp_path / "epubs", tmp_path / "idx"
+    epubs.mkdir()
+    idx.mkdir()
+    one = make_epub(epubs / "one.epub", title="Millbrook One", ch1=CH1, ch2=CH2 + ["The mill stood quiet under the winter moon that night."])
+    two = make_epub(epubs / "two.epub", title="Millbrook", ch1=CH1, ch2=CH2)
+    # Its own ids throughout, as a real series has (shared anchor ids across books are the pipeline's round 3, item 1).
+    d1 = json.loads(re.sub(r'"(mira|oren|mill|stranger|gabriel|bk\.|[aer]\d)', r'"b1\1', json.dumps(mill_index(one))))
+    d1.update({"id": "one", "series": {"id": "mill", "book": "one"}})
+    d2 = mill_index(two)
+    d2["series"] = {"id": "mill", "book": "two"}
+    (idx / "one.json").write_text(json.dumps(d1))
+    (idx / "mill.json").write_text(json.dumps(d2))
+    (idx / "mill.series.json").write_text(json.dumps({
+        "lorekeeper": "0.1", "kind": "series", "id": "mill", "title": "Mill",
+        "books": [{"key": "one", "title": "Millbrook One"}, {"key": "two", "title": "Millbrook"}],
+        "orders": {"pub": ["one", "two"]}, "defaultOrder": "pub"}))
+    t = Text()
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(llm, "make_image", lambda *a, **kw: GeminiFake())
+    seen = []
+
+    class Spy(art.Illustrator):
+        def __init__(self, books, *a, **kw):
+            seen.append({"books": [b.doc["id"] for b in books], "finished": kw.get("finished")})
+            super().__init__(books, *a, **kw)
+    monkeypatch.setattr(web_app.artmod, "Illustrator", Spy)
+    app = web_app.create_app(tmp_path / "data", [("examples", idx)], [epubs], ollama_url="http://127.0.0.1:9",
+                             allowed_hosts=("testserver",), auth=False)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        yield c, seen
+
+
+def test_the_prompt_route_reads_only_the_books_the_reader_finished(series_env):
+    c, seen = series_env
+    ask = {"kind": "event", "target": "e5", "style": "ink", "provider": "openai", "quality": "draft"}
+    for fin, read in (([], False), (["one"], True), (None, True)):
+        r = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, **({"finished": fin} if fin is not None else {})})
+        assert r.status_code == 200, r.text
+        got, s = r.json(), seen[-1]
+        assert ("one" in s["books"] and s["finished"] in (None, {"one"})) if read else \
+            ("one" not in s["books"] or s["finished"] == set())
+        assert got["slug"] == "ink" and isinstance(got["inherits"], list)
+        assert got["price"] == llm.image_price("openai", llm.IMAGE_PROVIDERS["openai"]["default"], "draft", got["shape"])
+    for bad in (["two"], ["nope"], "one"):
+        r = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "finished": bad})
+        assert r.status_code == 422 and r.json()["code"] == "bad-position", bad
