@@ -24,6 +24,7 @@ class FakeBookOrbit(BaseHTTPRequestHandler):
     served = 0             # bytes of the EPUB actually sent
     progress = None        # reading-progress items served for book 11 (None: 404)
     detail = None          # the `readStatus` of GET /books/11: dict, str, None, or "missing" to leave the field out; "down" = 500
+    row_finished = "2026-11-01T10:00:00Z"
     row_status = None      # `readStatus` on the /books/query row of book 11 (a plain string), when set
 
     def _json(self, code, obj):
@@ -103,7 +104,7 @@ class FakeBookOrbit(BaseHTTPRequestHandler):
                  "seriesName": "Lights", "seriesIndex": "2", "files": [{"id": "f1", "format": "epub"}],
                  "hasCover": True, "coverVersion": "ebook:2026-10-01T18:59:29.175Z:2026-10-14T00:19:56.547Z",
                  "isbn13": "9781250245380",
-                 **({"readStatus": FakeBookOrbit.row_status, "readFinishedAt": "2026-11-01T10:00:00Z"}
+                 **({"readStatus": FakeBookOrbit.row_status, "readFinishedAt": FakeBookOrbit.row_finished}
                     if FakeBookOrbit.row_status else {})},
                 {"id": 10, "libraryId": 1, "title": "The First Light", "authors": ["A. Writer"], "seriesId": 7,
                  "seriesName": "Lights", "seriesIndex": "1", "files": [{"id": "f0", "format": "epub"}], "hasCover": False},
@@ -123,6 +124,7 @@ class FakeBookOrbit(BaseHTTPRequestHandler):
 def bo_server(tmp_path):
     FakeBookOrbit.epub = make_epub(tmp_path / "remote.epub").read_bytes()
     FakeBookOrbit.detail, FakeBookOrbit.row_status, FakeBookOrbit.progress = "missing", None, None
+    FakeBookOrbit.row_finished = "2026-11-01T10:00:00Z"
     FakeBookOrbit.refresh, FakeBookOrbit.log, FakeBookOrbit.ranges, FakeBookOrbit.served = "a" * 64, [], True, 0
     srv = ThreadingHTTPServer(("127.0.0.1", 0), FakeBookOrbit)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -488,16 +490,16 @@ def test_position_null_status_clears_the_cache_but_a_missing_field_keeps_it(clie
     key = _indexed_orbit_book(client, bo_server, tmp_path)
     url = f"/api/library/{key}/position"
     FakeBookOrbit.progress = [{"fileId": "f1", "percentage": 40, "updatedAt": "2026-10-21T09:30:00Z"}]
+    FakeBookOrbit.detail = "missing"             # older server: the cached read stays
+    assert client.get(url).json()["finished"] is True
     FakeBookOrbit.detail = None                  # newer server, no status now: not finished
     r = client.get(url).json()
     assert r["finished"] is False and r["percentage"] == 40
-    FakeBookOrbit.detail = "missing"             # older server: the cached read stays
-    assert client.get(url).json()["finished"] is True
 
 
 def test_position_unreachable_server_skips_the_second_call(client, bo_server, tmp_path, monkeypatch):
     from lorekeeper.web import bookorbit as bo
-    FakeBookOrbit.row_status = "read"
+    FakeBookOrbit.row_status, FakeBookOrbit.row_finished = "read", None    # no date: progress would be asked
     key = _indexed_orbit_book(client, bo_server, tmp_path)
     url = f"/api/library/{key}/position"
     calls = []
@@ -542,3 +544,59 @@ def test_finished_status_never_writes(client, bo_server, tmp_path):
     FakeBookOrbit.detail, FakeBookOrbit.progress = {"status": "read"}, []
     client.get(f"/api/library/{key}/position")
     assert [m for m, *_ in FakeBookOrbit.log if m != "GET"] == []
+
+
+def test_refresh_failing_offline_is_unreachable_and_asked_once(monkeypatch):
+    import urllib.error
+    from lorekeeper.web import bookorbit as bo
+    seen = []
+
+    def offline(method, url, *a, **k):
+        seen.append(url)
+        raise urllib.error.URLError("down")
+    monkeypatch.setattr(bo, "_request", offline)
+    client = bo.BookOrbit(bo.Session("https://x", "r", None, "u"), lambda s: None)   # no access token: must refresh
+    with pytest.raises(bo.BookOrbitUnreachable):
+        client.read_status(11)
+    assert len(seen) == 1 and seen[0].endswith("/auth/refresh")
+
+
+def test_unreadable_answers_are_book_orbit_errors(monkeypatch):
+    import http.client
+    from lorekeeper.web import bookorbit as bo
+    client = bo.BookOrbit(bo.Session("https://x", "r", None, "u"), lambda s: None)
+    client._access, client._access_until = "t", 1e12
+    for exc in (json.JSONDecodeError("bad", "x", 0), http.client.IncompleteRead(b"ab"), UnicodeDecodeError("utf-8", b"", 0, 1, "x")):
+        def boom(*a, _e=exc, **k):
+            raise _e
+        monkeypatch.setattr(bo, "_request", boom)
+        with pytest.raises(bo.BookOrbitError) as got:
+            client.read_status(11)
+        assert not isinstance(got.value, bo.BookOrbitUnreachable)
+
+
+def test_position_keeps_the_last_live_status_when_a_call_fails(client, bo_server, tmp_path):
+    key = _indexed_orbit_book(client, bo_server, tmp_path)      # the sync cache has no status
+    url = f"/api/library/{key}/position"
+    FakeBookOrbit.progress = [{"fileId": "f1", "percentage": 40, "updatedAt": "2026-10-21T09:30:00Z"}]
+    FakeBookOrbit.detail = {"status": "read", "finishedAt": "2026-11-01T10:00:00Z"}
+    assert client.get(url).json()["finished"] is True
+    FakeBookOrbit.detail = "down"                                # a 500 must not bounce the Reader
+    assert client.get(url).json()["finished"] is True
+    FakeBookOrbit.detail = {"status": "reading"}                 # a live answer replaces it
+    assert client.get(url).json()["finished"] is False
+    FakeBookOrbit.detail = "down"
+    assert client.get(url).json()["finished"] is False
+    client.delete("/api/sources/bookorbit")                      # disconnecting forgets it
+
+
+def test_finished_with_a_date_skips_the_progress_call(client, bo_server, tmp_path):
+    key = _indexed_orbit_book(client, bo_server, tmp_path)
+    FakeBookOrbit.detail, FakeBookOrbit.progress = {"status": "read", "finishedAt": "2026-11-01T10:00:00Z"}, []
+    FakeBookOrbit.log.clear()
+    r = client.get(f"/api/library/{key}/position").json()
+    assert r["finished"] is True and not any("progress" in e[1] for e in FakeBookOrbit.log)
+    FakeBookOrbit.detail = {"status": "read"}                    # no date: progress is asked for the time
+    FakeBookOrbit.log.clear()
+    client.get(f"/api/library/{key}/position")
+    assert any("progress" in e[1] for e in FakeBookOrbit.log)
