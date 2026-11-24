@@ -238,6 +238,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     # ---- Book Orbit connection (session = rotating refresh token, kept with the other secrets)
     bo: dict = {"client": None}
+    bo_live: dict[str, dict] = {}    # book id → last status Book Orbit itself told us; cleared on (dis)connect
 
     def save_session(sess: bookorbit.Session) -> None:
         secrets.set("bookorbit", json.dumps(sess.__dict__))
@@ -746,6 +747,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def bookorbit_connect(request: Request):
         body = await request.json()
         try:
+            bo_live.clear()
             bo["client"] = bookorbit.BookOrbit.sign_in(body.get("url", ""), str(body.get("username", "")).strip(),
                                                        str(body.get("password", "")), save_session)
         except bookorbit.BookOrbitError as ex:
@@ -774,6 +776,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             except HTTPException:
                 pass
         bo["client"] = None
+        bo_live.clear()
         secrets.delete("bookorbit")
         catalog.clear_bookorbit()
         catalog.set_bookorbit_libraries(None)
@@ -973,6 +976,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.get("/api/library/{key}/position")
     def library_position(key: str):
+        """Where the person is in a Book Orbit book. With `finished: true` the whole book counts as read:
+        `p` is 1 and `seq` (the last block) is informational."""
         item = library.get(key)
         if item is None or item["doc"].get("kind") != "index":
             raise HTTPException(404, "no such index")
@@ -986,17 +991,22 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if p is None:
             return {"synced": False, "reason": "no-edition"}
         cached = next((b for b in catalog.bookorbit_books() if b["id"] == owner["bookorbitId"]), None) or {}
-        status, finished_at = cached.get("readStatus"), cached.get("finishedAt")
+        bid = owner["bookorbitId"]
+        # the last live answer beats the sync cache, so a failing call can't bounce the Reader
+        last = bo_live.get(bid) or {"status": cached.get("readStatus"), "finishedAt": cached.get("finishedAt")}
+        status, finished_at = last["status"], last["finishedAt"]
         items, error, down = [], None, False
         try:
             live = bo_client().read_status(owner["bookorbitId"])
-            if live["known"]:                    # null means no status; only a missing field keeps the cache
+            if live["known"]:                    # null means no status; only a missing field keeps the fallback
                 status, finished_at = live["status"], live["finishedAt"]
+                bo_live[bid] = {"status": status, "finishedAt": finished_at}
         except bookorbit.BookOrbitUnreachable as e:
             down, error = True, e                # no second wait for the progress call
         except bookorbit.BookOrbitError:
             pass                                 # fall back to the cached status
-        if not down:
+        done = bookorbit.is_finished(status) and bool(finished_at)   # progress could add nothing
+        if not down and not done:
             try:
                 items = bo_client().progress(owner["bookorbitId"])
             except bookorbit.BookOrbitError as e:
@@ -1010,7 +1020,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not blocks:
                 return {"synced": False, "reason": "no-edition"}
             return {"synced": True, "source": "bookorbit", "finished": True, "percentage": 100, "p": 1.0,
-                    "seq": len(blocks) - 1, "basis": "finished", "updatedAt": finished_at or newest}
+                    "seq": blocks[-1].seq, "basis": "finished", "updatedAt": finished_at or newest}
         if error is not None:
             return {"synced": False, "reason": "unreachable", "detail": str(error)}
         file_id = cached.get("epubFileId")

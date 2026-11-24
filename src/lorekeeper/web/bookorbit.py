@@ -7,6 +7,7 @@ password is never stored. Access tokens (15 minutes) live in memory and are refr
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import re
@@ -146,7 +147,9 @@ class BookOrbit:
                     raise BookOrbitError("Your Book Orbit session has expired. Sign in again in Settings.") from e
                 raise BookOrbitError(f"Book Orbit refresh failed: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+            except (ValueError, http.client.HTTPException) as e:
+                raise BookOrbitError("Book Orbit sent an answer Lorekeeper couldn't read.") from e
             self._access, self._access_until = r["accessToken"], time.time() + 13 * 60
             if r.get("refreshToken"):   # rotates on every refresh: persist the new one
                 self.session.refresh_token = r["refreshToken"]
@@ -175,6 +178,8 @@ class BookOrbit:
                 raise BookOrbitError(f"Book Orbit error {e.code}: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
                 raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+            except (ValueError, http.client.HTTPException) as e:   # not JSON, or cut off mid-answer
+                raise BookOrbitError("Book Orbit sent an answer Lorekeeper couldn't read.") from e
         raise BookOrbitError("Book Orbit rejected the session.")
 
     # ---- data ------------------------------------------------------------------------------
@@ -220,7 +225,7 @@ class BookOrbit:
                                          "download permission).") from e
                 raise BookOrbitError(f"Book Orbit error {e.code}: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
         raise BookOrbitError("Book Orbit rejected the session.")
 
     def download_text_epub(self, file_id) -> bytes:
