@@ -90,7 +90,8 @@ class Identity:
 
     def _busy(self, items: list[dict]) -> bool:
         paths = {str(it["path"]) for it in items}
-        return any(j.status in ("queued", "running", "stopping") and j.output in paths for j in self.jobs.jobs.values())
+        return any(j.status in ("queued", "running", "stopping") and j.output in paths and getattr(j, "kind", "index") != "art"
+                   for j in self.jobs.jobs.values())   # a pictures run never writes the index
 
     # ---- queries -------------------------------------------------------------------------------
 
@@ -427,6 +428,30 @@ class Identity:
             tmp.replace(p)
         return entry
 
+    def snapshot(self, key: str, paths: list[Path], meta: dict) -> dict:
+        """Journal a change to files that are not index documents (an art set's manifest and pictures): copy them for
+        undo and return the entry; the caller then makes the change, or calls `discard` when it fails. `undo` restores
+        them like any other entry, so pictures share the one undo history of the book's group."""
+        gid, _ = self.group(key)
+        entry = {"id": uuid.uuid4().hex[:12], "group": gid, "at": time.time(), **meta, "files": [str(p) for p in paths]}
+        snap = self.dir / entry["id"]
+        snap.mkdir(parents=True, exist_ok=True)
+        if len({p.name for p in paths}) != len(paths):
+            raise ValueError("two files with one name")
+        for p in paths:
+            shutil.copy2(p, snap / p.name)
+        (snap / "entry.json").write_text(json.dumps(entry, indent=2))
+        return entry
+
+    def discard(self, entry_id: str) -> None:
+        shutil.rmtree(self.dir / entry_id, ignore_errors=True)
+
+    def latest(self, key: str) -> dict | None:
+        """The journal entry `undo` would revert for this key's group."""
+        gid, _ = self.group(key)
+        journal = self._journal(gid)
+        return journal[-1] if journal else None
+
     def undo(self, key: str, merge_id: str) -> dict:
         with self._lock:
             gid, items = self.group(key)
@@ -443,7 +468,8 @@ class Identity:
                 if state.exists():
                     shutil.copy2(state, p.with_name(p.name + ".state"))
             shutil.rmtree(snap)
-            return {"undone": merge_id, "kind": journal[-1].get("kind", "merge"), "what": journal[-1].get("what")}
+            return {"undone": merge_id, "kind": journal[-1].get("kind", "merge"), "what": journal[-1].get("what"),
+                    **({"art": journal[-1]["art"]} if journal[-1].get("art") else {})}
 
     def _journal(self, gid: str) -> list[dict]:
         if not self.dir.is_dir():
