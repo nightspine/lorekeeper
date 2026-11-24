@@ -743,7 +743,7 @@ def test_a_draw_on_a_cache_miss_keeps_no_world_note_for_a_picture_it_then_holds_
 @pytest.mark.parametrize("route", ["draw", "prompt"])
 def test_a_dropped_prompt_keeps_no_world_note_it_wrote(env, route):
     env.key()
-    env.text.scene = lambda prompt: SCENE_WITH_NAME                        # the writer names someone every time: dropped
+    env.text.scene = lambda prompt: SCENE_WITH_NAME                        # the writer names someone the book never does: dropped
     r = env.c.post(f"/api/library/{KEY}/art/{route}", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."})
     assert r.status_code == 422 and r.json()["code"] == "dropped", r.text
     assert any("visual world note" in p for p in env.text.prompts) and world_of(env) is None
@@ -758,6 +758,7 @@ def test_a_world_note_already_there_is_never_taken_back(env):
     assert r.status_code == 422 and world_of(env)["text"] == "A grey valley of mills."
 
 
-SCENE_WITH_NAME = ("Mira stands at a wooden gate beside a grey stone mill, a basket on her arm, while an old miller dusted with "
+# a name the book never uses (the writer's memory): dropped after the rewrite, since only a known name can be replaced by a role
+SCENE_WITH_NAME = ("At a wooden gate beside a grey stone mill, Valdemar waits with a basket on his arm, while a miller dusted with "
                    "flour watches from the doorway. Soft morning light falls across the packed earth of the yard and a path leads "
                    "off toward low green hills in the distance under a pale sky.")

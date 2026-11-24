@@ -10,13 +10,18 @@ from lorekeeper import art, epub, images, llm, text
 
 WORLD = ("A quiet river valley in a pre-industrial farming country: stone mills, thatched cottages, dirt tracks and wooden carts. "
          "People wear plain wool and linen in browns and greys. The light is soft and low, the land green and rolling, the mood calm.")
-SCENE = ("A slight young woman in a brown shawl stands at a wooden gate beside a grey stone mill, a basket on her arm, while an old "
-         "miller dusted with flour watches from the doorway. Soft morning light falls across the packed earth of the yard and a path "
-         "leads off toward low green hills in the distance.")
-NOTES = {"Mira": "A slight young woman of about twenty with dark braided hair, a brown shawl and a plain grey dress.",
-         "Oren": "A broad old miller with white hair, flour on his sleeves and a leather apron.",
-         "Gabriel": "A tall fair young man with short hair, a blue coat and tall riding boots.",
-         "Stranger": "A hooded figure in a long black cloak, the face never seen, of middle height."}
+SCENE = ("A woman with a basket on her arm stands at a wooden gate beside a grey stone mill, while a miller watches her from the "
+         "doorway with his arms folded. Soft morning light falls across the packed earth of the yard and a path leads off toward low "
+         "green hills in the distance, the river bright beyond the mill wheel.")
+# Appearance notes as the fake writer returns them: a role and look details, each quoted from the entity's profile below.
+NOTE_PARTS = {"Mira": ("a young woman", ["slight", "of about twenty", "dark braided hair", "a brown shawl", "a plain grey dress"]),
+              "Oren": ("an old miller", ["broad", "white hair", "flour on his sleeves", "a leather apron"]),
+              "Gabriel": ("a rider", ["tall", "fair", "short hair", "a blue coat", "tall riding boots"]),
+              "Stranger": ("a traveller", ["hooded", "a long black cloak", "of middle height", "face is never seen"])}
+NOTES = {k: art.compose_note(r, ds) for k, (r, ds) in NOTE_PARTS.items()}
+PORTRAIT_SCENE = ("A head-and-shoulders portrait, the figure turned slightly toward the viewer with a calm and steady expression, lit "
+                  "softly from one side. Behind, a plain wall of grey stone and a small window showing low green hills under a soft "
+                  "morning sky. The background is simple and muted so the figure stands out.")
 CH1 = ["Mira walked to the mill with her basket and waited by the gate that morning.",
        "The miller Oren came out of the mill door wiping flour from his hands slowly.",
        "Mira told Oren that her mother sent greetings from the village below the hill.",
@@ -67,11 +72,15 @@ def recap(i, at, title, prefix=""):
 
 
 def base_doc(bk):
-    ents = [ent("mira", "Mira", facets=[portrait("mira", "a4", "A slight young woman of about twenty who carries baskets to the mill.")]),
-            ent("oren", "Oren", frm="a1", facets=[portrait("oren", "a3", "The old miller, white haired and broad, who runs the mill.")]),
+    ents = [ent("mira", "Mira", facets=[portrait("mira", "a4", "A slight young woman of about twenty with dark braided hair, a brown "
+                                                 "shawl and a plain grey dress, who carries baskets to the mill.")]),
+            ent("oren", "Oren", frm="a1", facets=[portrait("oren", "a3", "The old miller, broad, with white hair, flour on his sleeves "
+                                                              "and a leather apron, who runs the mill.")]),
             ent("mill", "the mill", "place", facets=[]),
-            ent("stranger", "the Stranger", frm="a6", facets=[portrait("stranger", "a7", "A hooded traveller whose face is never seen.")]),
-            ent("gabriel", "Gabriel", frm="a8", facets=[portrait("gabriel", "a8", "A tall fair rider who brings news from the hills.")])]
+            ent("stranger", "the Stranger", frm="a6", facets=[portrait("stranger", "a7", "A hooded traveller in a long black cloak, of "
+                                                                         "middle height, whose face is never seen.")]),
+            ent("gabriel", "Gabriel", frm="a8", facets=[portrait("gabriel", "a8", "A tall fair rider with short hair, a blue coat and "
+                                                                    "tall riding boots, who brings news from the hills.")])]
     evs = [event(1, 0, "Mira walks to the mill with a basket and waits at the gate.", ["mira", "mill"]),
            event(2, 1, "Oren the miller comes out of the mill and greets her.", ["oren", "mira"], "turn"),
            event(3, 4, "A small errand takes Mira to the well.", ["mira"], "minor"),
@@ -105,7 +114,7 @@ class Text:
     """A scripted text model that answers by the kind of prompt it is given and keeps every prompt."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None):
-        self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTES, **(notes or {})), shows
+        self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.prompts = []
 
@@ -121,11 +130,14 @@ class Text:
             return {"text": self.world}
         if "fixed appearance note" in prompt:
             who = re.search(r"appearance note for (.+?) \(", prompt).group(1).replace("the ", "").capitalize()
-            if "Begin with" in prompt:
-                return {"text": "The same young woman, older, with a livid scar across one cheek and a plain grey dress."}
-            return {"text": self.notes.get(who, "A plain figure in a brown coat and a worn hat.")}
+            if "Its fixed note until now" in prompt:      # an amended note: what changed, quoted from the change
+                ds = [m.group(0) for m in re.finditer(r"\b(older|scar\w*)( \w+){0,3}", prompt.split("The text now shows")[1][:200])]
+                return {"role": "young woman", "details": [{"text": d, "quote": d} for d in dict.fromkeys(ds)]
+                        + [{"text": "a livid scar across one cheek", "quote": "a livid scar"}]}
+            return note_reply(self.notes.get(who, None), prompt)
         if "Write the picture prompt" in prompt or "Write it again" in prompt or "quieter composition" in prompt:
-            out = {"text": self.scene(prompt) if callable(self.scene) else self.scene}
+            scene = PORTRAIT_SCENE if "This is a portrait" in prompt and self.scene is SCENE else self.scene
+            out = {"text": scene(prompt) if callable(scene) else scene}
             if self.shows is not None and "Write the picture prompt" in prompt:
                 out["shows"] = self.shows
             return out
@@ -133,6 +145,23 @@ class Text:
 
     def scenes(self):
         return [p for p in self.prompts if "Write the picture prompt" in p]
+
+
+def note_reply(note, prompt):
+    """The fake writer's note: NOTE_PARTS' role and details, each quoted with a word either side as the prompt has it (a detail
+    the prompt lacks keeps its own words as the quote, which the check then drops); a plain string is one detail; "" none."""
+    if note is None:          # someone the table does not know (a web test's book): a look word of what it was given
+        given = prompt.split("What the companion has noted:", 1)[-1]
+        m = re.search(r"[A-Za-z]+ (?:" + art.BODY_LOOK.pattern[3:-3] + r") [A-Za-z]+", given, re.IGNORECASE)
+        return {"role": "a figure", "details": [{"text": m.group(0), "quote": m.group(0)}] if m else []}
+    if not note:
+        return {"role": "", "details": []}
+    role, ds = note if isinstance(note, tuple) else ("", [note])
+    out = []
+    for d in ds:
+        m = re.search(r"(\w+[ ,]+)?" + re.escape(d) + r"([ ,]+\w+)?", prompt)
+        out.append({"text": d, "quote": m.group(0) if m else d})
+    return {"role": role, "details": out}
 
 
 def png(w, h, salt):
@@ -269,9 +298,12 @@ def test_unknown_names_and_names_of_characters_get_one_rewrite_then_a_skip_with_
     il, rep, sink, t, im = run(text_=Text(scene=lambda p: "A tall rider named Valdemar rides a horse across a wide field under a heavy sky of low grey cloud, "
                                                           "a lone rider small against hills, the light thin and cold, mud on the road."))
     assert not pics(sink, "plate") and rep.skipped["dropped: unknown name in prompt"] >= 2
-    il, rep, sink, t, im = run(text_=Text(scene=lambda p: SCENE.replace("A slight young woman", "Mira, a slight young woman")))
-    assert not pics(sink, "plate") and rep.skipped["dropped: name in prompt"] >= 2
-    assert sum(1 for p in t.prompts if "It was rejected" in p) >= 2        # one rewrite each
+    # a name kept after the rewrite is replaced by code and the text checked again, so the picture is not lost to it
+    il, rep, sink, t, im = run(text_=Text(scene=lambda p: SCENE.replace("A woman", "Mira, a woman")))
+    plates = pics(sink, "plate")
+    assert len(plates) == 2 and all("Mira," not in p["prompt"] and p["prompt"].startswith("The figure, a woman") for p in plates)
+    assert rep.dropped["fixed: name replaced by a role"] == rep.drawn and not rep.skipped["dropped: name in prompt"]
+    assert sum(1 for p in t.prompts if "It was rejected" in p) >= rep.drawn        # one rewrite each first
 
 
 def test_a_refusal_gets_one_quieter_rewrite_then_a_recorded_skip():
@@ -384,7 +416,8 @@ def series_docs():
     d1.update({"id": "b1", "series": {"id": "mill", "book": "b1"}})
     bk2 = book(("Three", ["Mira came back to the mill years later with a scar on her cheek and a new coat."] + CH1[1:],), )
     ents = [ent("mira", "Mira", frm="b2.a0", facets=[portrait("mira", "b2.a3", "A scarred young woman, older and harder, back at the mill.", 1, "b2")]),
-            ent("oren", "Oren", frm="b2.a1", facets=[portrait("oren", "b2.a2", "The old miller, white haired and broad, who runs the mill.", 1, "b2")])]
+            ent("oren", "Oren", frm="b2.a1", facets=[portrait("oren", "b2.a2", "The old miller, broad, with white hair, flour on his "
+                                                                 "sleeves and a leather apron, who runs the mill.", 1, "b2")])]
     evs = [event(1, 1, "Oren the miller greets her at the door of the mill.", ["oren", "mira"], "turn", "b2."),
            event(2, 4, "Mira walks to the well behind the mill.", ["mira"], "turn", "b2.")]
     d2 = doc(bk2, "b2", "b2.", ents, evs, [recap(1, 5, "Three", "b2.")])
@@ -440,7 +473,8 @@ def test_a_later_book_may_append_one_sentence_to_the_world_but_never_an_edited_n
 def test_an_earlier_book_without_its_epub_is_only_read():
     bk1, d1, bk2, d2 = series_docs()
     s1 = Mem()
-    il = art.Illustrator([art.Book(d1, None, s1, None, draw=False), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+    t = Text(notes={"Mira": ("a young woman", ["scarred", "older and harder"])})
+    il = art.Illustrator([art.Book(d1, None, s1, None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink", workers=1,
                          log=lambda *_: None, pause=0)
     rep = il.run()
     assert s1.m is None and rep.drawn > 0
@@ -450,7 +484,10 @@ def test_an_earlier_book_without_its_epub_is_only_read():
 def test_on_demand_job_and_prompt_refuse_a_target_the_reader_has_not_reached():
     bk = book(("One", CH1), ("Two", CH2))
     d = base_doc(bk)
-    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    d["entities"][2]["facets"].append({"id": "bk.mill.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
+                                       "text": "A grey stone mill with a wooden gate and a wheel on the river."})
+    t = Text(notes={"Mill": ("a mill", ["grey stone", "a wooden gate"])})
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     with pytest.raises(art.NotVisible):
         il.job("event", "e4", at="a3")
@@ -496,6 +533,132 @@ def test_an_entity_whose_look_the_text_never_shows_gets_no_portrait_and_a_reason
     n = len(im.calls)
     run(il.books[0].doc, il.books[0].epub, sink, Text(notes={"Oren": ""}), im)      # the skip is remembered: no new text call for Oren
     assert len(im.calls) == n
+
+
+# ---- the portraits round (the lead's Dracula check run, chapters I to III)
+
+VESNA_CH1 = CH1[:2] + ["Mira told Oren that Vesna would write to him soon from the town across the river."] + CH1[3:]
+VESNA_CH2 = CH2[:3] + ["Vesna stood at the mill door, a tall old woman with white hair, a black shawl and a hooked nose."] + CH2[4:]
+
+
+def vesna_doc():
+    bk = book(("One", VESNA_CH1), ("Two", VESNA_CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("vesna", "Vesna", frm="a2", facets=[
+        portrait("vesna", "a2", "A woman who writes letters to the miller from the town across the river."),
+        {"id": "bk.vesna.f1", "from": "a9", "basis": "stated", "evidence": ["a9"], "text": "Is a tall old woman with white hair."}]))
+    d["events"] += [event(7, 2, "Mira tells Oren that a letter from the town is coming.", ["vesna", "oren"]),
+                    event(8, 9, "Vesna arrives at the mill door at last.", ["vesna", "mira"])]
+    return bk, d
+
+
+VESNA = ("an old woman", ["tall", "white hair", "a black shawl", "a hooked nose"])
+
+
+def test_a_portrait_shows_from_where_the_look_is_first_described_not_from_a_first_profile_without_one():
+    # Dracula: the Count's first profile (chapter I, a letter writer) shows no look; chapter II describes him at length
+    bk, d = vesna_doc()
+    il, rep, sink, t, im = run(d, bk, text_=Text(notes={"Vesna": VESNA}))
+    [v] = [p for p in pics(sink, "portrait") if p["target"] == "vesna"]
+    assert v["from"] == "a9" and "skipped: no look described" not in rep.skipped        # the facet that describes her
+    assert v["appearance"] == art.compose_note(*VESNA) and "a9" in v["sources"]
+    asked = [p for p in t.prompts if "appearance note for Vesna" in p]
+    assert "a tall old woman with white hair" in asked[-1]                                   # written from that paragraph
+    # a paragraph that names her beside look words is not enough: it may describe someone else
+    bk, d = vesna_doc()
+    d["entities"][-1]["facets"].pop()
+    il, rep, sink, t, im = run(d, bk, text_=Text(notes={"Vesna": VESNA}))
+    assert [p["from"] for p in pics(sink, "portrait") if p["target"] == "vesna"] == []
+    assert rep.skipped["skipped: no look described"] == 1          # at her first profile, as before: its note had no look
+
+
+def test_an_empty_note_gives_way_when_the_book_describes_the_look_later():
+    # the check run's set held the Count's empty note from chapter I and a final skip; a run of this version draws him
+    bk, d = vesna_doc()
+    sink = Mem()
+    sink.m = {**art.blank("sha256:tbk", "ink"), "appearance": {"vesna": [{"from": "a5", "text": "", "details": [], "sources": ["a2"],
+                                                                         "inherits": []}]},
+              "skipped": [{"target": "vesna", "reason": "skipped: no look described", "kind": "portrait", "from": "a2", "final": True}]}
+    il, rep, sink, t, im = run(d, bk, sink, Text(notes={"Vesna": VESNA}))
+    assert [p["from"] for p in pics(sink, "portrait") if p["target"] == "vesna"] == ["a9"]
+    assert [n["from"] for n in sink.m["appearance"]["vesna"]] == ["a5", "a9"]
+    # with no description after it the empty note stands: nothing is asked again
+    bk2, d2 = vesna_doc()
+    il, rep, sink2, t2, im = run(d2, bk2, text_=Text(notes={"Oren": ""}))
+    asked = [p for p in t2.prompts if "appearance note for Oren" in p]
+    assert len(asked) == 1 and "oren" not in {p["target"] for p in pics(sink2, "portrait")}
+
+
+def test_a_note_that_says_no_look_is_shown_means_no_portrait_and_an_old_unchecked_note_is_written_again():
+    # Peter Hawkins: "A solicitor, seen only through letters and papers; no physical appearance is shown"
+    sink = Mem()
+    sink.m = {**art.blank("sha256:tbk", "ink"), "appearance": {
+        "oren": [{"from": "a3", "text": "A miller, seen only through his work; no physical appearance is shown.", "details": [],
+                  "sources": [], "inherits": []}],
+        # Mina's note of the check run: written before notes were quote-checked (no `details`), its look invented
+        "mira": [{"from": "a5", "text": "A young woman with dark hair worn up and a pale, oval face.", "sources": [], "inherits": []}]}}
+    il, rep, sink, t, im = run(sink=sink)
+    assert "oren" not in {p["target"] for p in pics(sink, "portrait")} and rep.skipped["skipped: no look described"] == 1
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert m["appearance"] == NOTES["Mira"] and "worn up" not in m["prompt"]
+    assert any("appearance note for Mira" in p for p in t.prompts)
+
+
+def test_a_portrait_scene_takes_no_look_from_another_figure_or_the_passages():
+    # Peter Hawkins was drawn as "the young solicitor in a dark coat", Harker's look: a portrait's look is its own note's only
+    def scene(p):
+        if "This is a portrait" in p and "- Oren:" in p:
+            return PORTRAIT_SCENE.replace("the figure turned", "the young figure in a blue coat turned")
+        return PORTRAIT_SCENE if "This is a portrait" in p else SCENE
+    il, rep, sink, t, im = run(text_=Text(scene=scene))
+    assert "oren" not in {p["target"] for p in pics(sink, "portrait")} and rep.skipped["dropped: look not in the note"] == 1
+    assert {"mira", "stranger", "gabriel"} <= {p["target"] for p in pics(sink, "portrait")}
+    writer = next(p for p in t.prompts if "This is a portrait" in p and "- Oren:" in p)
+    assert "portrait of Oren" not in writer and "young solicitor" not in writer and "It was rejected: look not in the note" in \
+        next(p for p in t.prompts if "It was rejected" in p and "- Oren:" in p)
+    # a scene may give a figure the look its note or the passage gives it, and nothing else
+    assert art.unlooked("an old miller with white hair", NOTES["Oren"]) == ""
+    assert art.unlooked("a young miller with white hair", NOTES["Oren"]) == "young"
+    # an adjective kept after the rewrite is taken out by code (the Count's "thin" in the chapter II plate of the check run);
+    # a noun ("a blue coat" above) never is
+    def thin(p):
+        return SCENE.replace("a miller watches", "a thin, gaunt miller watches") if "This is a portrait" not in p else PORTRAIT_SCENE
+    il, rep, sink, t, im = run(text_=Text(scene=thin))
+    plates = pics(sink, "plate")
+    assert len(plates) == 2 and all("while a miller watches" in p["prompt"] for p in plates)
+    assert rep.dropped["fixed: look word not in the notes taken out"] >= 2 and not rep.skipped["dropped: look not in the note"]
+    assert art._drop_word("a tall, thin old man", "thin") == "a tall, old man" and art._drop_word("a young, thin rider", "young") == \
+        "a thin rider" and art._drop_word("A young English traveller", "young") == "An English traveller"
+
+
+def test_look_details_the_passages_and_notes_do_not_show_are_dropped():
+    # Mina at chapter I: "dark hair worn up and a pale, oval face", none of it in the text
+    invented = ("a young woman", ["slight", "dark hair worn up", "a pale oval face", "braided hair"])
+    il, rep, sink, t, im = run(text_=Text(notes={"Mira": invented}))
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert m["appearance"] == "A young woman: slight, braided hair." and rep.dropped["dropped: look detail not in the text"] == 2
+    assert any("had no quote of the passages or notes" in p and "dark hair worn up" in p for p in t.prompts)   # one rewrite first
+    note = sink.m["appearance"]["mira"][0]
+    assert [d["text"] for d in note["details"]] == ["slight", "braided hair"] and all(d["quote"] for d in note["details"])
+    # a detail with a word its quote lacks is not supported ("dark braided hair" on "braided hair"); a quote must be verbatim
+    assert not art.detail_supported("dark braided hair", "braided hair")
+    assert art.detail_supported("a scar", "a scarred face") and art.quoted("long white moustache", "a tall man, with a long white moustache")
+    assert not art.quoted("long grey moustache", "a tall man, with a long white moustache")
+    # nothing supported: no note, no portrait
+    il, rep, sink, t, im = run(text_=Text(notes={"Mira": ("a young woman", ["dark hair worn up", "a pale oval face"])}))
+    assert "mira" not in {p["target"] for p in pics(sink, "portrait")} and rep.skipped["skipped: no look described"] == 1
+
+
+def test_names_are_replaced_by_a_role_when_the_rewrite_still_names_someone():
+    # Jonathan Harker's portrait was dropped with "dropped: name in prompt"
+    def scene(p):
+        return ("A portrait of Mira, Oren's helper, " + PORTRAIT_SCENE[2:]) if "This is a portrait" in p else SCENE
+    il, rep, sink, t, im = run(text_=Text(scene=scene))
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert m["prompt"].startswith("A portrait of the figure, the figure's helper, head-and-shoulders portrait")
+    names = il.names[0]
+    assert names.strip("Mr. Oren's mill and the Stranger at the door; Dawn breaks.") == \
+        "The figure's mill and the figure at the door; Dawn breaks."
 
 
 def test_portraits_are_drawn_most_named_first_so_a_cap_keeps_the_main_characters():
