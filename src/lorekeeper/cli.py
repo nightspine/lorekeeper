@@ -590,6 +590,61 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+_IMAGE_SUFFIX = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
+
+
+def _picture_path(out: Path, mime: str) -> Path:
+    """The path to write: a wrong image suffix is replaced by the one for the bytes, another suffix gets it appended."""
+    want = _IMAGE_SUFFIX.get(mime)
+    if want is None:
+        import mimetypes
+        want = mimetypes.guess_extension(mime) or ".img"
+    have = out.suffix.lower()
+    if have == want or (have == ".jpeg" and want == ".jpg"):
+        return out
+    if have in (".png", ".jpg", ".jpeg", ".webp", ""):
+        return out.with_suffix(want)
+    return out.with_name(out.name + want)
+
+
+def cmd_draw(args) -> int:
+    """Draw one picture from a prompt (and optional reference pictures) and write it to a file."""
+    import mimetypes
+    import time
+    from . import images, llm
+    spec = llm.image_spec(args.provider)
+    try:
+        key = Path(args.api_key_file).read_text().strip() if args.api_key_file else None
+        refs = [(Path(f).read_bytes(), mimetypes.guess_type(f)[0] or "image/png") for f in args.ref or []]
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
+    key = key or llm.env_key(args.provider)
+    if key is None:
+        raise SystemExit(f"error: no API key for {spec['label']}: set {spec['key_env']} or pass --api-key-file")
+    try:
+        model = llm.make_image(args.provider, args.model, api_key=key)
+        t = time.time()
+        pic = model.draw(args.prompt, shape=args.shape, quality=args.quality, references=refs)
+    except images.ImageRefused as e:
+        print(f"refused: {e.reason}", file=sys.stderr)
+        return 2
+    except (ValueError, llm.ProviderError) as e:
+        raise SystemExit(f"error: {e}") from e
+    out = _picture_path(Path(args.output), pic.mime)
+    try:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(pic.data)
+    except OSError as e:
+        raise SystemExit(f"error: {e}") from e
+    size = f"{pic.width}x{pic.height}" if pic.width else "size not reported"
+    price = llm.image_price(args.provider, pic.model, args.quality, args.shape)
+    cost = f"${pic.cost:.4f}" if pic.cost else "price unknown"
+    print(f"{out}: {pic.model}, {size}, {pic.mime}, {len(pic.data):,} bytes, {cost}"
+          + ("" if price is not None or not pic.cost else " (from the response's token usage)")
+          + f", {time.time() - t:.1f}s")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="lorekeeper")
     sub = p.add_subparsers(required=True)
@@ -781,6 +836,19 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--out", help="write the results to this directory instead of in place")
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_arcs)
+
+    s = sub.add_parser("draw", help="draw one picture from a prompt with an image model (Gemini or OpenAI, your own key)")
+    from . import llm as _llm
+    s.add_argument("prompt")
+    s.add_argument("-o", "--output", required=True, help="where to write the picture (an extension is added from its type if missing)")
+    s.add_argument("--provider", choices=list(_llm.IMAGE_PROVIDERS), default="gemini",
+                   help="gemini or openai; Claude cannot draw. Keys come from --api-key-file or GEMINI_API_KEY / OPENAI_API_KEY.")
+    s.add_argument("--model", help="image model id (default: the provider's default)")
+    s.add_argument("--shape", choices=["square", "portrait", "landscape"], default="landscape")
+    s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
+    s.add_argument("--ref", action="append", metavar="FILE", help="a picture the result should resemble (repeatable, at most 6)")
+    s.add_argument("--api-key-file", metavar="PATH", help="file holding the API key (default: the provider's environment variable)")
+    s.set_defaults(fn=cmd_draw)
 
     s = sub.add_parser("conformance", help="run (or regenerate) conformance cases")
     s.add_argument("dir", nargs="?", default="conformance")
