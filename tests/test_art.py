@@ -2276,3 +2276,47 @@ def test_a_look_told_once_beats_a_run_of_near_repeats_and_a_long_pick_is_batched
     il, t = fresh(d, bk, text_=Flaky())                # the second batch fails: nothing is kept, the fallback is used
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     assert "mira" not in il.man[0]["lookSentences"] and tag(writer_calls(t)[-1], "earlier_look")
+
+
+# ---- review round 1
+
+
+def test_a_rewrite_of_a_refused_text_with_no_label_never_adds_one():
+    plain = f"{ROOM} A young woman in a brown shawl waits by the gate for the hooded traveller."
+    added = f"{ROOM} Figure A, a young woman in a brown shawl, waits by the gate in the cold."
+    il, t, im, by, sink = labelled(lambda p: (plain if "It was rejected" in p else added) if "image model refused" in p else plain)
+    job = il.job("event", "e6", at="a11")
+    soft = il.soften(job, plain, "violence")              # the person's sheet
+    assert "It was rejected: unknown figure label: figure A" in writer_calls(t)[-1]
+    assert soft.figures == [] and soft.references == []
+    il, t, im, by, sink = labelled(lambda p: (plain if "It was rejected" in p else added) if "image model refused" in p else plain)
+    im.refuse = [lambda prompt, n: n == 1]
+    rec = il.draw(il.job("event", "e6", at="a11"))         # a run's own rewrite after a refusal
+    assert rec and "It was rejected: unknown figure label: figure A" in writer_calls(t)[-1]
+    assert rec["figures"] == [] and rec["references"] == [] and im.calls[-1]["references"] == []
+
+
+def test_a_scene_figures_earlier_look_is_chosen_against_the_entry_as_sent(monkeypatch):
+    bk, d = look_doc()
+    d["entities"][0]["facets"] = [
+        portrait("mira", "a2", "Her hair is long and dark. She wears copper rings in her braid.", 1),
+        {"id": "bk.mira.f1", "from": "a3", "basis": "stated", "evidence": ["a3"], "text": "Wears copper rings in her braid."},
+        {"id": "bk.mira.f2", "from": "a8", "basis": "stated", "evidence": ["a8"], "text": "Sells eggs at the market on market days."},
+        portrait("mira", "a9", "A young woman who keeps a coin.", 2)]
+    d["events"].append(event(7, 10, "Mira hides the coin under a loose stone by the well.", ["mira"]))
+    monkeypatch.setattr(art, "OTHER_CHARS", 120)
+    il, t = fresh(d, bk, text_=Text(picks=lambda s: True))
+    il.make_prompt(il.job("event", "e7", at="a11"))
+    w = writer_calls(t)[-1]
+    entry, earlier = re.search(r'<entry name="Mira"[^>]*>(.*?)</entry>\s*<earlier_look name="Mira">(.*?)</earlier_look>', w, re.S).groups()
+    assert "Wears copper rings" not in entry and "copper rings" in earlier    # the detail made room; its look came back
+    assert len(entry) + len(earlier) + 1 <= 120
+
+
+def test_picked_sentences_of_one_note_print_in_reading_order():
+    bk, d = look_doc()
+    d["entities"][0]["facets"][1]["text"] = "She has grey eyes. She wears long dark hair braided with copper rings and a brown shawl."
+    il, t = fresh(d, bk, text_=Text(picks=lambda s: True))
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    got = tag(writer_calls(t)[-1], "earlier_look")
+    assert got.index("She has grey eyes.") < got.index("She wears long dark hair")

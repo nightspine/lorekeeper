@@ -990,8 +990,9 @@ class Illustrator:
     @staticmethod
     def _label_check(given: set[str], keep: set[str] | None = None) -> Callable[[str], str]:
         """The check of a scene's figure labels: every label the text uses is one the material gave (`given`); for a softened
-        prompt (`keep`: the labels of the refused text), only those, and at least one of them when it had any."""
-        allowed = set(given) & keep if keep else set(given)
+        prompt (`keep`: the labels of the refused text, a set even when empty), only those, and at least one of them when it
+        had any. A refused text with no label gives none: a rewrite never labels a figure that text left unlabelled."""
+        allowed = set(given) & set(keep) if keep is not None else set(given)
 
         def check(text: str) -> str:
             used = set(labels_in(text))
@@ -1833,7 +1834,8 @@ class Illustrator:
         if picks:
             # the sentence that adds the most words not said yet goes first (the oldest on a tie), so a run of near-repeats
             # ("tall and pale with grey eyes", forty times over a long book) gives way to a look told once
-            pool = [(j, f, n, sent, self._content(sent, skip)) for n, (j, f, sents) in enumerate(cands) for sent in sents]
+            pool = [(j, f, (n, k), sent, self._content(sent, skip)) for n, (j, f, sents) in enumerate(cands)
+                    for k, sent in enumerate(sents)]      # (note, sentence within it): reading order within a note too
             added: dict[tuple[int, str], tuple[int, dict, set[str]]] = {}
             while pool:
                 best = max(range(len(pool)), key=lambda i: (len(pool[i][4] - seen), -i))
@@ -2166,9 +2168,15 @@ class Illustrator:
             desc, shown = self._describe(vis[eid], OTHER_CHARS)
             earlier, said = "", []
             if scene and eid in ids and vis[eid]["type"] in PORTRAIT_TYPES:   # a figure's look told earlier, within its budget
-                earlier, said = self._earlier_look(bi, eid, vis[eid], desc, OTHER_CHARS // 3)
-                if earlier:
-                    desc, shown = self._describe(vis[eid], OTHER_CHARS - len(earlier) - 1)
+                first, _ = self._earlier_look(bi, eid, vis[eid], desc, OTHER_CHARS // 3)
+                if first:
+                    # make room for it, then choose it against the entry as it is sent: a look in a detail the shorter
+                    # entry drops is no longer "said" and may come back in the earlier look
+                    short, short_shown = self._describe(vis[eid], OTHER_CHARS - len(first) - 1)
+                    earlier, said = self._earlier_look(bi, eid, vis[eid], short,
+                                                       min(OTHER_CHARS // 3, OTHER_CHARS - len(short) - 1))
+                    if earlier:
+                        desc, shown = short, short_shown
             used(eid, shown)
             material.append(self._tag("entry", vis[eid], desc, label_of.get(eid, "")))
             plain.append(desc)
