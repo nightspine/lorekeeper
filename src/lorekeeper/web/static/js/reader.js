@@ -950,7 +950,7 @@ export function mountReader(root) {
     else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
       // The moments are still revealed but the prompt or the World line was written from further on: drop both and write
       // the prompt again at the position now (the server refuses it if the picture itself is held past here).
-      s.art.sheet.sh.reposition(visibleWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
+      s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))).world);
     }
     const repaint = () => {
       frame = 0;
@@ -1873,6 +1873,16 @@ export function mountReader(root) {
     return worldGate(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
       book: s.series ? s.book : null, finished: finishedSet() || [], earlier: booksBefore(s.book) });
   }
+  /** The background note the picture sheet shows: only the person's own (`edited: true`), as the reader may see it at the
+   *  position. One may be added when the set has none of the person's own (an automatic note is no longer used); never
+   *  over one that is the person's but hidden here, nor in this book over one inherited from an earlier book. */
+  function sheetWorld(set) {
+    const raw = set?.manifest?.world;
+    const seen = visibleWorld(set);
+    const world = seen && raw?.edited === true ? seen : null;
+    const canEditWorld = world ? world.own : raw?.edited !== true;
+    return { world, canEditWorld };
+  }
   /** The title of the first earlier book a picture's prompt carries content from and the reader has not finished, or null. */
   function promptHiddenUntil(rec, book) {
     if (!s.series) return null;
@@ -1883,11 +1893,11 @@ export function mountReader(root) {
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
   function drawPicture({ kind, target, title, moments = null, drawnLine = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
-    const world = visibleWorld(set);
+    const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
     const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
-      style: s.art.slug || null, styles: s.art.styles, world, canEditWorld: Boolean(world?.own),
+      style: s.art.slug || null, styles: s.art.styles, world, canEditWorld,
       // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
       srcFor: (rec, slug) => (set?.manifest?.textHash ? artUrl(rec, set.manifest.textHash, slug) : null),
       canShow: (rec) => {

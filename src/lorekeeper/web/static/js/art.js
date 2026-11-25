@@ -4,6 +4,7 @@
 // Captions, prompts and notes are untrusted text: they only ever go through h(). Picture files are fetched only from
 // /api/art/... URLs built here from ids the server sent, never from a path or URL found in the manifest.
 import { api } from "./api.js";
+import { composePrompt, promptParts, restyle, sentenceFor, squash } from "./artprompt.js";
 import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 
@@ -348,7 +349,8 @@ export async function openPictureSheet(opts) {
     kind: opts.kind, target: opts.target,
     style: opts.style || d.style, custom: "", shape: SHAPE_OF[opts.kind] || "landscape",
     quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0], model: null,
-    prompt: "", written: "", price: null, asked: null, slug: null, promptStyle: null,
+    prompt: "", written: "", price: null, asked: null, slug: null,
+    parts: null, sentence: null, missing: false,   // the prompt's parts, the style sentence in it now, and whether that is lost
     busy: false, closed: false,
   };
   if (!STYLE_LABEL[st.style]) {
@@ -392,7 +394,7 @@ export async function openPictureSheet(opts) {
   sh.reposition = (world) => {
     opts.world = world || null;
     st.prompt = st.written = "";
-    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null;
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false;
     write();
   };
 
@@ -412,14 +414,23 @@ export async function openPictureSheet(opts) {
       const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
         quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
-      st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
+      st.parts = promptParts(r);
+      st.missing = false;
+      if (st.parts) {
+        // Built here from its parts, in the style chosen now (it may have changed while the prompt was being written).
+        st.sentence = sentenceFor(st.parts, st.style, st.custom) ?? squash(st.parts.style);
+        st.prompt = st.written = composePrompt(st.parts.body, st.sentence, st.parts.noText);
+      } else {
+        st.sentence = null;   // an older server: the style is inside its text, so a new style writes the prompt again
+        st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
+      }
       st.price = typeof r.price === "number" ? r.price : null;
       st.anchor = typeof r.anchor === "string" ? r.anchor : null;
       st.asked = asked;
       st.promptStyle = asked.style;
-      st.promptFor = { kind: st.kind, target: st.target, style: st.style, custom: st.custom };
+      st.promptFor = { kind: st.kind, target: st.target };
       clear(err);
-      if (st.style === "custom") st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
+      if (st.style === "custom" && asked.style === styleText()) st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
       st.busy = false; ctrl = null;
       paint();
     } catch (e) {
@@ -438,13 +449,22 @@ export async function openPictureSheet(opts) {
       paintFoot();
     }
   }
-  /** A new style needs a prompt written for it (the style sentence is part of the prompt). An edited prompt is asked about. */
-  async function restyle(apply) {
-    const edited = st.prompt && st.prompt !== st.written;
-    if (edited && !(await confirmDialog({ title: "Write the prompt again for this style?", message: "The prompt carries its style, so it is written again and your changes are replaced.",
-      confirmLabel: "Write it again", cancelLabel: "Keep this style", danger: false }))) { paint(); return; }
-    apply();
-    if (styleText()) write(); else paint();
+  /** A new style changes only the prompt's style sentence, here and with no call: an unedited prompt is built again from
+   *  its parts, an edited one has the old sentence replaced where it still stands (else `st.missing` says so). An older
+   *  server sends no parts, so there the prompt is written again. Updates the text area in place (typing keeps focus). */
+  function applyStyle() {
+    if (!st.prompt && !st.parts) return;
+    if (!st.parts) { if (styleText() && styleText() !== st.promptStyle) write(); return; }
+    const next = sentenceFor(st.parts, st.style, st.custom);
+    if (next == null) { st.missing = true; return; }   // a known style the server did not list: the text stays as it is
+    Object.assign(st, restyle({ prompt: st.prompt, written: st.written, parts: st.parts, old: st.sentence, next }));
+    st.promptStyle = styleText();
+    textarea.value = st.prompt;
+    paintStyleNote();
+  }
+  const styleNote = h("p.hint.art-style-note", { role: "status" });
+  function paintStyleNote() {
+    styleNote.textContent = st.missing && st.prompt ? "The style you chose is not in the prompt text, so the picture follows the text as you wrote it." : "";
   }
 
   const chip = (label, pressed, on) => h("button.filter-chip", { type: "button", "aria-pressed": String(pressed), on: { click: on } }, label);
@@ -452,11 +472,11 @@ export async function openPictureSheet(opts) {
   function paint() {
     textarea.value = st.prompt;
     const customField = h("input.input.art-custom", { value: st.custom, placeholder: "Describe the style, for example: linocut, two colours", "aria-label": "Custom style",
-      on: { input: (e) => { st.custom = e.target.value; paintFoot(); },
-        change: (e) => { const v = e.target.value; if (v.trim() && v.trim() !== st.promptStyle) restyle(() => { st.custom = v; st.slug = null; }); } } });
+      on: { input: (e) => { st.custom = e.target.value; st.slug = null; if (st.parts) applyStyle(); paintFoot(); },
+        change: (e) => { st.custom = e.target.value; applyStyle(); paintFoot(); } } });
     const styleRow = h("div.art-chips", { role: "group", "aria-label": "Style" },
-      STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { if (st.style !== slug) restyle(() => { st.style = slug; }); })),
-      chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; paint(); } body.querySelector(".art-custom")?.focus(); }));
+      STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { if (st.style !== slug) { st.style = slug; applyStyle(); paint(); } })),
+      chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; applyStyle(); paint(); } body.querySelector(".art-custom")?.focus(); }));
     const seg = (label, list, value, set) => h("div.seg", { role: "group", "aria-label": label },
       list.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(value === k), on: { click: () => { set(k); paint(); } } }, l)));
     // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
@@ -501,38 +521,48 @@ export async function openPictureSheet(opts) {
       h("div.art-field", h("label.label", { for: "art-prompt" }, "Prompt"), textarea,
         h("p.hint", "Written from what you have read so far. Change anything; the picture is drawn from this text only. ",
           h("button.linkish", { type: "button", on: { click: write } }, "Write it again"))),
-      h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
+      h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null, styleNote),
       h("div.art-row",
         h("div.art-field", h("span.label", "Shape"), seg("Shape", SHAPES, st.shape, (k) => { st.shape = k; })),
         h("div.art-field", h("span.label", "Quality"), qualitySeg),
         provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
       modelPick ? h("div.art-field", models.length <= 3 ? h("span.label", "Model") : h("label.label", { for: "art-model" }, "Model"), modelPick) : null,
-      opts.world ? worldLine() : null,
+      worldLine(),
       err);
     textarea.id = "art-prompt";
+    paintStyleNote();
     paintFoot();
   }
+  /** The person's own note on the book's world, which the prompt writer reads with every picture of this book (an
+   *  automatic note is no longer written or used). Empty by default: one quiet "Add a note about this book's world". */
   function worldLine() {
-    const text = h("span.art-world-text", opts.world.text);
-    const line = h("p.art-world", h("span.subtle", "World: "), text, " ",
-      opts.canEditWorld ? h("button.linkish", { type: "button", on: { click: edit } }, "Change") : null);
+    const has = Boolean(opts.world?.text);
+    if (!has && !opts.canEditWorld) return null;
+    const line = has
+      ? h("p.art-world", h("span.subtle", "Your note on this book's world: "), h("span.art-world-text", opts.world.text), " ",
+        opts.canEditWorld ? h("button.linkish", { type: "button", on: { click: edit } }, "Change") : null)
+      : h("p.art-world", h("button.linkish", { type: "button", on: { click: edit } }, "Add a note about this book's world"));
     function edit() {
-      const field = h("textarea.input", { rows: "3", "aria-label": "World note", value: opts.world.text });
-      field.value = opts.world.text;
+      const was = opts.world?.text || "";
+      const field = h("textarea.input", { rows: "3", "aria-label": "Your note on this book's world", placeholder: "For example: a walled city in a cold kingdom, lit by oil lamps, where guilds rule" });
+      field.value = was;
       const ferr = h("p.hint.field-error", { role: "alert" });
       const save = h("button.btn", { type: "button", on: { click: async () => {
+        const text = field.value.trim();
+        if (!text) { ferr.textContent = "Write the note first."; return; }
         save.disabled = true;
         try {
-          await api.artWorld(opts.key, field.value.trim(), opts.style || styleText());   // the note of the art set shown, by its slug
-          opts.world = { ...opts.world, text: field.value.trim() };
+          const r = await api.artWorld(opts.key, text, opts.style || styleText());   // the note of the art set shown, by its slug
+          const from = typeof r?.world?.from === "string" ? r.world.from : opts.world?.from;
+          opts.world = { ...(opts.world || {}), text, own: true, edited: true, ...(from ? { from } : {}) };
           forgetArt(opts.key);
-          toast("World note saved", "ok", { host: sh.toasts });
-          box.replaceWith(worldLine());
+          toast("Note saved. Write the prompt again to use it.", "ok", { host: sh.toasts });
+          box.replaceWith(worldLine() || h("span"));
         } catch (e) { ferr.textContent = e.message; save.disabled = false; }
       } } }, "Save");
-      const cancel = h("button.btn.quiet", { type: "button", on: { click: () => box.replaceWith(worldLine()) } }, "Cancel");
-      const box = h("div.art-field.art-world-edit", h("span.label", "World"), field,
-        h("p.hint", "Pasted into every picture of this book: its era, technology and the materials things are made of. Places and people get their own looks."), ferr, h("div.btns", cancel, save));
+      const cancel = h("button.btn.quiet", { type: "button", on: { click: () => box.replaceWith(worldLine() || h("span")) } }, "Cancel");
+      const box = h("div.art-field.art-world-edit", h("span.label", "Your note on this book's world"), field,
+        h("p.hint", "The prompt writer reads it with every picture of this book. Say what the book itself makes clear: the era, the places, how its people live."), ferr, h("div.btns", cancel, save));
       line.replaceWith(box);
       field.focus();
     }
@@ -546,7 +576,8 @@ export async function openPictureSheet(opts) {
     return a && a.quality === st.quality && a.provider === st.provider.id && a.model === st.model && a.shape === st.shape ? st.price : null;
   }
   function paintFoot() {
-    const stale = st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
+    // An older server's prompt carries its style in the text: until it is written again for a new style, Draw waits.
+    const stale = !st.parts && st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
     const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !stale;
     drawBtn.disabled = !ok;
     const pr = price();
@@ -555,7 +586,7 @@ export async function openPictureSheet(opts) {
     const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.model === st.model && st.asked.shape === st.shape;
     footNote.textContent = st.busy ? "" : stale ? "Write the prompt again for this style first."
       : pr != null ? `${money(pr)[0].toUpperCase()}${money(pr).slice(1)} for this picture`
-        : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Write it again to see the price for these choices" : "Price unknown";
+        : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Price unknown for these choices" : "Price unknown";
   }
 
   drawBtn.addEventListener("click", async () => {
