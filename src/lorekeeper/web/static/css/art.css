@@ -86,6 +86,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .lb-acts:empty { display: none; }
 .lb-redraw { display: grid; gap: 8px; width: 100%; max-width: 560px; }
 .lb-redraw .btns { display: flex; gap: 8px; justify-content: flex-end; }
+.lb-choice .btns { flex-wrap: wrap; justify-content: flex-start; }
 .lb-details > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); min-height: 32px; }
 .lb-details > summary::-webkit-details-marker { display: none; }
 .lb-details > summary .svg-icon { width: 14px; height: 14px; transition: transform var(--dur-fast); }
