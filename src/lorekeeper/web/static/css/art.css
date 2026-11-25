@@ -162,3 +162,11 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .art-sheet .seg button { min-height: 44px; }
   .art-ctl { display: none; }
 }
+
+/* ---- figure lines: which reference picture is which figure ---- */
+.art-figures-box:empty { display: none; }
+.art-figures { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.art-figure { display: flex; align-items: center; gap: 8px; font-size: var(--text-sm); line-height: 1.4; color: var(--text-2); overflow-wrap: anywhere; }
+.art-fig-face { display: inline-block; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden; background: var(--pane-2); box-shadow: 0 0 0 1px var(--line-2); }
+.art-fig-img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 28%; transform: scale(1.6); transform-origin: 50% 32%; }
+.lb-details-body .art-figures { margin: 0; }
