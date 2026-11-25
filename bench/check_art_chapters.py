@@ -19,7 +19,19 @@ from playwright.sync_api import sync_playwright
 KEY = "demo-book"
 IDX = "demo-index"
 CHAPTERS = [{"n": i, "title": f"Chapter {i}: {'A very long chapter title that has to be cut short somewhere' if i == 7 else 'The road'}",
-             "events": 0 if i == 3 else 4, "drawable": None, "screened": False} for i in range(1, 13)]
+             "events": 0 if i in (3, 12) else 4, "drawable": None, "screened": False} for i in range(1, 13)]
+
+
+# What each chapter gets per level. Chapter 3 has only minor events (`events` 0) yet gets its recap plate; chapter 9 has
+# events but gets nothing at level "all" (pictures 0 there only); chapter 12 gets nothing at any level.
+def pictures_at(c: dict, level: str) -> int:
+    if level == "none" or c["n"] == 12:
+        return 0
+    if c["n"] == 3:
+        return 1
+    if c["n"] == 9:
+        return 1 if level == "main" else 0
+    return 1 if level == "main" else c["events"]
 PORTRAITS = {"main": 5, "all": 9}
 
 BOOK = {"key": KEY, "title": "The Demo Book", "authors": ["A. Writer"], "source": "upload", "status": "complete", "canBuild": True,
@@ -38,7 +50,7 @@ def estimate(q: dict) -> dict:
     chosen = None if raw is None else {int(x) for x in raw[0].split(",") if x}
     rows = []
     for c in CHAPTERS:
-        pics = 0 if level == "none" or not c["events"] else (1 if level == "main" else c["events"])
+        pics = pictures_at(c, level)
         drawn = (pics if c["n"] == 5 else 1 if c["n"] == 6 and pics else 0)
         rows.append({**c, "pictures": pics, "drawn": drawn})
     plates = sum(r["pictures"] for r in rows if chosen is None or r["n"] in chosen)
@@ -93,7 +105,10 @@ def run(base: str, out: Path) -> int:
             line = dlg.locator(".art-est")
             check(rows.count() == 12, f"{tag}: every chapter listed ({rows.count()})")
             check(dlg.locator(".art-ch-row input:checked").count() == 11, f"{tag}: every chapter that can get a picture is on")
-            check(rows.nth(2).locator("input").is_disabled() and "nothing to draw" in rows.nth(2).inner_text(), f"{tag}: no events, box off")
+            check(rows.nth(11).locator("input").is_disabled() and "nothing to draw" in rows.nth(11).inner_text(), f"{tag}: no pictures, box off")
+            check(rows.nth(2).locator("input").is_checked() and "1 picture" in rows.nth(2).inner_text(),
+                  f"{tag}: events 0 with a recap plate is choosable ({rows.nth(2).inner_text()})")
+            check("11 of 11 chosen" in dlg.locator(".art-ch-count").inner_text(), f"{tag}: chosen count at main")
             check("already drawn" in rows.nth(4).inner_text(), f"{tag}: drawn chapter says so")
             check("1 picture" in rows.nth(0).inner_text(), f"{tag}: count at main level")
             check("chapters" not in asked[-1], f"{tag}: all chosen sends no chapter list")
@@ -106,10 +121,22 @@ def run(base: str, out: Path) -> int:
             dlg.get_by_text("Every moment worth drawing").click()
             page.wait_for_function("document.querySelector('.art-ch-row .art-ch-n')?.textContent === '4 pictures'")
             check("4 pictures, 1 already drawn" in rows.nth(5).inner_text(), f"{tag}: partly drawn chapter at all level")
+            check(rows.nth(8).locator("input").is_disabled() and not rows.nth(8).locator("input").is_checked()
+                  and "nothing to draw" in rows.nth(8).inner_text(), f"{tag}: events but no pictures at this level, box off")
+            check("10 of 10 chosen" in dlg.locator(".art-ch-count").inner_text(), f"{tag}: chosen count follows the level")
             rows.nth(1).locator("input").click()
             page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
-            check(asked[-1].get("chapters") == ["1,4,5,6,7,8,9,10,11,12"], f"{tag}: unticked chapter left out ({asked[-1].get('chapters')})")
-            check("10 of 11 chosen" in dlg.locator(".art-ch-count").inner_text(), f"{tag}: chosen count")
+            check(asked[-1].get("chapters") == ["1,3,4,5,6,7,8,10,11"], f"{tag}: unticked and unchoosable chapters left out ({asked[-1].get('chapters')})")
+            check("9 of 10 chosen" in dlg.locator(".art-ch-count").inner_text(), f"{tag}: chosen count")
+            dlg.get_by_text("The main moment of each chapter").click()
+            page.wait_for_function("document.querySelector('.art-ch-row .art-ch-n')?.textContent === '1 picture'")
+            page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
+            page.wait_for_timeout(500)   # the second ask, made when the answer changed which rows can be ticked
+            check(rows.nth(8).locator("input").is_checked() and not rows.nth(1).locator("input").is_checked(),
+                  f"{tag}: back at main, the ticks are kept")
+            check(asked[-1].get("chapters") == ["1,3,4,5,6,7,8,9,10,11"], f"{tag}: asked again with the choice as it is now ({asked[-1].get('chapters')})")
+            dlg.get_by_text("Every moment worth drawing").click()
+            page.wait_for_function("document.querySelector('.art-ch-row .art-ch-n')?.textContent === '4 pictures'")
 
             dlg.get_by_role("button", name="None", exact=True).click()
             page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About 5 ')")
