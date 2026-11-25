@@ -164,8 +164,8 @@ class Text:
                 return self.amend(prompt)
             if "The text now shows a change" in prompt:      # an amended note: what changed, quoted from the change
                 ds = [m.group(0) for m in re.finditer(r"\b(older|scar\w*)( \w+){0,3}", prompt.split("The text now shows")[1][:200])]
-                return {"role": "young woman", "details": [{"text": d, "quote": d} for d in dict.fromkeys(ds)]
-                        + [{"text": "a livid scar across one cheek", "quote": "a livid scar"}]}
+                return {"role": "young woman", "details": [{"text": d, "quote": d, "seen": True} for d in dict.fromkeys(ds)]
+                        + [{"text": "a livid scar across one cheek", "quote": "a livid scar", "seen": True}]}
             return note_reply(self.notes.get(who, None), prompt)
         if "Write the picture prompt" in prompt or "Write it again" in prompt or "quieter composition" in prompt:
             scene = PORTRAIT_SCENE if "This is a portrait" in prompt and self.scene is SCENE else self.scene
@@ -185,15 +185,16 @@ def note_reply(note, prompt):
     if note is None:          # someone the table does not know (a web test's book): a look word of what it was given
         given = prompt.split("What the companion has noted:", 1)[-1]
         m = re.search(r"[A-Za-z]+ (?:" + FAKE_LOOK.pattern[3:-3] + r") [A-Za-z]+", given, re.IGNORECASE)
-        return {"role": "a figure", "details": [{"text": m.group(0), "quote": m.group(0)}] if m else []}
+        return {"role": "a figure", "role_look": [],
+                "details": [{"text": m.group(0), "quote": m.group(0), "seen": True}] if m else []}
     if not note:
-        return {"role": "", "details": []}
+        return {"role": "", "role_look": [], "details": []}
     role, ds, home = (note + ([],))[:3] if isinstance(note, tuple) else ("", [note], [])
 
     def q(d):
         m = re.search(r"(\w+[ ,]+)?\b" + re.escape(d) + r"\b([ ,]+\w+)?", prompt.split("What the companion has noted:", 1)[-1])
-        return {"text": d, "quote": m.group(0) if m else d}
-    return {"role": role, "details": [q(d) for d in ds], "home": [q(d) for d in home]}
+        return {"text": d, "quote": m.group(0) if m else d, "seen": True}
+    return {"role": role, "role_look": [], "details": [q(d) for d in ds], "home": [q(d) for d in home]}
 
 
 def png(w, h, salt):
@@ -738,7 +739,7 @@ def test_a_role_is_who_it_is_in_its_own_words_and_no_detail_repeats_it():
     # "A small, filthy boy: small, smallest boy": a detail the role already says goes
     assert art.compose_note("a small, filthy boy", ["small", "smallest boy in the Institute", "filthy", "khaki teeth"]) == \
         "A small, filthy boy: smallest boy in the Institute, khaki teeth."
-    assert art.compose_note("a miller", ["white hair", "white hair, long"]) == "A miller: white hair, white hair, long." or True
+    assert art.compose_note("a miller", ["white hair", "white hair, long"]) == "A miller: white hair, long."   # the fuller stands
 
 
 def test_a_quote_is_a_phrase_of_the_text_and_holds_every_word_of_its_detail():
@@ -759,9 +760,9 @@ def test_a_quote_is_a_phrase_of_the_text_and_holds_every_word_of_its_detail():
     t = Text(notes={"Mira": ("a woman", ["dark braided hair", "pale skin"])})
 
     def note(prompt):
-        return {"role": "a woman", "details": [{"text": "dark braided hair", "quote": "with dark braided hair"},
-                                               {"text": "a slight frame", "quote": "dark ... hair"},
-                                               {"text": "pale skin", "quote": "a plain grey dress"}]}
+        return {"role": "a woman", "details": [{"text": "dark braided hair", "quote": "with dark braided hair", "seen": True},
+                                               {"text": "a slight frame", "quote": "dark ... hair", "seen": True},
+                                               {"text": "pale skin", "quote": "a plain grey dress", "seen": True}]}
     t.notes["Mira"] = None
     real = t.complete
 
@@ -807,10 +808,10 @@ def test_the_drops_counted_are_those_of_the_reply_kept():
             if "appearance note for Mira" in prompt:
                 self.prompts.append(prompt)
                 if "had no quote" in prompt:
-                    return {"role": "a woman", "details": [{"text": "a kind soul", "quote": "x y"},
-                                                           {"text": "a cheerful heart", "quote": "x y"}]}
-                return {"role": "a woman", "details": [{"text": "slight", "quote": "A slight young"},
-                                                       {"text": "red hair", "quote": "red hair"}]}
+                    return {"role": "a woman", "details": [{"text": "a kind soul", "quote": "x y", "seen": True},
+                                                           {"text": "a cheerful heart", "quote": "x y", "seen": True}]}
+                return {"role": "a woman", "details": [{"text": "slight", "quote": "A slight young", "seen": True},
+                                                       {"text": "red hair", "quote": "red hair", "seen": True}]}
             return super().complete(system, prompt, schema, prefix)
     il, rep, sink, t, im = run(text_=T())
     assert sink.m["appearance"]["mira"][0]["text"] == "A woman: slight."
@@ -1768,7 +1769,7 @@ def test_a_group_note_written_from_content_after_the_anchor_is_refused():
     sink = Mem()
     sink.m = {**art.blank("sha256:tbk", "ink"), "appearance": {"guild": [
         {"v": art.NOTE_VERSION, "from": "a3", "text": "A guild: blue sashes.", "role": "a guild",
-         "details": [{"text": "blue sashes", "quote": "wear blue sashes"}], "home": [], "sources": ["a10"], "inherits": [],
+         "details": [{"text": "blue sashes", "quote": "wear blue sashes", "seen": True}], "home": [], "sources": ["a10"], "inherits": [],
          "items": ["bk.guild.portrait-1"]}]}}
     il = art.Illustrator([art.Book(d, bk, sink)], Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild), Image(), "ink",
                          workers=1, log=lambda *_: None, pause=0)
@@ -1854,7 +1855,7 @@ def test_an_amended_note_replaces_the_detail_the_change_supersedes_quoting_the_c
 
     def amend(prompt):
         n = next(int(m.group(1)) for m in re.finditer(r"^(\d+)\. (.*)$", prompt, re.M) if "braided" in m.group(2))
-        return {"role": "", "drop": [n], "details": [{"text": "short golden hair", "quote": "hair was cut short and dyed golden"}]}
+        return {"role": "", "drop": [n], "details": [{"text": "short golden hair", "quote": "hair was cut short and dyed golden", "seen": True}]}
     t = Text(change=lambda txt: "dyed golden" if "dyed golden" in txt else "", amend=amend)
     il, rep, sink, t, im = run(d, bk, text_=t)
     ms = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
@@ -1864,7 +1865,7 @@ def test_an_amended_note_replaces_the_detail_the_change_supersedes_quoting_the_c
     assert "a brown shawl" in ms[1]["appearance"] and rep.dropped["replaced: look detail the change supersedes"] == 1
     # a drop with no new detail quoting the change drops nothing
     t = Text(change=lambda txt: "dyed golden" if "dyed golden" in txt else "",
-             amend=lambda p: {"role": "", "drop": [1, 2], "details": [{"text": "a brown shawl", "quote": "brown shawl and"}]})
+             amend=lambda p: {"role": "", "drop": [1, 2], "details": [{"text": "a brown shawl", "quote": "brown shawl and", "seen": True}]})
     il, rep, sink, t, im = run(d, bk, text_=t)
     m2 = [p for p in pics(sink, "portrait") if p["target"] == "mira"][-1]
     assert "slight" in m2["appearance"] and "dark braided hair" in m2["appearance"]
@@ -2009,3 +2010,124 @@ def test_a_figure_whose_look_changed_after_joining_a_group_takes_no_look_from_it
     assert [p["from"] for p in ports] == ["a5", "a10"]
     assert "white aprons" in ports[0]["appearance"] and "white aprons" not in ports[1]["appearance"]
     assert sink.m["appearance"]["oren"][-1]["changed"] == [["bk", "a10"]]
+
+
+
+# ---- review round 1
+
+
+def test_a_detail_the_writer_does_not_call_seen_is_no_look():
+    class T(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "appearance note for Mira" in prompt:
+                self.prompts.append(prompt)
+                return {"role": "a woman", "role_look": [], "details": [
+                    {"text": "slight", "quote": "A slight young"},                        # no "seen": no look
+                    {"text": "a curious soul", "quote": "A slight young", "seen": False},
+                    {"text": "dark braided hair", "quote": "with dark braided hair", "seen": True}]}
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(text_=T())
+    assert sink.m["appearance"]["mira"][0]["text"] == "A woman: dark braided hair."
+    assert rep.dropped["dropped: not a look detail"] == 2
+    assert art.NOTE_SCHEMA["required"] == ["role", "role_look", "details"] and "seen" in art._DETAILS["items"]["required"]
+
+
+def test_a_group_membership_never_starts_before_the_item_that_names_the_group():
+    # the model read a later item and says "from: 1"; item 1 never names the Guild
+    bk, d = guild_doc()
+    t = Text(notes={"Guild": GUILD_PARTS}, groups=lambda who, items, groups: [{"group": "A", "from": 1, "until": 1}] if who == "Oren" else [])
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0, portraits="all")
+    assert il.items(0, "oren")[0]["from"] == "a1" and "Guild" not in il.items(0, "oren")[0]["text"]
+    assert il.group_picks(0, "oren") == [{"group": "guild", "from": "a3", "until": None}]     # an end before the start: none
+    assert il.groups_of(0, "oren", "a2") == [] and il.groups_of(0, "oren", "a3") == ["guild"]
+    # a later "from" than the evidence is kept
+    d["entities"][1]["facets"].append({"id": "bk.oren.f5", "from": "a7", "basis": "stated", "evidence": ["a7"],
+                                       "text": "Takes the Guild's oath at last."})
+    n = next(i for i, it in enumerate(art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink").items(0, "oren"), 1)
+             if it["from"] == "a7")
+    t = Text(notes={"Guild": GUILD_PARTS}, groups=lambda who, items, groups: [{"group": "A", "from": n}] if who == "Oren" else [])
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0, portraits="all")
+    assert il.group_picks(0, "oren")[0]["from"] == "a7"
+
+
+def test_red_rising_shapes_keep_their_colour_words_in_details_and_lose_the_name_in_roles():
+    bk, d = guild_doc()
+    for gid, name in (("red", "Red"), ("gold", "Gold")):
+        d["entities"].append(ent(gid, name, "group", frm="a1"))
+    d["entities"][1]["facets"][0]["text"] = ("The old Red miller, broad, with Red sigils on his hands, gold hair and a leather "
+                                             "apron, who runs the mill.")
+    t = Text(notes={"Oren": ("a Red miller", ["Red sigils on his hands", "gold hair", "broad"])})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: red sigils on his hands, gold hair, broad."
+
+
+def test_a_look_item_cut_from_a_note_by_the_budget_is_left_for_the_next_fill(monkeypatch):
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a4", "basis": "stated", "evidence": ["a4"],
+                                       "text": "Wears a red ribbon in her dark braided hair at the well."})
+    monkeypatch.setattr(art, "NOTE_ITEMS_CHARS", 70)      # room for the newest look item only
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(notes={"Mira": ("a young woman", ["slight", "a red ribbon"])}), Image(),
+                         "ink", workers=1, log=lambda *_: None, pause=0, portraits="all")
+    il.world(0)
+    il.ensure_note(0, "mira", "a5")
+    first = il.man[0]["appearance"]["mira"][0]
+    assert first["items"] == ["bk.mira.f9"]                    # the profile at a4 was not sent: not marked as done
+    il.ensure_note(0, "mira", "a6")
+    assert "bk.mira.portrait-1" in il.man[0]["appearance"]["mira"][-1]["items"]
+
+
+def test_an_amend_drops_a_detail_only_for_a_quote_from_the_change_item_and_its_paragraphs():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Her hair was cut short and dyed golden by the stranger."})
+    # the quote is from her profile (a recent look paragraph), not the change: nothing is dropped
+    t = Text(change=lambda txt: "dyed golden" if "dyed golden" in txt else "",
+             amend=lambda p: {"role": "", "role_look": [], "drop": [1, 3], "details": [
+                 {"text": "dark braided hair", "quote": "with dark braided hair", "seen": True}]})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    last = sink.m["appearance"]["mira"][-1]
+    assert [x["text"] for x in last["details"]][:2] == ["slight", "of about twenty"] and not rep.dropped["replaced: look detail the change supersedes"]
+
+
+def test_a_look_change_in_an_earlier_finished_book_keeps_a_group_look_out_of_a_later_one():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"].append(ent("guild", "Guild", "group", frm="a2", facets=[portrait(
+        "guild", "a2", "The Guild's members wear blue sashes and live in stone houses by the river.")]))
+    d1["entities"][1]["facets"] += [{"id": "bk.oren.f1", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                     "text": "A member of the Guild of millers."},
+                                    {"id": "bk.oren.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                     "text": "Oren lost an eye in the storm."}]
+    d2["entities"][1]["facets"].append({"id": "b2.oren.f1", "from": "b2.a3", "basis": "stated", "evidence": ["b2.a3"],
+                                        "text": "Still of the Guild of millers."})
+    guild = ("a guild", ["blue sashes"], [])
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], TwoWorlds(notes={"Guild": guild}, groups=pick_guild),
+                         Image(), "ink", workers=1, log=lambda *_: None, pause=0, portraits="all")
+    assert "blue sashes" in il.figure_note(0, "oren", "a5")[0]
+    il.figure_note(0, "oren", "a10", change="Oren lost an eye in the storm.")
+    assert il.man[0]["appearance"]["oren"][-1]["changed"] == [["b1", "a10"]]
+    assert "blue sashes" not in il.figure_note(1, "oren", "b2.a5", finished={"b1"})[0]
+
+
+def test_the_most_specific_group_is_counted_from_what_has_been_read():
+    bk, d, notes, groups = nested_groups_doc()
+    # the Guild grows later: Gabriel's item at a8 names it; before a8 it still has one member
+    d["entities"][4]["facets"].append({"id": "bk.gabriel.f1", "from": "a8", "basis": "stated", "evidence": ["a8"],
+                                       "text": "Rides for the Guild of millers."})
+    d["entities"][4]["facets"].append({"id": "bk.gabriel.f2", "from": "a9", "basis": "stated", "evidence": ["a9"],
+                                       "text": "Joins the Guild and the Valley folk at the mill."})
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(notes=notes, groups=groups), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0, portraits="all")
+    assert il._member_count(0, "guild", "a5") == 1 and il._member_count(0, "guild", "a9") == 2
+
+
+def test_a_look_check_that_fails_twice_skips_the_picture():
+    class Down(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "List every phrase of the prompt" in prompt:
+                self.prompts.append(prompt)
+                raise llm.ProviderError("HTTP 503: down")
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(text_=Down())
+    assert not im.calls and rep.skipped["skipped: text model failed"] == rep.skipped.total()

@@ -184,10 +184,10 @@ HOME = """
 Return also "home": the places its members live in and how those places look, as the passages and notes show it (their
 dwellings, the kind of place, how rich or poor it is; not what they do or rule), at most 6, each a short phrase with its "quote"
 and "seen", the same way; an empty list when the text does not show it."""
-_DETAILS = {"type": "array", "items": {"type": "object", "required": ["text", "quote"],
+_DETAILS = {"type": "array", "items": {"type": "object", "required": ["text", "quote", "seen"],
                                        "properties": {"text": {"type": "string"}, "quote": {"type": "string"},
                                                       "seen": {"type": "boolean"}}}}
-NOTE_SCHEMA = {"type": "object", "required": ["role", "details"],
+NOTE_SCHEMA = {"type": "object", "required": ["role", "role_look", "details"],
                "properties": {"role": {"type": "string"}, "role_look": {"type": "array", "items": {"type": "string"}},
                               "details": _DETAILS, "home": _DETAILS,
                               "drop": {"type": "array", "items": {"type": "integer"}}}}
@@ -937,7 +937,7 @@ class Illustrator:
         self._entity_locks: dict[str, threading.Lock] = {}
         self._checks: dict[str, list[str]] = {}
         self._class_lock = threading.Lock()
-        self._members: dict[int, Counter] = {}
+        self._members: dict[int, dict[str, list[int]]] = {}
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
@@ -1037,17 +1037,13 @@ class Illustrator:
     def unfounded_looks(self, text: str, source: str) -> list[str]:
         """The phrases of a written prompt that give a figure a look `source` (its notes and passage) does not state, as one
         cheap call lists them (`LOOK_CHECK`, the pattern of the fact-check). Only a phrase that is in the text, word for word,
-        counts: the call can point at words, never add any. Cached per text and source; a failed call lists nothing (the
-        prompt's other checks still ran)."""
+        counts: the call can point at words, never add any. Cached per text and source. A call that fails twice raises
+        TextFailed, so the picture is skipped as when its writer fails ("skipped: text model failed")."""
         key = hashlib.sha256((text + "\x00" + source).encode()).hexdigest()
         with self.lock:
             if key in self._checks:
                 return self._checks[key]
-        try:
-            out = self._complete(LOOK_CHECK.format(source=source[:6000] or "(none)", text=text), LOOK_CHECK_SCHEMA)
-        except TextFailed as e:
-            self.log(f"    look check: text model failed ({e.detail})")
-            out = {}
+        out = self._complete(LOOK_CHECK.format(source=source[:6000] or "(none)", text=text), LOOK_CHECK_SCHEMA)
         bad: list[str] = []
         flat = " ".join(_toks(text))
         for x in out.get("phrases") or [] if isinstance(out.get("phrases"), list) else []:
@@ -1767,7 +1763,11 @@ class Illustrator:
             first = min((it["from"] for it in uses), key=b.ord_of.get) if uses else \
                 min((r["from"] for r in b.doc.get("relations", []) if eid in (r["src"], r["dst"]) and gid in (r["src"], r["dst"])
                      and r["from"] in b.ord_of), key=b.ord_of.get, default=items[0]["from"])
-            start = items[f - 1]["from"] if 1 <= f <= len(items) else first
+            # membership never starts before its evidence (the first item naming the group, or the tie): the model's item counts
+            # only when it is later, and an end only when it is after the start
+            start = first
+            if 1 <= f <= len(items) and b.ord_of[items[f - 1]["from"]] > b.ord_of[first]:
+                start = items[f - 1]["from"]
             until = items[u - 1]["from"] if 1 <= u <= len(items) and b.ord_of[items[u - 1]["from"]] > b.ord_of[start] else None
             picks.append({"group": gid, "from": start, "until": until})
         with self.lock:
@@ -1776,24 +1776,26 @@ class Illustrator:
             self._save(bi)
         return picks
 
-    def _member_count(self, bi: int, gid: str) -> int:
-        """How many people and creatures of book bi the group has, as far as the index shows: those whose own items use its name
-        (the measure of "the most specific group first")."""
+    def _member_count(self, bi: int, gid: str, anchor: str) -> int:
+        """How many people and creatures of book bi the group has at an anchor, as far as the index shows: those with an item at
+        or before it that uses its name (the measure of "the most specific group first"; never counted from unread text)."""
         with self.lock:
-            counts = self._members.get(bi)
-        if counts is None:
-            counts = Counter()
-            b = self.books[bi]
+            firsts = self._members.get(bi)
+        b = self.books[bi]
+        if firsts is None:
+            firsts = {}
             groups = {e["id"]: self._group_names(e["id"]) for bb in self.books[:bi + 1] for e in bb.doc["entities"] if e["type"] == "group"}
             for e in b.doc["entities"]:
                 if e["type"] in PORTRAIT_TYPES:
-                    texts = [it["text"] for it in self.items(bi, e["id"])]
+                    items = self.items(bi, e["id"])
                     for g, names in groups.items():
-                        if names and any(self._names_in(names, t) for t in texts):
-                            counts[g] += 1
+                        at = next((b.ord_of[it["from"]] for it in items if names and self._names_in(names, it["text"])), None)
+                        if at is not None:
+                            firsts.setdefault(g, []).append(at)
+            firsts = {g: sorted(v) for g, v in firsts.items()}
             with self.lock:
-                self._members[bi] = counts
-        return counts[gid]
+                self._members[bi] = firsts
+        return bisect_right(firsts.get(gid, []), b.ord_of[anchor])
 
     def groups_of(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None) -> list[str]:
         """The groups an entity belongs to at an anchor, most specific first (fewest members): groups visible there that it has
@@ -1815,7 +1817,7 @@ class Illustrator:
                         and (p.get("until") is None or b.ord_of.get(p["until"], 1 << 30) > at):
                     out.append(p["group"])
         order = {g: n for n, g in enumerate(out)}
-        return sorted(out, key=lambda g: (self._member_count(bi, g), order[g]))
+        return sorted(out, key=lambda g: (self._member_count(bi, g, anchor), order[g]))
 
     # ---- notes, pictures and references (a later book reads the earlier books' manifests)
 
@@ -1919,8 +1921,8 @@ class Illustrator:
             # the look items themselves (the latest first, within NOTE_ITEMS_CHARS), then the current profile and facets
             shown_items, size = [], 0
             for it in pick:
-                if size + len(it["text"]) > NOTE_ITEMS_CHARS:
-                    break
+                if shown_items and size + len(it["text"]) > NOTE_ITEMS_CHARS:
+                    break          # the newest one is always sent; the ones left out stay for a later fill
                 shown_items.append(it)
                 size += len(it["text"])
             listed = {it["id"] for it in shown_items}
@@ -1946,7 +1948,10 @@ class Illustrator:
             # or describe it, never the paragraph either side that only gives them context (it often describes someone else)
             core = sorted((set(look_seqs) | set(rest)) & set(used))
             own = "\n".join([b.text[s] for s in core] + [notes] + prev_text)
-            change_src = "\n".join([change] + [b.text[s] for s in look_seqs[:3]]) if mode == "amend" else ""
+            # what an amend may quote to replace a detail: the change item's own text and the paragraphs it cites, nothing else
+            citem = next((it for it in reversed(self.items(bi, eid)) if it["text"] == change and b.ord_of[it["from"]] <= at), None)
+            cseqs = [b.seq_of[a] for a in (citem or {}).get("evidence", []) if a in b.seq_of and b.seq_of[a] <= upto]
+            change_src = "\n".join([change] + [b.text[s] for s in cseqs if s in b.text]) if mode == "amend" else ""
             got, why, details, home, role = self._write_note(prompt, bi, anchor, source, ve["name"], mode, eid, own,
                                                        prev_details, list(cur.get("home", [])) if cur else [], change_src,
                                                        str(cur.get("role", "")) if cur else "")
@@ -1954,7 +1959,7 @@ class Illustrator:
             if got is None and why != "empty":
                 return {"why": why}
             note = {"v": NOTE_VERSION, "from": anchor, "text": got or "", "role": role, "details": details,
-                    "sources": sources, "inherits": inherits, "items": sorted(done | {it["id"] for it in looks}),
+                    "sources": sources, "inherits": inherits, "items": sorted(done | {it["id"] for it in shown_items}),
                     "changed": (list(cur.get("changed", [])) if cur else []) + ([[me, anchor]] if mode == "amend" and got else [])}
             if e["type"] == "group":
                 note["home"] = home
@@ -1997,7 +2002,7 @@ class Illustrator:
                     if not isinstance(d, dict) or not str(d.get("text") or "").strip():
                         continue
                     t, q = " ".join(str(d["text"]).split()), " ".join(str(d.get("quote") or "").split())
-                    if d.get("seen") is False:
+                    if d.get("seen") is not True:      # a detail the writer does not call seen is no look
                         not_look.append(t)
                         continue
                     if quoted(q, own) and detail_supported(t, q):
@@ -2097,13 +2102,16 @@ class Illustrator:
         if e.get("type") not in PORTRAIT_TYPES or eid not in self.books[bi].ents:
             return note, "", srcs, books
         b = self.books[bi]
-        me = self._bkey(bi)
-        # the anchors of this book where its own note was amended by a look change
-        changed = [a for k, a in own.get("changed", []) if k == me and a in b.ord_of]
+        fin = self._finished(bi, finished)
+        # where its own note was amended by a look change, as (book, ordinal): this book's, and an earlier book's the reader
+        # finished (one from an unfinished book is not visible, so it does not count)
+        keys = {self._bkey(j): j for j in range(bi + 1)}
+        changed = [(keys[k], self.books[keys[k]].ord_of[a]) for k, a in own.get("changed", [])
+                   if k in keys and a in self.books[keys[k]].ord_of and (keys[k] == bi or fin is None or k in fin)]
         parts, said, found = [note], _content(note), 0
         for gid in self.groups_of(bi, eid, anchor, finished)[:GROUPS_TRIED]:
-            since = self._member_since(bi, eid, gid)
-            if since is not None and any(b.ord_of[a] > b.ord_of[since] for a in changed):
+            since = self._member_since(bi, eid, gid, fin) if changed else None
+            if since is not None and any(c > since for c in changed):
                 continue      # its own look changed after it joined (a Red carved into a Gold): its own look wins
             g = self._note(bi, gid, anchor, "", finished)
             new = [d["text"] for d in g.get("details") or [] if not _content(d["text"]) <= said]
@@ -2118,12 +2126,19 @@ class Illustrator:
                 break
         return " ".join(p.rstrip(".") + "." for p in parts), "", sorted(set(srcs), key=b.ord_of.get), sorted(set(books))
 
-    def _member_since(self, bi: int, eid: str, gid: str) -> str | None:
-        """The anchor of book bi where the entity's membership of a group begins: its tie's, else the group pick's."""
-        b = self.books[bi]
-        froms = [r["from"] for r in b.doc.get("relations", []) if {r["src"], r["dst"]} == {eid, gid} and r["from"] in b.ord_of]
-        froms += [p["from"] for p in self.group_picks(bi, eid) if p["group"] == gid and p["from"] in b.ord_of]
-        return min(froms, key=b.ord_of.get) if froms else None
+    def _member_since(self, bi: int, eid: str, gid: str, finished: frozenset[str] | None = None) -> tuple[int, int] | None:
+        """(book, ordinal) where the entity's membership of a group begins, over books 0..bi (an earlier book only when the
+        reader finished it): the earliest of its ties to the group and the group pick's start."""
+        out = []
+        for j in range(bi + 1):
+            if j < bi and finished is not None and self._bkey(j) not in finished:
+                continue
+            b = self.books[j]
+            froms = [r["from"] for r in b.doc.get("relations", []) if {r["src"], r["dst"]} == {eid, gid} and r["from"] in b.ord_of]
+            if eid in b.ents:
+                froms += [p["from"] for p in self.group_picks(j, eid) if p["group"] == gid and p["from"] in b.ord_of]
+            out += [(j, b.ord_of[a]) for a in froms]
+        return min(out) if out else None
 
     def milieu(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None) -> tuple[str, list[str], list[str]]:
         """(text, sources, inherits) of the surroundings a figure belongs to at an anchor, from the index's structure only:
