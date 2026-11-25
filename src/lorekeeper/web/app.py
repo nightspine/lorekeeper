@@ -1329,7 +1329,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 books_.append(arts.book(d, None, ph, arts.resolve(ph, style)[1], None, draw=False))
         books_.append(arts.book(ctx["doc"], art_epub(ctx), ctx["hash"], style, None))
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
-                                  log=lambda m: None, pause=0), image, slug_
+                                  log=lambda m: None, pause=0,
+                                  cheap_text=jobs.cheap_model(None) if text_needed else None), image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1473,21 +1474,42 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         pr.references, pr.inherits = refs, sorted(inherits - {book_key(job.bi)})
         return pr
 
-    def figure_ref_url(h: str, slug_: str, ref) -> str | None:
-        """The URL of a stored reference (a plain id of this set, or {set, id} of another style's set of the edition), built
-        from checked ids only; None for none or anything malformed."""
+    def edition_hashes(ctx: dict) -> list[str]:
+        """The editions a reference of this index's pictures may live in: this one, then the earlier books of its series
+        (a reference picture is stored as an id with no book, and `latest_picture` walks the earlier books)."""
+        out = [ctx["hash"]]
+        try:
+            for d in art_prior(ctx):
+                ph = artstore.text_hash(d)
+                if artstore.HASH.fullmatch(ph) and ph not in out:
+                    out.append(ph)
+        except Exception:
+            pass
+        return out
+
+    def figure_ref_url(hashes: list[str], slug_: str, ref) -> str | None:
+        """The URL of a stored reference (a plain id of this style's set, or {set, id} of another style's set), served from the
+        edition that holds that picture (this one, else an earlier book's: the search `redraw_references` makes); None for
+        none, anything malformed, or a picture no edition holds. Built from checked ids only."""
         if isinstance(ref, str):
             pid_, sl = ref, slug_
         elif isinstance(ref, dict) and isinstance(ref.get("set"), str) and isinstance(ref.get("id"), str):
             pid_, sl = ref["id"], ref["set"]
         else:
             return None
-        return f"/api/art/{h}/{sl}/{pid_}" if artstore.PID.fullmatch(pid_) and artstore.SLUG.fullmatch(sl) else None
+        if not (artstore.PID.fullmatch(pid_) and artstore.SLUG.fullmatch(sl)):
+            return None
+        for h in hashes:
+            m = arts.manifest(h, sl)
+            if m and any(r.get("id") == pid_ for r in m.get("pictures", [])):
+                return f"/api/art/{h}/{sl}/{pid_}"
+        return None
 
-    def picture_json(h: str, slug_: str, rec: dict) -> dict:
-        out = {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
+    def picture_json(ctx: dict, slug_: str, rec: dict, hashes: list[str] | None = None) -> dict:
+        out = {**rec, "url": f"/api/art/{ctx['hash']}/{slug_}/{rec['id']}"}
         if isinstance(rec.get("figures"), list):    # each reference as a URL (or null), as the prompt route answers
-            out["figures"] = [{"label": f.get("label"), "entity": f.get("entity"), "ref": figure_ref_url(h, slug_, f.get("ref"))}
+            hashes = hashes if hashes is not None else edition_hashes(ctx)
+            out["figures"] = [{"label": f.get("label"), "entity": f.get("entity"), "ref": figure_ref_url(hashes, slug_, f.get("ref"))}
                               for f in rec["figures"] if isinstance(f, dict)]
         return out
 
@@ -1608,7 +1630,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         bg = arts.background(h)                 # the person's note is the edition's, in every style
         if bg:
             body["world"] = artstore.world_of(bg)
-        body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
+        hashes = edition_hashes(ctx) if m and any(isinstance(r.get("figures"), list) for r in body.get("pictures", [])) else None
+        body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
     def chapter_events(ctx: dict, il) -> dict[str, int]:
@@ -1813,7 +1836,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 else:
                     entry = take_place_of(key, ctx["hash"], slug_, old_rec, rec)
                     rec = {**rec, "replaces": old_rec["id"]}
-            return {**picture_json(ctx["hash"], slug_, rec), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, rec), "undo": entry["id"]}
         return await work()
 
     def replaced_record(ctx: dict, il, job, slug_: str, at: str | None, fin, pid) -> dict | None:
@@ -1948,7 +1971,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if "inherits" not in rec:
                     new.pop("inherits", None)
                 entry = take_place_of(key, ctx["hash"], slug_, rec, new)
-            return {**picture_json(ctx["hash"], slug_, {**new, "replaces": pid}), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "undo": entry["id"]}
         return await work()
 
     @app.put("/api/library/{key}/art/world")
