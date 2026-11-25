@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.15.0](https://github.com/nightspine/lorekeeper/compare/v0.14.0...v0.15.0) (2026-11-25)
+
+
+### Features
+
+* art sets, chapter pictures and portraits drawn from the book, with the server routes behind them ([#97](https://github.com/nightspine/lorekeeper/issues/97)) ([3f0f714](https://github.com/nightspine/lorekeeper/commit/3f0f714de38d7bccab9349cd295c4f9ed39d51e9))
+* pictures in the Reader, drawn on demand or with a build, with a pictures help page ([#99](https://github.com/nightspine/lorekeeper/issues/99)) ([f52b41e](https://github.com/nightspine/lorekeeper/commit/f52b41e8a00013ee46e36f42e8e63ef99fd50bb6))
+
 ## [0.14.0](https://github.com/nightspine/lorekeeper/compare/v0.13.0...v0.14.0) (2026-11-24)
 
 
