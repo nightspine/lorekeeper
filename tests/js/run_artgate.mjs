@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { visibleArt, visibleAt, visibleWorld, unfinishedSources, scopeAt, faceIndex } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -92,6 +92,42 @@ test("an inherited note is never read as this book's, even when its anchor id co
 test("no note, or an empty one, shows nothing", () => {
   assert.equal(visibleWorld(null, { ords: book2, position: 4 }), null);
   assert.equal(visibleWorld({ text: "  ", from: "ch1.para01" }, { ords: book2, position: 4 }), null);
+});
+
+
+// Story time: a frame story (s1) whose chapters tell a past strand (s2) after a cue paragraph.
+const timeline = { runs: [{ seq: 0, scope: null }, { seq: 3, scope: "s1.1" }, { seq: 100, scope: null }, { seq: 112, scope: "s2.1" },
+  { seq: 300, scope: null }, { seq: 300, scope: "s1.1" }] };
+test("scopeAt: the run at or before the block, unknown before a chapter's cue", () => {
+  assert.equal(scopeAt(timeline, 0), null);
+  assert.equal(scopeAt(timeline, 2), null);
+  assert.equal(scopeAt(timeline, 3), "s1.1");
+  assert.equal(scopeAt(timeline, 99), "s1.1");
+  assert.equal(scopeAt(timeline, 100), null);   // the new chapter has begun, its cue not reached: never switch early
+  assert.equal(scopeAt(timeline, 111), null);
+  assert.equal(scopeAt(timeline, 112), "s2.1");
+  assert.equal(scopeAt(timeline, 300), "s1.1");   // a cue on the chapter's first block: the later run at one seq wins
+});
+test("scopeAt: no timeline, no block, malformed runs", () => {
+  assert.equal(scopeAt(null, 5), null);
+  assert.equal(scopeAt({}, 5), null);
+  assert.equal(scopeAt(timeline, null), null);
+  assert.equal(scopeAt({ runs: [{ seq: "1", scope: "s1.1" }, { seq: 2, scope: 7 }, null, { seq: 3, scope: "" }] }, 9), null);
+  // unsorted input still reads by seq
+  assert.equal(scopeAt({ runs: [{ seq: 50, scope: "s2.1" }, { seq: 1, scope: "s1.1" }] }, 10), "s1.1");
+});
+test("faceIndex: the latest picture of the reader's scope, else the latest", () => {
+  const pics = [{ rec: { id: "young", scope: "s2.1" } }, { rec: { id: "old", scope: "s1.1" } }, { rec: { id: "legacy" } }];
+  assert.equal(faceIndex(pics, "s2.1"), 0);
+  assert.equal(faceIndex(pics, "s1.1"), 1);
+  assert.equal(faceIndex(pics, null), 2);       // unknown scope (before the cue): the latest, as today
+  assert.equal(faceIndex(pics, "s3.1"), 2);     // no picture of that time: the latest
+  assert.equal(faceIndex([pics[2]], "s1.1"), 0); // a single-scope figure with a legacy record: unchanged
+  assert.equal(faceIndex([], "s1.1"), -1);
+  // the choice is only among what is visible: a later scoped picture past the position is never passed in
+  const visible = visibleArt({ pictures: [{ id: "a", kind: "portrait", from: "ch1.para01", target: "t", scope: "s1.1" },
+    { id: "b", kind: "portrait", from: "ch3.para12", target: "t", scope: "s2.1" }] }, book1, book1.get("ch2.para03"), false).map((rec) => ({ rec }));
+  assert.equal(visible[faceIndex(visible, "s2.1")].rec.id, "a");
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

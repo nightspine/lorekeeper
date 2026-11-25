@@ -55,3 +55,33 @@ export function visibleWorld(world, { ords, position, book = null, finished = []
   // `from` goes with a note of this book: text shown from it is dropped if the position moves back before it.
   return visibleAt(world.from, ords || new Map(), position, false) ? { text: world.text, own: true, from: world.from } : null;
 }
+
+/**
+ * The scope ("s2.1": strand and era) of block `seq` from an art set's `timeline.runs` ([{ seq, scope }], sorted by seq;
+ * a null run opens each labelled chapter, its scope starts at the chapter's cue), or null when unknown: no timeline,
+ * no block, before the first run, before a chapter's cue. Runs come from the server, so anything malformed is ignored.
+ */
+export function scopeAt(timeline, seq) {
+  const runs = Array.isArray(timeline?.runs) ? timeline.runs : [];
+  if (!Number.isInteger(seq) || !runs.length) return null;
+  let best = null, bestSeq = -Infinity;
+  for (const r of runs) {
+    if (!r || !Number.isInteger(r.seq) || r.seq > seq) continue;
+    if (r.scope !== null && typeof r.scope !== "string") continue;
+    // The latest run at or before the block; at one seq a later entry wins, as the list's order says.
+    if (r.seq >= bestSeq) { bestSeq = r.seq; best = r.scope; }
+  }
+  return typeof best === "string" && best ? best : null;
+}
+
+/**
+ * The index of the picture to show as an entry's face among its visible pictures (oldest first): the latest whose
+ * `scope` is the reader's current scope, else the latest. -1 for none. Records without a scope only win the fallback.
+ */
+export function faceIndex(pics, scope) {
+  if (!Array.isArray(pics) || !pics.length) return -1;
+  if (typeof scope === "string" && scope) {
+    for (let i = pics.length - 1; i >= 0; i--) if ((pics[i]?.rec ?? pics[i])?.scope === scope) return i;
+  }
+  return pics.length - 1;
+}
