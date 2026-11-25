@@ -440,7 +440,8 @@ def test_a_redraw_keeps_the_story_time_its_picture_shows(env, monkeypatch):
 
 def test_the_manifest_route_gives_the_browser_the_timeline_and_each_scope(env):
     """The Reader picks a figure's picture by the scope of the block being read, so the set comes with `timeline.runs`
-    and every picture with its `scope`; the strands' labels and the cue quotes stay on the server."""
+    and every picture with its `scope`; everything else the timeline and the paragraph checks hold (labels, `when`, `skip`,
+    `why`, cue quotes, `shows`) stays on the server."""
     env.key()
     run_set(env, portraits=False)
     path = env.data / "art" / env.hash / "ink" / "art.json"
@@ -448,12 +449,16 @@ def test_the_manifest_route_gives_the_browser_the_timeline_and_each_scope(env):
     timeline = {"strands": [{"id": "s1", "label": "the frame", "book": "mill", "from": "a1"},
                             {"id": "s2", "label": "the miller's youth", "book": "mill", "from": "a9"}],
                 "chapters": {"One": {"key": "k1", "strand": "s1", "era": 1, "cue": {"seq": 1, "quote": "The mill"},
+                                     "label": "the old miller in his mill", "when": "the night of the storm",
                                      "events": {}},
                              "Two": {"key": "k2", "strand": "s2", "era": 1, "cue": {"seq": 9, "quote": "Years before"},
-                                     "events": {"e3": "other"}}},
+                                     "label": "the miller as a boy", "when": "forty years before",
+                                     "skip": "ten winters later", "events": {"e3": "other"}},
+                             "Three": {"strand": None, "why": "no answer"}},
                 "runs": [{"seq": 1, "scope": None}, {"seq": 1, "scope": "s1.1"},
                          {"seq": 8, "scope": None}, {"seq": 9, "scope": "s2.1"}]}
     man["timeline"] = timeline
+    man["shows"] = {"zz-shown-at": {"14": "s1.1", "15": "s2.1"}}
     man["pictures"][0]["scope"] = "s2.1"
     path.write_text(json.dumps(man))
 
@@ -461,8 +466,16 @@ def test_the_manifest_route_gives_the_browser_the_timeline_and_each_scope(env):
     assert body["timeline"]["runs"] == timeline["runs"]
     assert [s["id"] for s in body["timeline"]["strands"]] == ["s1", "s2"]
     assert all("label" not in s for s in body["timeline"]["strands"])
-    two = body["timeline"]["chapters"]["Two"]
-    assert two["cue"] == {"seq": 9} and two["strand"] == "s2" and two["events"] == {"e3": "other"}
+    chapters = body["timeline"]["chapters"]
+    assert chapters["Two"] == {"key": "k2", "strand": "s2", "era": 1, "cue": {"seq": 9}, "events": {"e3": "other"}}
+    assert chapters["One"] == {"key": "k1", "strand": "s1", "era": 1, "cue": {"seq": 1}, "events": {}}
+    assert chapters["Three"] == {"strand": None}
+    assert set(body["timeline"]) == {"runs", "strands", "chapters"}
+    assert all(set(st) == {"id", "book", "from"} for st in body["timeline"]["strands"])
+    assert "shows" not in body
+    raw = json.dumps(body)
+    for word in ("the frame", "youth", "forty years", "ten winters", "storm", "Years before", "The mill", "no answer", "zz-shown-at"):
+        assert word not in raw, word
     pics = {p["id"]: p for p in body["pictures"]}
     assert pics[man["pictures"][0]["id"]]["scope"] == "s2.1"
     assert json.loads(path.read_text())["timeline"] == timeline     # the stored set keeps its working notes

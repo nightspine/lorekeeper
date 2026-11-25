@@ -1523,20 +1523,33 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         m = arts.manifest(h, slug_) if slug_ else None
         body = copy.deepcopy(m) if m else artmod.blank(h, style or "")
         body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
-        tidy_timeline(body.get("timeline"))
+        body.pop("shows", None)
+        if "timeline" in body:
+            body["timeline"] = tidy_timeline(body["timeline"])
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
-    def tidy_timeline(tl) -> None:
-        """The Reader reads only `timeline.runs` (and a picture's own `scope`); the strands' labels and the cue quotes are the
-        pipeline's working notes, written from chapters the reader may not have reached, so they never leave the server."""
+    def tidy_timeline(tl):
+        """What the Reader may see of the timeline, by allow-list: `runs`, each strand's id, book and first anchor, and
+        each chapter's key, line, era, cue paragraph and per-event lines. Everything else the pipeline keeps (a line's
+        label, a chapter's `when`, `skip` and `why`, the cue quote, the paragraph checks under `shows`) is written from
+        chapters the reader may not have reached, so it never leaves the server."""
         if not isinstance(tl, dict):
-            return
-        for st in tl.get("strands") or []:
-            if isinstance(st, dict):
-                st.pop("label", None)
-        for ch in (tl.get("chapters") or {}).values():
-            if isinstance(ch, dict) and isinstance(ch.get("cue"), dict):
-                ch["cue"].pop("quote", None)
+            return None
+        out: dict = {}
+        if isinstance(tl.get("runs"), list):
+            out["runs"] = tl["runs"]
+        out["strands"] = [{k: st[k] for k in ("id", "book", "from") if k in st}
+                          for st in tl.get("strands") or [] if isinstance(st, dict)]
+        chapters = {}
+        for title, ch in (tl.get("chapters") or {}).items() if isinstance(tl.get("chapters"), dict) else ():
+            if not isinstance(ch, dict):
+                continue
+            c = {k: ch[k] for k in ("key", "strand", "era", "events") if k in ch}
+            if isinstance(ch.get("cue"), dict) and "seq" in ch["cue"]:
+                c["cue"] = {"seq": ch["cue"]["seq"]}
+            chapters[title] = c
+        out["chapters"] = chapters
+        return out
 
     def chapter_events(ctx: dict, il) -> dict[str, int]:
         """Non-minor events per chapter title of the plan (the EPUB's chapters, a repeated title as "Title (2)")."""
