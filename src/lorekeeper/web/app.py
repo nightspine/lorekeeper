@@ -160,6 +160,21 @@ class Library:
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "::1")
 
 
+def lorekeeper_version() -> str:
+    """The installed package's version, else pyproject.toml's (a checkout run without installing), else "unknown"."""
+    try:
+        from importlib.metadata import version
+        return version("lorekeeper")
+    except Exception:
+        pass
+    try:
+        import tomllib
+        with open(Path(__file__).resolve().parents[3] / "pyproject.toml", "rb") as f:
+            return str(tomllib.load(f)["project"]["version"])
+    except Exception:
+        return "unknown"
+
+
 class Revalidated(StaticFiles):
     """Static files the browser must check before reuse (a 304 when unchanged). Without it a browser guesses a
     lifetime from Last-Modified and, after an upgrade, runs new scripts against old styles or the reverse."""
@@ -459,6 +474,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.get("/readme.md", include_in_schema=False)
     def readme_md():
         return repo_markdown("README.md")
+
+    @app.get("/api/about")
+    def about():
+        """The version of Lorekeeper this server runs (Settings shows it). Never fails: "unknown" when neither the installed
+        package nor pyproject.toml says."""
+        return {"version": lorekeeper_version()}
 
     @app.get("/api/ollama")
     def ollama_status():
@@ -1713,11 +1734,61 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     # The text drawn is not the prompt just written for this reader, so it may come from one written for a
                     # reader with more books finished: it is hidden until every earlier book is (`partial` is this request's).
                     pr.inherits = sorted(set(pr.inherits) | set(earlier_keys(ctx)))
+                old_rec = replaced_record(ctx, il, job, slug_, at, fin, body.get("replaces"))
                 rec = draw_given(il, job, pr, text_)
-                entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_, "added": [rec["id"]]},
-                                    f"drew a picture ({rec['kind']})")
+                if old_rec is None:
+                    entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_,
+                                                  "added": [rec["id"]]}, f"drew a picture ({rec['kind']})")
+                else:
+                    entry = take_place_of(key, ctx["hash"], slug_, old_rec, rec)
+                    rec = {**rec, "replaces": old_rec["id"]}
             return {**picture_json(ctx["hash"], slug_, rec), "undo": entry["id"]}
         return await work()
+
+    def replaced_record(ctx: dict, il, job, slug_: str, at: str | None, fin, pid) -> dict | None:
+        """The picture a draw from the sheet takes the place of (`replaces`), or None: one of the same set, kind and target,
+        that the reader can see by the same gate as the target (its anchor at or before the position, and nothing from an
+        earlier book the reader has not finished). Checked before anything is drawn."""
+        if pid is None:
+            return None
+        if not isinstance(pid, str) or not pid:
+            raise ArtRefusal(422, "bad-replaces", "replaces must be a picture id.")
+        rec = next((r for r in (arts.manifest(ctx["hash"], slug_) or {}).get("pictures", []) if r.get("id") == pid), None)
+        if rec is None:
+            raise ArtRefusal(422, "bad-replaces", "That picture is not in this style's pictures.")
+        if rec.get("kind") != job.kind or rec.get("target") != job.target:
+            raise ArtRefusal(422, "bad-replaces", "That picture is of something else.")
+        ords = il.books[job.bi].ord_of
+        unfinished = set(earlier_keys(ctx)) - set(fin) if fin is not None else set()
+        if (rec.get("from") not in ords or (at is not None and ords[rec["from"]] > ords[at])
+                or unfinished & set(rec.get("inherits") or [])):
+            raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
+        return rec
+
+    def take_place_of(key: str, h: str, slug_: str, old_rec: dict, new: dict) -> dict:
+        """File `new` (already in the set) in the place of `old_rec`: the new record `replaces` it and the old leaves the set
+        with its file, both kept in one journal entry (op `redraw`) whose undo puts the old one back. Under the set's lock."""
+        pid = old_rec["id"]
+        old = arts.path(h, slug_, pid)
+        entry = journal_art(key, [old] if old and old.name != new["file"] else [],
+                            {"op": "redraw", "textHash": h, "style": slug_, "removed": [old_rec], "added": [new["id"]]},
+                            f"drew a picture again ({old_rec['kind']})")
+        try:
+            man = arts.manifest(h, slug_)
+            for r in man["pictures"]:
+                if r["id"] == new["id"]:
+                    r["replaces"] = pid
+                    if "inherits" not in old_rec and "inherits" not in new:
+                        r.pop("inherits", None)
+            man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
+            man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
+            arts.save(h, slug_, man)
+            if old is not None and new["file"] != old.name:
+                old.unlink(missing_ok=True)
+        except Exception:
+            identity.discard(entry["id"])
+            raise
+        return entry
 
     def art_record(ctx: dict, pid: str) -> tuple[str, dict]:
         hit = arts.find(ctx["hash"], pid)
@@ -1784,25 +1855,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
-                old = arts.path(ctx["hash"], slug_, pid)
-                entry = journal_art(key, [old] if old and old.name != new["file"] else [],
-                                    {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
-                                     "added": [new["id"]]}, f"drew a picture again ({rec['kind']})")
-                try:
-                    man = arts.manifest(ctx["hash"], slug_)
-                    for r in man["pictures"]:
-                        if r["id"] == new["id"]:
-                            r["replaces"] = pid
-                            if "inherits" not in rec:
-                                r.pop("inherits", None)
-                    man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
-                    man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
-                    arts.save(ctx["hash"], slug_, man)
-                    if old is not None and new["file"] != old.name:
-                        old.unlink(missing_ok=True)
-                except Exception:
-                    identity.discard(entry["id"])
-                    raise
+                entry = take_place_of(key, ctx["hash"], slug_, rec, new)
             return {**picture_json(ctx["hash"], slug_, {**new, "replaces": pid}), "undo": entry["id"]}
         return await work()
 

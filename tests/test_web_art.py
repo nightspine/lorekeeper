@@ -429,6 +429,76 @@ def test_a_redraw_keeps_the_earlier_books_its_prompt_carries(env):
     assert "inherits" not in stored[legacy["id"]]
 
 
+def test_a_draw_from_the_sheet_can_replace_a_picture_and_undo_brings_it_back(env):
+    """Redraw with a new prompt: the sheet's draw names the picture it takes the place of; the old one leaves the set as a
+    redraw does it, in one `redraw` journal entry."""
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A mill wheel at dusk.", "p": 1.0,
+           "replaces": old["id"]}
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json=ask)
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["replaces"] == old["id"] and new["prompt"] == "A mill wheel at dusk." and new["target"] == old["target"]
+    now = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert old["id"] not in {p["id"] for p in now} and next(p for p in now if p["id"] == new["id"])["replaces"] == old["id"]
+    assert len(now) == len(pics) and env.c.get(old["url"]).status_code == 404
+    entry = json.loads((env.data / "merges" / new["undo"] / "entry.json").read_text())
+    assert entry["kind"] == "art" and entry["art"]["op"] == "redraw" and entry["art"]["added"] == [new["id"]]
+    assert env.c.post(f"/api/library/{KEY}/undo/{new['undo']}").status_code == 200
+    back = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert old["id"] in {p["id"] for p in back} and new["id"] not in {p["id"] for p in back}
+    assert env.c.get(old["url"]).status_code == 200
+
+
+def test_a_draw_without_replaces_adds_a_version_beside_the_old_one(env):
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": old["kind"], "target": old["target"], "style": "ink",
+                                                          "prompt": "A mill wheel at dusk."})
+    assert r.status_code == 200 and "replaces" not in r.json()
+    now = {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert old["id"] in now and r.json()["id"] in now
+
+
+def test_replaces_must_name_a_visible_picture_of_the_same_target_in_the_set(env):
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    other = next(p for p in pics if (p["kind"], p["target"]) != (old["kind"], old["target"]))
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A mill wheel at dusk.", "p": 1.0}
+    calls = len(env.image.calls)
+    for bad, code in ((other["id"], "bad-replaces"), ("p00000000", "bad-replaces"), (7, "bad-replaces")):
+        r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "replaces": bad})
+        assert r.status_code == 422 and r.json()["code"] == code, (bad, r.text)
+    # a picture of another style's set is not this set's
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "replaces": old["id"]})
+    assert r.status_code == 422 and r.json()["code"] == "bad-replaces"
+    assert len(env.image.calls) == calls                          # refused before anything is drawn
+    assert {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]} == {p["id"] for p in pics}
+
+
+def test_replaces_never_names_a_picture_past_the_position(env):
+    """A picture whose anchor is past the reader's position is refused like the target, even when the target is reached."""
+    env.key()
+    run_set(env, portraits=False)
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    old = next(p for p in man["pictures"] if p["target"] == "Chapter One")
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A gate.", "p": 0.9, "replaces": old["id"]}
+    old["from"] = env.doc["anchors"][-1]["id"]                     # past the position asked with
+    path.write_text(json.dumps(man))
+    calls = len(env.image.calls)
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json=ask)
+    assert r.status_code == 422 and r.json()["code"] == "not-visible" and "picture" in r.json()["detail"], r.text
+    assert len(env.image.calls) == calls
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)

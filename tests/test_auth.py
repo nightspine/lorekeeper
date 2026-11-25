@@ -94,7 +94,7 @@ def test_public_and_protected_routes(env):
     with client(app) as c:
         for path in ("/", "/.well-known/lorekeeper", "/docs/", "/static/css/base.css", "/api/auth/session"):
             assert c.get(path).status_code == 200, path
-        for path in ("/api/library", "/api/ollama", "/api/docs", "/openapi.json"):
+        for path in ("/api/library", "/api/ollama", "/api/about", "/api/docs", "/openapi.json"):
             r = c.get(path)
             assert r.status_code == 401 and r.json() == {"detail": "Sign in required"}, path
 
