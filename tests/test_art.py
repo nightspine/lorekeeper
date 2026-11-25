@@ -190,7 +190,7 @@ def note_reply(note, prompt):
     role, ds, home = (note + ([],))[:3] if isinstance(note, tuple) else ("", [note], [])
 
     def q(d):
-        m = re.search(r"(\w+[ ,]+)?" + re.escape(d) + r"([ ,]+\w+)?", prompt)
+        m = re.search(r"(\w+[ ,]+)?\b" + re.escape(d) + r"\b([ ,]+\w+)?", prompt.split("What the companion has noted:", 1)[-1])
         return {"text": d, "quote": m.group(0) if m else d}
     return {"role": role, "details": [q(d) for d in ds], "home": [q(d) for d in home]}
 
@@ -1882,3 +1882,16 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_no_group_only_it_ha
     assert "white aprons" in full.text and "b1" in full.inherits
     own = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished=set()))
     assert own.partial and "white aprons" not in own.text and own.inherits == []
+
+
+def test_a_full_note_takes_no_new_detail_and_drops_none(monkeypatch):
+    monkeypatch.setattr(art, "MAX_DETAILS", 2)
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Wears a red ribbon in her dark braided hair at the market."})
+    t = Text(notes={"Mira": ("a young woman", ["slight", "dark braided hair", "a red ribbon"])})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    first = sink.m["appearance"]["mira"][0]["text"]
+    assert first == "A young woman: slight, dark braided hair."               # the third did not fit
+    assert il.ensure_note(0, "mira", "a11")[0] == first                       # the fill keeps both, adds nothing

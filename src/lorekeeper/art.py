@@ -71,7 +71,9 @@ GROUPS_TRIED = 4       # groups asked for a note before giving up on finding two
 PASSAGE_WORDS = 600
 WORKERS = 3
 SCENE_WORDS = (35, 170)
-NOTE_WORDS = (1, 140)      # an appearance note is put together by code from the role and the quoted details
+NOTE_WORDS = (1, 200)      # an appearance note is put together by code from the role and the quoted details
+MAX_DETAILS = 16           # details a note holds: a fill adds new ones only while it has room (nothing is dropped for them)
+MAX_HOME = 6               # a group note's details of where its members live
 WORLD_WORDS = (15, 90)
 NOTE_VERSION = 2           # a note (and a picture drawn from one) of another version is never used for a new picture
 # A note is written from the paragraphs its look items cite first, then from paragraphs that name the entity, within these
@@ -167,8 +169,9 @@ allegiance ("a miller of the valley", "a stone bridge"); no look in the role (no
 and in "role_look" any word of your role that still says how it looks (an empty list when none does).
 Return "details": {looks}, as the passages and notes show it, each a short phrase ("text") with "quote", the exact words of the
 passages or notes that show it about {who} (copied word for word, 2 to 25 words), and "seen": true when it is something an
-illustrator can draw (a body, a face, a colour, a garment, a mark, gear), false when it is character, mood or situation
-("curious", "a prisoner"). Use no name. A detail you cannot quote about {who} is not shown: leave it out, never guess it and never
+illustrator can draw and that lasts (a body, a face, a colour, a garment, a mark, gear it keeps), false when it is character,
+mood, situation or a passing state ("curious", "a prisoner", "bleeding", "in tears", "holding a cup"). At most 12 details, the
+ones an illustrator most needs, each a short phrase, not a sentence. Use no name. A detail you cannot quote about {who} is not shown: leave it out, never guess it and never
 take it from another figure. Give each detail once, never again in other words. If nothing of its look is shown (a name only mentioned, an author, a person only written about),
 return an EMPTY details list.{home}{more}
 {prev}
@@ -178,8 +181,9 @@ What the companion has noted:
 Passages:
 {passages}"""
 HOME = """
-Return also "home": where and how its members live, as the passages and notes show it (their dwellings, the kind of place,
-how rich or poor it is), each a short phrase with its "quote", the same way; an empty list when the text does not show it."""
+Return also "home": the places its members live in and how those places look, as the passages and notes show it (their
+dwellings, the kind of place, how rich or poor it is; not what they do or rule), at most 6, each a short phrase with its "quote"
+and "seen", the same way; an empty list when the text does not show it."""
 _DETAILS = {"type": "array", "items": {"type": "object", "required": ["text", "quote"],
                                        "properties": {"text": {"type": "string"}, "quote": {"type": "string"},
                                                       "seen": {"type": "boolean"}}}}
@@ -1946,7 +1950,7 @@ class Illustrator:
                     if not isinstance(d, dict) or not str(d.get("text") or "").strip():
                         continue
                     t, q = " ".join(str(d["text"]).split()), " ".join(str(d.get("quote") or "").split())
-                    if field_ == "details" and d.get("seen") is False:
+                    if d.get("seen") is False:
                         not_look.append(t)
                         continue
                     if quoted(q, own) and detail_supported(t, q):
@@ -1982,8 +1986,10 @@ class Illustrator:
                 with self.lock:
                     self.report.dropped["replaced: look detail the change supersedes"] += len(prev) - len(details)
         have = {d["text"].lower() for d in details}
-        details += [d for d in good if d["text"].lower() not in have]
+        # a note keeps what it had and takes new details while it has room (MAX_DETAILS; MAX_HOME for a group's homes)
+        details += [d for d in good if d["text"].lower() not in have][:max(0, MAX_DETAILS - len(details))]
         homes = list(prev_home) + [d for d in home if d["text"].lower() not in {h["text"].lower() for h in prev_home}]
+        homes = homes[:max(MAX_HOME, len(prev_home))]
         role = str(out.get("role") or "") if mode == "write" or not prev_role else prev_role
         if mode == "write" or not prev_role:
             # the role is who it is, not how it looks: its first clause only ("a miller with white hair" is "a miller"), and the
