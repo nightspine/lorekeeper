@@ -412,17 +412,12 @@ def quoted(quote: str, source: str) -> bool:
     return False
 
 
-# Words a look detail may add to its quote that name only the kind of detail ("tall build" on "a tall old man", "dressed in black"
-# on "clad in black"). A word naming what is described (skin, face, colour) is never one of them: "pale skin" needs "skin".
-_GENERIC = frozenset("build frame figure appearance look looks dressed clad wearing wears worn clothes clothing garb attire".split())
-
-
 def detail_supported(detail: str, quote: str) -> bool:
     """Whether every content word of a look detail is in its own quote ("long white moustache" in "a long white moustache";
     "dark hair" not in "her hair"; "pale skin" not in "the pale light"), words matched whole with their endings (`_base`)."""
     have = {_base(w) for w in _toks(quote)}
     words = [w for w in _toks(detail) if w not in _STOP and len(w) > 2]
-    return bool(words) and all(_base(w) in have or w in _GENERIC for w in words) and any(_base(w) in have for w in words)
+    return bool(words) and all(_base(w) in have for w in words)
 
 
 def _content(text: str) -> set[str]:

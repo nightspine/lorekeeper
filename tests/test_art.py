@@ -748,7 +748,8 @@ def test_a_quote_is_a_phrase_of_the_text_and_holds_every_word_of_its_detail():
     assert not art.quoted("white moustache ... a tall man", src)  # out of order
     assert not art.detail_supported("pale skin", "the pale light")          # "skin" rides on nothing
     assert not art.detail_supported("dark hair", "dark eyes")
-    assert art.detail_supported("dressed in black", "clad in black")        # a word naming only the kind of detail may
+    assert not art.detail_supported("dressed in black", "clad in black")    # every word, a kind-of-detail word too, is quoted
+    assert art.detail_supported("clad in black", "was clad in black from head to foot")
     # whole words with their endings, never a prefix
     assert not art.detail_supported("a scar", "a scarlet cloak") and not art.detail_supported("a big man", "many big hats")
     assert art.detail_supported("a scar", "a scarred face") and art.detail_supported("older", "the old miller")
