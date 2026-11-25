@@ -827,11 +827,88 @@ def test_counts_need_no_model_call():
     t = Text()
     il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     c = il.counts()
-    assert c == {"plates": 2, "portraits": 4, "chapters": [{"title": "One", "drawable": None}, {"title": "Two", "drawable": None}]}
+    row = {"drawable": None, "pictures": 1, "drawn": 0, "chosen": True}
+    assert c == {"plates": 2, "portraits": 4, "chapters": [{"n": 1, "title": "One", "events": 2, **row},
+                                                           {"n": 2, "title": "Two", "events": 3, **row}]}
     assert not t.prompts
     il.run()
     n = len(t.prompts)
     assert [x["drawable"] for x in il.counts()["chapters"]] == [2, 3] and len(t.prompts) == n
+
+
+# ---- choosing chapters, and portraits only
+
+
+SCREENING = "Which of them are a visible moment"
+
+
+@pytest.mark.parametrize("level", ["none", None])
+def test_level_none_draws_portraits_only_and_never_screens(level):
+    il, rep, sink, t, im = run(level=level, portraits="main")
+    assert pics(sink) and {p["kind"] for p in pics(sink)} == {"portrait"}
+    assert not any(SCREENING in p for p in t.prompts) and not sink.m["screened"]
+    assert art.scene_level("none") is None and "none" in art.LEVELS
+
+
+def test_an_unknown_level_is_refused_before_any_call():
+    bk = book(("One", CH1), ("Two", CH2))
+    t, im = Text(), Image()
+    with pytest.raises(ValueError, match="level must be"):
+        art.Illustrator([art.Book(base_doc(bk), bk, Mem(), "every")], t, im, "ink")
+    assert not t.prompts and not im.calls
+
+
+def test_scene_chapters_limit_scenes_but_never_portraits():
+    # Gabriel's only profile is in chapter Two: the CLI's --chapters 1 leaves him out, the web's chapter choice does not
+    il, rep, sink, t, im = run(level="all", scene_chapters={1})
+    assert {p["target"] for p in pics(sink, "plate")} == {"One"} and {p["target"] for p in pics(sink, "event")} == {"e1"}
+    assert {p["target"] for p in pics(sink, "portrait")} == {"mira", "oren", "stranger", "gabriel"}
+    assert set(sink.m["screened"]) == {"One"} and sum(SCREENING in p for p in t.prompts) == 1
+    _, _, cli_sink, _, _ = run(level="all", chapters={1})
+    assert "gabriel" not in {p["target"] for p in pics(cli_sink, "portrait")}
+
+
+def test_an_empty_chapter_choice_draws_no_scenes():
+    il, rep, sink, t, im = run(level="main", scene_chapters=[])
+    assert pics(sink) and {p["kind"] for p in pics(sink)} == {"portrait"} and not any(SCREENING in p for p in t.prompts)
+
+
+def test_counts_list_every_chapter_with_its_pictures_at_the_level_and_what_is_drawn():
+    bk = book(("One", CH1), ("Two", CH2), ("Three", ["Rain fell on the mill all through the long grey afternoon and evening.",
+                                                     "Mira mended a sack by the fire while Oren slept in his chair by the stove."]))
+    d = base_doc(bk)
+    d["recaps"].append(recap(3, 13, "Three"))                        # a chapter with a recap and no events
+    d["coverage"]["through"] = d["anchors"][-1]["id"]
+    sink = Mem()
+    il = art.Illustrator([art.Book(d, bk, sink, None)], Text(), Image(), "ink", portraits=None, scene_chapters={2, 3},
+                         workers=1, log=lambda *_: None, pause=0)
+    rows = lambda c, f: [x[f] for x in c["chapters"]]
+    c = il.counts(level="all")                                       # not screened yet: up to one per non-minor event
+    assert rows(c, "n") == [1, 2, 3] and rows(c, "title") == ["One", "Two", "Three"] and rows(c, "events") == [2, 3, 0]
+    assert rows(c, "pictures") == [2, 3, 0] and rows(c, "chosen") == [False, True, True] and c["plates"] == 3
+    c = il.counts(level="main")
+    assert rows(c, "pictures") == [1, 1, 0] and c["plates"] == 1 and c["portraits"] == 0
+    c = il.counts(level="none")
+    assert rows(c, "pictures") == [0, 0, 0] and rows(c, "chosen") == [False] * 3 and c["plates"] == 0
+    il2 = art.Illustrator([art.Book(d, bk, sink, "all")], Text(), Image(), "ink", portraits=None, workers=1,
+                          log=lambda *_: None, pause=0)
+    il2.run()
+    c = il2.counts(level="all")
+    assert rows(c, "drawable") == [2, 3, 0] and rows(c, "pictures") == [2, 3, 0] and rows(c, "drawn") == [2, 3, 0]
+    assert rows(il2.counts(level="main"), "drawn") == [1, 1, 0]
+
+
+def test_illustrate_command_level_none_draws_portraits_only(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    idx = _cli_index(tmp_path, base_doc(bk), bk, "a.lore.json")
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: Image())
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    assert cli.main(["illustrate", str(idx), "--epub", "x.epub", "--level", "none", "--out", str(tmp_path / "o")]) == 0
+    m = json.loads((tmp_path / "o" / "art.json").read_text())
+    assert m["pictures"] and {p["kind"] for p in m["pictures"]} == {"portrait"}
 
 
 def test_an_edited_prompt_is_never_softened_and_its_refusal_is_raised():
