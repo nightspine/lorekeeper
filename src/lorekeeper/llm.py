@@ -371,7 +371,8 @@ class OpenAICompatible:
         if choices[0].get("finish_reason") == "length":
             self.usage.truncated += 1
             return {}
-        if message.get("refusal") or choices[0].get("finish_reason") == "content_filter":
+        # a safety block: "content_filter", or with the provider's reason after it ("content_filter: PROHIBITED_CONTENT", Gemini)
+        if message.get("refusal") or str(choices[0].get("finish_reason") or "").startswith("content_filter"):
             self.usage.refusals += 1
             return {}
         try:

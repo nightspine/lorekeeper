@@ -97,7 +97,7 @@ LIKENESS_REFERENCE = True  # a scope's first portrait takes the figure's portrai
 MAX_STRANDS = 4            # lines of telling per series; a chapter opening a fifth is unknown
 MAX_ERAS = 4               # eras per strand; a chapter past the fourth is unknown
 MAX_SCOPE_VERSIONS = 5     # portraits per entity per book over all its scopes (MAX_VERSIONS within one)
-OPENING_WORDS = 120        # of a chapter's opening sent to the timeline call
+OPENING_WORDS = 200        # of a chapter's opening sent to the timeline call (the time is often stated a few lines in)
 EVIDENCE_WORDS = 25        # of the paragraph each event cites
 OTHER = "other"            # an event told in no known line (a dream, a vision, a brief memory): its figures get passage only
 PASSAGE = "passage"        # a figure drawn from the passage only: no fixed note, no reference
@@ -279,31 +279,41 @@ KINDS_WHAT = {
 }
 BACKGROUND = "in the surroundings they belong to, given below as their place (the program adds it after your text)."
 PLAIN = "against a plain, neutral background with no place in it."
-TIMELINE = """A reader's companion draws the people of a novel as they look at the time each scene tells. Below is one chapter
-of the novel, read in order: say which line of telling it is told in.
+TIMELINE = """A reader's companion draws the people of a novel as they look at the time each scene shows. Below is one chapter
+of the novel, read in order: say which line of telling it belongs to.
 
-A line of telling is a sustained stretch told at one time or at one layer of narration: the main story; a frame in which someone
-tells, writes or remembers the story; a long tale told inside it; a run of chapters set years before or after the rest; one of
-two times a book tells side by side. These are NOT a new line and stay in the line they are told in:
-- the story moving on in time, as stories do;
-- another narrator, viewpoint or place at the same time;
-- letters, diaries, journals and reports written in the story's own time;
-- dreams, visions and brief memories (mark their events "other", below).
+A line of telling is one TIME the story is set in, kept up over chapters. Most books have one. Some have several: the time of a
+frame (someone telling, writing or remembering the story, with whoever listens) and the time of the tale; or two or more times,
+years apart, that the book moves between (the same people as children in some chapters and as adults in others).
+- Decide by WHEN the chapter's events happen, never by who tells them or how. The frame's line holds only the scenes at the time
+  of the telling (the teller and the listener themselves); what the tale shows happens at the tale's time, even when it is told
+  aloud, in quotation marks or in the first person. A chapter that opens in the frame and then tells the past at length is in
+  the line of that past; its frame scenes are exceptions (see "events").
+- Times years apart are separate lines, even inside one tale and one frame: a teller's boyhood and his life as a grown man are
+  two lines. A chapter set years away from the line before it goes to the known line set at that time, or opens a new line.
+- Not a new line: the story moving on by hours, days or months; another narrator, viewpoint or place at the same time; letters,
+  diaries and reports written in the story's own time; a dream, a vision or a memory of a few lines inside a scene (mark its
+  events "other").
+- A chapter goes on in the line of the chapter before when its opening shows no other time. At a new part or section, decide
+  afresh from the opening: its time (an age, a date, years passed), its people and their situation.
 
-Lines known so far (id: what it is; its era, 1 at first and one more after each stated jump of years):
+Lines known so far (its era is 1 at first and one more after each stated jump of years):
 {catalog}
 {previous}
-Return:
-- "strand": the id of the known line this chapter is told in, or "new" when it opens a line not listed, with "label": a few
-  plain words for that line (such as "the old sailor telling his tale at the inn" or "the sisters as children on the farm").
-- "cue": {{"paragraph": the number of the paragraph where the chapter first shows its line and time, "quote": 3 to 12 words
-  copied exactly from that paragraph that show it}}. For a chapter that simply goes on from the previous one, paragraph 1.
-- "skip": true only when this chapter itself states a jump forward within its line long enough that looks change (years pass:
-  children have grown up, adults have aged), with "skip_quote": the words of the cue paragraph that state the jump. False for
-  days, weeks or months, and for a new line.
-- "events": for each numbered event told in another line than the chapter's own (a scene of the frame inside a chapter of the
-  tale, or the reverse), {{"n": its number, "strand": that known line's id}}, or "other" for a dream, a vision or a brief memory
-  that belongs to no known line. Leave out the events told in the chapter's own line.
+Return, in this order:
+- "when": in a few words, when this chapter's events happen as the text states or shows it: the age or stage of life of its
+  main people, a year, or how far before or after the line before it.
+- "events": for EVERY numbered event, {{"n": its number, "line": the id of the known line it happens in, "new" for a line this
+  chapter opens, or "other" only for a dream, a vision or a memory of a few lines inside a scene}}.
+- "strand": the line most of the chapter's events happen in, found by comparing your "when" with each known line's time (the
+  line before keeps the chapter only when the time is the same): a known id, or "new" with "label": the time of that line in a few
+  plain words, never the telling: who is seen then, at what age or stage of life, and their situation (such as "the two sisters
+  as children on the farm" or "the sailor, old, at the inn where he tells his tale").
+- "cue": {{"paragraph": the number of the paragraph where the chapter's own line first shows, "quote": 3 to 12 words copied
+  exactly from that paragraph that show it}}. For a chapter that simply goes on from the previous one, paragraph 1.
+- "skip": true only when the chapter goes on in its line but itself states a jump forward long enough that looks change (years
+  pass: children have grown up, adults have aged), with "skip_quote": the words of the cue paragraph that state the jump. False
+  for days, weeks or months, and for a new line.
 
 Chapter: {path}
 
@@ -313,12 +323,13 @@ Its opening, numbered by paragraph:
 Its events, each with the start of the paragraph it is told in:
 {events}"""
 # The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
-TIMELINE_SCHEMA = {"type": "object", "required": ["strand", "cue"], "properties": {
+TIMELINE_SCHEMA = {"type": "object", "required": ["when", "events", "strand", "cue"], "properties": {
+    "when": {"type": "string"},
+    "events": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"},
+                                                                           "line": {"type": "string"}}}},
     "strand": {"type": "string"}, "label": {"type": "string"},
     "cue": {"type": "object", "properties": {"paragraph": {"type": "integer"}, "quote": {"type": "string"}}},
-    "skip": {"type": "boolean"}, "skip_quote": {"type": "string"},
-    "events": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"},
-                                                                           "strand": {"type": "string"}}}}}}
+    "skip": {"type": "boolean"}, "skip_quote": {"type": "string"}}}
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
 SOFTEN = """\n\nThe image model refused to draw this: "{text}". Write a quieter composition of the same moment: nothing graphic,
 nothing violent or frightening in view (a doorway, a shadow, a face turned away, the room afterwards). Keep who and where."""
@@ -1576,6 +1587,8 @@ class Illustrator:
                 if s in strands and isinstance(era, int):
                     strands[s]["era"] = era
                     strands[s]["last"] = (j, ch["title"])
+                    if lab.get("when"):
+                        strands[s]["when"] = lab["when"]
                     scope = f"{s}.{era}" if era <= MAX_ERAS else None
                 exc, blocks = {}, {}
                 for eid, x in (lab.get("events") or {}).items():
@@ -1654,7 +1667,7 @@ class Illustrator:
                 self._presence_memo.clear()
                 if fj is None:
                     w = self._walk(j, fin)
-                    tl["strands"] = [{k: v for k, v in s.items() if k not in ("era", "last")} for s in w["strands"].values()
+                    tl["strands"] = [{k: v for k, v in s.items() if k not in ("era", "last", "when")} for s in w["strands"].values()
                                      if s["book"] == self._bkey(j)]
                     tl["runs"] = self._runs(j, w)
                     self._dirty.add(j)
@@ -1717,23 +1730,14 @@ class Illustrator:
                 ws = b.text[s].split()
                 line += f"\n   [{paras.index(s) + 1}] " + " ".join(ws[:EVIDENCE_WORDS]) + (" …" if len(ws) > EVIDENCE_WORDS else "")
             ev_lines.append(line)
-        cat = []
-        for s in strands.values():
-            jj, title = s.get("last", (None, None))
-            said = ""
-            if jj is not None:
-                c = next((c for c in self.books[jj].chapters if c["title"] == title), None)
-                sents = [x for r in (c or {}).get("recaps", []) for x in re.split(r"(?<=[.!?])\s+", " ".join(r["text"].split())) if x]
-                if not sents:
-                    sents = [" ".join(e["summary"].split()) for e in (c or {}).get("events", []) if e.get("kind") != "minor"]
-                if sents:
-                    said = f'; its latest chapter opens "{sents[0]}"' + (f' and ends "{sents[-1]}"' if len(sents) > 1 else "")
-            cat.append(f"- {s['id']}: {s['label']}; era {min(s['era'], MAX_ERAS + 1)}{said}")
+        cat = [self._catalog_line(s, w) for s in strands.values()]
         catalog = "\n".join(cat) if cat else '(none yet: this is the first chapter, so return "new")'
         previous = f"The previous chapter was told in {prev}.\n" if prev else ""
         out = self._complete(TIMELINE.format(catalog=catalog, previous=previous, path=" > ".join(ch["path"]),
                                              opening="\n".join(lines) or "(no text)",
                                              events="\n".join(ev_lines) or "(none)"), TIMELINE_SCHEMA)
+        if not out:
+            return {"strand": None, "why": "no answer"}     # refused or cut off: this chapter is unknown, the rest goes on
         said = str(out.get("strand") or "").strip().strip(".").lower()
         cue = out.get("cue") if isinstance(out.get("cue"), dict) else {}
         try:
@@ -1773,6 +1777,9 @@ class Illustrator:
             got["cue"] = {"seq": cue_seq, "quote": quote if found(quote) else ""}
         else:
             return {"strand": None, "why": "no such line of telling"}
+        when = " ".join(str(out.get("when") or "").split())[:160]
+        if when:
+            got["when"] = when             # internal: the line's latest time, shown with it to the next chapters' calls
         known = set(strands) | {got["strand"]}
         exc = {}
         for x in out.get("events") or [] if isinstance(out.get("events"), list) else []:
@@ -1782,11 +1789,47 @@ class Illustrator:
                 n = int(x.get("n"))
             except (TypeError, ValueError):
                 continue
-            s = str(x.get("strand") or "").strip().strip(".").lower()
+            s = str(x.get("line") or x.get("strand") or "").strip().strip(".").lower()
+            if s == "new" and said == "new":
+                s = got["strand"]           # the line this chapter opens
             if 1 <= n <= len(evs) and s != got["strand"] and (s == OTHER or s in known):
                 exc[evs[n - 1]["id"]] = s
         got["events"] = exc
         return got
+
+    def _catalog_line(self, s: dict, w: dict) -> str:
+        """One known line for the timeline call, from what is labelled so far only: its id and label, where it was first told
+        (its first chapter's heading), the people its events name most, its era, and its latest chapter's opening and last
+        recap sentence (else its first and last events)."""
+        names: Counter = Counter()
+        first = None
+        for j, labs in w["books"].items():
+            b = self.books[j]
+            for c in b.chapters:
+                lab = labs.get(c["title"])
+                if not lab:
+                    continue
+                for e in c["events"]:
+                    own = lab["events"].get(e["id"])
+                    if (own or "").split(".")[0] == s["id"] or (own is None and e["id"] not in lab["events"] and lab["strand"] == s["id"]):
+                        if first is None:
+                            first = " > ".join(c["path"])
+                        for x in e.get("entities", []):
+                            ent = next((bb.ents[x] for bb in self.books if x in bb.ents), None)
+                            if ent and ent["type"] in PORTRAIT_TYPES:
+                                names[ent["names"][0]["value"]] += 1
+        said = ""
+        jj, title = s.get("last", (None, None))
+        if jj is not None:
+            c = next((c for c in self.books[jj].chapters if c["title"] == title), None)
+            sents = [x for r in (c or {}).get("recaps", []) for x in re.split(r"(?<=[.!?])\s+", " ".join(r["text"].split())) if x]
+            if not sents:
+                sents = [" ".join(e["summary"].split()) for e in (c or {}).get("events", []) if e.get("kind") != "minor"]
+            if sents:
+                said = f'\n  its latest chapter opens "{sents[0]}"' + (f' and ends "{sents[-1]}"' if len(sents) > 1 else "")
+        who = ", ".join(n for n, _ in names.most_common(6))
+        return (f"- {s['id']}: {s['label']}; era {min(s['era'], MAX_ERAS + 1)}" + (f"; first told in {first}" if first else "")
+                + (f"\n  people seen in it: {who}" if who else "") + said)
 
     def _chapter_lab(self, bi: int, seq: int, fin: frozenset[str] | None) -> dict | None:
         ch = next((c for c in self.books[bi].chapters if c["lo"] <= seq <= c["hi"]), None)

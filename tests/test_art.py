@@ -134,7 +134,7 @@ class Text:
 
     def complete(self, system, prompt, schema, prefix=None):
         self.prompts.append(prompt)
-        if "say which line of telling it is told in" in prompt:
+        if "say which line of telling it belongs to" in prompt:
             return (self.timeline or one_line)(tl_parts(prompt))
         if "Which of them are a visible moment" in prompt:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
@@ -2373,7 +2373,7 @@ def scripted(table):
     """A timeline answer per chapter title: (strand, label, cue paragraph, quote, events {summary start: strand}, skip quote)."""
     def answer(p):
         strand, label, cue, quote, exc, skip = (table[p["title"]] + ({}, ""))[:6] if len(table[p["title"]]) < 6 else table[p["title"]]
-        evs = [{"n": n, "strand": s} for n, t in p["events"] for start, s in exc.items() if t.startswith(start)]
+        evs = [{"n": n, "line": s} for n, t in p["events"] for start, s in exc.items() if t.startswith(start)]
         return {"strand": strand, "label": label, "cue": {"paragraph": cue, "quote": quote}, "skip": bool(skip),
                 "skip_quote": skip, "events": evs}
     return answer
