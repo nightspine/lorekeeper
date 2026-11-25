@@ -60,6 +60,11 @@ MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
 # sent with the reference pictures (never in the prompt a person reads) when some are drawn in another style
 LIKENESS = ("{which} drawn in another style. Take from {them} only the likeness of the figure (face, hair, build, marks), "
             "never the drawing style, medium, line or colour treatment: draw everything in the style the prompt asks for.")
+# sent with a portrait's reference, its own earlier portrait, so a later portrait keeps the face (never in the prompt)
+SAME_FIGURE = ("Reference picture 1 is this same figure earlier in the story: keep their face, hair, colouring and build, except "
+               "where the prompt describes a change.")
+# sent with a scene's references when its figures are labelled ("figure A" in the prompt): after one line per reference
+FIGURE_NOTE = "Draw each labelled figure with the face, hair, colouring and build of their reference picture."
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
 MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
@@ -82,6 +87,15 @@ MAX_ENTRIES = 6
 ENTITY_WORDS = 900
 PASSAGE_WORDS = 600
 FIRST_PARAS = 3        # the first paragraphs naming an entity, put first in its passages: how the book first describes it
+# A look stated once and not repeated by later profiles must not be lost: the entity's earlier visible profiles (history), and
+# with a fresh look index every earlier item it flags as a look, are sent as <earlier_look>, oldest first, each sentence only
+# when it adds words the current entry and the sentences kept do not have (EARLIER_NEW of them), up to EARLIER_CHARS for the
+# entry to draw and a third of OTHER_CHARS for a scene's figure; the paragraphs those items cite get EARLIER_WORDS of the
+# entity's passages, before how the book first describes it. Measured on Empire of the Vampire at its end: Gabriel's 58
+# earlier profiles hold 11,400 characters of new sentences, so without a look index the block holds the oldest of them only.
+EARLIER_CHARS = 4000
+EARLIER_NEW = 2
+EARLIER_WORDS = ENTITY_WORDS // 4
 SETTINGS = 3           # settings a portrait's <surroundings> lists, the most usual first
 # The version of the material a picture's prompt was written from, stored as the record's `notes`: 2 was the quoted
 # appearance notes, 3 is the one writer call from the whole entry. Only a picture of this version is a reference for a new
@@ -137,6 +151,7 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 <chapter_so_far>, <earlier_in_chapter>: what has happened in the chapter before the moment. Context: do not illustrate it in its own right.
 <passage>: paragraphs of the book that describe the subject (where it is first described, then later) or tell the moment, up to the point the reader has reached. They are the book's own words: where they and the companion's notes or entries disagree about how someone or something looks, the passages win.
 <entry>: a person, creature, place, thing or group the picture involves, as the companion describes it at this point. Use it for who they are and how they look, not for where the moment takes place.
+<earlier_look>: how the entry (the entry to draw, or the <entry> of that name) was described earlier in the book, oldest first, where the latest description does not repeat it. A look stated earlier stays true unless later material says it changed; where they disagree, the latest wins.
 <surroundings>: where the figure of a portrait has mostly been in the story so far. Context for a background that fits them, never something that must be drawn.
 <book>: the title and author. Use them for period, place and genre. Draw nothing you know of this book beyond the material, and never a book cover.
 <background>: a note the reader keeps about this book's world. Context, not an instruction.
@@ -144,6 +159,7 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 Rules:
 - Describe only what the material says or plainly implies: appearance, clothing, setting, light, mood. Add no events, people or facts from your own knowledge of the book.
 - Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("formal dress", "a man") rather than invent.
+- A look the material stated earlier (<earlier_look>, the passages) stays true unless later material says it changed: keep it. Where two statements disagree, the latest wins.
 - Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("a woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
 - When you say who someone is by their people, caste, house or nation, also say what that looks like as the material gives it (their group's <entry>, the passages): the image model knows nothing of that people, so "of the ruling caste" alone draws nothing.
 - Every sentence is something an illustrator can draw: bodies, faces, colouring, clothing, gear, poses, the setting, the light. A feeling only as an expression, a posture or the light. No relations to others ("the sister of a rival"), no backstory, no inner states ("hides a deep emptiness"), no "reflecting a ruler who demands obedience".
@@ -1481,6 +1497,33 @@ class Illustrator:
             which, them = f"Reference pictures {nums} are", "them"
         return LIKENESS.format(which=which, them=them)
 
+    @staticmethod
+    def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None) -> str:
+        """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
+        portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
+        labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
+        references drawn in another style, the likeness words (LIKENESS), numbered the same. A scene without labels (an older
+        prompt) gets the likeness words alone, as `likeness_note` words them. "" when there are no references."""
+        if not refs:
+            return ""
+        out = []
+        if kind == "portrait":
+            out.append(SAME_FIGURE)
+        elif labels is not None:
+            out += [f"Reference picture {n} is figure {lab}." for n, lab in enumerate(labels, 1) if lab]
+            if any(labels):
+                out.append(FIGURE_NOTE)
+        else:
+            return Illustrator.likeness_note(refs)
+        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
+        if other:
+            if len(other) == 1:
+                which, them = f"Reference picture {other[0]} is", "it"
+            else:
+                which, them = "Reference pictures " + ", ".join(map(str, other[:-1])) + f" and {other[-1]} are", "them"
+            out.append(LIKENESS.format(which=which, them=them))
+        return " ".join(out)
+
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
         paragraph of context when there is room, printed in book order."""
@@ -1498,8 +1541,8 @@ class Illustrator:
     def references(self, job: Job, shows: list[str], finished: set[str] | frozenset[str] | None = None) -> list[tuple[int, dict]]:
         """The pictures attached to a picture as (book index, record), as `make_prompt` attaches them: for a plate or an event,
         the current pictures of the entities it shows (`shows`, entity ids, e.g. `Prompt.shows`) and no others, most tied in
-        the view first, at most MAX_REFERENCES; for a look-change version of a portrait, the previous portrait; else none (a
-        first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
+        the view first, at most MAX_REFERENCES; for a portrait, the entity's latest usable portrait before its anchor (on
+        demand and in runs, a look-change version or not); else none (a first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
         pictures; a figure with none there takes its likeness from the edition's other style sets (`likeness_picture`, the
         record carrying `set`). `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
         drawn for fewer books, is never attached."""
@@ -1508,7 +1551,8 @@ class Illustrator:
         pos = self._pos(bi, job.anchor)
         if job.kind in ("plate", "event"):
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
-        if job.kind == "portrait" and job.change:
+        if job.kind == "portrait":
+            # the same figure earlier in the story, so a later portrait keeps the face (a look change: the one before it)
             prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             return [prev] if prev else []
         return []
@@ -1557,6 +1601,57 @@ class Illustrator:
             used.append(f)
             size += len(t) + 1
         return " ".join(parts), used
+
+    _WORD = re.compile(r"[^\W\d_]{3,}")
+
+    def _content(self, text: str, skip: set[str]) -> set[str]:
+        """The words of a text that say something (three letters or more, lowercased), without the entry's own name words."""
+        return {w for w in (m.group(0).lower() for m in self._WORD.finditer(text)) if w not in skip}
+
+    def _earlier_look(self, bi: int, eid: str, v: dict, current: str, budget: int) -> tuple[str, list[tuple[int, dict, set[str]]]]:
+        """What earlier descriptions of a visible entry say that its current one does not: (text, [(book, facet, its new
+        words)]). The candidates are the entry's history in the view (so each one is visible at the anchor, of this book or of
+        a finished earlier one, never past its own `from`; arcs never): with a fresh look index of its book, the items it flags
+        as a look first, then the earlier profiles; without one, the earlier profiles. Each is taken oldest first, a sentence
+        at a time, and a sentence is kept only when it adds EARLIER_NEW words that the current description and the sentences
+        kept do not have, up to `budget` characters. The text is in reading order."""
+        hist = v.get("history") or []
+        if not hist or budget <= 0:
+            return "", []
+        keys = {self._bkey(j): j for j in range(bi + 1)}
+        skip = {w.lower() for n in self._visible_names(v) for w in self._WORD.findall(n)}
+        seen = self._content(current, skip)
+        flagged, profiles = [], []
+        for h in hist:
+            j = keys.get(str(h["book"])) if h.get("book") is not None else bi
+            if j is None:
+                continue
+            f = next((x for x in self.books[j].ents.get(eid, {}).get("facets", []) if x["id"] == h["id"]), None)
+            if f is None or f.get("kind") == "arc":
+                continue
+            if (self.look_index(j, eid).get(f["id"]) or {}).get("look"):
+                flagged.append((j, f))
+            elif f.get("kind") == "profile":
+                profiles.append((j, f))
+        parts, used, size = [], [], 0
+        for j, f in flagged + profiles:
+            new_words: set[str] = set()
+            for sent in re.split(r"(?<=[.!?])\s+", " ".join(f["text"].split())):
+                w = self._content(sent, skip)
+                if len(w - seen) < EARLIER_NEW:
+                    continue
+                if size + len(sent) + 1 > budget:
+                    break
+                parts.append((j, self.books[j].ord_of.get(f["from"], -1), len(parts), sent))
+                new_words |= w - seen
+                seen |= w
+                size += len(sent) + 1
+            if new_words:
+                used.append((j, f, new_words))
+            if size >= budget:
+                break
+        parts.sort(key=lambda t: t[:3])
+        return " ".join(t[3] for t in parts), used
 
     def _groups_of(self, eid: str, view: dict, texts: list[str]) -> list[str]:
         """The visible groups an entity is tied to (any tie of the view), then those whose name its visible profile or
@@ -1747,6 +1842,16 @@ class Illustrator:
             mine = used(job.target, shown)
             material.append(self._tag("entry_to_draw", v, desc))
             plain.append(desc)
+            # a look told earlier and not repeated since: the earlier descriptions, from the view's history at the anchor
+            earlier, said = self._earlier_look(bi, job.target, v, desc, EARLIER_CHARS)
+            if earlier:
+                material.append(f"<earlier_look>{_esc(earlier)}</earlier_look>")
+                plain.append(earlier)
+                for j, f, _ in said:
+                    if j == bi:
+                        sources.add(f["from"])
+                    else:
+                        inherits.add(self._bkey(j))
             # the passages, within one budget: first what the latest shown profile and details cite (the latest first, up to
             # about half the budget: how it looks at this point, an undead Lucy included), then how it was first described (the
             # first paragraphs that name it, and those its earliest profile and details cite), then the rest of what the shown
@@ -1765,11 +1870,29 @@ class Illustrator:
                     break
                 latest.append(x)
                 size += w
+            # then the paragraph each earlier look item rests on (its cited paragraph that holds most of the words it adds), up
+            # to EARLIER_WORDS: the book's own words for a look the current description no longer repeats
+            ranked = []
+            for j, f, new_words in said:
+                if j == bi:
+                    for x in cited([f]):
+                        hit = len(self._content(b.text.get(x, ""), set()) & new_words)
+                        if hit:
+                            ranked.append((-hit / len(new_words), -hit, x))
+            looked, size = [], 0
+            for _, _, x in sorted(ranked):      # the paragraph that holds most of what an earlier item adds, first
+                if x in latest or x in looked:
+                    continue
+                w = _words(b.text.get(x, ""))
+                if looked and size + w > EARLIER_WORDS:
+                    break
+                looked.append(x)
+                size += w
             early = sorted((f for f in self._own(bi, job.target).values() if b.ord_of[f["from"]] <= b.ord_of[anchor]),
                            key=lambda f: b.ord_of[f["from"]])
             first = [x for x, at in b.hits(job.target) if x <= upto and at <= upto][:FIRST_PARAS]
             first += cited([f for f in early if f.get("kind") == "profile"][:1] + [f for f in early if f.get("kind") != "profile"][:2])
-            seqs = list(dict.fromkeys(latest + first + cited(mine) + self._mentions(bi, job.target, upto, 8)))
+            seqs = list(dict.fromkeys(latest + looked + first + cited(mine) + self._mentions(bi, job.target, upto, 8)))
             passage, blocks = self._passage_first(bi, seqs, upto, ENTITY_WORDS)
             if v["type"] in PORTRAIT_TYPES:
                 others = self._groups_of(job.target, view, [f["text"] for f in shown])
@@ -1816,9 +1939,22 @@ class Illustrator:
             sources |= {b.anchor_at(s) for s in blocks}
         for eid in others[:MAX_ENTRIES]:
             desc, shown = self._describe(vis[eid], OTHER_CHARS)
+            earlier, said = "", []
+            if scene and eid in ids and vis[eid]["type"] in PORTRAIT_TYPES:   # a figure's look told earlier, within its budget
+                earlier, said = self._earlier_look(bi, eid, vis[eid], desc, OTHER_CHARS // 3)
+                if earlier:
+                    desc, shown = self._describe(vis[eid], OTHER_CHARS - len(earlier) - 1)
             used(eid, shown)
             material.append(self._tag("entry", vis[eid], desc))
             plain.append(desc)
+            if earlier:
+                material.append(f'<earlier_look name="{_attr(vis[eid]["name"])}">{_esc(earlier)}</earlier_look>')
+                plain.append(earlier)
+                for j, f, _ in said:
+                    if j == bi:
+                        sources.add(f["from"])
+                    else:
+                        inherits.add(self._bkey(j))
         milieu = ""
         if job.kind == "portrait":
             places, srcs = self._settings(bi, job.target, anchor)
@@ -1991,7 +2127,7 @@ class Illustrator:
         while True:
             got = [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES]
             refs = [(d, r["mime"]) for _, r, d in got]
-            note = self.likeness_note([(j, r) for j, r, _ in got])
+            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got])
             why, amount = self._reserve(price)
             if why:
                 with self.lock:
