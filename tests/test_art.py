@@ -2320,3 +2320,19 @@ def test_picked_sentences_of_one_note_print_in_reading_order():
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert got.index("She has grey eyes.") < got.index("She wears long dark hair")
+
+
+# ---- the world's period and technology in the setting (label-scene-figures, part 3)
+
+
+def test_the_writer_states_the_worlds_period_and_technology_wherever_it_draws_a_setting():
+    rule = "say the period the story is set in and its level of technology"
+    for system in (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER):
+        assert rule in system and "When neither the book nor the material makes the period plain, say nothing about it" in system
+        assert "This is not a specific look the material lacks" in system
+        assert "Never give a specific look the material does not state" in system      # the figures' rule is unchanged
+    # a general rule: no book of the bench (or any of its places, castes or people) is named in what the writer is told
+    told = " ".join([art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER, art.SOFTEN, art.LOOK_SENTENCES, *art.TASKS.values()])
+    for word in ("Red Rising", "Mars", "Dracula", "Transylvania", "Carpathian", "Sherlock", "Holmes", "London",
+                 "Empire of the Vampire", "Victorian", "far-future"):
+        assert word not in told, word
