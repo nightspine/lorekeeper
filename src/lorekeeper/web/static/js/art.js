@@ -532,7 +532,7 @@ export async function openPictureSheet(opts) {
       } } }, "Save");
       const cancel = h("button.btn.quiet", { type: "button", on: { click: () => box.replaceWith(worldLine()) } }, "Cancel");
       const box = h("div.art-field.art-world-edit", h("span.label", "World"), field,
-        h("p.hint", "Pasted into every picture of this book, so places and clothing keep to one world."), ferr, h("div.btns", cancel, save));
+        h("p.hint", "Pasted into every picture of this book: its era, technology and the materials things are made of. Places and people get their own looks."), ferr, h("div.btns", cancel, save));
       line.replaceWith(box);
       field.focus();
     }

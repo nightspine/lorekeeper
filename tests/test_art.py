@@ -1767,8 +1767,8 @@ def test_a_group_note_written_from_content_after_the_anchor_is_refused():
     bk, d = guild_doc()
     sink = Mem()
     sink.m = {**art.blank("sha256:tbk", "ink"), "appearance": {"guild": [
-        {"v": art.NOTE_VERSION, "from": "a3", "text": "A guild: white aprons.", "role": "a guild",
-         "details": [{"text": "white aprons", "quote": "wear white aprons"}], "home": [], "sources": ["a10"], "inherits": [],
+        {"v": art.NOTE_VERSION, "from": "a3", "text": "A guild: blue sashes.", "role": "a guild",
+         "details": [{"text": "blue sashes", "quote": "wear blue sashes"}], "home": [], "sources": ["a10"], "inherits": [],
          "items": ["bk.guild.portrait-1"]}]}}
     il = art.Illustrator([art.Book(d, bk, sink)], Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild), Image(), "ink",
                          workers=1, log=lambda *_: None, pause=0)
@@ -1932,3 +1932,80 @@ def test_a_note_detail_with_a_name_the_book_has_not_used_goes_and_the_note_stays
     il, rep, sink, t, im = run(d, bk, text_=t)
     assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad, white hair."
     assert rep.dropped["dropped: look detail with an unknown name"] == 1 and "oren" in {p["target"] for p in pics(sink, "portrait")}
+
+
+def nested_groups_doc():
+    """Oren in four groups, from the most specific: the Mill hands (white hair, which his own note already says), the Guild
+    (white aprons), the Order of Owls (no member look) and the Valley folk (plain wool coats; Mira is of them too)."""
+    bk, d = guild_doc()
+    d["entities"][1]["facets"].append({"id": "bk.oren.f2", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                       "text": "Leads the Mill hands, sits with the Order of Owls and is Valley folk born."})
+    d["entities"][0]["facets"].append({"id": "bk.mira.f8", "from": "a2", "basis": "stated", "evidence": ["a2"],
+                                       "text": "Valley folk, like all at the mill."})
+    for gid, name, text_ in (("hands", "Mill hands", "The Mill hands all have white hair from the flour."),
+                             ("owls", "Order of Owls", "The Order of Owls meets at night in secret."),
+                             ("valley", "Valley folk", "The Valley folk wear plain wool coats.")):
+        d["entities"].append(ent(gid, name, "group", frm="a2", facets=[portrait(gid, "a2", text_)]))
+    notes = {"Guild": GUILD_PARTS, "Mill hands": ("a crew", ["white hair"]), "Order of owls": "",
+             "Valley folk": ("a people", ["plain wool coats"])}
+
+    def groups(who, items, groups):
+        return [{"group": ltr} for ltr, _ in groups] if who == "Oren" else []
+    return bk, d, notes, groups
+
+
+def test_a_group_takes_a_look_slot_only_when_its_member_look_adds_to_the_figures():
+    bk, d, notes, groups = nested_groups_doc()
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(notes=notes, groups=groups), Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0, portraits="all")
+    assert il.groups_of(0, "oren", "a5") == ["guild", "hands", "owls", "valley"]   # one member each, then the Valley's two
+    note, _, srcs, _ = il.figure_note(0, "oren", "a5")
+    assert note == (NOTES["Oren"] + " Like others of its people: white aprons dusted with flour."
+                    " Like others of its people: plain wool coats.")
+    # the Mill hands' white hair is in his own note and the Owls show no look: neither takes a slot
+    assert "white hair from" not in note and note.count("Like others") == 2
+    monkey = art.MAX_GROUPS
+    try:
+        art.MAX_GROUPS = 1
+        assert il.figure_note(0, "oren", "a5")[0].count("Like others") == 1
+    finally:
+        art.MAX_GROUPS = monkey
+
+
+def test_group_names_are_taken_out_of_a_role_not_replaced():
+    bk, d = guild_doc()
+    t = Text(notes={"Guild": GUILD_PARTS, "Oren": ("a Guild miller", ["broad"])}, groups=pick_guild)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad."
+    t = Text(notes={"Guild": ("a guild", ["white aprons dusted with flour", "Guild"], ["stone houses by the river"])},
+             groups=pick_guild)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["guild"][0]["text"] == "White aprons dusted with flour."      # "Guild" alone is no detail
+    n = art._Names([("Gryffindor", True), ("OPA", True), ("the Silver Order", True), ("Slytherin", True), ("Red", True),
+                    ("Gold", True), ("Mira", False)])
+    assert n.drop_groups("a first-year Gryffindor") == "a first-year"
+    assert n.drop_groups("Head of OPA security") == "Head of security"
+    assert n.drop_groups("a frère of the Silver Order") == "a frère"
+    assert n.drop_groups("a Gryffindor's prefect") == "a prefect"
+    assert n.drop_groups("A first-year gryffindor student") == "A first-year student"     # any case
+    assert n.drop_groups("an OPA agent") == "an agent"
+    assert n.drop_groups("a golden-haired miller") == "a golden-haired miller"            # a word, not the name
+    assert n.drop_groups("a Red digger") == "a digger"                                    # in a role every group name goes
+    # in a detail a group name that is an ordinary word stays, as the word (Red Rising's castes are colours)
+    assert n.drop_groups("a huge Slytherin serpent", words=True) == "a huge serpent"
+    assert n.drop_groups("Red Sigils on the hands", words=True) == "red Sigils on the hands"
+    assert n.drop_groups("gold hair", words=True) == "gold hair" and n.drop_groups("Gold-class boy", words=True) == "gold-class boy"
+    assert n.drop_groups("Gold", words=True) == "gold" and n.drop_groups("Mira's shawl", words=True) == "Mira's shawl"
+
+
+def test_a_figure_whose_look_changed_after_joining_a_group_takes_no_look_from_it():
+    # Darrow carved into a Gold is never given Red looks: his own amended note wins
+    bk, d = guild_doc()
+    d["entities"][1]["facets"].append({"id": "bk.oren.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Oren lost an eye in the storm."})
+    t = Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    ports = sorted((p for p in pics(sink, "portrait") if p["target"] == "oren"), key=lambda p: ordinal(d)[p["from"]])
+    assert [p["from"] for p in ports] == ["a5", "a10"]
+    assert "white aprons" in ports[0]["appearance"] and "white aprons" not in ports[1]["appearance"]
+    assert sink.m["appearance"]["oren"][-1]["changed"] == [["bk", "a10"]]

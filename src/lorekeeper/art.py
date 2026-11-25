@@ -66,8 +66,8 @@ MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events
 MAIN_CAST_SHARE = 0.05  # ...and by at least this share of the book's non-minor events (rounded up)
 MAIN_CAST_MAX = 12     # main cast: at most this many characters per book, most named first
 CASTS = ("main", "all")  # whose portraits a run draws: the main cast, or everyone with a part (the older rule)
-MAX_GROUPS = 2         # groups whose members' look a figure's note carries, the most specific first
-GROUPS_TRIED = 4       # groups asked for a note before giving up on finding two that show a look
+MAX_GROUPS = 3         # groups whose members' look a figure's note carries: only groups with a member look that adds to it
+GROUPS_TRIED = 6       # groups asked for a note before giving up on finding more that add a look
 PASSAGE_WORDS = 600
 WORKERS = 3
 SCENE_WORDS = (35, 170)
@@ -454,6 +454,18 @@ def compose_note(role: str, details: list[str], same: bool = False, capital: boo
     return f"{head}: {body}." if head else (body[:1].upper() if capital else body[:1]) + body[1:] + "."
 
 
+def _tidy(text: str) -> str:
+    """A text with words taken out made whole again: spaces, a doubled article, an article or preposition left dangling at the
+    end, a stray hyphen, and "a"/"an" before what now follows."""
+    text = re.sub(r"(?<![\w])-(?=\w)|(?<=\w)-(?![\w])", "", text)
+    text = " ".join(text.split())
+    for _ in range(3):
+        text = re.sub(r"(?:\s+|^)(?:of|from|in|for|to|with|at|among|and|the|a|an)[\s,;:]*$", "", text, flags=re.IGNORECASE).strip(" ,;:")
+    text = re.sub(r"\b(the|a|an)\s+(?=(?:the|a|an)\b)", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+([,;:])", r"\1", text)
+    return re.sub(r"\b([Aa])n?\s+(?=(\w))", lambda m: m.group(1) + ("n " if m.group(2).lower() in "aeiou" else " "), text)
+
+
 def group_look(details: list[str]) -> str:
     """A group's members' look as a figure's note carries it, with no name: "Like others of its people: golden eyes, a winged
     sigil on the back of each hand."."""
@@ -655,6 +667,36 @@ class _Names:
                 out.append(hit[:3])
             i += hit[3] if hit else 1
         return out
+
+    def drop_groups(self, text: str, words: bool = False) -> str:
+        """The text with every group name `_spans` finds taken out, nothing put in ("A first-year Gryffindor": "A first-year",
+        "Head of OPA security": "Head of security", "a frère of the Silver Order": "a frère", "a Gryffindor's prefect": "a
+        prefect"), with what it leaves tidied (`_tidy`). `words` (a look detail): a one-word group name that is an ordinary
+        sentence word (`SENTENCE_FIRST`, the test the name lists use) stays, lowercased, since it is also what it says ("Red
+        Sigils": "red sigils", "Gold-class": "gold-class"). The text is scanned as if after other words, so a name opening it
+        counts too."""
+        pad = "x "
+        t = pad + text
+        out, last = [], 0
+        for s, e, group in self._spans(t):
+            if not group:
+                continue
+            pos = re.match(r"['’][sS](?![^\W_])", t[e:]) or (re.match(r"['’](?![^\W_])", t[e:]) if t[e - 1] in "sS" else None)
+            end = e + (len(pos.group(0)) if pos else 0)
+            name = t[s:e]
+            if words and self._RUN.fullmatch(name) and name.lower() in SENTENCE_FIRST:
+                out.append(t[last:s] + name.lower() + t[e:end])
+            else:
+                out.append(t[last:s] + " ")
+            last = end
+        new = ("".join(out) + t[last:])[len(pad):]
+        # a group's name word written in another case ("a first-year gryffindor student"), never an ordinary word ("red")
+        runs = [(m.start(), m.end()) for m in self._RUN.finditer(new)
+                if (hit := self.tokens.get(self._apos(self._base(m.group(0))).lower())) and hit[1]
+                and m.group(0).lower() not in SENTENCE_FIRST]
+        for s, e in reversed(runs):
+            new = new[:s] + " " + new[e:]
+        return _tidy(new) if new != text else text
 
     # ---- the two calls
 
@@ -1912,7 +1954,8 @@ class Illustrator:
             if got is None and why != "empty":
                 return {"why": why}
             note = {"v": NOTE_VERSION, "from": anchor, "text": got or "", "role": role, "details": details,
-                    "sources": sources, "inherits": inherits, "items": sorted(done | {it["id"] for it in looks})}
+                    "sources": sources, "inherits": inherits, "items": sorted(done | {it["id"] for it in looks}),
+                    "changed": (list(cur.get("changed", [])) if cur else []) + ([[me, anchor]] if mode == "amend" and got else [])}
             if e["type"] == "group":
                 note["home"] = home
             if finished is not None:
@@ -2007,7 +2050,13 @@ class Illustrator:
                         self.report.dropped["dropped: look word in the role"] += 1
         mine = {_base(w) for w in _toks(own)}
         role = " ".join(w for w in role.split() if not _toks(w) or all(x in _STOP or _base(x) in mine for x in _toks(w)))
-        names = self.names[bi]       # a note names nobody: "A red-haired Weasley twin" is "A red-haired twin"
+        names = self.names[bi]
+        # a group's name goes from the role with nothing put in ("A first-year Gryffindor": "A first-year"); in a detail one
+        # that is an ordinary word stays as that word ("Red Sigils": "red sigils"), another goes ("a huge Slytherin serpent":
+        # "a huge serpent"); a detail left with no word goes. Then person and creature names are stripped as everywhere.
+        role = names.drop_groups(role)
+        details = [{**d, "text": t} for d in details if _content(t := names.drop_groups(d["text"], words=True))]
+        homes = [{**d, "text": t} for d in homes if _content(t := names.drop_groups(d["text"], words=True))]
         text = compose_note(names.strip(role, attributive=True), [names.strip(d["text"]) for d in details], mode == "amend" and bool(good))
         if not text:
             return "", "empty", [], homes, role
@@ -2036,30 +2085,45 @@ class Illustrator:
     def figure_note(self, bi: int, eid: str, anchor: str, change: str = "",
                     finished: frozenset[str] | None = None) -> tuple[str | None, str, list[str], list[str]]:
         """The note a picture carries for a figure: its own appearance note, then, for a person or creature, the look of the
-        members of up to MAX_GROUPS of its groups at the anchor (`groups_of`, the most specific first, only groups whose note
-        shows a look), with no group name. Its own quoted look comes first and wins where the two disagree (the writer and the
+        members of up to MAX_GROUPS of its groups at the anchor (`groups_of`, the most specific first). A group takes a slot only
+        when its member look adds something the figure's own note and the earlier groups do not already say (only the new
+        details are carried), and never when the figure's own look was amended by a change after it joined. No group name. Its own quoted look comes first and wins where the two disagree (the writer and the
         image model are told so by the order). (text, reason when None, sources, inherits), as `ensure_note`."""
-        note, why, srcs, books = self.ensure_note(bi, eid, anchor, change, finished)
-        if not note:
-            return note, why, srcs, books
+        own = self._note(bi, eid, anchor, change, finished)
+        if not own.get("text"):
+            return None, own.get("why", "empty"), [], []
+        note, srcs, books = own["text"], list(own["sources"]), list(own["inherits"])
         e = next((bb.ents[eid] for bb in self.books if eid in bb.ents), {})
         if e.get("type") not in PORTRAIT_TYPES or eid not in self.books[bi].ents:
-            return note, why, srcs, books
-        parts, srcs, books = [note], list(srcs), list(books)
-        found = 0
+            return note, "", srcs, books
+        b = self.books[bi]
+        me = self._bkey(bi)
+        # the anchors of this book where its own note was amended by a look change
+        changed = [a for k, a in own.get("changed", []) if k == me and a in b.ord_of]
+        parts, said, found = [note], _content(note), 0
         for gid in self.groups_of(bi, eid, anchor, finished)[:GROUPS_TRIED]:
+            since = self._member_since(bi, eid, gid)
+            if since is not None and any(b.ord_of[a] > b.ord_of[since] for a in changed):
+                continue      # its own look changed after it joined (a Red carved into a Gold): its own look wins
             g = self._note(bi, gid, anchor, "", finished)
-            if not g.get("details"):
-                continue
-            look = group_look([d["text"] for d in g["details"]])
-            if look:
-                parts.append(look)
-                srcs += g["sources"]
-                books += g["inherits"]
-                found += 1
+            new = [d["text"] for d in g.get("details") or [] if not _content(d["text"]) <= said]
+            if not new:
+                continue      # no member look, or nothing the figure's note and the earlier groups do not already say
+            parts.append(group_look(new))
+            said |= set().union(*(_content(x) for x in new))
+            srcs += g["sources"]
+            books += g["inherits"]
+            found += 1
             if found >= MAX_GROUPS:
                 break
-        return " ".join(p.rstrip(".") + "." for p in parts), "", sorted(set(srcs), key=self.books[bi].ord_of.get), sorted(set(books))
+        return " ".join(p.rstrip(".") + "." for p in parts), "", sorted(set(srcs), key=b.ord_of.get), sorted(set(books))
+
+    def _member_since(self, bi: int, eid: str, gid: str) -> str | None:
+        """The anchor of book bi where the entity's membership of a group begins: its tie's, else the group pick's."""
+        b = self.books[bi]
+        froms = [r["from"] for r in b.doc.get("relations", []) if {r["src"], r["dst"]} == {eid, gid} and r["from"] in b.ord_of]
+        froms += [p["from"] for p in self.group_picks(bi, eid) if p["group"] == gid and p["from"] in b.ord_of]
+        return min(froms, key=b.ord_of.get) if froms else None
 
     def milieu(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None) -> tuple[str, list[str], list[str]]:
         """(text, sources, inherits) of the surroundings a figure belongs to at an anchor, from the index's structure only:
