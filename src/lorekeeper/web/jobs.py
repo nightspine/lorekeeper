@@ -415,12 +415,22 @@ class JobManager:
     def cheap_model(self, job_provider: str | None = None):
         """The cheap model for background writing (descriptions): the run's own cloud provider,
         else the first configured one; None when no cloud provider is set up."""
+        got = self.text_choice("cheap", job_provider)
+        return self.cloud_model(*got) if got else None
+
+    def strong_model(self, job_provider: str | None = None):
+        """As `cheap_model`, the provider's strong tier (the picture sheet's prompt writer)."""
+        got = self.text_choice("strong", job_provider)
+        return self.cloud_model(*got) if got else None
+
+    def text_choice(self, tier: str = "cheap", job_provider: str | None = None) -> tuple[str, str] | None:
+        """(provider, model name) of the `tier` text model `cheap_model` / `strong_model` give, or None."""
         order = ([job_provider] if job_provider in self.configured() else []) + self.configured()
         for p in order:
             spec = llm.PROVIDERS[p]
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else spec["cheap"]
+            name = (self.provider_config(p) or {}).get("model") if p == "custom" else spec[tier]
             if name:
-                return self.cloud_model(p, name)
+                return p, name
         return None
 
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:

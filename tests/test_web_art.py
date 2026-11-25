@@ -67,6 +67,7 @@ def env(tmp_path, monkeypatch):
     e.hash = doc["editions"][0]["textHash"]
     e.key = lambda: monkeypatch.setenv("GEMINI_API_KEY", "g-test")
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: e.text)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: e.text)
     monkeypatch.setattr(llm, "make_image", lambda provider, model=None, api_key=None, base_url=None: e.image)
     app = web_app.create_app(tmp_path / "data", [("examples", idx)], [epubs], ollama_url="http://127.0.0.1:9",
                              allowed_hosts=("testserver",), auth=False)
@@ -297,8 +298,26 @@ def test_a_target_past_the_position_is_not_visible(env):
     assert env.c.post(f"/api/library/{KEY}/art/prompt", json={**early, "target": "e99"}).status_code == 404
 
 
+def test_the_sheet_writes_with_the_strong_tier_and_runs_with_the_cheap_one(env, monkeypatch):
+    env.key()
+    strong = Text()
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: strong)
+    monkeypatch.setattr(jobs_mod.JobManager, "text_choice",
+                        lambda self, tier="cheap", provider=None: ("gemini", f"gemini-{tier}"))
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"}).json()
+    assert strong.prompts and not env.text.prompts
+    assert got["writer"] == {"provider": "gemini", "model": "gemini-strong"} and got["model"] == GEMINI
+    n = len(strong.prompts)                                 # a draw on a cache miss writes as the sheet does
+    ask = {"kind": "event", "target": "e6", "style": "ink", "prompt": "A gate."}
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json=ask).status_code == 200
+    assert len(strong.prompts) > n and not env.text.prompts
+    run_set(env, portraits=False)                           # a run keeps the cheap tier
+    assert env.text.prompts and len(strong.prompts) > n
+
+
 def test_without_a_text_model_the_prompt_route_says_so(env, monkeypatch):
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: None)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: None)
     r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"})
     assert r.status_code == 409 and r.json()["code"] == "no-text-model"
 
@@ -723,6 +742,7 @@ def series_env(tmp_path, monkeypatch):
         "orders": {"pub": ["one", "two"]}, "defaultOrder": "pub"}))
     t = Text()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: GeminiFake())
     seen = []
 

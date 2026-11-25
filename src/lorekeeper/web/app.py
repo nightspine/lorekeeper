@@ -1280,7 +1280,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return sorted(set(fin))
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    portraits: str | bool | None = "main"):
+                    portraits: str | bool | None = "main", tier: str = "cheap"):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
@@ -1289,7 +1289,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
         if quality not in QUALITIES:
             raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
-        text_model = jobs.cheap_model(None) if text_needed else None
+        # One picture asked for in the sheet is written by the strong tier (`tier`); runs keep the cheap one.
+        text_model = (jobs.strong_model(None) if tier == "strong" else jobs.cheap_model(None)) if text_needed else None
         if text_model is None and text_needed:
             raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
         try:
@@ -1646,7 +1647,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job, pr = prompt_for(il, args)
@@ -1655,7 +1656,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             # The price of the chosen provider and quality, also before its key is added.
             prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
             name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-            out = {"prompt": pr.text, "body": body_, "style": sentence, "noText": no_text,
+            # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
+            wp, wn = jobs.text_choice("strong") or (None, None)
+            out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
                    "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
                    "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
                    "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
@@ -1681,7 +1684,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"))
+                                               body.get("model"), tier="strong")   # a cache miss writes as the sheet does
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
