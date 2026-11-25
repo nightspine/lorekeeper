@@ -1568,12 +1568,20 @@ def test_an_old_final_skip_for_no_look_described_is_tried_again():
     assert [s["reason"] for s in sink.m["skipped"]] == ["refused: provider declined"]
 
 
-def test_an_entitys_passages_begin_with_how_the_book_first_describes_it(monkeypatch):
-    monkeypatch.setattr(art, "ENTITY_WORDS", 30)       # room for two paragraphs
+def test_an_entitys_passages_put_what_its_latest_items_cite_first_then_how_the_book_first_describes_it(monkeypatch):
+    # Lucy at her staking: the paragraphs her latest profile cites (the churchyard, undead) come before her first description
+    monkeypatch.setattr(art, "ENTITY_WORDS", 40)        # half of it for the latest items' paragraphs, room for one more
     il, t = fresh()
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     passage = writer_calls(t)[0].split("<passage>")[1].split("</passage>")[0]
-    assert passage.startswith(CH1[0]) and CH2[5] not in passage          # her first naming paragraph, not the latest
+    assert CH1[4] in passage                               # what her profile (a4) cites
+    assert CH1[0] in passage                               # her first naming paragraph
+    assert CH1[2] not in passage and not any(p in passage for p in CH2)   # no room for the other mentions
+    monkeypatch.setattr(art, "ENTITY_WORDS", 20)           # room for one: the latest item's paragraph wins
+    il, t = fresh()
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    passage = writer_calls(t)[0].split("<passage>")[1].split("</passage>")[0]
+    assert passage == CH1[4]
 
 
 def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():

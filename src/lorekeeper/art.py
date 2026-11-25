@@ -1587,7 +1587,7 @@ class Illustrator:
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
         anchor = job.anchor
-        upto, pos = b.seq_of[anchor], self._pos(bi, anchor)
+        upto = b.seq_of[anchor]
         view = self.view(bi, anchor, fin)
         vis = {x["id"]: x for x in view["entities"]}
         sources: set[str] = {anchor}
@@ -1620,21 +1620,29 @@ class Illustrator:
             mine = used(job.target, shown)
             material.append(self._tag("entry_to_draw", v, desc))
             plain.append(desc)
-            # the passages: how it was first described (the first paragraphs that name it, and those its earliest profile and
-            # details cite), then what the shown profile and details cite, then sampled mentions, within one budget
-            seqs: list[int] = []
-
-            def cite(facets: list[dict]) -> None:
+            # the passages, within one budget: first what the latest shown profile and details cite (the latest first, up to
+            # about half the budget: how it looks at this point, an undead Lucy included), then how it was first described (the
+            # first paragraphs that name it, and those its earliest profile and details cite), then the rest of what the shown
+            # profile and details cite, then sampled mentions
+            def cited(facets: list[dict]) -> list[int]:
+                out: list[int] = []
                 for f in facets:
-                    for a in f.get("evidence", []):
-                        if a in b.seq_of and b.seq_of[a] <= upto and b.seq_of[a] not in seqs:
-                            seqs.append(b.seq_of[a])
-            seqs += [s for s, at in b.hits(job.target) if s <= upto and at <= upto][:FIRST_PARAS]
+                    for a in sorted(f.get("evidence", []), key=lambda a: -b.seq_of.get(a, -1)):
+                        if a in b.seq_of and b.seq_of[a] <= upto and b.seq_of[a] not in out:
+                            out.append(b.seq_of[a])
+                return out
+            latest, size = [], 0
+            for x in cited(mine):          # `mine`: the shown profile, then the shown details, the latest first
+                w = _words(b.text.get(x, ""))
+                if latest and size + w > ENTITY_WORDS // 2:
+                    break
+                latest.append(x)
+                size += w
             early = sorted((f for f in self._own(bi, job.target).values() if b.ord_of[f["from"]] <= b.ord_of[anchor]),
                            key=lambda f: b.ord_of[f["from"]])
-            cite([f for f in early if f.get("kind") == "profile"][:1] + [f for f in early if f.get("kind") != "profile"][:2])
-            cite(mine)
-            seqs += [s for s in self._mentions(bi, job.target, upto, 8) if s not in seqs]
+            first = [x for x, at in b.hits(job.target) if x <= upto and at <= upto][:FIRST_PARAS]
+            first += cited([f for f in early if f.get("kind") == "profile"][:1] + [f for f in early if f.get("kind") != "profile"][:2])
+            seqs = list(dict.fromkeys(latest + first + cited(mine) + self._mentions(bi, job.target, upto, 8)))
             passage, blocks = self._passage_first(bi, seqs, upto, ENTITY_WORDS)
             if v["type"] in PORTRAIT_TYPES:
                 others = self._groups_of(job.target, view, [f["text"] for f in shown])
