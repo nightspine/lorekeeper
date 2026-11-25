@@ -1466,3 +1466,31 @@ def test_text_spent_counts_against_the_cap():
     t = Costly()
     il, rep, sink, _, im = run(text_=t, cap=1.0)
     assert "cost cap" in rep.stopped and len(t.scenes()) <= 1 and not im.calls
+
+
+def test_details_a_fresh_look_index_flags_go_first_in_the_entry_and_none_is_classified_on_the_way():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    mira = d["entities"][0]
+    mira["facets"] += [{"id": "bk.mira.f1", "from": "a2", "basis": "stated", "evidence": ["a2"], "text": "Has a freckled face."},
+                       {"id": "bk.mira.f2", "from": "a5", "basis": "stated", "evidence": ["a5"], "text": "Sells eggs at the market."},
+                       {"id": "bk.mira.f3", "from": "a6", "basis": "stated", "evidence": ["a6"], "text": "Keeps the mill's books."}]
+    entry = lambda w: w.split("<entry_to_draw")[1].split("</entry_to_draw>")[0]   # noqa: E731
+    il, t = fresh(d, bk)                       # no look index in the set: the latest details first, and no call to make one
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    e = entry(writer_calls(t)[0])
+    assert e.index("Keeps the mill's books") < e.index("Sells eggs") < e.index("freckled face") and t.systems == [art.WRITER]
+    il, t = fresh(d, bk, text_=Text(look=lambda txt: "freckled" in txt))
+    il.classify(0, ["mira"])                   # a bulk run's look index, cached in the set
+    t.prompts.clear(), t.systems.clear()
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    e = entry(writer_calls(t)[0])
+    assert e.index("freckled face") < e.index("Keeps the mill's books") < e.index("Sells eggs") and t.systems == [art.WRITER]
+    il.make_prompt(il.job("portrait", "mira", at="a1"))        # a flagged detail after the anchor is still not there
+    assert "freckled" not in entry(writer_calls(t)[-1])
+    d["entities"][0]["facets"][-1]["text"] += " She hums."      # a rebuilt entity: the cache is stale, today's order again
+    il2 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], Text(), Image(), "ink", portraits="all", workers=1,
+                          log=lambda *_: None, pause=0)
+    il2.make_prompt(il2.job("portrait", "mira", at="a11"))
+    e = entry(il2.text.scenes()[0])
+    assert e.index("Keeps the mill's books") < e.index("freckled face")

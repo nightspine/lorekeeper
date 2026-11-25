@@ -1205,8 +1205,9 @@ class Illustrator:
         the manifest (`looks[eid] = {"key", "items"}`), else {} (not classified yet, or the index changed since).
 
         Gating: the classification call sees all the entity's items up to the end of the book, but it only chooses. Every use
-        is filtered by anchor (a look item or a change counts only at or after its own `from`), and nothing it writes reaches a
-        prompt (a change is stored as true or false, never its phrase; an amended note quotes the change item's own text).
+        is filtered by anchor (a look item or a change counts only at or after its own `from`; on the prompt path the flags only
+        put the details the view already shows in another order), and nothing it writes reaches a prompt (a change is stored
+        as true or false, never its phrase).
         The manifest holds item ids and flags only, so it says nothing the index the Reader holds does not."""
         items = self.items(bi, eid)
         got = self.man[bi]["looks"].get(eid)
@@ -1349,9 +1350,11 @@ class Illustrator:
         return {f["id"]: f for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
 
     @staticmethod
-    def _describe(v: dict, budget: int) -> tuple[str, list[dict]]:
+    def _describe(v: dict, budget: int, first: set[str] = frozenset()) -> tuple[str, list[dict]]:
         """A visible entry's description: its latest profile in full, then its visible details, the latest first, up to
-        `budget` characters (the profile cut at a sentence when it alone is longer). (text, the facets used)."""
+        `budget` characters (the profile cut at a sentence when it alone is longer); the details whose ids are in `first`
+        (those a fresh look index flags as a look) go before the others, each group the latest first. (text, the facets
+        used)."""
         parts, used, size = [], [], 0
         if v.get("profile"):
             t = " ".join(v["profile"]["text"].split())
@@ -1361,7 +1364,8 @@ class Illustrator:
             parts.append(t)
             used.append(v["profile"])
             size = len(t)
-        for f in reversed(v.get("facets") or []):
+        latest = list(reversed(v.get("facets") or []))
+        for f in [f for f in latest if f["id"] in first] + [f for f in latest if f["id"] not in first]:
             t = " ".join(f["text"].split())
             if parts and size + len(t) + 1 > budget:
                 break
@@ -1532,7 +1536,10 @@ class Illustrator:
             v = vis.get(job.target)
             if v is None:
                 raise NotVisible(job.target)
-            desc, shown = self._describe(v, ENTRY_CHARS)
+            # a look told chapters ago stays in reach: the details a fresh look index (a bulk run's, in this set) flags as a
+            # look go first; the cache is only read here, never made (without it, the latest details first)
+            looks = {k for k, x in self.look_index(bi, job.target).items() if x.get("look")} if job.target in b.ents else set()
+            desc, shown = self._describe(v, ENTRY_CHARS, looks)
             mine = used(job.target, shown)
             material.append(self._tag("entry_to_draw", v, desc))
             plain.append(desc)
