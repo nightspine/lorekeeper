@@ -183,8 +183,8 @@ class Job:
 
 
 def art_config(raw) -> dict:
-    """The pictures part of a job config, checked: {style, level, portraits, quality, provider, model, cap}.
-    Raises ValueError with a sentence for the person."""
+    """The pictures part of a job config, checked: {style, level, portraits, quality, provider, model, cap};
+    portraits is "main", "all" or False. Raises ValueError with a sentence for the person."""
     if not isinstance(raw, dict):
         raise ValueError("art must be an object")
     style = " ".join(str(raw.get("style") or "").split())
@@ -205,7 +205,10 @@ def art_config(raw) -> dict:
     cap = raw.get("cap")   # required: a run never draws without a spending limit (the form fills in $10)
     if isinstance(cap, bool) or not isinstance(cap, (int, float)) or not 0 < cap <= 500:
         raise ValueError("The cost cap must be a number of dollars above 0 and at most 500.")
-    return {"style": style, "level": level, "portraits": bool(raw.get("portraits", True)), "quality": quality,
+    portraits = raw.get("portraits", "main")   # "main" (missing), "all" (or true, from an older page), or false for none
+    if portraits is not False and portraits is not True and portraits not in artmod.CASTS:
+        raise ValueError("portraits must be \"main\", \"all\" or false.")
+    return {"style": style, "level": level, "portraits": artmod.portrait_cast(portraits) or False, "quality": quality,
             "provider": provider, "model": model, "cap": cap}
 
 
