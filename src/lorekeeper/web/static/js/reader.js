@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
+import { artImg, artOn, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -952,6 +952,9 @@ export function mountReader(root) {
       // the prompt again at the position now (the server refuses it if the picture itself is held past here).
       s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
     }
+    // Names and thumbnails on an open lightbox or sheet follow the view now, not the one they were painted from.
+    s.art.lightbox?.refresh?.();
+    s.art.sheet?.sh?.refreshFigures?.();
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1817,8 +1820,19 @@ export function mountReader(root) {
       return { rec: p.rec, src: picSrc(p), srcFor: (rec) => picSrc({ ...p, rec }), caption: caption(p), key: p.set.key,
         style: p.set.slug, styleText: p.set.manifest.style, canEdit, canRedraw: Boolean(s.art.hasProvider),
         newPrompt: canEdit && s.art.hasProvider && canRewrite(p.rec) ? (rec) => redrawPicture(rec, caption(p), p.set.slug) : null,
-        promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book) };
+        promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book),
+        figureName: figureName, figureThumb: (rec, f) => figureThumb(p, f) };
     });
+  }
+  /** A figure's name for the sheet and the lightbox: only from the view at the position, null when not visible there. */
+  const figureName = (id) => nameOf(id)?.name || null;
+  /** A figure's reference picture, only when that picture itself passes the gate: found among the pictures visible now in the
+   *  picture's own set. A likeness in another style's set cannot be gated here, so it shows no thumbnail. */
+  function figureThumb(p, f) {
+    const ref = refParts(f.ref);
+    if (!ref || (ref.set && ref.set !== p.set.slug)) return null;
+    const hit = visiblePictures().find((x) => x.set === p.set && x.rec.id === ref.id);
+    return hit ? picSrc(hit, true) : null;
   }
   /** May a picture be redrawn from a new prompt: its kind and target are an item of the book being read, revealed now. */
   function canRewrite(rec) {
@@ -1836,7 +1850,7 @@ export function mountReader(root) {
     s.art.lightbox?.close();
     const items = lightboxItems(pics, caption);
     const box = openLightbox(items, index, { onChanged: () => refreshPictures({ forget: s.key }) });
-    s.art.lightbox = box && { close: box.close, ids: new Set(items.map((x) => x.rec.id)) };
+    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: new Set(items.map((x) => x.rec.id)) };
   }
   /** A picture as a button that opens the lightbox on it. */
   function pictureButton(pics, i, caption, cls, { thumb = true } = {}) {
@@ -1898,7 +1912,7 @@ export function mountReader(root) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
       reached: anchorReached,
