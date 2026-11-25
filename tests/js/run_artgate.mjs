@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { visibleArt, visibleAt, visibleWorld, unfinishedSources, scopeAt, faceIndex } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { visibleArt, visibleAt, visibleWorld, unfinishedSources, scopeAt, faceScopeAt, faceIndex } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -106,7 +106,29 @@ test("scopeAt: the run at or before the block, unknown before a chapter's cue", 
   assert.equal(scopeAt(timeline, 100), null);   // the new chapter has begun, its cue not reached: never switch early
   assert.equal(scopeAt(timeline, 111), null);
   assert.equal(scopeAt(timeline, 112), "s2.1");
-  assert.equal(scopeAt(timeline, 300), "s1.1");   // a cue on the chapter's first block: the later run at one seq wins
+  assert.equal(scopeAt(timeline, 300), "s1.1");   // a cue on the chapter's first block applies
+});
+test("scopeAt: at one seq a scope beats null, whichever is listed last", () => {
+  const nullFirst = { runs: [{ seq: 0, scope: "s2.1" }, { seq: 300, scope: null }, { seq: 300, scope: "s1.1" }] };
+  const nullLast = { runs: [{ seq: 0, scope: "s2.1" }, { seq: 300, scope: "s1.1" }, { seq: 300, scope: null }] };
+  for (const tl of [nullFirst, nullLast]) {
+    assert.equal(scopeAt(tl, 300), "s1.1");
+    assert.equal(scopeAt(tl, 450), "s1.1");
+    assert.equal(faceScopeAt(tl, 300), "s1.1");
+  }
+});
+test("faceScopeAt: before a chapter's cue the face keeps the last known scope; a later run never applies", () => {
+  assert.equal(faceScopeAt(timeline, 2), null);      // before the book's first cue: unknown, the latest picture
+  assert.equal(faceScopeAt(timeline, 99), "s1.1");
+  assert.equal(faceScopeAt(timeline, 100), "s1.1");  // the chapter has begun, its cue (112) not reached: no switch
+  assert.equal(faceScopeAt(timeline, 111), "s1.1");
+  assert.equal(faceScopeAt(timeline, 112), "s2.1");
+  assert.equal(faceScopeAt(timeline, 299), "s2.1");
+  assert.equal(faceScopeAt(timeline, 300), "s1.1");
+  // The reviewer's case: youth, frame, then an unscoped picture; the face holds on the frame portrait until the cue.
+  const pics = [{ rec: { id: "youth", scope: "s2.1" } }, { rec: { id: "frame", scope: "s1.1" } }, { rec: { id: "legacy" } }];
+  for (const seq of [99, 100, 111]) assert.equal(pics[faceIndex(pics, faceScopeAt(timeline, seq))].rec.id, "frame");
+  assert.equal(pics[faceIndex(pics, faceScopeAt(timeline, 112))].rec.id, "youth");
 });
 test("scopeAt: no timeline, no block, malformed runs", () => {
   assert.equal(scopeAt(null, 5), null);
@@ -120,7 +142,7 @@ test("faceIndex: the latest picture of the reader's scope, else the latest", () 
   const pics = [{ rec: { id: "young", scope: "s2.1" } }, { rec: { id: "old", scope: "s1.1" } }, { rec: { id: "legacy" } }];
   assert.equal(faceIndex(pics, "s2.1"), 0);
   assert.equal(faceIndex(pics, "s1.1"), 1);
-  assert.equal(faceIndex(pics, null), 2);       // unknown scope (before the cue): the latest, as today
+  assert.equal(faceIndex(pics, null), 2);       // no scope known yet (before the book's first cue): the latest, as today
   assert.equal(faceIndex(pics, "s3.1"), 2);     // no picture of that time: the latest
   assert.equal(faceIndex([pics[2]], "s1.1"), 0); // a single-scope figure with a legacy record: unchanged
   assert.equal(faceIndex([], "s1.1"), -1);
