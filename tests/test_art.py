@@ -1921,3 +1921,14 @@ def test_the_look_index_and_the_group_pick_only_choose_and_write_nothing_a_promp
     assert "Zephyr" not in json.dumps(sink.m)                # nothing the choosers said is stored, so nothing is served
     assert not any("Zephyr says so" in p or "Zephyr rides in" in p for p in t.prompts)
     assert all("Zephyr the storm-king" not in p["prompt"] for p in pics(sink))
+
+
+def test_a_note_detail_with_a_name_the_book_has_not_used_goes_and_the_note_stays():
+    # the Count's and Greyhand's notes were lost to one detail carrying a word the book had not used by the portrait's anchor
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"][0]["text"] += " He wears a Valdemar pin."
+    t = Text(notes={"Oren": ("a miller", ["broad", "white hair", "a Valdemar pin"])})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad, white hair."
+    assert rep.dropped["dropped: look detail with an unknown name"] == 1 and "oren" in {p["target"] for p in pics(sink, "portrait")}

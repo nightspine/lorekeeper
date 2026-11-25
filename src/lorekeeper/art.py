@@ -2012,6 +2012,21 @@ class Illustrator:
         if not text:
             return "", "empty", [], homes, role
         got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
+        for _ in range(4):
+            # a word the book has not used by this point (the index's own spelling, a later name): the details and role words
+            # carrying it go, not the whole note; a note left with no detail is empty
+            if got is not None or not why.startswith("unknown name: "):
+                break
+            word = why[len("unknown name: "):].strip()
+            has = lambda t: re.search(r"(?<![\w-])" + re.escape(word) + r"(?![\w-])", t) is not None   # noqa: E731
+            details, homes = [d for d in details if not has(d["text"])], [d for d in homes if not has(d["text"])]
+            role = " ".join(w for w in role.split() if not has(w))
+            with self.lock:
+                self.report.dropped["dropped: look detail with an unknown name"] += 1
+            text = compose_note(role, [d["text"] for d in details], mode == "amend" and bool(good))
+            if not text:
+                return "", "empty", [], homes, role
+            got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
         if got is None and why.startswith("name in the text"):
             got, why = self._vet(self.names[bi].strip(text), bi, anchor, source, NOTE_WORDS)
         if got is None:
