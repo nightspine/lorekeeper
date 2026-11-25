@@ -842,10 +842,14 @@ const CAST_SUMMARY = { main: ", main characters' portraits", all: ", everyone's 
 const LEVEL_SUMMARY = { main: "one per chapter", all: "every moment", none: "no chapter pictures" };
 export const NOTHING_CHOSEN = "Choose at least one chapter, or portraits.";
 
+/** Whether a chapter row can be ticked: it would get a picture at the chosen level (`pictures` > 0; a chapter whose events
+ *  are all minor still gets its recap plate). An answer without `pictures` falls back on the chapter having events. */
+export const chapterChoosable = (c) => (c?.pictures != null && Number.isFinite(+c.pictures) ? +c.pictures > 0 : +c?.events > 0);
+
 /** What a chapter row says beside its box: "2 pictures", "2 pictures, 1 already drawn", "already drawn", "nothing to draw". */
 export function chapterCount(c) {
-  const n = Number.isFinite(+c?.pictures) ? +c.pictures : null, done = Number.isFinite(+c?.drawn) ? +c.drawn : 0;
-  if (!(+c?.events > 0) || n === 0) return "nothing to draw";
+  const n = c?.pictures != null && Number.isFinite(+c.pictures) ? +c.pictures : null, done = Number.isFinite(+c?.drawn) ? +c.drawn : 0;
+  if (!chapterChoosable(c)) return "nothing to draw";
   if (n == null) return "";
   if (done >= n) return "already drawn";
   return `${n} picture${n === 1 ? "" : "s"}${done ? `, ${done} already drawn` : ""}`;
@@ -857,10 +861,12 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     quality: d.quality, provider: null, model: null, cap: d.cap };
   let provs = null;
   // The chapter list: `chs` is the estimate's last list (null before it, or from a server that does not number chapters),
-  // `picked` the chosen plan numbers, every chapter that can get a picture at first. A chapter first seen later starts on.
+  // `picked` the chosen plan numbers, every chapter that can get a picture at first. What can be ticked follows the level
+  // (`chapterChoosable`); a row that stops being choosable keeps its tick for when it is again, and is never counted or sent
+  // meanwhile. A chapter choosable for the first time starts on.
   let chs = null;
   const picked = new Set(), seen = new Set();
-  const choosable = () => (chs || []).filter((c) => +c.events > 0);
+  const choosable = () => (chs || []).filter(chapterChoosable);
   const allPicked = () => choosable().every((c) => picked.has(c.n));
   const chosenNs = () => choosable().filter((c) => picked.has(c.n)).map((c) => c.n);
   const noScenes = () => st.level === "none" || (chs != null && !chosenNs().length);
@@ -895,12 +901,12 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     if (!chField) return;
     chField.hidden = !st.on || st.level === "none" || !chs || !chs.length;
     if (!chs) return;
-    const sig = chs.map((c) => `${c.n}:${c.title}:${+c.events > 0}`).join("|");
+    const sig = chs.map((c) => `${c.n}:${c.title}:${chapterChoosable(c)}`).join("|");
     if (chList.dataset.sig !== sig) {
       chList.dataset.sig = sig;
       rowsByN.clear();
       clear(chList, chs.map((c) => {
-        const can = +c.events > 0;
+        const can = chapterChoosable(c);
         const box = h("input", { type: "checkbox", checked: can && picked.has(c.n), disabled: !can });
         const count = h("span.art-ch-n");
         const row = h(`label.art-ch-row${can ? "" : ".none"}`, box, h("span.art-ch-title", { title: c.title }, c.title), count);
@@ -917,7 +923,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   }
   function takeChapters(list) {
     if (!listChapters || !Array.isArray(list) || !list.length || !list.every((c) => Number.isInteger(c?.n))) { chs = null; return; }
-    for (const c of list) if (!seen.has(c.n)) { seen.add(c.n); if (+c.events > 0) picked.add(c.n); }
+    for (const c of list) if (chapterChoosable(c) && !seen.has(c.n)) { seen.add(c.n); picked.add(c.n); }
     chs = list;
   }
   const line = h("p.art-est", { role: "status" });
@@ -1004,18 +1010,22 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     if (reason()) { line.classList.add("why"); line.textContent = reason(); return; }
     line.textContent = "Counting the pictures…";
     let r = null;
+    const asked = listChapters ? chapterParam() : undefined;
     try {
       r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model,
-        ...(listChapters ? { chapters: chapterParam() } : {}) });
+        ...(listChapters ? { chapters: asked } : {}) });
     } catch { r = null; }
     if (mine !== seq) return;
     // A level "none" answer has no chapter counts worth keeping; the list is hidden then and asked again on the way back.
     if (r && st.level !== "none") {
-      const had = chs != null;
+      const was = JSON.stringify([chs?.map((c) => [c.n, chapterChoosable(c)]), reason()]);
       takeChapters(r.chapters);
       paintChapters();
-      // The first list changes what counts as chosen only for chapters it adds, all chosen, so the totals already hold.
-      if (!had && chs) onChange?.();
+      // A new list can change which rows can be ticked (`pictures` follows the level), so what was asked for may no longer
+      // be the choice: ask again with the choice as it is now. Otherwise tell the page when the list or the reason changed.
+      if (JSON.stringify(chapterParam()) !== JSON.stringify(asked)) { onChange?.(); refresh(); return; }
+      if (JSON.stringify([chs?.map((c) => [c.n, chapterChoosable(c)]), reason()]) !== was) onChange?.();
+      if (reason()) { refresh(); return; }
     }
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
