@@ -1615,3 +1615,57 @@ def test_references_is_public_and_what_make_prompt_attaches():
     assert [r["id"] for _, r in il.references(change, ["mira"])] == [by["mira"][0]["id"]]     # the previous portrait
     assert il.references(art.Job("portrait", "mira", 0, "a10", shape="portrait"), ["mira"]) == []   # a first version: none
     assert il.references(il.job("place", "mill", at="a11"), ["mill", "mira"]) == []           # a place: none
+
+
+QUIET = ("A small crowd stands in the yard of a grey stone mill at dusk, faces turned toward a covered shape carried between two "
+         "figures. A woman in a brown shawl holds a basket to her chest and looks away. A lamp burns in a doorway and the last thin "
+         "light falls across the mud of the yard.")
+
+
+def test_soften_writes_the_refused_prompt_again_from_the_same_material():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    t = Text(scene=lambda p: QUIET if "image model refused" in p else SCENE)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    job = il.job("event", "e2", at="a3")
+    first = il.make_prompt(job)
+    assert "image model refused" not in writer_calls(t)[-1]
+    pr = il.soften(job, first.text, "IMAGE_SAFETY")
+    w = writer_calls(t)[-1]
+    # the same material, then the refused text (without the style and no-text lines code appended) and the provider's reason
+    assert w.startswith(writer_calls(t)[0]) and f'"{SCENE}"' in w and '"IMAGE_SAFETY"' in w
+    assert art.NO_TEXT not in w and first.style not in w and "say \"young\"" in w and "misspellings" in w
+    assert pr.body == QUIET and pr.text == f"{QUIET} {first.style} {art.NO_TEXT}" and pr.anchor == first.anchor
+    assert pr.sources == first.sources and pr.writer == first.writer and pr.shape == first.shape
+    # no reason given: the request still reads well
+    il.soften(job, first.text)
+    assert "the reason it gave" not in writer_calls(t)[-1]
+
+
+def test_soften_runs_the_same_checks_with_one_rewrite():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    bad = QUIET.replace("A woman in a brown shawl", "Mira")
+    t = Text(scene=lambda p: QUIET if "It was rejected" in p else bad)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    job = il.job("event", "e2", at="a3")
+    pr = il.soften(job, SCENE, "safety")
+    assert pr.body == QUIET and "image model refused" in writer_calls(t)[-1] and "It was rejected: name in the text" in writer_calls(t)[-1]
+    # a writer that keeps naming an unknown person gives up with the reason, like make_prompt
+    t2 = Text(scene=lambda p: QUIET.replace("A small crowd", "Valdemar and a small crowd"))
+    il2 = art.Illustrator([art.Book(d, bk, Mem())], t2, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    with pytest.raises(art.Dropped, match="unknown name"):
+        il2.soften(il2.job("event", "e2", at="a3"), SCENE, "safety")
+
+
+def test_soften_keeps_the_readers_gate():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"][0]["facets"].append({"id": "b1.mira.f9", "from": "a6", "basis": "stated", "evidence": ["a6"],
+                                        "text": "Wears a red ribbon in her dark braided hair."})
+    t = Text(scene=lambda p: QUIET)
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], t, Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    pr = il.soften(il.job("portrait", "mira", at="b2.a5", finished=set()), SCENE, "safety")
+    assert "red ribbon" not in writer_calls(t)[-1] and pr.partial and pr.inherits == []
+    pr = il.soften(il.job("portrait", "mira", at="b2.a5"), SCENE, "safety", finished={"b1"})
+    assert "red ribbon" in writer_calls(t)[-1] and pr.inherits == ["b1"]

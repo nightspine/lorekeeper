@@ -163,8 +163,23 @@ TASKS = {
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
-SOFTEN = """\n\nThe image model refused to draw this: "{text}". Write a quieter composition of the same subject: nothing graphic,
-nothing violent or frightening in view (a doorway, a shadow, a face turned away, the room afterwards). Keep who and where."""
+# A refused prompt, written again from the same material: by a run once on its own, on the Reader's sheet when the person asks
+# (`Illustrator.soften`). A quieter picture of the same moment, never a trick to slip past the image model's filter.
+SOFTEN = """\n\nThe image model refused to draw this prompt: "{text}"{reason}. Write a quieter composition of the same subject, one an
+image model will draw: keep who is in it, where it is, the light and the mood. Show what is hard to look at by implication (a figure
+wrapped or covered, a face turned away, the moment just before or after, the onlookers' faces, a doorway, a shadow), and leave out
+graphic detail, wounds and injuries, blood, and bodies shown limp or dead; nothing violent or frightening in view. Give no age for
+anyone young: say "young". No tricks to get past a filter (misspellings, code words, euphemisms, other languages): a quieter picture
+of the same moment, in plain English."""
+SOFTEN_TEXT_CHARS = 900
+SOFTEN_REASON_CHARS = 200
+
+
+def soften_request(text: str, reason: str = "") -> str:
+    """The SOFTEN request for a refused prompt and the provider's reason (both trimmed; the reason may be empty)."""
+    text = " ".join(str(text or "").split())[:SOFTEN_TEXT_CHARS]
+    reason = " ".join(str(reason or "").split())[:SOFTEN_REASON_CHARS].replace('"', "'")
+    return SOFTEN.format(text=text.replace('"', "'"), reason=f' (the reason it gave: "{reason}")' if reason else "")
 
 
 class Sink(Protocol):
@@ -1584,6 +1599,21 @@ class Illustrator:
         earlier book outside it never reaches the material: not its entries, details or profiles (the view leaves them out),
         its background note or its pictures as references. `Prompt.inherits` lists the earlier books whose content the prompt
         does use, and `partial` says it was written for a reader with fewer books."""
+        return self._make_prompt(job, finished)
+
+    def soften(self, job: Job, text: str, reason: str = "", finished: set[str] | frozenset[str] | None = None) -> Prompt:
+        """A refused prompt written again so an image model will draw it: one writer call (two with the rewrite) on the same
+        material as `make_prompt` for this job, with the refused `text` and the provider's `reason`, asking for a quieter
+        picture of the same moment (SOFTEN). The same checks, gates and `finished` as `make_prompt`; raises the same errors.
+        The person asks for it on the Reader's sheet and reads the result before anything is drawn."""
+        style = self._style(job.bi)
+        refused = " ".join(str(text or "").split())
+        for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
+            if tail and refused.endswith(tail):
+                refused = refused[:-len(tail)].rstrip()
+        return self._make_prompt(job, finished, soften_request(refused, reason))
+
+    def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "") -> Prompt:
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1712,7 +1742,7 @@ class Illustrator:
         check = "\n".join(plain)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
-        body, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
+        body, why, out = self._write_full(writer + extra, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         if scene:                          # an entity's own picture always shows it
@@ -1878,7 +1908,7 @@ class Illustrator:
                 if not softened:
                     softened = True
                     try:
-                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS,
+                        soft, _ = self._write(pr.writer + soften_request(pr.scene, e.reason), bi, pr.anchor, pr.check, SCENE_WORDS,
                                               self._finished(bi, job.finished))
                     except TextFailed:
                         soft = None
