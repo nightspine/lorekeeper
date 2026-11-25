@@ -2694,3 +2694,85 @@ def test_the_code_keeps_a_new_line_only_a_year_away_and_follows_the_one_line_mar
         return got
     _, _, sink2, _, _ = frame_run(text_=Text(notes={"Mira": MIRA_BOTH}, timeline=tl2))
     assert [c["strand"] for c in sink2.m["timeline"]["chapters"].values()] == ["s1", "s2", "s1"]
+
+
+def cell_book():
+    """The frame and a chapter of the tale holding one frame paragraph (the old woman in her cell) beside her youth."""
+    youth = ["When she was a girl Mira carried baskets to the mill each morning.",
+             "In her cell the old woman Mira has white hair and a scarred face now.",
+             "Young Mira had dark braided hair and a brown shawl that summer.",
+             "The miller Oren greeted young Mira at the gate with a smile.",
+             "The Guild of millers wore white aprons dusted with flour at the gate."]
+    bk = book(("Prologue", FRAME), ("One", youth))
+    fac = lambda i, at, txt: {"id": f"bk.mira.f{i}", "from": at, "basis": "stated", "evidence": [at], "text": txt}  # noqa: E731
+    mira = ent("mira", "Mira", facets=[fac(1, "a0", "An old woman with white hair, held in a cell."),
+                                       fac(2, "a5", "A girl with dark braided hair and a brown shawl."),
+                                       portrait("mira", "a5", "A girl who carries baskets to the mill.")])
+    oren = ent("oren", "Oren", frm="a6", facets=[portrait("oren", "a6", "The miller with flour on his sleeves and a leather apron.")])
+    d = doc(bk, entities=[mira, oren], events=[event(1, 1, "Old Mira begins to tell the scribe her story.", ["mira"], "turn"),
+                                               event(2, 6, "Young Mira meets the miller Oren at the gate.", ["mira", "oren"], "turn")],
+            recaps=[recap(1, 2, "Prologue"), recap(2, 7, "One")])
+    table = {"Prologue": FRAME_TL["Prologue"], "One": ("new", "her girlhood at the mill", 1, "When she was a girl")}
+    return bk, d, table
+
+
+def in_cell(text, marked):
+    return "s1" if "cell" in text else marked
+
+
+def test_a_frame_paragraph_inside_a_chapter_of_the_tale_stays_out_of_the_tales_portrait_passage():
+    bk, d, table = cell_book()
+
+    def youth_portraits(shows):
+        t = Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(table), shows_at=shows)
+        _, _, sink, t, _ = run(d, bk, text_=t)
+        got = [p for p in t.prompts if "This is a portrait" in p and "braided" in p.lower()]
+        assert got and any(p["scope"] == "s2.1" for p in pics(sink, "portrait") if p["target"] == "mira")
+        return got
+    assert any("In her cell the old woman" in p for p in youth_portraits(None))      # the chapter's time for every paragraph
+    assert not any("In her cell the old woman" in p for p in youth_portraits(in_cell))
+
+
+def test_a_scoped_figures_group_look_never_comes_from_a_profile_even_when_the_group_has_one_time():
+    bk, d, table = cell_book()
+    d["entities"].append(ent("guild", "Guild", "group", frm="a7", facets=[
+        {"id": "bk.guild.f1", "from": "a7", "basis": "stated", "evidence": ["a7"], "text": "Guild members wear white aprons dusted with flour."},
+        portrait("guild", "a7", "The Guild's members have white hair and scarred faces.")]))
+    d["relations"] = [{"id": "rel1", "src": "mira", "dst": "guild", "label": "member of", "kind": "alliance", "from": "a7",
+                       "basis": "stated", "evidence": ["a7"]}]
+    t = Text(notes={"Mira": MIRA_BOTH, "Guild": ("a guild", ["white aprons dusted with flour", "white hair"])},
+             timeline=scripted(table), shows_at=in_cell)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert il.scopes_of("guild", 0) == ["s2.1"] and il.multi("mira", 0)
+    plate = next(p for p in pics(sink, "plate") if p["target"] == "One")
+    assert plate["scope"] == "s2.1" and "white aprons dusted with flour" in plate["prompt"]
+    assert "white hair" not in plate["prompt"] and "scarred" not in plate["prompt"]
+    assert not any("have white hair and scarred faces" in p for p in t.prompts if "appearance note for Guild" in p)
+    assert {n.get("scope") for n in sink.m["appearance"]["guild"]} == {"s2.1"}
+
+
+def test_the_timeline_catalog_names_people_only_by_a_name_already_met():
+    bk = frame_book()
+    d = frame_doc(bk)
+    tomas = next(e for e in d["entities"] if e["id"] == "tomas")
+    # after a merge the kept entry's first name is one the book reveals later
+    tomas["names"] = [{"value": "Brother Tomas", "kind": "primary", "from": "a9"}, {"value": "the scribe", "kind": "alias", "from": "a1"}]
+    il, rep, sink, t, im = frame_run(d=d, bk=bk)
+    asked = {re.search(r"^Chapter: (.*)$", p, re.M).group(1): p for p in t.prompts if "line of telling" in p}
+    one = asked["One"].split("Its opening, numbered by paragraph:")[0]
+    assert "people seen in it:" in one and "the scribe" in one and "Brother Tomas" not in one
+
+
+def test_a_chapter_changing_line_without_a_usable_cue_paragraph_is_unknown():
+    table = dict(FRAME_TL, Epilogue=("s1", "", 99, "the old woman Mira"))
+    il, rep, sink, t, im = frame_run(table, level="all")
+    lab = sink.m["timeline"]["chapters"]["Epilogue"]
+    assert lab["strand"] is None and lab["why"] == "changed line without a cue paragraph"
+    assert il.scope_of(0, "a9") is None
+    last = next(p for p in pics(sink, "plate") if p["target"] == "Epilogue")
+    assert "white hair" not in last["prompt"] and "braided" not in last["prompt"]     # Mira from the passage only
+    # the same line as the chapter before goes on from the chapter's first block, as before
+    table = dict(FRAME_TL, Epilogue=("s2", "", 99, ""))
+    _, _, sink2, _, _ = frame_run(table)
+    lab = sink2.m["timeline"]["chapters"]["Epilogue"]
+    assert lab["strand"] == "s2" and lab["cue"]["seq"] == 8

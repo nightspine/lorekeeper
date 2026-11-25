@@ -1319,9 +1319,10 @@ class Illustrator:
                 self._views[key] = v
             return self._views[key]
 
-    def passage(self, bi: int, seqs: list[int], upto: int, words: int = PASSAGE_WORDS, context: int = 1) -> tuple[str, list[int]]:
-        """The paragraphs at `seqs` with `context` either side, merged, never past block `upto`, within `words`
-        (context goes first, then the earliest paragraphs). Returns (text, the blocks used)."""
+    def passage(self, bi: int, seqs: list[int], upto: int, words: int = PASSAGE_WORDS, context: int = 1,
+                skip: frozenset[int] = frozenset()) -> tuple[str, list[int]]:
+        """The paragraphs at `seqs` with `context` either side, merged, never past block `upto` and never a block of `skip`,
+        within `words` (context goes first, then the earliest paragraphs). Returns (text, the blocks used)."""
         b = self.books[bi]
         keep = sorted({s for s in seqs if s in b.text and s <= upto})
         used: list[int] = []
@@ -1333,7 +1334,7 @@ class Illustrator:
                     ranges[-1][1] = max(ranges[-1][1], hi)
                 else:
                     ranges.append([lo, hi])
-            used = [s for a, z in ranges for s in range(a, z + 1) if s in b.text]
+            used = [s for a, z in ranges for s in range(a, z + 1) if s in b.text and s not in skip]
             if sum(_words(b.text[s]) for s in used) <= words:
                 break
         while len(used) > 1 and sum(_words(b.text[s]) for s in used) > words:
@@ -1756,7 +1757,7 @@ class Illustrator:
                 ws = b.text[s].split()
                 line += f"\n   [{paras.index(s) + 1}] " + " ".join(ws[:EVIDENCE_WORDS]) + (" …" if len(ws) > EVIDENCE_WORDS else "")
             ev_lines.append(line)
-        cat = [self._catalog_line(s, w) for s in strands.values()]
+        cat = [self._catalog_line(s, w, j, ch["hi"]) for s in strands.values()]
         catalog = "\n".join(cat) if cat else '(none yet: this is the first chapter, so return "new")'
         previous = f"The previous chapter was told in {prev}.\n" if prev else ""
         out = self._complete(TIMELINE.format(catalog=catalog, previous=previous, path=" > ".join(ch["path"]),
@@ -1811,6 +1812,8 @@ class Illustrator:
             got = {"strand": said, "era": era + 1 if skip else era}
             if skip:
                 got["skip"] = sq
+            if cue_seq is None and prev != said:
+                return {"strand": None, "why": "changed line without a cue paragraph"}   # where it starts is not known
             if cue_seq is None or (prev == said and not skip):
                 cue_seq = ch["lo"]          # the chapter goes on in the line before it: known from its first block
             got["cue"] = {"seq": cue_seq, "quote": quote if found(quote) else ""}
@@ -1836,10 +1839,23 @@ class Illustrator:
         got["events"] = exc
         return got
 
-    def _catalog_line(self, s: dict, w: dict) -> str:
+    def _name_by(self, eid: str, bi: int, seq: int, books) -> str | None:
+        """The entity's first name a reader at block `seq` of book bi has met (the names of `books`, the earlier books the
+        reader knows, all count), or None. After a merge an entity's first listed name can be one revealed later ("the
+        stranger" folded into "Gabriel")."""
+        for j in sorted(set(books) | {bi}):
+            if j > bi:
+                continue
+            b = self.books[j]
+            for n in (b.ents.get(eid) or {}).get("names", []):
+                if j < bi or (n.get("from") in b.seq_of and b.seq_of[n["from"]] <= seq):
+                    return n["value"]
+        return None
+
+    def _catalog_line(self, s: dict, w: dict, bi: int, upto: int) -> str:
         """One known line for the timeline call, from what is labelled so far only: its id and label, where it was first told
-        (its first chapter's heading), the people its events name most, its era, and its latest chapter's opening and last
-        recap sentence (else its first and last events)."""
+        (its first chapter's heading), the people its events name most (by a name met by block `upto` of book bi), its era,
+        and its latest chapter's opening and last recap sentence (else its first and last events)."""
         names: Counter = Counter()
         first = None
         for j, labs in w["books"].items():
@@ -1855,8 +1871,9 @@ class Illustrator:
                             first = " > ".join(c["path"])
                         for x in e.get("entities", []):
                             ent = next((bb.ents[x] for bb in self.books if x in bb.ents), None)
-                            if ent and ent["type"] in PORTRAIT_TYPES:
-                                names[ent["names"][0]["value"]] += 1
+                            nm = self._name_by(x, bi, upto, w["books"]) if ent and ent["type"] in PORTRAIT_TYPES else None
+                            if nm:
+                                names[nm] += 1
         said = ""
         jj, title = s.get("last", (None, None))
         if jj is not None:
@@ -1898,7 +1915,7 @@ class Illustrator:
         known = {k: v for k, v in w["strands"].items() if b.ord_of.get(v["from"], -1) <= b.ord_of[b.anchor_at(upto)]
                  or v["book"] != self._bkey(bi)}
         e = next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
-        who = e["names"][0]["value"] if e else eid
+        who = (self._name_by(eid, bi, upto, w["books"]) or "this figure") if e else eid
         catalog = "\n".join(f"- {k}: {v['label']}" for k, v in known.items())
         for i in range(0, len(todo), SHOWS_BATCH):
             batch = todo[i:i + SHOWS_BATCH]
@@ -3006,13 +3023,14 @@ class Illustrator:
 
     def _group_scope(self, bi: int, gid: str, anchor: str, scope: str | None, fin: frozenset[str] | None) -> str | None:
         """Which of a group's notes a figure drawn in `scope` may carry: None (the group's only note) for a figure with one
-        scope; for one drawn per scope, the group's note of that scope, or its only note when its one known scope is the same;
+        scope; for one drawn per scope, the group's note of that scope, written from that scope's items and paragraphs only
+        (never a profile or an item whose evidence is at another time), also when the group's one known scope is the same;
         PASSAGE when none fits."""
         if scope is None:
             return None
-        if self.multi(gid, bi, anchor, fin):
+        if self.multi(gid, bi, anchor, fin) or self.scopes_of(gid, bi, anchor, fin) == [scope]:
             return scope
-        return None if self.scopes_of(gid, bi, anchor, fin) == [scope] else PASSAGE
+        return PASSAGE
 
     def _member_since(self, bi: int, eid: str, gid: str, finished: frozenset[str] | None = None) -> tuple[int, int] | None:
         """(book, ordinal) where the entity's membership of a group begins, over books 0..bi (an earlier book only when the
@@ -3226,12 +3244,25 @@ class Illustrator:
                 if why == "empty":
                     raise ValueError("skipped: no look described")
                 raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
+        away: frozenset[int] = frozenset()
         if job.kind in ENTITY_KINDS:
             e = b.ents.get(job.target) or {}
             ts = fscope.get(job.target)
-            seqs = self._mentions(bi, job.target, upto, 8, ts, fin) if job.kind == "portrait" else \
+            timed = ts not in (None, PASSAGE, OTHER)
+            seqs = self._mentions(bi, job.target, upto, 24 if timed else 8, ts, fin) if job.kind == "portrait" else \
                 self._in_scope(bi, [b.seq_of[a] for f in e.get("facets", []) for a in f["evidence"] if a in b.seq_of
                                     and b.seq_of[a] <= upto], ts, fin)
+            if timed:
+                # as for the scope's note: a paragraph of the scope's chapters that shows the figure at another time (a frame
+                # paragraph inside a chapter of the tale) is left out of the passage, as a mention or as context (the same
+                # cached check)
+                named = {x for x, _ in b.hits(job.target)}
+                near = {x for s0 in seqs for x in (s0 - 1, s0, s0 + 1) if x <= upto and x in named}
+                sh = self.shows_at(bi, job.target, near, upto, fin)
+                away = frozenset(x for x in near if sh.get(x, ts) != ts)
+                seqs = [x for x in seqs if x not in away]
+                if job.kind == "portrait":
+                    seqs = P._sample(seqs, 8)
             who = vis[job.target]["name"] if job.target in vis else job.target
         else:
             cited = job.event["evidence"] if job.event else [a for e2 in (job.chapter or {}).get("events", [])[:6] for a in e2["evidence"]]
@@ -3240,7 +3271,7 @@ class Illustrator:
             if not job.event and job.chapter:   # a plate with no event: its figures and passage come from the chapter's events
                 sources |= {e2["from"] for e2 in job.chapter["events"] if e2.get("kind") != "minor"}
                 sources |= {e2["from"] for e2 in job.chapter["events"][:6]}
-        passage, used = self.passage(bi, seqs, upto)
+        passage, used = self.passage(bi, seqs, upto, skip=away)
         sources |= {b.anchor_at(s) for s in used}
         ctx: list[str] = []
         if job.kind in ("plate", "event") and job.chapter:
