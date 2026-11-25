@@ -1007,8 +1007,9 @@ class _B:
 
 
 def _key(rec: dict) -> tuple:
-    """What a picture is, for a resume: its kind, target, anchor and story time (None for a record with one scope or older)."""
-    return rec["kind"], rec["target"], rec["from"], rec.get("scope")
+    """What a picture is, for a resume: its kind, target, anchor and, for a portrait, its story time (None for one of an entity
+    with one scope, and for an older record). A scene's scope follows from its moment, so it is no part of the key."""
+    return rec["kind"], rec["target"], rec["from"], rec.get("scope") if rec["kind"] == "portrait" else None
 
 
 # What a failed check is called in the report.
@@ -1669,6 +1670,8 @@ class Illustrator:
         def put(seq: int, scope) -> None:
             if out and out[-1]["seq"] == seq:
                 out[-1]["scope"] = scope
+                if len(out) > 1 and out[-2]["scope"] == scope:
+                    out.pop()
             elif not out or out[-1]["scope"] != scope:
                 out.append({"seq": seq, "scope": scope})
         labs = w["books"].get(j, {})
@@ -1678,7 +1681,7 @@ class Illustrator:
             if lab and lab["scope"]:
                 put(lab["cue"], lab["scope"])
             nxt = b.chapters[n + 1]["lo"] if n + 1 < len(b.chapters) else None
-            if nxt is None or nxt > ch["hi"] + 1:
+            if nxt is not None and nxt > ch["hi"] + 1:
                 put(ch["hi"] + 1, None)      # a stretch no chapter covers (a part's page): unknown
         return out
 
@@ -1959,12 +1962,14 @@ class Illustrator:
                                            -b.ord_of[b.events[x]["from"]]))
 
     def _have(self, bi: int) -> set[tuple]:
-        """(kind, target, from) of what a book's set already holds or will never draw (a final skip)."""
+        """`_key` of what a book's set already holds or will never draw (a final skip)."""
         return {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")} | \
-            {(x.get("kind"), x["target"], x.get("from"), x.get("scope")) for x in self.man[bi]["skipped"]}
+            {(x.get("kind"), x["target"], x.get("from"), x.get("scope") if x.get("kind") == "portrait" else None)
+             for x in self.man[bi]["skipped"]}
 
     def _is_new(self, bi: int, j: Job, have: set[tuple]) -> bool:
-        return (j.kind, j.target, self._anchor(bi, j.anchor), j.scope) not in have and (j.kind, j.target, j.anchor, j.scope) not in have
+        sc = j.scope if j.kind == "portrait" else None
+        return (j.kind, j.target, self._anchor(bi, j.anchor), sc) not in have and (j.kind, j.target, j.anchor, sc) not in have
 
     def _budget(self) -> int | None:
         """How many more pictures the picture limit and the cost cap leave room for (None: no bound known). With an unknown
