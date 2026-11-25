@@ -8,7 +8,8 @@ The books, their indexes and the ground truth are bench data only (nothing in ar
 (a frame and two strands of the past, alternating by part), and the controls Dracula and A Study in Scarlet / The Sign of the
 Four. Indexes are read from `~/projects/lorekeeper/lorekeeper-data/indexes/`, EPUBs from `lorekeeper-data/books/`, never
 written: every art set goes to a temporary folder. Keys come from the environment, else from the `.env` of the repository.
-The text model is the provider's cheap one (Haiku by default). Results are written to `bench/results/art_timeline-*.json`.
+The text model is the provider's cheap one (Haiku by default). Results are written to `.claude/work/art-timeline/` (gitignored:
+they hold short quotes and summaries of the books, which are not ours to publish).
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from lorekeeper import art, epub, llm
 
 DATA = Path(os.environ.get("LOREKEEPER_DATA", Path.home() / "projects/lorekeeper/lorekeeper-data"))
 ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "bench" / "results"
+OUT = ROOT / ".claude" / "work" / "art-timeline"   # gitignored: results quote the books, which are not ours to publish
 
 # (index file stem, book file stem) in series reading order
 EOTV = [("empire-of-the-vampire-3ec7065b2283", "865fa20bac04f9dd"),
