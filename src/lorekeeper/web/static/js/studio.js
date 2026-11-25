@@ -302,7 +302,7 @@ function configure(target, book, ctx, fromJob = null) {
       : `About ${Math.round(cur.tp * 60)} words per minute with this model, measured locally when available.`;
     const unavailable = cloudNow ? (clouds ? (cs?.ok ? "" : cs?.error || `${cs?.label || "That provider"} isn't set up. Add a key in Settings.`) : "Checking your cloud models…")
       : (!appState.ollama?.ok ? "Ollama is not running. Start it with: brew services start ollama" : "");
-    const reason = !words ? "Select at least one section to index." : unavailable || (!cfg.model ? "No model available." : "");
+    const reason = !words ? "Select at least one section to index." : unavailable || (!cfg.model ? "No model available." : "") || pics?.reason() || "";
     startBtn.disabled = Boolean(reason);
     est.classList.toggle("why", Boolean(reason));
     clear(est, reason
@@ -382,9 +382,12 @@ function configure(target, book, ctx, fromJob = null) {
   let indexKey = null;
   if (catalogKey) api.book(catalogKey).then((b) => { indexKey = (b?.versions || []).find((v) => v.isDefault)?.key || null; pics.refresh(); }).catch(() => {});
   pics = picturesForm({
-    estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", chapters: [...picked].filter((n) => storySet.has(n)).length, ...q }),
+    // No chapter list here (the index the pictures follow is not written yet), so no `chapters`: every chapter it ends up with.
+    estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", ...q }),
+    onChange: () => { if (pics) update(); },   // the form paints once while it is made, before `pics` is set
     fallback: (st) => {
       const n = [...picked].filter((n) => storySet.has(n)).length;
+      if (st.level === "none") return `${st.cast === "main" ? "Portraits of the main characters" : "Portraits of everyone with a part"}, no chapter pictures; the count is set once the index is written.`;
       return `About ${n} chapter picture${n === 1 ? "" : "s"}${st.level === "all" ? " or more" : ""}${st.cast === "main" ? ", plus portraits of the main characters" : st.cast === "all" ? ", plus portraits" : ""}; the count is set once the index is written.`;
     },
   });

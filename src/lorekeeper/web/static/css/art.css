@@ -133,6 +133,24 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .art-est:empty { display: none; }
 .art-cap-row { display: inline-flex; align-items: center; gap: 6px; }
 .art-group .prows .prow { min-height: 44px; }
+.art-est.why { color: var(--text-2); }
+/* the chapter list of the book page's dialog: one row per story chapter, a checkbox, the title, its count at the level */
+.art-ch-field { gap: 6px; }
+.art-ch-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+.art-ch-head .label { margin-right: auto; }
+.art-ch-count { font-size: var(--text-sm); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.art-ch-head .linkish { font-size: var(--text-sm); }
+.art-chapters { max-height: min(300px, 40dvh); overflow-y: auto; overscroll-behavior: contain; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.art-ch-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: center; min-height: 40px; padding: 4px 10px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: var(--text-sm); }
+.art-ch-row:last-child { border-bottom: 0; }
+.art-ch-row input { width: 16px; height: 16px; margin: 0; accent-color: var(--beacon); cursor: pointer; }
+.art-ch-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.art-ch-n { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.art-ch-row.off .art-ch-title, .art-ch-row.off .art-ch-n { color: var(--text-3); }
+.art-ch-row.none { cursor: default; }
+.art-ch-row.none .art-ch-title, .art-ch-row.none .art-ch-n { color: var(--text-3); }
+.art-ch-row.none input { cursor: default; }
+@media (hover: hover) { .art-ch-row:not(.none):hover { background: var(--hover); } }
 
 /* ---- phone ---- */
 @media (max-width: 640px) {
@@ -143,6 +161,10 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .art-draw, .art-error > .btn, .lb-choice .btn { min-height: 44px; }
   .tl-thumb { width: 56px; height: 56px; }
   .tl-draw { position: relative; }
+  .art-ch-row { min-height: 44px; }
+  .art-ch-row input { width: 18px; height: 18px; }
+  .art-ch-head .linkish { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .art-chapters { max-height: 36dvh; }
   .tl-draw::after { content: ""; position: absolute; inset: -8px; }
   dialog.lightbox { width: 100%; height: 100dvh; max-height: 100dvh; border: 0; border-radius: 0; }
   .lb-panel { height: 100dvh; max-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
