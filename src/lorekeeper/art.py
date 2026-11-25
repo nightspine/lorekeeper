@@ -1329,7 +1329,9 @@ class Illustrator:
         `events` the non-minor events, `pictures` what the chapter would get at the level whether chosen or not (0 for a
         chapter with no events: it can never get one), `drawn` how many of those the set already holds, `chosen` whether
         this run draws its scenes; `new_portraits`: how many of the portrait jobs a run would still draw (not in the set
-        and not a final skip)."""
+        and not a final skip); `portraits_max`: what `new_portraits` would be if every counted entity with no fresh look index
+        got MAX_VERSIONS portraits (less those it already holds), its planned versions otherwise; equal to `new_portraits`
+        when every counted entity has been checked."""
         bi = len(self.books) - 1 if bi < 0 else bi
         b = self.books[bi]
         level = scene_level(level)
@@ -1357,8 +1359,22 @@ class Illustrator:
             end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
             ports = [j for j in ports if b.seq_of[j.anchor] <= end]
         have = self._have(bi)
-        return {"plates": plates, "portraits": len(ports), "new_portraits": sum(self._is_new(bi, j, have) for j in ports),
+        new = sum(self._is_new(bi, j, have) for j in ports)
+        # an entity whose looks no run has checked yet is planned at one portrait, but a run may find look changes and draw up to
+        # MAX_VERSIONS: the most it could still draw, beside the plan (equal to it once every counted entity is checked)
+        most = 0
+        for eid in dict.fromkeys(j.target for j in ports):
+            mine = [j for j in ports if j.target == eid]
+            fresh = sum(self._is_new(bi, j, have) for j in mine)
+            most += fresh if self._classified(bi, eid) else max(fresh, MAX_VERSIONS - (len(mine) - fresh))
+        return {"plates": plates, "portraits": len(ports), "new_portraits": new, "portraits_max": most,
                 "chapters": chapters}
+
+    def _classified(self, bi: int, eid: str) -> bool:
+        """Whether the manifest holds a fresh look index for the entity (a run has checked its looks, even when none was found)."""
+        items = self.items(bi, eid)
+        got = self.man[bi]["looks"].get(eid)
+        return not items or (isinstance(got, dict) and got.get("key") == self._items_key(items))
 
     def _profiles(self, bi: int, eid: str) -> list[tuple[int, int, dict]]:
         """(book, ordinal, facet) of the entity's profiles in books 0..bi, in reading order."""
