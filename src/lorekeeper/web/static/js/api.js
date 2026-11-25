@@ -191,7 +191,10 @@ export const api = {
   /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
   artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
   /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */
-  artEstimate: (q) => request("GET", `/api/art/estimate?${new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "").map(([k, v]) => [k, String(v)]))}`),
+  // `chapters` is a list of plan numbers, sent as "1,3,4"; an empty list is sent as "chapters=" (no chapter), absent as all.
+  artEstimate: (q) => request("GET", `/api/art/estimate?${new URLSearchParams(Object.entries(q)
+    .map(([k, v]) => [k, Array.isArray(v) ? v.join(",") : v])
+    .filter(([k, v]) => v != null && (v !== "" || Array.isArray(q[k]))).map(([k, v]) => [k, String(v)]))}`),
   /** The standalone "Add pictures" run on an existing index: a job of kind "art". */
   artRun: (key, art) => request("POST", `/api/library/${encodeURIComponent(key)}/art/run`, { art }),
   /** Every art set on disk, per book: [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }]. */

@@ -775,17 +775,96 @@ function promptError(e) {
 
 /**
  * The "Pictures" choices, as one closed disclosure (`details`) or as a plain block for a dialog. Returns
- * { el, config() → the job's `art` object or null when "Draw pictures" is off, refresh() }. `estimate(params)` is
- * asked for the line "About 52 pictures, about $1.75"; `fallback()` gives a rough count when it cannot answer.
+ * { el, config() → the job's `art` object or null when "Draw pictures" is off, refresh(), reason() → why nothing would be
+ * drawn ("" when something would) }. `estimate(params)` is asked for the line "About 52 pictures, about $1.75";
+ * `fallback()` gives a rough count when it cannot answer; `onChange()` is told after every choice.
+ * With `chapters` on (the book page, where the index exists) the form lists the book's chapters from the estimate's
+ * answer, each with a checkbox and its count at the chosen level; the config then carries `chapters` (plan numbers `n`)
+ * when not every chapter that can get a picture is chosen.
  */
 // The portrait choice: `st.cast` is "main", "all" or "none"; the job config sends "main", "all" or false, the estimate the word.
 const CAST_SUMMARY = { main: ", main characters' portraits", all: ", everyone's portraits", none: "" };
+const LEVEL_SUMMARY = { main: "one per chapter", all: "every moment", none: "no chapter pictures" };
+export const NOTHING_CHOSEN = "Choose at least one chapter, or portraits.";
 
-export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art" } = {}) {
+/** What a chapter row says beside its box: "2 pictures", "2 pictures, 1 already drawn", "already drawn", "nothing to draw". */
+export function chapterCount(c) {
+  const n = Number.isFinite(+c?.pictures) ? +c.pictures : null, done = Number.isFinite(+c?.drawn) ? +c.drawn : 0;
+  if (!(+c?.events > 0) || n === 0) return "nothing to draw";
+  if (n == null) return "";
+  if (done >= n) return "already drawn";
+  return `${n} picture${n === 1 ? "" : "s"}${done ? `, ${done} already drawn` : ""}`;
+}
+
+export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null } = {}) {
   const d = artDefaults();
   const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
     quality: d.quality, provider: null, model: null, cap: d.cap };
   let provs = null;
+  // The chapter list: `chs` is the estimate's last list (null before it, or from a server that does not number chapters),
+  // `picked` the chosen plan numbers, every chapter that can get a picture at first. A chapter first seen later starts on.
+  let chs = null;
+  const picked = new Set(), seen = new Set();
+  const choosable = () => (chs || []).filter((c) => +c.events > 0);
+  const allPicked = () => choosable().every((c) => picked.has(c.n));
+  const chosenNs = () => choosable().filter((c) => picked.has(c.n)).map((c) => c.n);
+  const noScenes = () => st.level === "none" || (chs != null && !chosenNs().length);
+  const reason = () => (st.on && noScenes() && st.cast === "none" ? NOTHING_CHOSEN : "");
+  const chapterParam = () => (st.level === "none" || !chs || allPicked() ? undefined : chosenNs());
+  const chList = h("div.art-chapters", { role: "group", "aria-labelledby": `${idPrefix}-ch-h` });
+  const chCount = h("span.art-ch-count");
+  const chField = listChapters ? h("div.field.art-ch-field", { hidden: true },
+    h("div.art-ch-head", h("span.label", { id: `${idPrefix}-ch-h` }, "Chapters"), chCount,
+      h("button.linkish", { type: "button", on: { click: () => setPicked(true) } }, "All"),
+      h("button.linkish", { type: "button", on: { click: () => setPicked(false) } }, "None")),
+    chList) : null;
+  const rowsByN = new Map();
+  function setPicked(on) {
+    for (const c of choosable()) on ? picked.add(c.n) : picked.delete(c.n);
+    for (const [n, r] of rowsByN) r.box.checked = picked.has(n) && !r.box.disabled;
+    chosen();
+  }
+  function chosen() {
+    paintChapterHead();
+    onChange?.();
+    refresh();
+  }
+  function paintChapterHead() {
+    if (!chField) return;
+    const all = choosable().length, n = chosenNs().length;
+    chCount.textContent = all ? `${n} of ${all} chosen` : "";
+    for (const r of rowsByN.values()) r.row.classList.toggle("off", !r.box.checked);
+  }
+  // Rows are built once per list of chapters and kept, so a new estimate updates the counts in place and never moves focus.
+  function paintChapters() {
+    if (!chField) return;
+    chField.hidden = !st.on || st.level === "none" || !chs || !chs.length;
+    if (!chs) return;
+    const sig = chs.map((c) => `${c.n}:${c.title}:${+c.events > 0}`).join("|");
+    if (chList.dataset.sig !== sig) {
+      chList.dataset.sig = sig;
+      rowsByN.clear();
+      clear(chList, chs.map((c) => {
+        const can = +c.events > 0;
+        const box = h("input", { type: "checkbox", checked: can && picked.has(c.n), disabled: !can });
+        const count = h("span.art-ch-n");
+        const row = h(`label.art-ch-row${can ? "" : ".none"}`, box, h("span.art-ch-title", { title: c.title }, c.title), count);
+        box.addEventListener("change", () => { box.checked ? picked.add(c.n) : picked.delete(c.n); chosen(); });
+        rowsByN.set(c.n, { row, box, count });
+        return row;
+      }));
+    }
+    for (const c of chs) {
+      const r = rowsByN.get(c.n);
+      if (r) r.count.textContent = chapterCount(c);
+    }
+    paintChapterHead();
+  }
+  function takeChapters(list) {
+    if (!listChapters || !Array.isArray(list) || !list.length || !list.every((c) => Number.isInteger(c?.n))) { chs = null; return; }
+    for (const c of list) if (!seen.has(c.n)) { seen.add(c.n); if (+c.events > 0) picked.add(c.n); }
+    chs = list;
+  }
   const line = h("p.art-est", { role: "status" });
   const body = h("div.art-form-body");
   const tick = h("input", { type: "checkbox", role: "switch", id: `${idPrefix}-on`, checked: st.on });
@@ -807,7 +886,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   });
   const slug = () => (st.style === "custom" ? st.custom.trim() : st.style);
   function paint() {
-    sum.textContent = st.on ? `${styleLabel(slug())}, ${st.level === "main" ? "one per chapter" : "every moment"}${CAST_SUMMARY[st.cast]}` : "Off";
+    sum.textContent = st.on ? `${styleLabel(slug())}, ${LEVEL_SUMMARY[st.level]}${CAST_SUMMARY[st.cast]}` : "Off";
     if (provs && !provs.length) {
       clear(body, h("p.hint", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Settings")));
       line.textContent = "";
@@ -840,7 +919,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
         st.style === "custom" ? custom : null),
       h("div.field", h("span.label", "How many"), h("div.prows", { role: "radiogroup", "aria-label": "How many" },
         radio("level", "main", "The main moment of each chapter"),
-        radio("level", "all", "Every moment worth drawing"))),
+        radio("level", "all", "Every moment worth drawing"),
+        radio("level", "none", "No chapter pictures"))),
+      chField,
       h("div.field", h("span.label", "Portraits"), h("div.prows", { role: "radiogroup", "aria-label": "Portraits" },
         radio("cast", "main", "Main characters", "The characters the story is most about, up to 12 a book."),
         radio("cast", "all", "Everyone with a part"),
@@ -855,16 +936,32 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
         : provs && provs.length === 1 ? h("p.hint", `Drawn with ${provs[0].label}: ${imageLine(provs[0], st.quality, st.model)}.`) : null,
       h("div.field.art-cap", h("label", { for: `${idPrefix}-cap` }, "Stop at"), h("span.art-cap-row", "$", cap),
         h("p.hint", "The run stops drawing there and keeps what it drew.")));
+    paintChapters();
+    onChange?.();
     refresh();
   }
   let seq = 0;
   async function refresh() {
-    if (!st.on || !st.provider) { line.textContent = st.on && provs && !provs.length ? "" : ""; return; }
+    if (!st.on || !st.provider) { seq++; line.textContent = ""; return; }
     const mine = ++seq;
+    line.classList.remove("why");
+    // Nothing would be drawn: no call, the one sentence saying why stands in for the estimate.
+    if (reason()) { line.classList.add("why"); line.textContent = reason(); return; }
     line.textContent = "Counting the pictures…";
     let r = null;
-    try { r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model }); } catch { r = null; }
+    try {
+      r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model,
+        ...(listChapters ? { chapters: chapterParam() } : {}) });
+    } catch { r = null; }
     if (mine !== seq) return;
+    // A level "none" answer has no chapter counts worth keeping; the list is hidden then and asked again on the way back.
+    if (r && st.level !== "none") {
+      const had = chs != null;
+      takeChapters(r.chapters);
+      paintChapters();
+      // The first list changes what counts as chosen only for chapters it adds, all chosen, so the totals already hold.
+      if (!had && chs) onChange?.();
+    }
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
       line.textContent = `About ${n} picture${n === 1 ? "" : "s"}, ${money(r.price)}${r.price != null && +r.price > st.cap ? `. The run stops at $${Number.isInteger(st.cap) ? st.cap : st.cap.toFixed(2)}` : ""}.`;
@@ -877,8 +974,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   return {
     el,
     config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
-      provider: st.provider.id, model: st.model || null, cap: st.cap } : null),
+      provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}) } : null),
     refresh,
+    reason,
     ready: () => Boolean(st.provider && slug()),
   };
 }
