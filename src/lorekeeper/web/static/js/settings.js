@@ -6,6 +6,7 @@ import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./ap
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
+import { artDefaults, drawsPictures, imageLine, imageProviders, QUALITIES, setArtDefaults, STYLES, styleLabel } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 // A 100,000-word novel at standard depth, measured on a fact-checked run: 1.2 input and 0.58 output tokens per word.
@@ -36,6 +37,7 @@ export function mountSettings(root) {
     { id: "bookorbit", name: "Book Orbit" },
     { id: "cloud", name: "Cloud models" },
     { id: "local", name: "Local models" },
+    { id: "pictures", name: "Pictures" },
     { id: "community", name: "Community indexes" },
   ].filter(Boolean);
   const ids = SECTIONS.map((x) => x.id);
@@ -287,6 +289,8 @@ export function mountSettings(root) {
       h("td.ps", cells.status),
       h("td.pk", cells.key),
       h(`td.pm${p.ok ? "" : ".subtle"}`, modelText),
+      // Images: the provider's image model and its price for one picture, or "Can't draw" (Claude and the rest).
+      h(`td.pi${p.ok && drawsPictures(p) ? "" : ".subtle"}`, drawsPictures(p) ? imageLine(p, artDefaults().quality) : "Can't draw"),
       h(`td.pp.r${p.ok ? "" : ".subtle"}`, cost != null ? money(cost) : "Unknown"),
       h("td.pa", h("div.act", actions)));
     const out = [tr];
@@ -301,7 +305,7 @@ export function mountSettings(root) {
         catch (ex) { toast(ex.message, "error"); }
       } } }, custom ? "Remove settings" : "Remove key");
       const priced = p.models.filter((m) => m.price);
-      out.push(h("tr.prov-more", { id: `prov-more-${p.id}` }, h("td", { colspan: "6" },
+      out.push(h("tr.prov-more", { id: `prov-more-${p.id}` }, h("td", { colspan: "7" },
         priced.length ? h("table.data.subt",
           h("caption.sr-only", `${p.label} models and prices`),
           h("thead", h("tr", h("th", { scope: "col" }, "Model"), h("th.r", { scope: "col" }, "Input, per million tokens"),
@@ -354,15 +358,81 @@ export function mountSettings(root) {
       h("div.table-wrap.set-table", h("table.data.provs",
         h("caption.sr-only", "Cloud model providers"),
         h("thead", h("tr", h("th", { scope: "col" }, "Provider"), h("th", { scope: "col" }, "Status"), h("th", { scope: "col" }, "Key"),
-          h("th", { scope: "col" }, "Default model"), h("th.r", { scope: "col" }, "Per book"), h("th.r", { scope: "col" }, h("span.sr-only", "Action")))),
+          h("th", { scope: "col" }, "Default model"), h("th", { scope: "col" }, "Images"), h("th.r", { scope: "col" }, "Per book"), h("th.r", { scope: "col" }, h("span.sr-only", "Action")))),
         tbody)),
       howItWorks(
         "Book text is sent to the provider you build with, and only when you build.",
         "A key is tested before it is saved, then kept only on this machine in lorekeeper-data/secrets.json, readable by your user only, and never shown in full again. A key in the provider's environment variable (such as OPENAI_API_KEY) works too; a key saved here takes priority over it.",
         `Per book means a 100,000-word novel at standard depth: about ${fmtInt(1.2 * 100000)} full-price input and ${fmtInt(0.58 * 100000)} output tokens, measured on a fact-checked run, at each provider's list prices, which may have changed. The build form shows the estimate for the real book.`,
-        "Custom server is anything that speaks the OpenAI chat API: LM Studio, vLLM, llama.cpp, a proxy. No price is known for it, so estimates say so, and book text is sent to that server."));
+        "Custom server is anything that speaks the OpenAI chat API: LM Studio, vLLM, llama.cpp, a proxy. No price is known for it, so estimates say so, and book text is sent to that server.",
+        "Images is the model that draws pictures with that key, and its price for one picture at your default quality. Only Gemini and OpenAI can draw; the same key serves both text and pictures."));
   }
   paintCloud();
+
+  // ---- Pictures ------------------------------------------------------------------------------
+  // The defaults new pictures start from (kept in this browser), and the art sets on this server with their size.
+  async function paintPictures(focusId = null) {
+    const d = artDefaults();
+    const provs = await imageProviders({ fresh: true });
+    if (disposed) return;
+    lines.pictures.textContent = provs.length ? `${styleLabel(d.style)}, ${d.quality}` : "Needs a Gemini or OpenAI key";
+    const save = (patch, what) => { setArtDefaults(patch); toast(`${what} saved`); paintPictures(document.activeElement?.id || null); };
+    const known = STYLES.some(([k]) => k === d.style);
+    const style = h("select.select#pic-style", { on: { change: (e) => { if (e.target.value === "custom") { custom.hidden = false; custom.focus(); } else save({ style: e.target.value }, "Style"); } } },
+      STYLES.map(([k, l]) => h("option", { value: k, selected: k === d.style }, l)), h("option", { value: "custom", selected: !known }, "Custom…"));
+    const custom = h("input.input#pic-custom", { hidden: known, value: known ? "" : d.style, placeholder: "Describe the style", "aria-label": "Custom style",
+      on: { change: (e) => { if (e.target.value.trim()) save({ style: e.target.value.trim() }, "Style"); } } });
+    const quality = h("select.select#pic-quality", { on: { change: (e) => save({ quality: e.target.value }, "Quality") } },
+      QUALITIES.map(([k, l]) => h("option", { value: k, selected: k === d.quality }, l)));
+    const cap = h("input.input.w-90#pic-cap", { type: "number", min: "0.05", step: "0.05", inputmode: "decimal", value: String(d.cap),
+      on: { change: (e) => save({ cap: +e.target.value > 0 ? Math.round(+e.target.value * 100) / 100 : 10 }, "Limit") } });
+    const prov = provs.length > 1 ? h("select.select#pic-prov", { on: { change: (e) => save({ provider: e.target.value }, "Provider") } },
+      provs.map((p) => h("option", { value: p.id, selected: p.id === (d.provider || provs[0].id) }, `${p.label}, ${imageLine(p, d.quality)}`))) : null;
+    const sets = h("div.pic-sets", h("p.set-note", "Looking for pictures…"));
+    clear(panes.pictures,
+      head("pictures", "Pictures", provs.length ? "What new pictures start from, and the pictures kept on this server." : null),
+      provs.length ? null : h("p.set-note", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Cloud models")),
+      h("div.set-rows",
+        row(h("label", { for: "pic-style" }, "Style"), h("div.pic-style", style, custom)),
+        row(h("label", { for: "pic-quality" }, "Quality"), quality),
+        row(h("label", { for: "pic-cap" }, "Stop a run at"), h("span.pic-cap", "$", cap)),
+        prov ? row(h("label", { for: "pic-prov" }, "Draw with"), prov) : provs.length === 1 ? row("Draws with", `${provs[0].label}, ${imageLine(provs[0], d.quality)}`) : null),
+      h("h3.pic-sets-h", "Pictures on this server"), sets,
+      howItWorks(
+        "These choices are kept in this browser and fill in the Pictures choices on the build form, on a book's page and in the Reader's Draw a picture sheet.",
+        "A text model writes each picture's prompt from the passage and the index, as far as that picture's place in the book; the image provider sees only that prompt, never the book text. Pictures stay on this server, beside the index, and are never part of a shared index.",
+        "A run stops drawing at the limit you set and keeps what it drew. Removing a book's pictures deletes its whole art folder, every style."));
+    if (focusId) document.getElementById(focusId)?.focus();
+    let r;
+    try { r = await api.artSets(); } catch (e) {
+      if (!disposed) clear(sets, h("p.set-note", e.status === 404 ? "This server cannot list pictures yet." : `Couldn't list the pictures: ${e.message}`));
+      return;
+    }
+    if (disposed) return;
+    // [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }] (an older shape { books } is read too).
+    const books = (Array.isArray(r) ? r : Array.isArray(r?.books) ? r.books : []).filter((b) => b && typeof b.textHash === "string");
+    const mb = (n) => (Number(n) >= 1e6 ? `${(n / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round((Number(n) || 0) / 1e3))} KB`);
+    clear(sets, books.length ? h("div.table-wrap", h("table.data.pic-table",
+      h("caption.sr-only", "Pictures on this server, per book"),
+      h("thead", h("tr", h("th", { scope: "col" }, "Book"), h("th", { scope: "col" }, "Styles"), h("th.r", { scope: "col" }, "Size"), h("th.r", { scope: "col" }, h("span.sr-only", "Action")))),
+      h("tbody", books.map((b) => h("tr",
+        h("th", { scope: "row" }, b.title || "Untitled"),
+        h("td", (Array.isArray(b.styles) ? b.styles : []).map((x) => (typeof x === "string" ? styleLabel(x) : styleLabel(x?.slug, x?.style))).join(", ")),
+        h("td.r.num", mb(b.bytes ?? b.size)),
+        h("td.r", h("button.btn.quiet.danger", { type: "button", on: { click: async () => {
+          if (!(await confirmDialog({ title: `Remove the pictures of ${b.title || "this book"}?`, message: "Every picture of this book, in every style, is deleted from this server. The index is not touched.", confirmLabel: "Remove pictures" }))) return;
+          try {
+            const res = await api.artRemove(b.textHash);
+            const undo = res?.undo ?? null;
+            toast("Pictures removed", "ok", { action: undo && b.key ? { label: "Undo", run: async () => {
+              try { await api.undo(b.key, undo); toast("Undone"); paintPictures(); } catch (e) { toast(e.message, "error"); }
+            } } : null });
+            paintPictures();
+          } catch (e) { toast(e.status === 409 ? "Pictures are being drawn for this book. Remove them once the run ends." : e.message, "error"); }
+        } } }, "Remove pictures")))))))
+      : h("p.set-note", "No pictures yet. Tick Pictures when you build an index, or use Add pictures on a book's page."));
+  }
+  paintPictures();
 
   // ---- Book Orbit -----------------------------------------------------------------------------
   const boHow = () => howItWorks(

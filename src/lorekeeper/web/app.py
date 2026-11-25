@@ -1697,10 +1697,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 refs = [(j, r) for j in range(len(il.books)) for r in il.man[j]["pictures"]
                         if r["id"] in set(rec.get("references") or []) and r["id"] != pid]
                 text_ = (note.rstrip(".") + ". " if note else "") + rec["prompt"]
+                # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
+                # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from
+                # before `inherits` existed gets none on the new one either, so the Reader keeps treating it as unknown.
                 pr = artmod.Prompt(text_, text_, rec["from"], rec.get("shape") or job.shape,
                                    [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
-                                   list(rec.get("sources") or [rec["from"]]))
+                                   list(rec.get("sources") or [rec["from"]]),
+                                   inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
+                                   partial=bool(rec.get("partial")))
                 new = draw_given(il, job, pr, text_)
+                if "inherits" not in rec:
+                    new.pop("inherits", None)
                 old = arts.path(ctx["hash"], slug_, pid)
                 entry = journal_art(key, [old] if old and old.name != new["file"] else [],
                                     {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
@@ -1710,6 +1717,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     for r in man["pictures"]:
                         if r["id"] == new["id"]:
                             r["replaces"] = pid
+                            if "inherits" not in rec:
+                                r.pop("inherits", None)
                     man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
                     man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
                     arts.save(ctx["hash"], slug_, man)

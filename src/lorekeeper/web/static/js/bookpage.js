@@ -1,7 +1,8 @@
 // The book page and the series page: a breadcrumb, a compact head, label / value rows on hairlines, and tables.
 import { api } from "./api.js";
 import { parseHash } from "./app.js";
-import { bookNo, buildDialog, builtWith, cover, NO_EPUB, numWord, startBuild, statusChip } from "./build.js";
+import { bookNo, buildDialog, builtWith, cover, modal, NO_EPUB, numWord, startBuild, statusChip } from "./build.js";
+import { loadArt, picturesForm } from "./art.js";
 import { openShare } from "./community.js";
 import { clear, crumbs, fmtInt, h, icon, loadError, loading, STATUS_LABEL, toast } from "./dom.js";
 import { rowAction } from "./library.js";
@@ -84,6 +85,7 @@ export function mountBook(root) {
           h("div.btns",
             d ? h("a.btn.primary", { href: `#/reader?i=${encodeURIComponent(d.key)}` }, "Read") : null,
             main,
+            d && b.canBuild && b.status !== "building" ? picturesButton(d) : null,
             d ? h("a.btn.quiet", { href: `/api/library/${encodeURIComponent(d.key)}`, download: "" }, icon("download"), "Download index") : null))),
       missing.length ? h("div.notice.warn", h("div",
         `${missing.length === 1 ? `Book ${numWord(missing[0].index)}, ${missing[0].title},` : `${missing.length} earlier books`} ${missing.length === 1 ? "has" : "have"} no index yet. `,
@@ -137,6 +139,32 @@ export function mountBook(root) {
             h("td", h(`span.badge.${j.status}`, STATUS_LABEL[j.status] || j.status)),
             h("td", h("a", { href: `#/studio/job/${j.id}` }, j.config.model || "Default model")),
             h("td.subtle", new Date(j.created * 1000).toLocaleString()))))))) : null);
+  }
+
+  /** "Add pictures" (or "More pictures" once the index has an art set): the Pictures choices in a small dialog that starts
+   *  an "Add pictures" run on the index as it is, then opens that run. */
+  function picturesButton(d) {
+    const btn = h("button.btn.quiet", { type: "button", on: { click: () => openPictures(d) } }, icon("sparkle"), h("span.lbl", "Add pictures"));
+    loadArt(d.key).then((a) => { if (a?.styles?.length && btn.isConnected) btn.querySelector(".lbl").textContent = "More pictures"; });
+    return btn;
+  }
+  function openPictures(d) {
+    const m = modal("Add pictures", { width: 640 });
+    const form = picturesForm({ always: true, idPrefix: "bk-art", estimate: (q) => api.artEstimate({ key: d.key, ...q }) });
+    const err = h("p.hint.field-error", { role: "alert" });
+    const start = h("button.btn.primary", { type: "button", on: { click: async () => {
+      const art = form.config();
+      if (!art) { err.textContent = "Choose a style first."; return; }
+      start.disabled = true; err.textContent = "";
+      try {
+        const job = await api.artRun(d.key, art);
+        m.close();
+        toast("Drawing pictures");
+        if (job?.id) location.hash = `#/studio/job/${encodeURIComponent(job.id)}`;
+      } catch (e) { err.textContent = e.message; start.disabled = false; }
+    } } }, icon("sparkle"), "Start drawing");
+    m.body.append(h("p.muted", { style: { margin: 0 } }, "Pictures for the index as it is now, drawn one chapter at a time. The image provider sees only the written prompts."),
+      form.el, err, h("div.confirm-actions", h("button.btn", { type: "button", on: { click: () => m.close() } }, "Cancel"), start));
   }
 
   load();

@@ -1,0 +1,158 @@
+/* Pictures (art.js): placements in the Reader, the lightbox, the "Draw a picture" sheet and the Pictures choices.
+   Pictures are flat on a hairline with a 6px radius; only the lightbox and the sheet float (they keep the dialog shadow). */
+
+/* ---- shared ---- */
+.art-img { display: block; width: 100%; height: 100%; object-fit: cover; background: var(--pane-2); }
+.art-plate, .art-thumb, .art-face-btn { display: block; padding: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); cursor: zoom-in; color: inherit; }
+.art-plate:focus-visible, .art-thumb:focus-visible, .art-face-btn:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+@media (hover: hover) { .art-plate:hover, .art-thumb:hover, .art-face-btn:hover { border-color: var(--line-2); } }
+.art-draw { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); min-height: 32px; }
+.art-draw .svg-icon { width: 14px; height: 14px; }
+@media (hover: hover) { .art-draw:hover { color: var(--beacon); } }
+
+/* ---- Reader toolbar ---- */
+.art-ctl { display: inline-flex; align-items: center; gap: 8px; }
+.art-ctl:empty { display: none; }
+.art-toggle[aria-pressed="false"] { color: var(--text-3); }
+.art-toggle[aria-pressed="false"] .svg-icon { opacity: .6; }
+.art-style { width: auto; max-width: 180px; }
+.more-select { display: grid; gap: 6px; }
+.more-select .select { width: 100%; }
+
+/* ---- Chapters tab: plates under the title, in the 72ch column ---- */
+.art-plates { display: grid; gap: 8px; max-width: 72ch; width: 100%; }
+.art-plates.one .art-plate { width: 100%; aspect-ratio: 16 / 9; }
+.art-plates.many { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; }
+.art-plates.many .art-thumb { aspect-ratio: 16 / 9; width: 100%; }
+.art-plates .art-more { grid-column: 1 / -1; justify-self: start; font-size: var(--text-sm); }
+.art-draw-row { display: flex; }
+
+/* ---- Timeline: a 64px picture at the left, "Draw a picture" quiet at the right ---- */
+.tl-list li.tl-ev.has-pic, .tl-list li.tl-ev.can-draw { grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; column-gap: 12px; }
+.tl-list li.tl-ev.can-draw:not(.has-pic) { grid-template-columns: minmax(0, 1fr) auto; }
+.tl-text { display: grid; gap: 6px; min-width: 0; }
+.tl-thumb { width: 64px; height: 64px; flex: none; }
+.tl-draw { color: var(--text-3); }
+@media (hover: hover) {
+  .tl-draw { opacity: 0; transition: opacity var(--dur-fast); }
+  li.tl-ev:hover .tl-draw, li.tl-ev:focus-within .tl-draw, .tl-draw:focus-visible { opacity: 1; }
+  .tl-draw:hover { color: var(--beacon); }
+}
+/* Without hover it appears on the row the reader tapped (the row takes focus), never on every row at once. */
+@media (hover: none) {
+  li.tl-ev.can-draw:not(:focus-within) .tl-draw { visibility: hidden; }
+  li.tl-ev.can-draw { cursor: pointer; }
+}
+.timeline li.tl-ev.has-pic { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; }
+.timeline .tl-thumb { width: 48px; height: 48px; }
+
+/* ---- Cast rows: a 24px portrait in the type mark's place, the type colour as its ring ---- */
+.ent-row.has-face .ent-name .nm::before { display: none; }
+.ent-face { display: inline-block; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden; background: var(--pane-2); box-shadow: 0 0 0 2px var(--t); }
+/* A portrait is 3:4 with a margin round the figure: the circle takes the face, a little above the middle. */
+.ent-face-img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 28%; transform: scale(1.6); transform-origin: 50% 32%; }
+.ent-row.has-face .ent-name .nm { gap: 10px; }
+.ent-row.dormant .ent-face { opacity: .55; }
+
+/* ---- the entry: the portrait beside "Who they are" ---- */
+.drawer .profile.has-face { grid-template-columns: 140px minmax(0, 1fr); align-items: start; column-gap: 16px; }
+.drawer .profile.has-face.face-only { grid-template-columns: 140px; }
+.drawer .profile .profile-text { display: grid; gap: 6px; min-width: 0; }
+.drawer .profile .art-face-btn { width: 140px; aspect-ratio: 3 / 4; }
+.art-earlier { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
+.art-thumb.small { width: 56px; aspect-ratio: 3 / 4; }
+.art-thumb.card-face { width: 72px; aspect-ratio: 3 / 4; }
+.d-art { margin: 0; }
+.g-face { margin-bottom: var(--space-3); }
+.g-face .art-face-btn { width: 120px; aspect-ratio: 3 / 4; }
+
+/* ---- the lightbox ---- */
+dialog.lightbox { position: fixed; inset: 0; margin: auto; padding: 0; width: min(1100px, calc(100% - 40px)); max-width: none; max-height: calc(100dvh - 40px); border: 1px solid var(--line-2); border-radius: var(--radius-m); background: var(--pane); color: var(--text); box-shadow: var(--shadow); overflow: hidden; }
+dialog.lightbox[open] { display: block; animation: toast-in var(--dur-slow) var(--ease); }
+dialog.lightbox::backdrop { background: var(--backdrop); }
+.lb-panel { display: flex; flex-direction: column; max-height: calc(100dvh - 40px); }
+.lb-head { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 8px 6px 18px; border-bottom: 1px solid var(--line); }
+.lb-count { font-size: var(--text-sm); }
+.lb-close { margin-left: auto; }
+.lb-main { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 4px; flex: none; padding: 12px 8px; background: var(--bg); overflow: hidden; }
+.lb-stage { grid-column: 2; grid-row: 1; display: flex; justify-content: center; align-items: center; min-height: 0; min-width: 0; }
+.lb-prev { grid-column: 1; grid-row: 1; } .lb-next { grid-column: 3; grid-row: 1; }
+/* The picture keeps to about three fifths of the window; the caption, actions and "How this was drawn" scroll under it. */
+.lb-img { display: block; max-width: 100%; max-height: min(62dvh, calc(100dvh - 260px)); width: auto; height: auto; border-radius: 6px; object-fit: contain; }
+.lb-nav[hidden] { display: none; }
+.lb-foot { display: grid; align-content: start; gap: 10px; padding: 14px 18px 18px; min-height: 0; flex: 1 1 auto; overflow: auto; border-top: 1px solid var(--line); }
+.lb-caption { margin: 0; font: 600 var(--text-md)/1.4 var(--font-ui); }
+.lb-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.lb-acts:empty { display: none; }
+.lb-redraw { display: grid; gap: 8px; width: 100%; max-width: 560px; }
+.lb-redraw .btns { display: flex; gap: 8px; justify-content: flex-end; }
+.lb-details > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); min-height: 32px; }
+.lb-details > summary::-webkit-details-marker { display: none; }
+.lb-details > summary .svg-icon { width: 14px; height: 14px; transition: transform var(--dur-fast); }
+.lb-details[open] > summary .svg-icon { transform: rotate(90deg); }
+.lb-details-body { display: grid; gap: 12px; padding-top: 8px; }
+.lb-prompt { display: grid; gap: 4px; }
+.lb-prompt p { margin: 0; max-width: 72ch; font-size: var(--text-base); line-height: 1.55; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.lb-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; font-size: var(--text-sm); }
+.lb-facts dt { color: var(--text-3); }
+.lb-facts dd { margin: 0; color: var(--text-2); overflow-wrap: anywhere; }
+.lb-toasts { position: absolute; right: 12px; bottom: 12px; }
+
+/* ---- the picture sheet ---- */
+.art-sheet-body { display: grid; gap: 16px; padding: 4px var(--space-4) var(--space-4); }
+.art-sheet-body > p { margin: 0; }
+.art-field { display: grid; gap: 6px; min-width: 0; }
+.art-prompt { width: 100%; min-height: 9em; resize: vertical; font: 400 var(--text-base)/1.5 var(--font-ui); padding: 8px 10px; }
+.art-chips { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+.art-custom { width: 100%; }
+.art-row { display: flex; flex-wrap: wrap; gap: 12px 28px; }
+.art-moments { display: grid; border-top: 1px solid var(--line); }
+.art-moment { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); cursor: pointer; }
+.art-moment.on { background: var(--sel); color: var(--text); }
+.art-moment input { margin-top: 2px; }
+.art-world { margin: 0; font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.art-world-edit textarea { width: 100%; }
+.art-world-edit .btns, .art-done .btns { display: flex; gap: 8px; justify-content: flex-end; }
+.art-error:empty { display: none; }
+.art-error p { margin: 0; color: var(--rose); font-size: var(--text-sm); }
+.art-drawn { margin: 0; font-size: var(--text-sm); }
+.art-foot { flex: 1; display: flex; align-items: center; gap: 12px; justify-content: flex-end; }
+.art-price { margin-right: auto; font-size: var(--text-sm); color: var(--text-2); }
+.art-done { display: grid; gap: 12px; }
+.art-done p { margin: 0; }
+.art-done-img { display: block; width: 100%; max-height: 50dvh; object-fit: contain; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); }
+
+/* ---- the Pictures choices (build form, book page dialog) ---- */
+.art-form, .art-form-body { display: grid; gap: 16px; }
+.art-est { margin: 0; font-size: var(--text-sm); color: var(--text-2); }
+.art-est:empty { display: none; }
+.art-cap-row { display: inline-flex; align-items: center; gap: 6px; }
+.art-group .prows .prow { min-height: 44px; }
+
+/* ---- phone ---- */
+@media (max-width: 640px) {
+  .art-plates.many { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .drawer .profile.has-face { grid-template-columns: 96px minmax(0, 1fr); column-gap: 12px; }
+  .drawer .profile.has-face.face-only { grid-template-columns: 96px; }
+  .drawer .profile .art-face-btn { width: 96px; }
+  .art-draw { min-height: 44px; }
+  .tl-thumb { width: 56px; height: 56px; }
+  .tl-draw { position: relative; }
+  .tl-draw::after { content: ""; position: absolute; inset: -8px; }
+  dialog.lightbox { width: 100%; height: 100dvh; max-height: 100dvh; border: 0; border-radius: 0; }
+  .lb-panel { height: 100dvh; max-height: 100dvh; padding-bottom: env(safe-area-inset-bottom); }
+  .lb-head { padding-top: max(6px, env(safe-area-inset-top)); }
+  .lb-main { padding: 8px 0; grid-template-columns: minmax(0, 1fr); }
+  .lb-main .lb-stage { grid-column: 1; }
+  .lb-main .lb-nav { position: absolute; top: 50%; margin-top: -22px; z-index: 1; width: 44px; height: 44px; background: color-mix(in srgb, var(--pane) 80%, transparent); border-radius: 50%; }
+  .lb-prev { left: 6px; } .lb-next { right: 6px; }
+  .lb-img { max-height: min(56dvh, calc(100dvh - 240px)); border-radius: 0; }
+  .lb-foot { padding: 12px 16px 16px; }
+  .art-prompt, .lb-note, .art-custom, .art-world-edit textarea { font-size: 16px; }
+  .art-row { gap: 12px 20px; }
+  .art-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px 14px; }
+  .art-chips::-webkit-scrollbar { display: none; }
+  .art-chips .filter-chip { flex: none; min-height: 44px; }
+  .art-sheet .seg button { min-height: 44px; }
+  .art-ctl { display: none; }
+}
