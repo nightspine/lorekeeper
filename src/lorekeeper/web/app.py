@@ -1682,20 +1682,65 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job, pr = prompt_for(il, args)
-            stored = arts.resolve(ctx["hash"], style)[1]
-            body_, sentence, no_text = prompt_parts(il, pr, stored)
-            # The price of the chosen provider and quality, also before its key is added.
-            prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
-            name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-            # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
-            wp, wn = jobs.text_choice("strong") or (None, None)
-            out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
-                   "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
-                   "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
-                   "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
-                   "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
+            out = prompt_answer(ctx, il, image, job, pr, style, quality, body, fin)
             remember_prompt(prompt_key(key, job, fin), pr, slug_)
             return out
+        return await work()
+
+    def prompt_answer(ctx: dict, il, image, job, pr, style: str, quality: str, body: dict, fin) -> dict:
+        """The prompt route's answer for one written Prompt (the soften route answers the same shape)."""
+        slug_, stored = arts.resolve(ctx["hash"], style)
+        body_, sentence, no_text = prompt_parts(il, pr, stored)
+        # The price of the chosen provider and quality, also before its key is added.
+        prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+        name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
+        # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
+        wp, wn = jobs.text_choice("strong") or (None, None)
+        out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
+               "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
+               "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
+               "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+               "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
+        return out
+
+    @app.post("/api/library/{key}/art/soften")
+    async def art_soften(key: str, request: Request):
+        """Rewrite a prompt the image model refused so the same moment can be drawn (one writer call, strong tier, nothing
+        drawn): the prompt route's body plus `text` (what was refused) and `reason` (the provider's words). Gated like the
+        prompt route and answered in its shape; never cached as the job's prompt, so a draw of it is a person's own text."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            style = art_style(body.get("style"))
+            refused = " ".join(str(body.get("text") or "").split())
+            reason = " ".join(str(body.get("reason") or "").split())
+            if not refused or len(refused) > 4000:
+                raise ArtRefusal(422, "bad-prompt", "Give the refused prompt, at most 4,000 characters.")
+            if len(reason) > 300:
+                raise ArtRefusal(422, "bad-reason", "Keep the reason to 300 characters.")
+            art_busy(ctx["hash"])
+            quality = body.get("quality") or "standard"
+            fin = art_finished(ctx, body)
+            slug_ = arts.resolve(ctx["hash"], style)[0]
+            with arts.lock(ctx["hash"], slug_):
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
+                given, at = art_position(ctx, body)
+                job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
+                if not hasattr(il, "soften"):
+                    raise ArtRefusal(501, "unavailable", "This server can't rewrite a refused prompt yet.")
+                try:
+                    pr = il.soften(job, refused, reason, finished=None if fin is None else set(fin))
+                except artmod.NotVisible as e:
+                    raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+                except artmod.TextFailed as e:
+                    raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+                except artmod.Dropped as e:
+                    raise ArtRefusal(422, "dropped", str(e), e.say) from e
+                except ValueError as e:
+                    raise ArtRefusal(422, "dropped", str(e)) from e
+            return prompt_answer(ctx, il, image, job, pr, style, quality, body, fin)
         return await work()
 
     @app.post("/api/library/{key}/art/draw")

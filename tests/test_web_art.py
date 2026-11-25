@@ -499,6 +499,55 @@ def test_replaces_never_names_a_picture_past_the_position(env):
     assert len(env.image.calls) == calls
 
 
+def fake_soften(monkeypatch, seen):
+    """`Illustrator.soften` as the pipeline shapes it (job, text, reason, finished) -> Prompt: here make_prompt with a
+    quieter body, so the route is tested without the pipeline's own rewrite."""
+    import dataclasses
+
+    def soften(self, job, text_, reason, finished=None):
+        seen.append({"job": job, "text": text_, "reason": reason, "finished": finished})
+        pr = self.make_prompt(job)
+        quiet = "A figure carries a covered shape along a muddy road at dusk."
+        return dataclasses.replace(pr, body=quiet, scene=quiet, text=" ".join([quiet, pr.style, pr.no_text]).strip())
+    monkeypatch.setattr(art.Illustrator, "soften", soften, raising=False)
+
+
+def test_soften_rewrites_a_refused_prompt_in_the_prompt_routes_shape(env, monkeypatch):
+    env.key()
+    seen = []
+    fake_soften(monkeypatch, seen)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e6", "style": "ink"}).json()
+    ask = {"kind": "event", "target": "e6", "style": "ink", "text": got["prompt"], "reason": "IMAGE_SAFETY", "p": 1.0}
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json=ask)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert set(got) == set(out) and out["body"].startswith("A figure carries a covered shape")
+    assert out["style"] == got["style"] and out["kind"] == "event" and out["target"] == "e6" and env.image.calls == []
+    assert seen[0]["text"] == " ".join(got["prompt"].split()) and seen[0]["reason"] == "IMAGE_SAFETY"
+    assert seen[0]["finished"] is None and seen[0]["job"].target == "e6"
+    # never cached as the job's prompt: the prompt route's own stays what a draw reuses
+    n = len(env.text.prompts)
+    d = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e6", "style": "ink",
+                                                          "prompt": out["prompt"]})
+    assert d.status_code == 200 and d.json()["prompt"] == " ".join(out["prompt"].split()) and len(env.text.prompts) == n
+
+
+def test_soften_keeps_the_prompt_routes_gates(env, monkeypatch):
+    env.key()
+    seen = []
+    fake_soften(monkeypatch, seen)
+    base = {"kind": "event", "target": "e5", "style": "ink", "text": "A hanging.", "reason": "IMAGE_SAFETY"}
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "p": "a2"})
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "text": ""}).json()["code"] == "bad-prompt"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "reason": "x" * 301}).json()["code"] == "bad-reason"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "finished": ["nope"]}).json()["code"] == "bad-position"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "target": "e99"}).status_code == 404
+    assert seen == []                                              # refused before any writer call
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json=base, headers={"X-Lorekeeper": ""})
+    assert r.status_code == 403
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)
