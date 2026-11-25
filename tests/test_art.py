@@ -2238,3 +2238,22 @@ def test_a_detail_loses_a_capital_it_has_only_from_opening_a_sentence_and_the_fa
             return super().complete(system, prompt, schema, prefix)
     il, rep, sink, t, im = run(d, bk, text_=T())
     assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad."
+
+
+
+def test_a_one_word_look_padded_with_a_kind_word_stands_as_the_book_words_it():
+    # Holden's "tall build" and "lean build" on "tall", "lean"; Uncle Vernon's "large build" on "large"
+    assert art._beyond("tall build", "tall") and art._beyond("big, beefy build", "A big, beefy man")
+    assert not art._beyond("pale skin", "the pale light") and not art._beyond("dark hair", "dark eyes")
+    t = Text(notes={"Oren": ("a miller", ["old", "broad"])})
+    real = t.complete
+
+    def complete(system, prompt, schema, prefix=None):
+        out = real(system, prompt, schema, prefix)
+        if "appearance note for Oren" in prompt:
+            out["details"] = [{"text": "broad build", "quote": "broad", "seen": True},
+                              {"text": "old age", "quote": "The old", "seen": True}]
+        return out
+    t.complete = complete
+    il, rep, sink, t, im = run(text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad, old."

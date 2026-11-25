@@ -457,6 +457,13 @@ def _plain(detail: str, own: str = "") -> str:
     return detail
 
 
+def _beyond(detail: str, quote: str) -> bool:
+    """Whether a detail says its quote plus at most one word: every word of the quote is in it ("tall build" on "tall"), or
+    they share two words or more ("big, beefy build" on "A big, beefy man"). Never "pale skin" on "the pale light"."""
+    d, q = _content(detail), _content(quote)
+    return bool(q) and len(d - q) <= 1 and (q <= d or len(d & q) >= 2)
+
+
 def _content(text: str) -> set[str]:
     return {_base(w) for w in _toks(text) if w not in _STOP and len(w) > 2}
 
@@ -2081,11 +2088,12 @@ class Illustrator:
                         continue
                     if quoted(q, own, one=True) and detail_supported(t, q):
                         into.append({"text": _plain(t, own), "quote": q})
-                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and len(_content(t) & _content(q)) >= 2 \
-                            and len(_content(t) - _content(q)) <= 1 and not set(_toks(q)) & _SPEAKER:
-                        # the writer's words go one word beyond its quote ("big, beefy build" on "A big, beefy man"): the quote
-                        # is the book's own short phrase about it, so it becomes the detail (never a line someone speaks)
-                        into.append({"text": _plain(q.strip(" ,.;:"), own), "quote": q})
+                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and _beyond(t, q) \
+                            and not set(_toks(q)) & _SPEAKER:
+                        # the writer's words go one word beyond its quote ("big, beefy build" on "A big, beefy man", "tall build"
+                        # on "tall"): the quote is the book's own short phrase about it, so it becomes the detail (never a line
+                        # someone speaks)
+                        into.append({"text": _plain(re.sub(r"(?i)^the\s+", "", q.strip(" ,.;:")), own), "quote": q})
                         reworded.append(t)
                     else:
                         bad.append(t)
