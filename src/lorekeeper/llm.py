@@ -416,8 +416,10 @@ PROVIDERS: dict[str, dict] = {
         "key_env": "GEMINI_API_KEY", "key_url": "https://aistudio.google.com/apikey",
         "models": _models(("gemini-2.5-flash", "Gemini 2.5 Flash", (0.30, 2.50), "cheap"),
                           ("gemini-2.5-flash-lite", "Gemini 2.5 Flash-Lite", (0.10, 0.40), "cheap"),
-                          ("gemini-2.5-pro", "Gemini 2.5 Pro", (1.25, 10.00), "strong")),
-        "default": "gemini-2.5-flash", "cheap": "gemini-2.5-flash", "strong": "gemini-2.5-pro",
+                          # gemini-2.5-pro answers 404 "no longer available to new users" (2026-11-25); prices for prompts
+                          # up to 200K tokens (ai.google.dev, 2026-10-17)
+                          ("gemini-3.1-pro-preview", "Gemini 3.1 Pro (preview)", (2.00, 12.00), "strong")),
+        "default": "gemini-2.5-flash", "cheap": "gemini-2.5-flash", "strong": "gemini-3.1-pro-preview",
     },
     "openrouter": {
         "label": "OpenRouter", "kind": "openai", "base_url": "https://openrouter.ai/api/v1",
