@@ -2670,3 +2670,26 @@ def test_a_frame_paragraph_inside_a_chapter_of_the_tale_stays_out_of_the_tales_n
     assert "white hair" not in note["text"] and "braided" in note["text"]
     assert sink.m["shows"]["mira"]["5"]["line"] == "s1"
     assert "bk.mira.f3" not in note["items"]
+
+
+def test_the_code_keeps_a_new_line_only_a_year_away_and_follows_the_one_line_marked_same_time():
+    def tl(p):
+        if p["title"] == "Prologue":
+            return {"strand": "new", "label": "the cell", "cue": {"paragraph": 1, "quote": "the old woman Mira"}, "lines": []}
+        if p["title"] == "One":        # "new", but less than a year from the chapter before: it goes on in the line before
+            return {"strand": "new", "label": "the mill", "gap": 0.5, "lines": [], "cue": {"paragraph": 1, "quote": "When she was a girl"}}
+        # the reply names s1 but marks only... s1 false and nothing else: its own choice stands
+        return {"strand": "s1", "gap": 0, "lines": [{"id": "s1", "same_time": True}], "cue": {"paragraph": 1, "quote": "x"}}
+    il, rep, sink, t, im = frame_run(text_=Text(notes={"Mira": MIRA_BOTH}, timeline=tl))
+    assert [c["strand"] for c in sink.m["timeline"]["chapters"].values()] == ["s1", "s1", "s1"]
+    assert not il.multi("mira", 0)
+
+    def tl2(p):
+        got = tl(p) if p["title"] != "One" else {"strand": "new", "label": "the girlhood", "gap": 20, "lines": [],
+                                                  "cue": {"paragraph": 1, "quote": "When she was a girl"}}
+        if p["title"] == "Epilogue":   # it says the girlhood, but marks only the cell as the same time: the per-line check wins
+            got = {"strand": "s2", "gap": 20, "lines": [{"id": "s1", "same_time": True}, {"id": "s2", "same_time": False}],
+                   "cue": {"paragraph": 1, "quote": "the old woman Mira"}}
+        return got
+    _, _, sink2, _, _ = frame_run(text_=Text(notes={"Mira": MIRA_BOTH}, timeline=tl2))
+    assert [c["strand"] for c in sink2.m["timeline"]["chapters"].values()] == ["s1", "s2", "s1"]

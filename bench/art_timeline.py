@@ -51,9 +51,10 @@ def truth_eotv1(toc: int) -> str | None:
     return None
 
 
-# Bench data for the prompts measure: words of the narrator's look as the man in the cell (and in the later past) has it and
-# the boy of book one's first part (toc6-16, before his first inking) does not. Only for scoring.
-FRAME_LOOK = re.compile(r"\b(inkwork|inked|ink|tattoo\w*|PATIENCE|skulls?|roses|beard\w*|scar\w*|grizzled|weathered|middle-aged)\b", re.I)
+# Bench data for the prompts measure: the narrator's look as the man in the cell (and the later past) has it and the youth of
+# book one never does: covered in inkwork, the scars and stubble, the inked words and skulls on his fingers. (The youth's own
+# inkings, a sevenstar in his palm at toc13 and a lion on his chest at toc29, are not counted.) Only for scoring.
+FRAME_LOOK = re.compile(r"\b(inkwork|tattoo\w*|PATIENCE|skulls?|roses|scar\w*|stubbl\w*|beard\w*|neck to|grizzled|weathered)\b", re.I)
 
 
 class NoImage:
