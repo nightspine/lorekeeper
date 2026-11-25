@@ -233,6 +233,7 @@ export function mountReader(root) {
 
   /** Convert a position response to a 0..1 reading position (the block being read counts as unread). */
   function syncedP(r) {
+    if (r.finished === true) return 1;   // finished in Book Orbit: the end, whatever the last progress row says
     const p = typeof r.seq === "number" && s.map.exact ? s.map.blockStart(r.seq) : r.p;
     return Number.isFinite(p) ? Math.min(1, Math.max(0, p)) : null;
   }
@@ -265,9 +266,11 @@ export function mountReader(root) {
     const p = syncedP(r);
     if (p == null) return;
     const first = !s.sync.on;
-    if (!first && s.sync.updatedAt === r.updatedAt) { s.sync.fetchedAt = Date.now(); return; }
+    const finished = r.finished === true;
+    if (!first && s.sync.updatedAt === r.updatedAt && s.sync.finished === finished) { s.sync.fetchedAt = Date.now(); return; }
+    const wasFinished = s.sync.finished === true;
     const override = s.sync.override === true, ahead = s.sync.ahead === true;
-    s.sync = { on: true, override, ahead, p, updatedAt: r.updatedAt, basis: r.basis, percentage: r.percentage, fetchedAt: Date.now() };
+    s.sync = { on: true, override, ahead, p, finished, updatedAt: r.updatedAt, basis: r.basis, percentage: finished ? 100 : r.percentage, fetchedAt: Date.now() };
     if (override) { paintSource(); return; }
     // "New" needs something to compare against: the position this device last synced, when it is behind.
     let prev = null;
@@ -281,7 +284,7 @@ export function mountReader(root) {
       // A sync waits only for the book and the moment it was made for: gone after unmount, a book switch or a move by hand.
       if (disposed || s.key !== key || s.sync.override) return;
       setP(p, first ? (prev != null ? { prev } : { quiet: true }) : {});
-      if (!first) announce("Position updated from Book Orbit");
+      if (!first && !(finished && wasFinished)) announce(finished ? "Finished in Book Orbit" : "Position updated from Book Orbit");
       writeLast(p);
     };
     // An edit form with typed text keeps the entry as it is: the synced position waits until the form is
@@ -343,7 +346,7 @@ export function mountReader(root) {
   /** The position Book Orbit holds, when going past it would spoil: synced, not yet allowed ahead, book unfinished. */
   function aheadLine() {
     const y = s.sync;
-    return y.on && !y.ahead && (y.percentage == null || y.percentage < 99.5) ? y.p : null;
+    return y.on && !y.finished && !y.ahead && (y.percentage == null || y.percentage < 99.5) ? y.p : null;
   }
   /** Every deliberate move goes through here. Past Book Orbit's line it asks first; "no" returns to the line. */
   async function moveTo(p) {
@@ -390,7 +393,9 @@ export function mountReader(root) {
     const back = () => h("button.linkish", { type: "button", on: { click: backToSynced } },
       `Back to Book Orbit's position (${Math.round(y.p * 100)}%)`);
     if (y.on && y.override) clear(el.source, y.ahead && s.p > y.p + 1e-9 ? "Ahead of where Book Orbit says you are" : "Moved by hand", back());
-    else if (y.on) {
+    else if (y.on && y.finished) {
+      clear(el.source, h("span.dot-live", { "aria-hidden": "true" }), "Finished in Book Orbit");
+    } else if (y.on) {
       const t = y.updatedAt ? Date.parse(y.updatedAt) / 1000 : NaN;
       clear(el.source, h("span.dot-live", { "aria-hidden": "true" }),
         `From Book Orbit${Number.isFinite(t) ? `, ${relTime(t)}` : ""}`);

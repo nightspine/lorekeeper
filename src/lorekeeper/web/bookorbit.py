@@ -7,6 +7,7 @@ password is never stored. Access tokens (15 minutes) live in memory and are refr
 
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import re
@@ -31,6 +32,10 @@ MEDIA_EXTENSIONS = (".mp3", ".m4a", ".m4b", ".aac", ".ogg", ".oga", ".opus", ".w
 
 class BookOrbitError(Exception):
     """A failure worth showing the user as is."""
+
+
+class BookOrbitUnreachable(BookOrbitError):
+    """The server could not be reached at all (as opposed to answering with an error)."""
 
 
 def normalize_url(url: str) -> str:
@@ -142,7 +147,9 @@ class BookOrbit:
                     raise BookOrbitError("Your Book Orbit session has expired. Sign in again in Settings.") from e
                 raise BookOrbitError(f"Book Orbit refresh failed: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+            except (ValueError, http.client.HTTPException) as e:
+                raise BookOrbitError("Book Orbit sent an answer Lorekeeper couldn't read.") from e
             self._access, self._access_until = r["accessToken"], time.time() + 13 * 60
             if r.get("refreshToken"):   # rotates on every refresh: persist the new one
                 self.session.refresh_token = r["refreshToken"]
@@ -170,7 +177,9 @@ class BookOrbit:
                     raise BookOrbitError("Book Orbit couldn't find that item.") from e
                 raise BookOrbitError(f"Book Orbit error {e.code}: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+            except (ValueError, http.client.HTTPException) as e:   # not JSON, or cut off mid-answer
+                raise BookOrbitError("Book Orbit sent an answer Lorekeeper couldn't read.") from e
         raise BookOrbitError("Book Orbit rejected the session.")
 
     # ---- data ------------------------------------------------------------------------------
@@ -216,7 +225,7 @@ class BookOrbit:
                                          "download permission).") from e
                 raise BookOrbitError(f"Book Orbit error {e.code}: {_error_message(e)}") from e
             except (urllib.error.URLError, TimeoutError, OSError) as e:
-                raise BookOrbitError(f"Couldn't reach Book Orbit at {self.session.url}.") from e
+                raise BookOrbitUnreachable(f"Couldn't reach Book Orbit at {self.session.url}.") from e
         raise BookOrbitError("Book Orbit rejected the session.")
 
     def download_text_epub(self, file_id) -> bytes:
@@ -272,6 +281,16 @@ class BookOrbit:
                         "text": {"cfi": cfi}, "kobo": {"source": source, "contentPercent": pct}, "koreader": koreader})
         return out
 
+    def read_status(self, book_id) -> dict:
+        """The person's read status of one book, `{"status", "finishedAt"}` (a GET; nothing is ever written).
+
+        `GET /books/{id}` carries `readStatus` as an object, or null when the person has no status.
+        An older server may not carry the field at all: `known` is False then, and a null status
+        with `known` True means "no status".
+        """
+        r = self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}")
+        return {**read_status_of(r), "known": isinstance(r, dict) and "readStatus" in r}
+
     def thumbnail(self, book_id) -> tuple[bytes, str]:
         return self._call("GET", f"/books/{urllib.parse.quote(str(book_id))}/thumbnail", raw=True, timeout=30)
 
@@ -281,6 +300,28 @@ class BookOrbit:
                      token=self._access, timeout=8)
         except Exception:
             pass   # the local copy is deleted either way
+
+
+def read_status_of(b) -> dict:
+    """`{"status": lowercase str | None, "finishedAt": str | None}` from a book row or detail.
+
+    Detail answers carry `readStatus` as `{status, source, startedAt?, finishedAt?}` (or null); list rows
+    carry a plain string and `readFinishedAt`. Both are accepted; anything else reads as no status.
+    """
+    if not isinstance(b, dict):
+        return {"status": None, "finishedAt": None}
+    rs = b.get("readStatus")
+    finished = b.get("readFinishedAt")
+    if isinstance(rs, dict):
+        finished = rs.get("finishedAt", finished)
+        rs = rs.get("status")
+    status = rs.strip().lower() if isinstance(rs, str) and rs.strip() else None
+    return {"status": status, "finishedAt": finished if isinstance(finished, str) and finished else None}
+
+
+def is_finished(status) -> bool:
+    """Only `read` unlocks the whole index; `skimmed` and `abandoned` are not finishing it."""
+    return status == "read"
 
 
 def trim_book(b: dict) -> dict:
@@ -294,6 +335,7 @@ def trim_book(b: dict) -> dict:
     elif b.get("seriesId") or b.get("seriesName"):
         series.append({"id": str(b.get("seriesId") or b.get("seriesName")), "name": b.get("seriesName"),
                        "index": b.get("seriesIndex"), "expected": None})
+    rs = read_status_of(b)
     return {
         "id": str(b.get("id")), "libraryId": str(b.get("libraryId")), "title": b.get("title") or "Untitled",
         "authors": [a if isinstance(a, str) else a.get("name", "") for a in b.get("authors") or []],
@@ -301,6 +343,7 @@ def trim_book(b: dict) -> dict:
         "epubSize": epub.get("sizeBytes") if epub else None, "hasCover": bool(b.get("hasCover")),
         "coverVersion": b.get("coverVersion"), "language": b.get("language"), "isbn13": b.get("isbn13"),
         "updatedAt": b.get("updatedAt"),
+        "readStatus": rs["status"], "finishedAt": rs["finishedAt"],
     }
 
 

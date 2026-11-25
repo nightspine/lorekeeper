@@ -61,8 +61,41 @@ MIN_GAP = 30           # blocks between two portraits of one entity
 PASSAGE_WORDS = 600
 WORKERS = 3
 SCENE_WORDS = (35, 170)
-NOTE_WORDS = (10, 60)
+NOTE_WORDS = (3, 70)       # an appearance note is put together by code from the role and the quoted details
 WORLD_WORDS = (25, 110)
+LOOK_PASSAGE_WORDS = 300   # of a note's passages, the paragraphs that describe the look go first, within this many words
+
+# What a figure looks like: body, features, hair and dress. Light and colour words are left out ("dark", "pale light": they are a
+# look only when they describe a figure, `figure_looks`), and so are the parts every figure has (face, eyes, hands, lips, nose,
+# teeth, ears, nails), so a scene may say how a figure turns or smiles without describing it.
+LOOK_WORDS = re.compile(
+    r"\b(young|younger|youthful|old|older|elderly|aged|tall|slender|slim|lean|thin|gaunt|stout|plump|fat|burly|portly|frail|"
+    r"stooped|hunched|bald|balding|beard|bearded|moustache|moustached|mustache|whiskers|clean[- ]shaven|shaven|hair|haired|"
+    r"curls|curly|braids?|braided|plaits?|ringlets|blonde?|freckles|freckled|scars?|scarred|wrinkled|wrinkles|complexion|"
+    r"aquiline|spectacles|coat|cloak|cape|suit|dress|gown|frock|shawl|apron|hat|bonnet|hood|"
+    r"hooded|collar|uniform|robes?|boots|gloves|veil|armou?r|jewels?|jewelled|earrings|necklace)\b", re.IGNORECASE)
+# The same, plus the parts that count as a description in the text or the index ("an aquiline face, sharp white teeth").
+LOOK_POINT = re.compile(LOOK_WORDS.pattern[:-3] + r"|face|eyes|hands|nose|lips|teeth|ears|nails|height|build|dressed|clad)\b",
+                        re.IGNORECASE)
+LOOK_FACET = 2             # distinct look words that make a facet or profile a description of the look
+# A note that says no look is given is no note ("no physical appearance is shown", "his looks are not described").
+NO_LOOK = re.compile(r"\b(no|not any|nothing of (its|his|her|their))\s+(physical\s+)?(appearance|look|looks|description|features)\b|"
+                     r"\b(appearance|look|looks|features)\s+(is|are)\s+(not|never|un)\w*|\bnot\s+(shown|described|given)\b|"
+                     r"\bunknown\s+appearance\b", re.IGNORECASE)
+# Words a look detail may add to its quote without saying more ("tall build" on "a tall old man", "dressed in black" on "clad in
+# black"): they name the kind of detail, not a look.
+_GENERIC = frozenset("build frame figure face features appearance look looks dressed clad wearing wears worn clothes clothing "
+                     "garb attire colour color shade tone skin body".split())
+# A detail of a person or creature must say something of its look: a body, hair, dress or colour word ("a curious, observant
+# visitor" and "a faithful Churchman" are not looks).
+BODY_LOOK = re.compile(LOOK_POINT.pattern[:-3] + r"|black|white|grey|gray|red|dark|fair|pale|golden|brown|blue|green|ruddy|"
+                       r"sallow|swarthy|forehead|brow|brows|cheeks?|chin|jaw|mouth|neck|shoulders|limbs|skin|fur|scales|claws|"
+                       r"wings|tail|horns|muscular|strong|small|large|huge|heavy|beautiful|handsome|plain|ugly|"
+                       r"bearing|stature|wrinkle\w*|eyebrows|lashes|forearms|slight|sleeves?|shirt|trousers|breeches|waistcoat|"
+                       r"jacket|skirt|bodice|belt|sash|ribbons?|shoes|cap|age|years|twenty|thirty|forty|fifty|sixty|seventy|"
+                       r"eighty|\w+teen|child|boy|girl|man|woman|broad)\b", re.IGNORECASE)
+_STOP = frozenset("a an the of with and or in on at to by for from his her its their is are has have who which that as "
+                  "very rather quite somewhat".split())
 
 # What a new profile or fact says when the entity's look has changed (and the earlier text did not).
 LOOK_PROFILE = re.compile(r"\b(older|aged|ageing|scars?|scarred|wounds?|wounded|bandaged|limps?|limping|disguised|blinded|crippled|"
@@ -110,23 +143,31 @@ write ONE sentence adding what an illustrator now needs, as the pages show it, w
 """
 
 APPEAR = """Write a short, fixed appearance note for {who} ({kind}) so an illustrator draws it the same way every time.
-20 to 40 words: say who or what it is by role in a few words ("a young solicitor", "a ruined castle"), then its look as the
-passages and notes show it ({looks}). Look only: no situation (prisoner, guest, host), no plot, no personality, no mood. Do not use
-its name or any other name. State only what is shown: leave out anything not shown. If the passages and notes show nothing of its
-look beyond who or what it is (a name only mentioned, an author, a person only written about), return an EMPTY text: never write
-that nothing is shown. {more}
+Return "role": who or what it is in 2 to 6 words, by role only ("a miller", "a stone bridge"), using only words the passages or
+notes give it; and "details": its look as the passages and notes show it ({looks}), each detail a short phrase ("text") with
+"quote", the exact words of the passages or notes that show it about {who} (copied word for word, 2 to 25 words). Look only: no
+situation (prisoner, guest, host), no plot, no personality, no mood. Use no name. A detail you cannot quote about {who} is
+not shown: leave it out, never guess it and never take it from another figure. If nothing of its look is shown (a name only
+mentioned, an author, a person only written about), return an EMPTY details list. {more}
 {prev}
 What the companion has noted:
 {notes}
 
 Passages:
 {passages}"""
+NOTE_SCHEMA = {"type": "object", "required": ["role", "details"],
+               "properties": {"role": {"type": "string"},
+                              "details": {"type": "array", "items": {"type": "object", "required": ["text", "quote"],
+                                                                     "properties": {"text": {"type": "string"},
+                                                                                    "quote": {"type": "string"}}}}}}
 LOOKS = {"person": "age, build, face, hair, clothing, marks", "creature": "form, size, colouring, marks",
          "place": "form, materials, state, surroundings", "object": "form, materials, size, state"}
 AMEND = """Its fixed note until now was:
 "{prev}"
-The text now shows a change: "{change}". Write the AMENDED note: the same {who} with what changed, kept short. Begin with "The same".
-Do not use the word "now"; never start over."""
+The text now shows a change: "{change}". Give the details as they are at this point: keep the earlier ones that still hold
+(quoting the earlier note for them) and add what changed (quoting the change or the passages). Do not use the word "now"."""
+NOTE_AGAIN = """\n\nIn your first answer these details had no quote of the passages or notes that shows them about {who}: {bad}.
+Quote each detail word for word from the passages or notes, or leave it out."""
 
 WRITE = """Write the picture prompt for an illustrator. The picture shows {what}
 
@@ -140,7 +181,8 @@ Passage:
 
 Rules:
 - One scene, one moment: what is in frame, the composition and the light. 60 to 120 words, plain sentences, present tense.
-- Describe people by look and role, never by name ("a gaunt old man in black", "the young solicitor"); name no person, creature or group.
+- Describe people by role, never by name ("the miller", "the rider"); name no person, creature or group. A look you give a
+  figure must come from its fixed note or the passage, never from another figure's.
   A place may be named.
 - Put nothing in the picture that the passage or the notes do not show. You may recognise the book: use nothing from outside these pages.
 - The figures' fixed notes are added after your text by the program: say which figure is which by role, and do NOT repeat their looks.
@@ -152,7 +194,8 @@ Rules:
 KINDS_WHAT = {
     "plate": "the main moment of a chapter: {frame}",
     "event": "this moment: {frame}",   # frame = the event's own summary
-    "portrait": "a portrait of {who}, as they are at this point: head and shoulders or half length, a simple background that suits the world.",
+    "portrait": "a portrait of the figure listed below, as they are at this point: head and shoulders or half length, a simple "
+                "background that suits the world.",
     "place": "{who}, a place, as it looks at this point; people only if the passages put them there.",
     "thing": "{who}, an object, as it looks at this point, in a setting that suits the world.",
 }
@@ -259,6 +302,163 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
+def _look_norm(w: str) -> str:
+    return _base(re.sub(r"[- ]", "", w.lower()))
+
+
+def _base(w: str) -> str:
+    """A word without its plural or inflection ending, so that "scar" and "scarred", "old" and "older", "hair" and "haired",
+    "moustache" and "moustaches" are one word, while "scar" and "scarlet", "man" and "many" stay two (whole words only)."""
+    for suf, rep in (("iest", "y"), ("ier", "y"), ("ies", "y"), ("ied", "y"), ("ing", ""), ("est", ""), ("er", ""), ("ed", ""),
+                     ("es", ""), ("s", "")):
+        if w.endswith(suf) and len(w) - len(suf) >= 3 and not (suf == "s" and w.endswith("ss")):
+            w = w[:-len(suf)] + rep
+            break
+    if len(w) >= 4 and w[-1] == w[-2] and w[-1] not in "aeiouls":
+        w = w[:-1]                     # "scarr", "thinn"
+    if len(w) > 4 and w.endswith("e"):
+        w = w[:-1]                     # "pale" and "paler", "freckle" and "freckled"
+    return w
+
+
+# Colour and shape words: a look only when they describe a figure ("a pale, oval face", "dark hair"); "a dark wall" is no look.
+COLOUR_SHAPE = re.compile(
+    r"\b(black|white|grey|gray|red|dark|fair|pale|golden|gold|silver|brown|blue|green|ruddy|sallow|swarthy|blond|auburn|raven|"
+    r"crimson|scarlet|yellow|ashen|rosy|oval|round|square|angular|sharp|hollow|sunken|high|broad|narrow|thick|heavy|delicate|"
+    r"fine|pointed|hooked|arched|long|short|small|large|huge|little|big|strong|muscular|handsome|beautiful|pretty|plain|ugly|"
+    r"lovely|deep|bright|light|smooth|rough|flowing|loose|neat|tangled|wild|grizzled|silvered)\b", re.IGNORECASE)
+# What of a figure those words describe. A noun alone is no look: "a turn of the head", "her hands folded" stay allowed.
+FIGURE_NOUN = re.compile(
+    r"\b(faces?|hair|locks|eyes?|ears|skin|lips|cheeks?|cheekbones|brows?|eyebrows|forehead|nose|mouth|chin|jaw|teeth|beard|"
+    r"moustache|mustache|complexion|features|hands?|fingers|nails|neck|shoulders|frame|figure|build|body|limbs|coat|cloak|cape|"
+    r"dress|gown|suit|shawl|hat|hood|collar|robes?|boots|gloves|veil|clothes|clothing|garb|attire)\b", re.IGNORECASE)
+_HALT = frozenset("a an the his her its their my your our of in on at with behind across over under into from by to against "
+                  "toward towards through beside near upon".split())
+
+
+def figure_looks(text: str) -> list[str]:
+    """The colour and shape words of `text` that describe a figure: up to four words before a figure noun ("a pale, oval face",
+    stopping at an article, possessive or preposition) or after it with "is/was" ("her hair was dark and loose")."""
+    toks = re.findall(r"[A-Za-z’'-]+|[.,;:!?]", text)
+    out: list[str] = []
+    for i, t in enumerate(toks):
+        if not FIGURE_NOUN.fullmatch(t):
+            continue
+        j, n = i - 1, 0
+        while j >= 0 and n < 4 and toks[j].lower() not in _HALT and toks[j] not in ".;:!?":
+            if COLOUR_SHAPE.fullmatch(toks[j]):
+                out.append(toks[j])
+            j -= 1
+            n += toks[j + 1] not in (",", "and")
+        if i + 1 < len(toks) and toks[i + 1].lower() in ("is", "are", "was", "were"):
+            for t2 in toks[i + 2:i + 6]:
+                if t2 in ".;:!?" or t2.lower() in _HALT:
+                    break
+                if COLOUR_SHAPE.fullmatch(t2):
+                    out.append(t2)
+    return out
+
+
+def unlooked(text: str, looks: str) -> str:
+    """The first look word of `text` that `looks` does not have, "" when there is none: any `LOOK_WORDS` word (age, build,
+    hair, dress), and a colour or shape word that describes a figure (`figure_looks`). Words match whole, with their
+    endings (`_base`: "hair" and "haired", "old" and "older", never "scar" and "scarlet")."""
+    have = {_look_norm(w) for w in re.findall(r"[A-Za-z]+", looks) + re.findall(r"[A-Za-z]+[- ]shaven", looks)}
+    for w in [m.group(0) for m in LOOK_WORDS.finditer(text)] + figure_looks(text):
+        if _look_norm(w) not in have:
+            return w
+    return ""
+
+
+# The look words that are adjectives: a scene that gives a figure one its notes lack loses the word, not the picture.
+LOOK_ADJECTIVE = re.compile(r"young|younger|youthful|old|older|elderly|aged|tall|slender|slim|lean|thin|gaunt|stout|plump|fat|"
+                            r"burly|portly|frail|stooped|hunched|bald|balding|bearded|moustached|clean[- ]shaven|shaven|haired|"
+                            r"curly|blonde?|freckled|scarred|wrinkled|aquiline|hooded|jewelled|" + COLOUR_SHAPE.pattern[3:-3],
+                            re.IGNORECASE)
+
+
+def _drop_word(text: str, w: str) -> str:
+    """The text without the word `w` (every use of it), with the commas, "and" and article it leaves wrong tidied ("a young,
+    thin man" without "young" is "a thin man"; "a old man" becomes "an old man")."""
+    text = re.sub(r"(?<![\w-])" + re.escape(w) + r"(?![\w-])", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(a|an|the)\s*(?:,|\band\b|\bor\b)\s*", r"\1 ", text, flags=re.IGNORECASE)   # "the , thin" / "the and thin"
+    text = re.sub(r",\s*(?=,|\band\b)", " ", text)                                             # "tall, , thin" / "tall, and"
+    text = re.sub(r"\b(and|or)\s+(?=(?:and|or)\b)", "", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"\b([Aa])n?\s+(?=(\w))", lambda m: m.group(1) + ("n " if m.group(2).lower() in "aeiou" else " "), text)
+    return " ".join(text.split())
+
+
+def look_count(text: str) -> int:
+    """How many distinct look words (`LOOK_POINT`) a text has: a facet or profile with `LOOK_FACET` describes a look."""
+    return len({_look_norm(m.group(0)) for m in LOOK_POINT.finditer(text)})
+
+
+def _toks(text: str) -> list[str]:
+    return re.findall(r"[a-z0-9]+", text.lower().replace("’", "'").replace("'", ""))
+
+
+def _sentences(text: str) -> list[list[str]]:
+    return [t for t in (_toks(x) for x in re.split(r"(?<=[.!?;])\s+|\n+", text)) if t]
+
+
+def quoted(quote: str, source: str) -> bool:
+    """Whether `quote` (2 words or more) is a phrase of `source`, word for word, ignoring case and punctuation. A quote with an
+    ellipsis counts only when its pieces come in order within one sentence of the source ("dark ... hair" across two
+    sentences does not)."""
+    parts = [_toks(p) for p in re.split(r"\.\.\.|…", quote)]
+    parts = [p for p in parts if p]
+    if not parts or sum(map(len, parts)) < 2:
+        return False
+    if len(parts) == 1:
+        return " " + " ".join(parts[0]) + " " in " " + " ".join(_toks(source)) + " "
+    for sent in _sentences(source):
+        line, at = " " + " ".join(sent) + " ", 0
+        for p in parts:
+            k = line.find(" " + " ".join(p) + " ", at)
+            if k < 0:
+                break
+            at = k + len(" ".join(p)) + 1
+        else:
+            return True
+    return False
+
+
+# Words a look detail may add to its quote that name only the kind of detail ("tall build" on "a tall old man", "dressed in black"
+# on "clad in black"). A word naming what is described (skin, face, colour) is never one of them: "pale skin" needs "skin".
+_GENERIC = frozenset("build frame figure appearance look looks dressed clad wearing wears worn clothes clothing garb attire".split())
+
+
+def detail_supported(detail: str, quote: str) -> bool:
+    """Whether every content word of a look detail is in its own quote ("long white moustache" in "a long white moustache";
+    "dark hair" not in "her hair"; "pale skin" not in "the pale light"), words matched whole with their endings (`_base`)."""
+    have = {_base(w) for w in _toks(quote)}
+    words = [w for w in _toks(detail) if w not in _STOP and len(w) > 2]
+    return bool(words) and all(_base(w) in have or w in _GENERIC for w in words) and any(_base(w) in have for w in words)
+
+
+def role_looks(role: str) -> list[str]:
+    """The look, colour and shape words of a role ("a tall old nobleman": tall, old)."""
+    return [w for w in re.findall(r"[A-Za-z]+(?:-[A-Za-z]+)*", role)
+            if LOOK_WORDS.fullmatch(w) or COLOUR_SHAPE.fullmatch(w) or LOOK_ADJECTIVE.fullmatch(w)]
+
+
+def compose_note(role: str, details: list[str], same: bool = False) -> str:
+    """The appearance note as pasted into prompts: "A miller: white hair, a leather apron." ("The same miller: ..." for an
+    amended one); "" when no detail is left."""
+    details = [d.strip().rstrip(".;,") for d in details if d and d.strip()]
+    if not details:
+        return ""
+    role = " ".join(role.split()).rstrip(".;:,")
+    if re.fullmatch(r"(?i)(?:the|a|an)?", role):
+        role = ""                      # every word of it was taken out
+    if same:
+        role = "the same " + re.sub(r"^(?:the\s+same|the|a|an)\s+", "", role, flags=re.IGNORECASE)
+    head = (role[:1].upper() + role[1:]) if role else ""
+    body = ", ".join(details)
+    return f"{head}: {body}." if head else body[:1].upper() + body[1:] + "."
+
+
 class Known:
     """The capitalised words the book has used up to a block, plus every word of the earlier books of the series (which the
     reader has finished): the set `portraits._checked` wants, by position."""
@@ -322,6 +522,7 @@ class Report:
     stopped: str = ""           # why the run stopped early ("" = it did not)
     held: int = 0               # pictures moved later to the world note's anchor (the end of its first story chapter)
     reasons: list[dict] = field(default_factory=list)
+    dropped: Counter = field(default_factory=Counter)   # parts of a text dropped or fixed by code (a note's unquoted detail...)
 
     def lines(self) -> list[str]:
         out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}"
@@ -334,6 +535,7 @@ class Report:
             out.append(f"{self.held} picture(s) at the start of the book are held to the end of the chapter the world note is "
                        "written from")
         out += [f"  {n} x {why}" for why, n in sorted(self.skipped.items())]
+        out += [f"  {n} x {why}" for why, n in sorted(self.dropped.items())]
         out += [f"  - {r['target']}: {r['reason']}" for r in self.reasons]
         return out
 
@@ -345,6 +547,31 @@ class _Names:
     phrases: re.Pattern | None
     tokens: frozenset[str]
     alone: frozenset[str]
+    groups: frozenset[str] = frozenset()     # the names (and name words) of groups: replaced by "the people", not "the figure"
+
+    _TITLE = r"(?:(?:" + "|".join(sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*"
+
+    def strip(self, text: str) -> str:
+        """The text with every name it uses replaced by a role word: "Jonathan Harker's case" becomes "the figure's case" (a
+        title before it and an article go too). The last resort after a rewrite that still names someone; re-checked after."""
+        for _ in range(12):
+            hit = self.find(text)
+            if not hit:
+                break
+            role = "the people" if hit in self.groups else "the figure"
+            rx = re.compile(r"(?<![\w-])(?i:(?:(?:the|a|an)\s+)?" + self._TITLE + ")" + re.escape(hit) + r"(?:['’]s)?(?![\w-])")
+
+            def sub(m: re.Match) -> str:
+                out = role + ("'s" if re.search(r"['’]s$", m.group(0)) else "")
+                start = not text[:m.start()].strip() or re.search(r"[.!?:;\"“”]\s*$", text[:m.start()])
+                if start and hit in self.alone:      # an ordinary word opening a sentence ("Dawn breaks") is no name
+                    return m.group(0)
+                return out[0].upper() + out[1:] if start else out
+            new = rx.sub(sub, text)
+            if new == text:
+                break
+            text = new
+        return " ".join(text.split())
 
     def find(self, text: str) -> str:
         if self.phrases is not None and (m := self.phrases.search(text)):
@@ -361,6 +588,14 @@ class _Names:
 
 class NotVisible(ValueError):
     """The picture asked for sits after the reader's position."""
+
+
+class Dropped(ValueError):
+    """No usable prompt came out: the message is the report's reason, `detail` the check's own words ("unknown name: Vlad")."""
+
+    def __init__(self, reason: str, detail: str = "") -> None:
+        super().__init__(reason)
+        self.detail = detail
 
 
 class TextFailed(ValueError):
@@ -474,7 +709,7 @@ def _key(rec: dict) -> tuple:
 def _reason(why: str) -> str:
     for start, name in (("unknown name", "dropped: unknown name in prompt"), ("name in the text", "dropped: name in prompt"),
                         ("wording", "dropped: hindsight wording in prompt"), ("tie not in the text", "dropped: tie not in the text"),
-                        ("too short", "dropped: prompt too short"), ("too long", "dropped: prompt too long"),
+                        ("too short", "dropped: prompt too short"), ("look not in the note", "dropped: look not in the note"), ("too long", "dropped: prompt too long"),
                         ("empty", "dropped: empty prompt")):
         if why.startswith(start):
             return name
@@ -512,6 +747,7 @@ class Illustrator:
         self._views: dict[tuple, dict] = {}
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._entity_locks: dict[str, threading.Lock] = {}
+        self._looks: dict[tuple[int, str], list] = {}
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
@@ -573,6 +809,7 @@ class Illustrator:
         phrases: set[str] = set()
         tokens: set[str] = set()
         alone: set[str] = set()
+        groups: set[str] = set()
         for b in self.books:
             for e in b.doc["entities"]:
                 if e["type"] not in ("person", "creature", "group"):
@@ -589,13 +826,17 @@ class Illustrator:
                     for t in toks:
                         if t.lower() not in SENTENCE_FIRST:
                             tokens.add(t)       # "Mira", "Harker"; never "Order" or "Dawn" alone
+                    if e["type"] == "group":
+                        groups |= {value, *toks}
             rx = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(phrases, key=len, reverse=True)) + r")(?!\w)") \
                 if phrases else None
-            out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone))
+            out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone), frozenset(groups))
         return out
 
-    def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int]) -> tuple[str | None, str]:
-        """(text, "") when a written text is usable at an anchor, else (None, reason)."""
+    def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int],
+             looks: str | None = None) -> tuple[str | None, str]:
+        """(text, "") when a written text is usable at an anchor, else (None, reason). With `looks`, every look word of the text
+        (`LOOK_WORDS`: age, build, hair, dress) must also be in `looks`, the only text it may take a figure's look from."""
         text = " ".join(str(text or "").split())
         n = _words(text)
         if n and n < words[0]:
@@ -608,23 +849,55 @@ class Illustrator:
             return None, why
         if ABOUT_THE_TEXT.search(got):
             return None, "wording: about the passage"
+        if looks is not None and (w := unlooked(got, looks)):
+            return None, f"look not in the note: {w}"
         hit = self.names[bi].find(got)
         if hit:
             return None, f"name in the text: {hit}"
         return got, ""
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-                    schema: dict = SCHEMA) -> tuple[str | None, str, dict]:
-        """One call, one rewrite when a check fails. (text, "", the reply) or (None, reason, the reply)."""
+                    schema: dict = SCHEMA, looks: str | None = None) -> tuple[str | None, str, dict]:
+        """One call, one rewrite when a check fails, then, when only a name is wrong, the name replaced by code ("the figure")
+        and the text checked again. (text, "", the reply) or (None, reason, the reply)."""
         out = self._complete(prompt, schema)
-        got, why = self._vet(out.get("text"), bi, anchor, source, words)
+        got, why = self._vet(out.get("text"), bi, anchor, source, words, looks)
         if got is None and why != "empty":
+            tries = [(str(out.get("text") or ""), why, out)]
             out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:600], why=why), schema)
-            got, why = self._vet(out.get("text"), bi, anchor, source, words)
+            got, why = self._vet(out.get("text"), bi, anchor, source, words, looks)
+            if got is None:
+                for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
+                    fixed, how = self._fix(text_, why_, bi, anchor, source, words, looks)
+                    if fixed is not None:
+                        with self.lock:
+                            for h in how:
+                                self.report.dropped[h] += 1
+                        return fixed, "", out_
         return got, why, out
 
-    def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int]) -> tuple[str | None, str]:
-        got, why, _ = self._write_full(prompt, bi, anchor, source, words)
+    def _fix(self, text: str, why: str, bi: int, anchor: str, source: str, words: tuple[int, int],
+             looks: str | None) -> tuple[str | None, list[str]]:
+        """The last try on a text that failed twice: a name is replaced by a role ("the figure") and a look adjective the
+        notes do not give ("thin", "young") is taken out, then the text is checked again; (text, what was fixed) or (None, [])
+        when it still fails or failed for another reason (an unsupported noun such as "a hat" is never taken out)."""
+        how: list[str] = []
+        for _ in range(8):
+            if why.startswith("name in the text"):
+                text, how = self.names[bi].strip(text), how + ["fixed: name replaced by a role"]
+            elif why.startswith("look not in the note") and looks is not None and LOOK_ADJECTIVE.fullmatch(w := unlooked(text, looks)):
+                text = _drop_word(text, w)
+                how.append("fixed: look word not in the notes taken out")
+            else:
+                return None, []
+            got, why = self._vet(text, bi, anchor, source, words, looks)
+            if got is not None:
+                return got, how
+        return None, []
+
+    def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
+               looks: str | None = None) -> tuple[str | None, str]:
+        got, why, _ = self._write_full(prompt, bi, anchor, source, words, looks=looks)
         return got, why
 
     def view(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> dict:
@@ -1053,21 +1326,27 @@ class Illustrator:
             if before:
                 start, seen = None, looks(next((p[2]["text"] for p in reversed(profs) if p[0] < bi), ""))
             elif mine:
+                # the first portrait shows from the first point the text or the index describes the look (a first profile with
+                # no look would give an empty note and no portrait); with no such point, from the first profile as before
                 first = (written or mine)[0][2]
-                start, seen = first, looks(first["text"])
+                pts = [p for p in self.look_points(bi, eid) if p[1] in b.ord_of and b.ord_of[p[1]] >= b.ord_of.get(e["from"], 0)]
+                start = pts[0][1] if pts else first["from"]
+                seen = set().union(looks(first["text"]), *(looks(f["text"]) for _, o, f in mine if o <= b.ord_of[start]))
             else:
                 continue
             changes: list[tuple[int, str, str, set]] = []
             for _, o, f in mine:
-                if start is None or o > b.ord_of[start["from"]]:
+                if start is None or o > b.ord_of[start]:
                     changes.append((o, f["from"], P._first(f["text"]), looks(P._first(f["text"]))))
             standing = [(f["from"], f["text"]) for f in e["facets"] if f.get("kind") not in ("profile", "arc")]
             standing += [(ev["from"], ev["summary"]) for ev in b.doc.get("events", []) if ev.get("kind") == "turn" and eid in ev.get("entities", [])]
             changes += [(b.ord_of[a], a, t, None) for a, t in standing
                         if a in b.ord_of and P.changes_standing(t) and LOOK_STANDING.search(P.HEDGED.sub(" ", t))]
             # versions are compared on the anchors they will show from (after the hold to the world note), so two never share one
-            versions: list[list] = [[start["from"], "", self._anchor(bi, start["from"])]] if start else []
+            versions: list[list] = [[start, "", self._anchor(bi, start)]] if start else []
             for o, a, why, words in sorted(changes, key=lambda c: c[0]):
+                if start is not None and o <= b.ord_of[start]:
+                    continue                # told already where the first portrait shows from
                 if words is not None:
                     gained = words - seen
                     if not gained:
@@ -1095,6 +1374,8 @@ class Illustrator:
         best = None
         for j in range(pos[0] + 1):
             for n in self.man[j]["appearance"].get(eid, []):
+                if n.get("text") and "details" not in n:
+                    continue          # written before notes were quote-checked: never trusted, written again
                 k = (j, self.books[j].ord_of.get(n["from"], -1))
                 if k[1] >= 0 and k <= pos and (best is None or k >= best[0]) and self._usable(j, pos[0], finished, n):
                     best = (k, j, n)
@@ -1112,13 +1393,38 @@ class Illustrator:
                     best = (k, j, r)
         return (best[1], best[2]) if best else None
 
+    def look_points(self, bi: int, eid: str) -> list[tuple[int, str, list[int]]]:
+        """(ordinal, anchor, blocks) of every point where book bi describes the entity's look, in reading order: a checked facet
+        or profile of it with `LOOK_FACET` look words, at its anchor, its evidence the blocks. Only the index's own items count:
+        a paragraph that names the entity often describes someone else (Harker's journal names the Count beside the landlady's
+        apron), so the text alone cannot say whose look it is."""
+        b = self.books[bi]
+        key = (bi, eid)
+        if key not in self._looks:
+            out = []
+            for f in b.ents.get(eid, {}).get("facets", []):
+                if f.get("kind") != "arc" and f["from"] in b.ord_of and look_count(f["text"]) >= LOOK_FACET:
+                    out.append((b.ord_of[f["from"]], f["from"], [b.seq_of[a] for a in f.get("evidence", []) if a in b.seq_of]))
+            self._looks[key] = sorted(out, key=lambda t: (t[0], t[1]))
+        return self._looks[key]
+
+    def _note_text(self, n: dict | None) -> str:
+        """A stored note's text, "" when it says no look is shown."""
+        t = (n or {}).get("text") or ""
+        return "" if NO_LOOK.search(t) else t
+
     def ensure_note(self, bi: int, eid: str, anchor: str, change: str = "",
                     finished: frozenset[str] | None = None) -> tuple[str | None, str, list[str], list[str]]:
         """The entity's appearance note at `anchor`: the latest earlier one; amended ("the same man, aged...") when `change` says its
         look changed there; written now when it has none. Returns (note, reason when None, anchors of this book it was written
         from, the earlier book keys its text comes from), and stores a new note in the manifest. For a reader who has not
         finished every earlier book (`finished`) only notes from books they finished are used, and a note written for them is
-        stored as `partial` (never used for anyone else)."""
+        stored as `partial` (never used for anyone else).
+
+        A note holds only look details the writer quotes from the passages or the companion's notes about the entity
+        (`detail_supported`, `quoted`); the others are dropped ("dropped: look detail not in the text"), and a note with no
+        detail left is empty: the text shows no look, so the entity gets no portrait. An empty note is remembered and not
+        asked again until a look change, or until the book describes the entity's look after it (`look_points`)."""
         b = self.books[bi]
         me = self._bkey(bi)
         finished = self._finished(bi, finished)
@@ -1129,35 +1435,54 @@ class Illustrator:
             hit = self.latest_note(eid, pos, finished)
             cur = hit[1] if hit else None
             cur_books = sorted(set(cur.get("inherits", [])) | ({self._bkey(hit[0])} if hit[0] != bi else set())) if cur else []
+            points = [p for p in self.look_points(bi, eid) if p[0] <= b.ord_of[anchor]]
+            if cur and not self._note_text(cur):
+                # an earlier book's empty note gives way to any description here; this book's to one after it
+                described = bool(points) if hit[0] < bi else any(p[0] > b.ord_of.get(cur["from"], -1) for p in points)
+                if not change and not described:
+                    return None, "empty", [], []   # the text shows no look: remembered, not asked again until it does
+                cur, cur_books = None, []          # nothing to amend: the note is written afresh
             if cur and (not change or (hit[0] == bi and cur["from"] == anchor)):
-                if not cur["text"]:          # the text shows no look: remembered, not asked again until a look change
-                    return None, "empty", [], []
                 return cur["text"], "", (cur.get("sources", []) if hit[0] == bi else []), [k for k in cur_books if k != me]
-            if cur and not cur["text"]:
-                cur, cur_books = None, []    # nothing to amend: the note is written afresh
             view = self.view(bi, anchor, finished)
             ve = next((x for x in view["entities"] if x["id"] == eid), None)
             e = b.ents.get(eid) or next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
             if ve is None or e is None:
                 return None, "not visible", [], []
-            passages, used = self.passage(bi, self._mentions(bi, eid, b.seq_of[anchor]), b.seq_of[anchor], 450)
-            shown = ([ve["profile"]] if ve["profile"] else []) + ve["facets"][:8]
+            upto = b.seq_of[anchor]
+            # the paragraphs that describe the look first (the latest three points), then other paragraphs naming it
+            look_seqs = sorted({s for p in points[-3:] for s in p[2] if s <= upto})
+            lp, lused = self.passage(bi, look_seqs, upto, LOOK_PASSAGE_WORDS) if look_seqs else ("", [])
+            rest = [s for s in self._mentions(bi, eid, upto) if s not in set(lused)]
+            mp, mused = self.passage(bi, rest, upto, max(150, 450 - sum(_words(b.text[s]) for s in lused))) if rest else ("", [])
+            passages = "\n…\n".join(x for x in (lp, mp) if x)
+            used = lused + mused
+            # the current profile, this book's earlier ones (read already; a later profile may no longer state the look an earlier
+            # one gave) and the facets
+            pid = (ve["profile"] or {}).get("id")
+            older = [f for j, o, f in self._profiles(bi, eid) if j == bi and o <= b.ord_of[anchor] and f["id"] != pid][-3:]
+            shown = ([ve["profile"]] if ve["profile"] else []) + older + ve["facets"][:8]
             # only this book's own facets carry anchors of this book (an earlier book's are finished content, and its anchor
             # ids may repeat here)
             own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             srcs = {b.anchor_at(s) for s in used} | {own[f["id"]] for f in shown if f["id"] in own}
             inherits = sorted((set(cur_books) | {str(f["book"]) for f in shown if f.get("book") not in (None, me)}) - {me})
             kind = P.KINDS.get(e["type"], e["type"])
-            amend = AMEND.format(prev=cur["text"], change=change, who=kind.split(" ", 1)[-1]) if cur and change else ""
+            amend = AMEND.format(prev=cur["text"], change=change) if cur and change else ""
+            notes = " / ".join(f["text"] for f in shown)
             prompt = APPEAR.format(who=ve["name"], kind=kind, looks=LOOKS.get(e["type"], "look"), more="", prev=amend,
-                                   notes=" / ".join(f["text"] for f in shown) or "(nothing yet)",
-                                   passages=passages or "(no passage names it)")
-            got, why = self._write(prompt, bi, anchor, "\n".join([passages] + [f["text"] for f in shown] + ([cur["text"]] if cur else [])),
-                                   NOTE_WORDS)
+                                   notes=notes or "(nothing yet)", passages=passages or "(no passage names it)")
+            source = "\n".join([passages, notes] + ([cur["text"], change] if cur and change else []))
+            # a quote must come from the entity's own text: its notes, the earlier note and change, and the paragraphs that name it
+            # or describe it, never the paragraph either side that only gives them context (it often describes someone else)
+            core = sorted((set(look_seqs) | set(rest)) & set(used))
+            own = "\n".join([b.text[s] for s in core] + [notes] + ([cur["text"], change] if cur and change else []))
+            got, why, details = self._write_note(prompt, bi, anchor, source, ve["name"], bool(cur and change), eid,
+                                                 e["type"] in PORTRAIT_TYPES, own)
             sources = sorted(srcs, key=b.ord_of.get)
             if got is None and why != "empty":
                 return None, why, [], []
-            note = {"from": anchor, "text": got or "", "sources": sources, "inherits": inherits}
+            note = {"from": anchor, "text": got or "", "details": details, "sources": sources, "inherits": inherits}
             if finished is not None:
                 note["partial"] = True
             with self.lock:
@@ -1165,6 +1490,66 @@ class Illustrator:
                 self._dirty.add(bi)
                 self._save(bi)
             return (got, "", sources, inherits) if got else (None, "empty", [], [])
+
+    def _write_note(self, prompt: str, bi: int, anchor: str, source: str, who: str, same: bool,
+                    eid: str, body: bool = False, own: str | None = None) -> tuple[str | None, str, list[dict]]:
+        """Ask for a note's role and quoted details, keep the details whose quote is a phrase of `own` (the entity's own text:
+        its notes and the paragraphs naming or describing it; `source` when not given) and holds every word of the detail (one
+        rewrite naming the others), and put the note together. (text, "", kept details), ("", "empty", []) when no detail
+        holds, or (None, reason, []) when the note fails a check. `body`: a person or creature, whose details must each name
+        something of its look (`BODY_LOOK`), not its character ("a curious, observant visitor"). The role carries no look of
+        its own: a look, colour or shape word in it stays only when a kept detail's quote has it, and any other word only when
+        the text sent has it."""
+        own = source if own is None else own
+
+        def kept(out: dict) -> tuple[list[dict], list[str], list[str]]:
+            good, bad, not_look = [], [], []
+            for d in out.get("details") or [] if isinstance(out.get("details"), list) else []:
+                if not isinstance(d, dict) or not str(d.get("text") or "").strip():
+                    continue
+                t, q = " ".join(str(d["text"]).split()), " ".join(str(d.get("quote") or "").split())
+                if body and not BODY_LOOK.search(t):
+                    not_look.append(t)
+                    continue
+                (good if quoted(q, own) and detail_supported(t, q) else bad).append({"text": t, "quote": q})
+            return good, [d["text"] for d in bad], not_look
+
+        out = self._complete(prompt, NOTE_SCHEMA)
+        good, bad, not_look = kept(out)
+        if bad:
+            again = self._complete(prompt + NOTE_AGAIN.format(who=who, bad="; ".join(bad)[:500]), NOTE_SCHEMA)
+            got2 = kept(again)
+            if len(got2[0]) >= len(good):      # the reply kept is the one whose drops are counted
+                out, (good, bad, not_look) = again, got2
+        with self.lock:
+            for t in bad:
+                self.report.dropped["dropped: look detail not in the text"] += 1
+                self.log(f"    note for {eid}: dropped a look detail not in the text ({t[:80]})")
+            for t in not_look:
+                self.report.dropped["dropped: not a look detail"] += 1
+                self.log(f"    note for {eid}: dropped a detail that is no look ({t[:80]})")
+        role = str(out.get("role") or "")
+        quotes = {_base(w) for d in good for w in _toks(d["quote"])}
+        unquoted = [w for w in role_looks(role) if _look_norm(w) not in quotes and _base(w.lower()) not in quotes]
+        if unquoted:
+            # "a young man with dark hair and a pale face": the clause after the head goes, then the unquoted words in it
+            role = re.split(r",|;|\b(?:with|in|wearing|who|whose|of|and)\b", role, maxsplit=1)[0]
+            for w in role_looks(role):
+                if _look_norm(w) not in quotes and _base(w.lower()) not in quotes:
+                    role = _drop_word(role, w)
+            with self.lock:
+                self.report.dropped["dropped: look word in the role not quoted"] += len(unquoted)
+        have = {_base(w) for w in _toks(source)}
+        role = " ".join(w for w in role.split() if not _toks(w) or all(x in _STOP or _base(x) in have for x in _toks(w)))
+        text = compose_note(role, [d["text"] for d in good], same)
+        if not text or NO_LOOK.search(text):
+            return "", "empty", []
+        got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
+        if got is None and why.startswith("name in the text"):
+            got, why = self._vet(self.names[bi].strip(text), bi, anchor, source, NOTE_WORDS)
+        if got is None:
+            return None, why, []
+        return got, "", good
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
                     finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
@@ -1318,13 +1703,17 @@ class Illustrator:
         if job.kind == "plate" and not job.event:
             what = "the main moment of a chapter, as its recap tells it."
         fig = "\n".join(f"- {vis[eid]['name']}: {note}" for eid, note in figures)
-        extra = "- This is a portrait of the figure listed above: say only pose, expression and background.\n" if job.kind == "portrait" else ""
+        extra = ("- This is a portrait of the figure listed above: say only pose, expression and background. Describe nothing of its look\n"
+                 "  (age, build, hair, clothing): its fixed note is its whole look and is added by the program.\n") if job.kind == "portrait" else ""
         writer = WRITE.format(what=what, world=world or "(none)", figures=f"\nFigures (fixed notes):\n{fig}\n" if fig else "",
                               context="\n".join(ctx) or "(none)", passage=passage or "(no passage)", extra=extra)
         check = "\n".join([passage, world] + [n for _, n in figures] + ctx)
-        scene, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA)
+        # a figure's look comes from its own note or the passage; a portrait's only from its own note, never from the passages
+        # (which describe whoever else is in them) or another figure
+        looks = dict(figures).get(job.target, "") if job.kind in ENTITY_KINDS else check
+        scene, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA, looks=looks)
         if scene is None:
-            raise ValueError(_reason(why))
+            raise Dropped(_reason(why), why)
         if job.kind not in ENTITY_KINDS:   # an entity's own picture always shows it
             figures, ids = self._shown(out, figures, ids, vis)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
@@ -1474,7 +1863,8 @@ class Illustrator:
                 if not softened:
                     softened = True
                     try:
-                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS)
+                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS,
+                                             looks=dict(pr.notes).get(job.target, "") if job.kind in ENTITY_KINDS else pr.check)
                     except TextFailed:
                         soft = None
                 if not soft:
