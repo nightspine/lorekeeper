@@ -841,6 +841,7 @@ function promptError(e) {
 const CAST_SUMMARY = { main: ", main characters' portraits", all: ", everyone's portraits", none: "" };
 const LEVEL_SUMMARY = { main: "one per chapter", all: "every moment", none: "no chapter pictures" };
 export const NOTHING_CHOSEN = "Choose at least one chapter, or portraits.";
+export const ALL_DRAWN = "Everything you chose is already drawn.";
 
 /** Whether a chapter row can be ticked: it would get a picture at the chosen level (`pictures` > 0; a chapter whose events
  *  are all minor still gets its recap plate). An answer without `pictures` falls back on the chapter having events. */
@@ -870,7 +871,12 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   const allPicked = () => choosable().every((c) => picked.has(c.n));
   const chosenNs = () => choosable().filter((c) => picked.has(c.n)).map((c) => c.n);
   const noScenes = () => st.level === "none" || (chs != null && !chosenNs().length);
-  const reason = () => (st.on && noScenes() && st.cast === "none" ? NOTHING_CHOSEN : "");
+  // Why nothing would be drawn. `choiceReason` is known before asking (no call is made then); `allDrawn` comes from the
+  // last estimate (it counts only pictures still to draw) and applies only to the book page dialog, where the run draws
+  // pictures and nothing else: on the build form the index is written again and the pictures follow the new one.
+  let allDrawn = false;
+  const choiceReason = () => (st.on && noScenes() && st.cast === "none" ? NOTHING_CHOSEN : "");
+  const reason = () => choiceReason() || (st.on && allDrawn ? ALL_DRAWN : "");
   const chapterParam = () => (st.level === "none" || !chs || allPicked() ? undefined : chosenNs());
   const chList = h("div.art-chapters", { role: "group", "aria-labelledby": `${idPrefix}-ch-h` });
   const chCount = h("span.art-ch-count");
@@ -1007,7 +1013,8 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     const mine = ++seq;
     line.classList.remove("why");
     // Nothing would be drawn: no call, the one sentence saying why stands in for the estimate.
-    if (reason()) { line.classList.add("why"); line.textContent = reason(); return; }
+    if (choiceReason()) { line.classList.add("why"); line.textContent = choiceReason(); return; }
+    // `allDrawn` stands until the new answer, so Start stays off while a choice that was all drawn is being counted again.
     line.textContent = "Counting the pictures…";
     let r = null;
     const asked = listChapters ? chapterParam() : undefined;
@@ -1025,8 +1032,12 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       // be the choice: ask again with the choice as it is now. Otherwise tell the page when the list or the reason changed.
       if (JSON.stringify(chapterParam()) !== JSON.stringify(asked)) { onChange?.(); refresh(); return; }
       if (JSON.stringify([chs?.map((c) => [c.n, chapterChoosable(c)]), reason()]) !== was) onChange?.();
-      if (reason()) { refresh(); return; }
+      if (choiceReason()) { refresh(); return; }
     }
+    const drawnBefore = allDrawn;
+    allDrawn = Boolean(listChapters && r && Number.isFinite(+r.pictures) && +r.pictures === 0);
+    if (allDrawn !== drawnBefore) onChange?.();
+    if (allDrawn) { line.classList.add("why"); line.textContent = ALL_DRAWN; return; }
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
       line.textContent = `About ${n} picture${n === 1 ? "" : "s"}, ${money(r.price)}${r.price != null && +r.price > st.cap ? `. The run stops at $${Number.isInteger(st.cap) ? st.cap : st.cap.toFixed(2)}` : ""}.`;
