@@ -30,6 +30,18 @@ def text_hash(doc: dict) -> str:
     return h.split(":", 1)[1] if h.startswith("sha256:") else h
 
 
+class SeededSink(art.FileSink):
+    """A set's folder that, before its manifest is first written, reads as a blank set holding the edition's background
+    note (the person's own world note, kept per edition: every set of the book starts with it)."""
+
+    def __init__(self, folder: Path, seed) -> None:
+        super().__init__(folder)
+        self._seed = seed
+
+    def manifest(self) -> dict | None:
+        return super().manifest() or self._seed()
+
+
 class ArtStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "art"
@@ -46,8 +58,15 @@ class ArtStore:
         return self.root / text_hash / slug
 
     def sink(self, text_hash: str, style: str) -> art.FileSink:
-        """What `art.Illustrator` writes through: the same four calls as the CLI's folder."""
-        return art.FileSink(self.folder(text_hash, style))
+        """What `art.Illustrator` writes through: the same four calls as the CLI's folder. `style` should be the style text
+        (`resolve`), since a set not written yet starts as a blank set of that style with the edition's background note."""
+        folder = self.folder(text_hash, style)
+
+        def seed() -> dict | None:
+            got = self._background(text_hash)
+            # the edition's text hash as its sets store it (the index's own form, which the pipeline compares)
+            return {**art.blank(got[1] or text_hash, style), "world": got[0]} if got else None
+        return SeededSink(folder, seed)
 
     def lock(self, text_hash: str, style: str) -> threading.Lock:
         """One writer at a time per art set (a route's draw and another route's delete would each save a manifest)."""
@@ -82,6 +101,19 @@ class ArtStore:
                         "_t": (sub / "art.json").stat().st_mtime})
         out.sort(key=lambda s: -s.pop("_t"))
         return out
+
+    def background(self, text_hash: str) -> dict | None:
+        """The edition's background note: the person's own world note (`edited: true`) in its most recently written set."""
+        got = self._background(text_hash)
+        return got[0] if got else None
+
+    def _background(self, text_hash: str) -> tuple[dict, str] | None:
+        for st in self.styles(text_hash):
+            m = self.manifest(text_hash, st["slug"]) or {}
+            w = m.get("world")
+            if isinstance(w, dict) and w.get("edited") and w.get("text"):
+                return dict(w), str(m.get("textHash") or "")
+        return None
 
     def resolve(self, text_hash: str, style: str) -> tuple[str, str]:
         """(slug, style text) of the set a style names. A set is identified by its slug: "Ink" is the "ink" set, and a custom
@@ -185,7 +217,7 @@ class ArtStore:
     def put_back(self, text_hash: str, slug: str, records: list[dict], src: Path) -> int:
         """Put records back, with their files from `src` (a journal snapshot), unless a record with the id is already there."""
         sink = self.sink(text_hash, slug)
-        m = sink.manifest()
+        m = self.manifest(text_hash, slug)       # the stored one: a set that is gone is not made again from the seed
         if m is None:
             raise LookupError("this art set is gone")
         have = {r.get("id") for r in m.get("pictures", [])}

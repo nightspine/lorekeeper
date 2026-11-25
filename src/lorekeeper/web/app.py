@@ -1253,11 +1253,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 arts.take_out(h, slug_, a["added"])
             if a.get("removed"):
                 arts.put_back(h, slug_, a["removed"], snap)
-            if a.get("op") == "world":
+            if a.get("op") == "world" and "sets" not in a:     # an entry from before notes were per edition
                 m = arts.manifest(h, slug_)
                 if m is not None:
                     m["world"] = a.get("before")
                     arts.save(h, slug_, m)
+        if a.get("op") == "world" and "sets" in a:
+            for sl, was in a["sets"].items():
+                with arts.lock(h, sl):
+                    m = arts.manifest(h, sl)
+                    if m is not None:
+                        m["world"] = was
+                        arts.save(h, sl, m)
 
     def art_finished(ctx: dict, body: dict) -> list[str] | None:
         """The reader's finished books (`finished`: series book keys, each an earlier book of this one); None = the Reader's
@@ -1294,8 +1301,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
             ph = artstore.text_hash(d)
             if artstore.HASH.fullmatch(ph):
-                books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
-        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
+                books_.append(artmod.Book(d, None, arts.sink(ph, arts.resolve(ph, style)[1]), None, draw=False))
+        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], style), None))
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0), image, slug_
 
@@ -1418,12 +1425,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         pos = (job.bi, il.books[job.bi].ord_of[pr.anchor])
         fin = None if job.finished is None else frozenset(job.finished)
         look_change = job.kind == "portrait"     # a portrait's one reference is its previous version
+        shows = getattr(pr, "shows", None)       # the entities the picture shows; else those its references were of
+        ids = list(shows) if shows is not None and not look_change else [r["target"] for _, r in pr.references]
         refs = []
-        for t in dict.fromkeys(r["target"] for _, r in pr.references):
+        for t in dict.fromkeys(ids):
             hit = (il.latest_picture(t, pos, ("portrait",), strict=True, finished=fin, current=True) if look_change
                    else il.latest_picture(t, pos, finished=fin, current=True))
             if hit:
                 refs.append(hit)
+        if not look_change:                      # as the pipeline picks a scene's: most tied in the view first
+            refs = refs[:images.MAX_REFERENCES]
         def book_key(j: int) -> str:   # as the pipeline stores book keys: the series book key, else the index id
             d = il.books[j].doc
             return str((d.get("series") or {}).get("book") or d.get("id") or j)
@@ -1538,7 +1549,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         styles = arts.styles(h)
         slug_ = artmod.style_slug(style) if style else (styles[0]["slug"] if styles else None)
         m = arts.manifest(h, slug_) if slug_ else None
-        body = copy.deepcopy(m) if m else artmod.blank(h, style or "")
+        body = copy.deepcopy(m) if m else {**artmod.blank(h, style or ""), "world": arts.background(h)}
         body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
@@ -1781,8 +1792,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.put("/api/library/{key}/art/world")
     async def art_world(key: str, request: Request):
-        """The person's own note on the book's world (`edited: true`), saved in a style's set; the writer reads it as the
-        reader's background note. Nothing writes a world note automatically any more."""
+        """The person's own note on the book's world (`edited: true`), the writer's background note. It is the edition's,
+        not a style's: written into every set of the edition (the chosen style's made if needed), and a set made later
+        starts with it (`ArtStore.sink`). One journal entry; its undo puts every set's note back. Nothing writes a world
+        note automatically any more."""
         body = await json_body(request)
         try:
             ctx = art_index(key)
@@ -1791,24 +1804,31 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not text_ or len(text_) > artstore.MAX_WORLD:
                 raise ArtRefusal(422, "bad-text", f"Write the world note in 1 to {artstore.MAX_WORLD} characters.")
             art_busy(ctx["hash"])
-            slug_, style = arts.resolve(ctx["hash"], style)
-            with arts.lock(ctx["hash"], slug_):
-                m = arts.manifest(ctx["hash"], slug_)
-                if m is None:   # a new set; an existing one is never replaced by an empty manifest
-                    m = artmod.blank(next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")),
-                                          ctx["hash"]), style)
-                entry = journal_art(key, [], {"op": "world", "textHash": ctx["hash"], "style": slug_, "before": m.get("world")},
-                                    "changed the world note")
-                # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
-                m["world"] = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
-                try:
-                    arts.save(ctx["hash"], slug_, m)
-                except Exception:
-                    identity.discard(entry["id"])
-                    raise
+            h = ctx["hash"]
+            chosen, style = arts.resolve(h, style)
+            built = next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")), h)
+            # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
+            world = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
+            slugs = [chosen] + [st["slug"] for st in arts.styles(h) if st["slug"] != chosen]
+            before = {sl: (arts.manifest(h, sl) or {}).get("world") for sl in slugs}
+            entry = journal_art(key, [], {"op": "world", "textHash": h, "style": chosen, "before": before[chosen],
+                                          "sets": before}, "changed the world note")
+            try:
+                for sl in slugs:
+                    with arts.lock(h, sl):
+                        m = arts.manifest(h, sl)
+                        if m is None:   # a new set; an existing one is never replaced by an empty manifest
+                            if sl != chosen:
+                                continue
+                            m = artmod.blank(built, style)
+                        m["world"] = world
+                        arts.save(h, sl, m)
+            except Exception:
+                identity.discard(entry["id"])
+                raise
         except ArtRefusal as e:
             return art_error(e.status, e.code, e.detail)
-        return {"world": m["world"], "undo": entry["id"]}
+        return {"world": world, "undo": entry["id"]}
 
     # ---- duplicate entities ----------------------------------------------------------------------
 

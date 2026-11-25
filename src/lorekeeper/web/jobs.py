@@ -535,7 +535,7 @@ class JobManager:
                     self._emit(job, {"type": "log", "line": f"pictures: {title} names no edition, so its pictures are not read"})
                     continue
                 books.append(artmod.Book(d, None, store.sink(ph, store.resolve(ph, style)[1]), None, draw=False))
-            books.append(artmod.Book(doc, book, store.sink(h, slug), cfg["level"]))
+            books.append(artmod.Book(doc, book, store.sink(h, style), cfg["level"]))
             box: dict = {}
 
             def progress(done: int, total: int) -> None:

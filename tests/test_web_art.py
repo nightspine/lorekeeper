@@ -767,8 +767,8 @@ def test_a_text_model_failure_is_a_502_not_a_missing_target(env, monkeypatch):
     assert r.status_code == 502 and r.json()["code"] == "model-failed"
 
 
-def world_of(e):
-    p = e.data / "art" / e.hash / "ink" / "art.json"
+def world_of(e, style="ink"):
+    p = e.data / "art" / e.hash / style / "art.json"
     return json.loads(p.read_text()).get("world") if p.exists() else None
 
 
@@ -855,6 +855,49 @@ def test_a_prompt_drawn_into_another_set_takes_its_references_from_that_set(env)
     # and back in ink, the ink portraits again
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
     assert rec["references"] == [x["id"] for x in got["references"]]
+
+
+def test_a_prompt_made_in_an_empty_set_takes_the_shown_figures_references_in_another(env, monkeypatch):
+    env.key()
+    run_set(env, portraits=True)
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    real = art.Illustrator.make_prompt
+
+    def with_shows(self, job, finished=None):            # the pipeline's Prompt.shows: the entities the picture shows
+        pr = real(self, job, finished)
+        pr.shows = list(portraits)
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
+    ask = {"kind": "event", "target": "e6", "style": "watercolour"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    assert got["references"] == []                         # watercolour has no pictures to send
+    n = len(env.text.prompts)
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "ink", "prompt": got["prompt"]}).json()
+    assert len(env.text.prompts) == n and rec["references"]
+    assert set(rec["references"]) <= set(portraits.values())
+
+
+def test_the_background_note_is_the_books_in_every_style(env):
+    env.key()
+    run_set(env, portraits=False)
+    ask = {"kind": "event", "target": "e5"}
+    env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "prompt": "A gate."})
+    r = env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A grey northern valley of mills."})
+    assert r.status_code == 200
+    for st in ("ink", "watercolour"):
+        assert world_of(env, st)["text"] == "A grey northern valley of mills." and world_of(env, st)["edited"] is True
+    # a style with no set yet reads it
+    assert env.c.get(f"/api/library/{KEY}/art?style=anime").json()["world"]["text"].startswith("A grey northern")
+    undo(env, r.json()["undo"])                            # one entry: every set it wrote goes back
+    for st in ("ink", "watercolour"):
+        assert world_of(env, st) is None or not world_of(env, st).get("edited")
+    # and a set made after the note starts with it
+    env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A grey northern valley of mills."})
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "anime", "prompt": "A gate."}).status_code == 200
+    assert world_of(env, "anime")["text"].startswith("A grey northern")
+    m = json.loads((env.data / "art" / env.hash / "anime" / "art.json").read_text())
+    ink = json.loads((env.data / "art" / env.hash / "ink" / "art.json").read_text())
+    assert m["style"] == "anime" and m["textHash"] == ink["textHash"]
 
 
 def test_an_older_art_set_still_loads_and_draws(env):
