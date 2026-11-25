@@ -143,10 +143,11 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 
 Rules:
 - Describe only what the material says or plainly implies: appearance, clothing, setting, light, mood. Add no events, people or facts from your own knowledge of the book.
-- Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("aged", "formal dress") rather than invent.
-- Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("an aged woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
+- Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("formal dress", "a man") rather than invent.
+- Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("a woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
 - When you say who someone is by their people, caste, house or nation, also say what that looks like as the material gives it (their group's <entry>, the passages): the image model knows nothing of that people, so "of the ruling caste" alone draws nothing.
 - Every sentence is something an illustrator can draw: bodies, faces, colouring, clothing, gear, poses, the setting, the light. A feeling only as an expression, a posture or the light. No relations to others ("the sister of a rival"), no backstory, no inner states ("hides a deep emptiness"), no "reflecting a ruler who demands obedience".
+- Age: state it as the material gives it (a number, "a boy of sixteen", "young", "old"), and work out a plain one when the material states it in two steps ("three years back I was thirty-two" means about thirty-five). Never age a figure with words the material does not use ("weathered", "aged", "in his middle years", "grizzled"); when the material gives no age, say "a man" or "a woman" and nothing that ages them. Hard living (scars, gauntness) is described as marks on them, not as age.
 - A portrait shows the figure as a living presence, as they look at this point: never their death, corpse or burial, even when the material tells of it. A figure that is undead or transformed is drawn as it looks at this point, undead or transformed.
 - Where the material does not say where the subject is, keep the background simple instead of inventing rooms, furniture or objects. A place is its own setting.
 - No text, letters, titles, captions or signatures in the picture.
@@ -156,8 +157,26 @@ Rules:
 - The reader has not finished the book. Show nothing from later in the story than the material, and describe things as a careful reader understands them at this point: no hindsight, no hints of what comes later.
 Return "text": the prompt."""
 
+# A portrait is a likeness, not a scene: code puts the framing first (PORTRAIT_FRAME) and the writer describes only the look.
+PORTRAIT_FRAME = ("Portrait, head and shoulders to half length, the figure turned three-quarters toward the viewer, at rest, "
+                  "looking toward the viewer.")
+PORTRAIT_WORDS = (30, 130)      # what the checks accept; the writer is asked for 50 to 110
+_SCENE_FORM = ("60 to 150 words, plain sentences in the present tense: the subject first, then the setting as far as the material "
+               "gives it, then light and mood.")
+assert _SCENE_FORM in WRITER
+PORTRAIT_WRITER = WRITER.replace(_SCENE_FORM, (
+    "50 to 110 words, plain sentences in the present tense: the figure first, then at most one short clause of background "
+    "and one of light.")).replace('Return "text": the prompt.', """This prompt is for a portrait, a likeness of the figure at this point, not a scene:
+- The framing and the pose are fixed and put before your text by code: never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
+- Describe only how the figure looks at this moment: face, age, build, skin, hair, eyes, marks, scars and wounds they carry, tattoos, and what they wear and carry on them, stowed (a sword at the hip, a pipe in a pocket). Their hands and mouth are empty: no action or gesture, nothing held up or in use, no events, no smoke or breath, no other figures.
+- Expression: one short phrase at most, and only as the material shows their usual or current bearing.
+- Their people, caste or role stays ("a silversaint", "of the Gold caste"), with what that looks like as the material gives it.
+- Background: one short clause at most: from <surroundings> when it is given, else plain ("a plain dark background"); never a room or place the passages tell a scene in, nor its objects. Light: one short clause.
+Return "text": the prompt.""")
+assert PORTRAIT_WRITER.count("This prompt is for a portrait") == 1
+
 TASKS = {
-    "portrait": "Write the prompt for a portrait of the entry to draw as they are at this point: head and shoulders or half length.",
+    "portrait": "Write the prompt for a portrait of the entry to draw: how they look at this point. The framing and pose are given; do not state them.",
     "place": "Write the prompt for a picture of the place to draw as it looks at this point; people only where the material puts them there.",
     "thing": "Write the prompt for a picture of the thing to draw as it looks at this point, in a plain setting or the place the material puts it.",
     "event": "Write the prompt for one picture of the moment: one scene, what is in frame, the composition and the light.",
@@ -895,14 +914,15 @@ class Illustrator:
         return got, ""
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-                    schema: dict = SCHEMA, finished: frozenset[str] | None = None) -> tuple[str | None, str, dict]:
+                    schema: dict = SCHEMA, finished: frozenset[str] | None = None,
+                    system: str = WRITER) -> tuple[str | None, str, dict]:
         """One writer call, one rewrite naming what a check caught, then, when only a name is wrong, code replaces it by a
         role (`_Names.strip`) and checks the text again. (text, "", the reply) or (None, reason, the reply)."""
-        out = self._complete(prompt, schema, WRITER)
+        out = self._complete(prompt, schema, system)
         got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
         if got is None and why != "empty":
             tries = [(str(out.get("text") or ""), why, out)]
-            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, WRITER)
+            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, system)
             got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
             if got is None:
                 for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
@@ -927,9 +947,19 @@ class Illustrator:
         return None
 
     def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-               finished: frozenset[str] | None = None) -> tuple[str | None, str]:
-        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished)
+               finished: frozenset[str] | None = None, system: str = WRITER) -> tuple[str | None, str]:
+        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system)
         return got, why
+
+    @staticmethod
+    def _form(kind: str) -> tuple[str, tuple[int, int]]:
+        """The writer's system text and the word range its text is checked against, for a kind of picture."""
+        return (PORTRAIT_WRITER, PORTRAIT_WORDS) if kind == "portrait" else (WRITER, SCENE_WORDS)
+
+    @staticmethod
+    def _framed(kind: str, text: str) -> str:
+        """The body of a prompt: a portrait's checked text after its fixed framing (PORTRAIT_FRAME), anything else as written."""
+        return f"{PORTRAIT_FRAME} {text}" if kind == "portrait" else text
 
     def view(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> dict:
         """The gated view of books 0..bi at an anchor of book bi: what a reader there may know (`finished`: the earlier books
@@ -1675,6 +1705,8 @@ class Illustrator:
         for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
             if tail and refused.endswith(tail):
                 refused = refused[:-len(tail)].rstrip()
+        if refused.startswith(PORTRAIT_FRAME):
+            refused = refused[len(PORTRAIT_FRAME):].lstrip()
         return self._make_prompt(job, finished, soften_request(refused, reason))
 
     def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "") -> Prompt:
@@ -1802,13 +1834,17 @@ class Illustrator:
             material.append(f"<background>{_esc(world)}</background>")
             plain.append(world)
             inherits |= set(bg[1])
-        writer = TASKS[job.kind] + "\n\n" + "\n".join(material) + ("\n\n" + SHOWS if scene else "")
+        task = TASKS[job.kind] + (" No usual surroundings are known: the background is plain." if job.kind == "portrait"
+                                  and not milieu else "")
+        writer = task + "\n\n" + "\n".join(material) + ("\n\n" + SHOWS if scene else "")
         check = "\n".join(plain)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
-        body, why, out = self._write_full(writer + extra, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
+        system, words = self._form(job.kind)
+        body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
+        body = self._framed(job.kind, body)
         if scene:                          # an entity's own picture always shows it
             ids = self._shown(out, ids, vis)
         refs = self.references(job, ids, fin)
@@ -1975,8 +2011,11 @@ class Illustrator:
                 if not softened:
                     softened = True
                     try:
-                        soft, _ = self._write(pr.writer + soften_request(pr.scene, e.reason), bi, pr.anchor, pr.check, SCENE_WORDS,
-                                              self._finished(bi, job.finished))
+                        system, words = self._form(job.kind)
+                        refused = pr.scene[len(PORTRAIT_FRAME):].lstrip() if pr.scene.startswith(PORTRAIT_FRAME) else pr.scene
+                        soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
+                                              self._finished(bi, job.finished), system)
+                        soft = self._framed(job.kind, soft) if soft else soft
                     except TextFailed:
                         soft = None
                 if not soft:
