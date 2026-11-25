@@ -350,6 +350,8 @@ export function modalToasts() {
  *   moments      for a chapter: [{ kind, target, label }] the visible moments it may draw, the first being the chapter's main one
  *   drawnLine    for a chapter: "4 moments in this chapter, 1 drawn" (counted from visible content only)
  *   srcFor(rec, slug), canShow(rec)   the URL of a filed picture, and whether it may show at the position
+ *   reached(anchor)                   whether an anchor is at or before the position now: a prompt or rewrite that comes
+ *                                     back written further on (the reader moved back meanwhile) is dropped and written again
  *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
  *   replaces     a picture id of the art set: Redraw with a new prompt. The sheet is titled "Redraw", Draw sends it and the
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
@@ -399,9 +401,10 @@ export async function openPictureSheet(opts) {
   const replaces = typeof opts.replaces === "string" && ID_RE.test(opts.replaces) ? opts.replaces : null;
   const sh = sheet({ title: `${replaces ? "Redraw" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
     footer: h("div.art-foot", footNote, drawBtn),
-    // Always closable: a prompt or a drawing in flight is abandoned (a drawing already sent may still be filed and show
-    // later); an edited prompt is asked about first.
+    // Always closable: a prompt in flight is abandoned; a drawing already sent is not (the server files it either way), and
+    // when it lands its toast, with Undo for a redraw, shows where the sheet was opened from. An edited prompt is asked about first.
     beforeClose: () => {
+      if (st.drawing) return true;
       if (st.busy) { abort(); return true; }
       if (!st.prompt || st.prompt === st.written) return true;
       confirmDialog({ title: "Discard your prompt?", message: "The prompt you changed is not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
@@ -409,7 +412,8 @@ export async function openPictureSheet(opts) {
       return false;
     },
     onClose: () => {
-      st.closed = true; abort();
+      st.closed = true;
+      if (!st.drawing) abort();
       if (undoRedraw) toast("Picture redrawn", "ok", { host: modalToasts(), action: { label: "Undo", run: () => undoRedraw?.() } });
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
@@ -431,7 +435,22 @@ export async function openPictureSheet(opts) {
   textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); });
   const err = h("div.art-error", { role: "alert" });
 
-  async function write() {
+  /** Is a reply's anchor still reached at the position now? A reply written further on than the reader is now (they moved
+   *  back while it was being written) is never put on screen. `opts.reached` comes from the Reader; without it, yes. */
+  const reachedNow = (r) => !(opts.reached && typeof r?.anchor === "string" && !opts.reached(r.anchor));
+  /** A reply came back for a position the reader has left: drop it and what it replaced, and write the prompt again here,
+   *  once; a second miss says so and waits for the person. */
+  function moved(retried) {
+    st.prompt = st.written = "";
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false;
+    textarea.value = "";
+    if (!retried) { write({ retried: true }); return; }
+    clear(body, h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
+      h("button.btn", { type: "button", on: { click: () => write() } }, "Write it again"));
+    paintFoot();
+  }
+  async function write(how) {
+    const retried = how?.retried === true;
     abort();
     const mine = ++gen;
     ctrl = new AbortController();
@@ -443,6 +462,7 @@ export async function openPictureSheet(opts) {
       const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
         quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
+      if (!reachedNow(r)) { st.busy = false; ctrl = null; moved(retried); return; }
       st.parts = promptParts(r);
       st.missing = false;
       if (st.parts) {
@@ -492,6 +512,7 @@ export async function openPictureSheet(opts) {
       const r = await api.artSoften(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
         quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), text, reason, ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
+      if (!reachedNow(r)) { st.busy = false; ctrl = null; moved(false); return; }
       const parts = promptParts(r);
       if (parts) {
         st.parts = parts;
@@ -667,8 +688,7 @@ export async function openPictureSheet(opts) {
     if (st.parts && sentenceFor(st.parts, st.style, st.custom) !== st.sentence) applyStyle();
     abort();
     const mine = ++gen;
-    ctrl = new AbortController();
-    st.busy = true; drawBtn.disabled = true;
+    st.busy = true; st.drawing = true; drawBtn.disabled = true;
     // The old picture is replaced only within its own set: another style files a new picture there and keeps the old one.
     const replacing = Boolean(replaces) && (!opts.replacesStyle || folder() === opts.replacesStyle);
     const sent = st.prompt;   // the text as the provider saw it (a rewrite after a refusal starts from this)
@@ -677,13 +697,34 @@ export async function openPictureSheet(opts) {
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() }, ctrl.signal);
+        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() });
+      st.drawing = false;
       const rec = r?.record || r;
       const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);
       opts.onDrawn?.(rec, slug || null);
-      if (mine !== gen || st.closed) return;
-      st.busy = false; ctrl = null;
+      const undoId = replacing ? (r?.undo ?? r?.journal ?? null) : null;
+      if (undoId) undoRedraw = async () => {
+        undoRedraw = null;
+        try {
+          await api.undo(opts.key, undoId);
+          forgetArt(opts.key);
+          if (!st.closed) sh.close(true);
+          toast("Undone", "ok", { host: modalToasts() });
+          opts.onUndone?.();
+        } catch (e) { toast(e.message, "error", { host: st.closed ? modalToasts() : sh.toasts }); }
+      };
+      if (st.closed) {
+        // Closed while it was drawing: say so where the sheet was opened from, with Undo for a redraw.
+        toast(replacing ? "Picture redrawn" : "Picture drawn", "ok", { host: modalToasts(), action: undoRedraw ? { label: "Undo", run: () => undoRedraw?.() } : null });
+        return;
+      }
+      if (mine !== gen) {
+        // The sheet moved on meanwhile (the position moved back and it writes a new prompt): the picture is filed all the same.
+        toast(replacing ? "Picture redrawn" : "Picture drawn", "ok", { host: sh.toasts, action: undoRedraw ? { label: "Undo", run: () => undoRedraw?.() } : null });
+        return;
+      }
+      st.busy = false;
       st.written = st.prompt;   // drawn: nothing to ask about on close
       // The new picture shows here only if it may show at the position (its anchor is the item's own, which is visible,
       // but the server decides the anchor; the Reader checks it as it checks every picture).
@@ -695,23 +736,12 @@ export async function openPictureSheet(opts) {
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
       // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).
       // The toast is offered again where the sheet was opened from once it closes, until it is used.
-      const undoId = replacing ? (r?.undo ?? r?.journal ?? null) : null;
-      if (undoId) {
-        undoRedraw = async () => {
-          undoRedraw = null;
-          try {
-            await api.undo(opts.key, undoId);
-            forgetArt(opts.key);
-            if (!st.closed) sh.close(true);
-            toast("Undone", "ok", { host: modalToasts() });
-            opts.onUndone?.();
-          } catch (e) { toast(e.message, "error", { host: st.closed ? modalToasts() : sh.toasts }); }
-        };
-        toast("Picture redrawn", "ok", { host: sh.toasts, action: { label: "Undo", run: () => undoRedraw?.() } });
-      }
+      if (undoRedraw) toast("Picture redrawn", "ok", { host: sh.toasts, action: { label: "Undo", run: () => undoRedraw?.() } });
     } catch (e) {
-      if (mine !== gen || st.closed) return;
-      st.busy = false; ctrl = null;
+      st.drawing = false;
+      if (st.closed) { toast(e.code === "refused" ? `The provider would not draw it: ${e.message}` : `Couldn't draw it: ${e.message}`, "error", { host: modalToasts() }); return; }
+      if (mine !== gen) return;
+      st.busy = false;
       clear(body, keep);
       if (e.code === "refused") {
         // The person stays in control: a rewrite of the same moment, told so it can be drawn, goes into the prompt box to be

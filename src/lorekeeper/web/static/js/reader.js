@@ -1900,6 +1900,8 @@ export function mountReader(root) {
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
     const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
+      // A prompt written for a position the reader has since moved back from is never put on screen.
+      reached: anchorReached,
       style: s.art.slug || null, styles: s.art.styles, world, canEditWorld,
       // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
       srcFor: (rec, slug) => (set?.manifest?.textHash ? artUrl(rec, set.manifest.textHash, slug) : null),
@@ -1925,12 +1927,14 @@ export function mountReader(root) {
   }
   /** Every anchor the sheet's text was written up to (the prompt's, the World line's) is reached in the book being read. */
   function sheetTextVisible(sh) {
-    const anchors = sh.anchors ? sh.anchors() : [];
-    if (!anchors.length) return true;
+    return (sh.anchors ? sh.anchors() : []).every(anchorReached);
+  }
+  /** Is an anchor of the book being read at or before the position now? (An unknown anchor never is.) */
+  function anchorReached(a) {
     const ords = ordsOf(s.doc);
     const front = s.map.frontier(s.p);
     const pos = front == null ? -1 : ords.get(front) ?? -1;
-    return anchors.every((a) => ords.has(a) && ords.get(a) <= pos);
+    return ords.has(a) && ords.get(a) <= pos;
   }
   /** Is the item a picture sheet was opened for still revealed? (A Book Orbit sync may move the position back.) */
   function sheetItemVisible({ kind, target }) {
