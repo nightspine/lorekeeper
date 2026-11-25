@@ -181,13 +181,51 @@ export function artImg(src, alt, cls = "art-img", { eager = false } = {}) {
   return img;
 }
 
+// ---- figure labels: which picture is which figure in a scene prompt -------------------------------
+
+const LABEL_RE = /\b[Ff]igure ([A-D])\b/g;
+/** The labels a prompt text uses ("figure A"), each once, in label order: the same rule the server draws by. */
+export function labelsIn(text) {
+  const seen = new Set();
+  for (const m of String(text || "").matchAll(LABEL_RE)) seen.add(m[1]);
+  return [...seen].sort();
+}
+/** The figures a server reply or record carries, checked: [{ label, entity, ref }] with ref the raw reference or null. */
+export function cleanFigures(list) {
+  if (!Array.isArray(list)) return [];
+  return list.filter((f) => f && typeof f.label === "string" && /^[A-D]$/.test(f.label) && typeof f.entity === "string" && f.entity)
+    .map((f) => ({ label: f.label, entity: f.entity, ref: f.ref ?? null }))
+    .sort((a, b) => (a.label < b.label ? -1 : 1));
+}
+/** The id and set of a reference as stored (a plain id, { set, id }) or as the sheet's reply gives it ({ id, set?, url }). */
+export function refParts(ref) {
+  if (typeof ref === "string") return ID_RE.test(ref) ? { id: ref, set: null } : null;
+  if (ref && typeof ref === "object" && typeof ref.id === "string" && ID_RE.test(ref.id)) return { id: ref.id, set: typeof ref.set === "string" ? ref.set : null };
+  return null;
+}
+/**
+ * One quiet line per figure: "Figure A is Greyhand" with a 24px round thumbnail of its reference. `name(entity)` gives the
+ * name from the reader's own view (null: not visible there, so just "Figure A"), `thumb(figure)` the picture's URL or null
+ * (the caller decides what may show). Only labels in `text` (when given) are listed. Null when there is nothing to list.
+ */
+export function figureLines(figures, { text = null, name = () => null, thumb = () => null } = {}) {
+  const used = text == null ? null : new Set(labelsIn(text));
+  const rows = cleanFigures(figures).filter((f) => !used || used.has(f.label));
+  if (!rows.length) return null;
+  return h("ul.art-figures", { "aria-label": "Which picture is which figure" }, rows.map((f) => {
+    const nm = name(f.entity), src = thumb(f);
+    const img = src ? artImg(src, "", "art-fig-img") : null;
+    return h("li.art-figure", img ? h("span.art-fig-face", img) : null, h("span", nm ? `Figure ${f.label} is ${nm}` : `Figure ${f.label}`));
+  }));
+}
+
 // ---- the lightbox ----------------------------------------------------------------------------------
 
 const when = (iso) => { const t = Date.parse(iso || ""); return Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : ""; };
 
 /**
  * One picture at full size, with its caption and a closed "How this was drawn". `items` are
- * [{ rec, src, caption, key, canEdit, canRedraw, newPrompt }] in the order the arrows step through (only visible pictures
+ * [{ rec, src, caption, key, canEdit, canRedraw, newPrompt, figureName(entity), figureThumb(rec, figure) }] in the order the arrows step through (only visible pictures
  * are ever passed). `newPrompt(rec)` opens the picture sheet to write a new prompt for the same kind and target, whose
  * picture replaces this one; without it Redraw only draws the saved prompt again. `onChanged()` runs after a redraw, a
  * delete or an undo.
@@ -243,12 +281,16 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     clear(how, h("details.lb-details", h("summary", icon("chevron"), "How this was drawn"),
       hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
+        h("div.lb-figs", lbFigures(it)),
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : "dd", v)])))));
     clear(acts, it.canEdit ? [
       it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
     ] : null);
   }
+  const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
+  /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
+  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
     // While the lightbox is open its own stack; after it closed, the modal it was opened from (the entry drawer, a sheet),
@@ -322,7 +364,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const r = items[i]?.rec;
     if (dd && r) dd.textContent = modelFact(r);
   });
-  return { close };
+  return { close, refresh };
 }
 
 /** A toast stack inside the topmost open modal (the entry drawer or a sheet), or null for the page's own. */
@@ -353,6 +395,7 @@ export function modalToasts() {
  *   reached(anchor)                   whether an anchor is at or before the position now: a prompt or rewrite that comes
  *                                     back written further on (the reader moved back meanwhile) is dropped and written again
  *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
+ *   figureName(entity)   a figure's name from the reader's view (null: not visible there, so only \"Figure A\")
  *   replaces     a picture id of the art set: Redraw with a new prompt. The sheet is titled "Redraw", Draw sends it and the
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
  *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
@@ -376,7 +419,7 @@ export async function openPictureSheet(opts) {
     quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0], model: null,
     prompt: "", written: "", price: null, asked: null, slug: null,
     parts: null, sentence: null, missing: false,   // the prompt's parts, the style sentence in it now, and whether that is lost
-    busy: false, closed: false,
+    busy: false, closed: false, figures: [],   // figures: the labelled figures of the prompt on screen
   };
   if (!STYLE_LABEL[st.style]) {
     st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
@@ -418,6 +461,7 @@ export async function openPictureSheet(opts) {
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
   sh.current = () => ({ kind: st.kind, target: st.target });
+  sh.refreshFigures = () => paintFigures();
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
   /** The anchors the text on screen was written up to: the prompt's (the picture's own, any world-note hold included) and
    *  the world note's own anchor. The Reader checks them against the position as it checks the moments. */
@@ -427,12 +471,12 @@ export async function openPictureSheet(opts) {
     opts.world = world || null;
     opts.canEditWorld = canEditWorld;   // decided again for the position now: a note hidden here is never written over
     st.prompt = st.written = "";
-    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false;
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
     write();
   };
 
   const textarea = h("textarea.input.art-prompt", { rows: "7", "aria-label": "Prompt", spellcheck: "true" });
-  textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); });
+  textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); paintFigures(); });
   const err = h("div.art-error", { role: "alert" });
 
   /** Is a reply's anchor still reached at the position now? A reply written further on than the reader is now (they moved
@@ -442,7 +486,7 @@ export async function openPictureSheet(opts) {
    *  once; a second miss says so and waits for the person. */
   function moved(retried) {
     st.prompt = st.written = "";
-    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false;
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
     textarea.value = "";
     if (!retried) { write({ retried: true }); return; }
     clear(body, h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
@@ -473,6 +517,7 @@ export async function openPictureSheet(opts) {
         st.sentence = null;   // an older server: the style is inside its text, so a new style writes the prompt again
         st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
       }
+      st.figures = cleanFigures(r.figures);
       st.price = typeof r.price === "number" ? r.price : null;
       st.anchor = typeof r.anchor === "string" ? r.anchor : null;
       st.asked = asked;
@@ -523,12 +568,14 @@ export async function openPictureSheet(opts) {
         st.prompt = st.written = r.prompt;
       } else throw new Error("No prompt came back");
       st.missing = false;
+      st.figures = cleanFigures(r.figures);
       if (typeof r.price === "number") st.price = r.price;
       if (typeof r.anchor === "string") st.anchor = r.anchor;
       st.asked = asked; st.promptStyle = asked.style;
       st.busy = false; ctrl = null;
       textarea.value = st.prompt;
       paintStyleNote();
+      paintFigures();
       clear(err, h("p.art-ok", "Rewritten so it can be drawn. Read it, change anything, then Draw."));
       paintFoot();
       textarea.focus();
@@ -552,6 +599,12 @@ export async function openPictureSheet(opts) {
     st.promptStyle = styleText();
     textarea.value = st.prompt;
     paintStyleNote();
+  }
+  /** Under the box: which reference picture is which figure, as the text stands now (a label taken out drops its line). */
+  const figuresBox = h("div.art-figures-box");
+  function paintFigures() {
+    const pic = (f) => { const u = f.ref && typeof f.ref === "object" ? f.ref.url : null; return typeof u === "string" && /^\/api\/art\/[^/]+\/[^/]+\/[A-Za-z0-9_-]{1,64}$/.test(u) ? u : null; };
+    clear(figuresBox, figureLines(st.figures, { text: st.prompt, name: opts.figureName || undefined, thumb: pic }));
   }
   const styleNote = h("p.hint.art-style-note", { role: "status" });
   function paintStyleNote() {
@@ -613,7 +666,8 @@ export async function openPictureSheet(opts) {
       moments,
       h("div.art-field", h("label.label", { for: "art-prompt" }, "Prompt"), textarea,
         h("p.hint", "Written from what you have read so far. Change anything; the picture is drawn from this text only. ",
-          h("button.linkish", { type: "button", on: { click: write } }, "Write it again"))),
+          h("button.linkish", { type: "button", on: { click: write } }, "Write it again")),
+        figuresBox),
       h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null, styleNote),
       h("div.art-row",
         h("div.art-field", h("span.label", "Shape"), seg("Shape", SHAPES, st.shape, (k) => { st.shape = k; })),
@@ -624,6 +678,7 @@ export async function openPictureSheet(opts) {
       err);
     textarea.id = "art-prompt";
     paintStyleNote();
+    paintFigures();
     paintFoot();
   }
   /** The person's own note on the book's world, which the prompt writer reads with every picture of this book (an

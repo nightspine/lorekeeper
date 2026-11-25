@@ -1329,7 +1329,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 books_.append(arts.book(d, None, ph, arts.resolve(ph, style)[1], None, draw=False))
         books_.append(arts.book(ctx["doc"], art_epub(ctx), ctx["hash"], style, None))
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
-                                  log=lambda m: None, pause=0), image, slug_
+                                  log=lambda m: None, pause=0,
+                                  cheap_text=jobs.cheap_model(None) if text_needed else None), image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1434,7 +1435,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         first (at most `art.MAX_REFERENCES`), a look-change portrait its previous portrait, nothing for anything else."""
         pick = getattr(il, "references", None)
         if pick is not None:
-            return pick(job, list(pr.shows), fin)
+            return pick(job, list(pr.shows), fin, figures=pr.figures) if pr.figures is not None else pick(job, list(pr.shows), fin)
         # until `Illustrator.references` lands: the same rule from the pipeline's own parts
         pos = (job.bi, il.books[job.bi].ord_of[pr.anchor])
         if job.kind in ("plate", "event"):
@@ -1473,8 +1474,44 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         pr.references, pr.inherits = refs, sorted(inherits - {book_key(job.bi)})
         return pr
 
-    def picture_json(h: str, slug_: str, rec: dict) -> dict:
-        return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
+    def edition_hashes(ctx: dict) -> list[str]:
+        """The editions a reference of this index's pictures may live in: this one, then the earlier books of its series
+        (a reference picture is stored as an id with no book, and `latest_picture` walks the earlier books)."""
+        out = [ctx["hash"]]
+        try:
+            for d in art_prior(ctx):
+                ph = artstore.text_hash(d)
+                if artstore.HASH.fullmatch(ph) and ph not in out:
+                    out.append(ph)
+        except Exception:
+            pass
+        return out
+
+    def figure_ref_url(hashes: list[str], slug_: str, ref) -> str | None:
+        """The URL of a stored reference (a plain id of this style's set, or {set, id} of another style's set), served from the
+        edition that holds that picture (this one, else an earlier book's: the search `redraw_references` makes); None for
+        none, anything malformed, or a picture no edition holds. Built from checked ids only."""
+        if isinstance(ref, str):
+            pid_, sl = ref, slug_
+        elif isinstance(ref, dict) and isinstance(ref.get("set"), str) and isinstance(ref.get("id"), str):
+            pid_, sl = ref["id"], ref["set"]
+        else:
+            return None
+        if not (artstore.PID.fullmatch(pid_) and artstore.SLUG.fullmatch(sl)):
+            return None
+        for h in hashes:
+            m = arts.manifest(h, sl)
+            if m and any(r.get("id") == pid_ for r in m.get("pictures", [])):
+                return f"/api/art/{h}/{sl}/{pid_}"
+        return None
+
+    def picture_json(ctx: dict, slug_: str, rec: dict, hashes: list[str] | None = None) -> dict:
+        out = {**rec, "url": f"/api/art/{ctx['hash']}/{slug_}/{rec['id']}"}
+        if isinstance(rec.get("figures"), list):    # each reference as a URL (or null), as the prompt route answers
+            hashes = hashes if hashes is not None else edition_hashes(ctx)
+            out["figures"] = [{"label": f.get("label"), "entity": f.get("entity"), "ref": figure_ref_url(hashes, slug_, f.get("ref"))}
+                              for f in rec["figures"] if isinstance(f, dict)]
+        return out
 
     def ref_json(il, refs, slug_: str) -> list[dict]:
         """The references as the sheet lists them, each served from its own set: a likeness from another style's set
@@ -1482,6 +1519,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return [{"id": r["id"], "kind": r["kind"], "target": r["target"], **({"set": r["set"]} if r.get("set") else {}),
                  "url": f"/api/art/{artstore.text_hash(il.books[j].doc)}/{r.get('set') or slug_}/{r['id']}"}
                 for j, r in refs]
+
+    def figures_json(il, pr, slug_: str) -> list[dict] | None:
+        """A scene prompt's labelled figures for the sheet: label, entity id and the reference's URL (null when none)."""
+        if pr.figures is None:
+            return None
+        return [{"label": f["label"], "entity": f["entity"],
+                 "ref": (ref_json(il, [hit], slug_)[0]["url"] if hit else None)}
+                for f, hit in artmod.Illustrator.pair_figures(pr.figures, pr.references)]
 
     def art_busy(h: str) -> None:
         if jobs.drawing(h):
@@ -1585,7 +1630,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         bg = arts.background(h)                 # the person's note is the edition's, in every style
         if bg:
             body["world"] = artstore.world_of(bg)
-        body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
+        hashes = edition_hashes(ctx) if m and any(isinstance(r.get("figures"), list) for r in body.get("pictures", [])) else None
+        body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
     def story_rows(il, rows: list[dict]) -> list[dict]:
@@ -1710,7 +1756,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
                "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
-               "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
                "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
         return out
 
@@ -1798,7 +1844,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 else:
                     entry = take_place_of(key, ctx["hash"], slug_, old_rec, rec)
                     rec = {**rec, "replaces": old_rec["id"]}
-            return {**picture_json(ctx["hash"], slug_, rec), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, rec), "undo": entry["id"]}
         return await work()
 
     def replaced_record(ctx: dict, il, job, slug_: str, at: str | None, fin, pid) -> dict | None:
@@ -1915,6 +1961,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
                 job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
                 refs = redraw_references(il, rec, pid)
+                figures = None      # older records and non-scenes: no labels, drawn as before
+                if rec.get("kind") in ("plate", "event") and isinstance(rec.get("figures"), list):
+                    figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]
+                               if isinstance(f, dict) and isinstance(f.get("label"), str) and isinstance(f.get("entity"), str)]
                 text_ = (note.rstrip(".") + ". " if note else "") + rec["prompt"]
                 # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
                 # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from
@@ -1924,12 +1974,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
-                                   version=rec.get("notes"), body=text_)
+                                   version=rec.get("notes"), body=text_, figures=figures)
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
                 entry = take_place_of(key, ctx["hash"], slug_, rec, new)
-            return {**picture_json(ctx["hash"], slug_, {**new, "replaces": pid}), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "undo": entry["id"]}
         return await work()
 
     @app.put("/api/library/{key}/art/world")

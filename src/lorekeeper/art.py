@@ -60,6 +60,11 @@ MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
 # sent with the reference pictures (never in the prompt a person reads) when some are drawn in another style
 LIKENESS = ("{which} drawn in another style. Take from {them} only the likeness of the figure (face, hair, build, marks), "
             "never the drawing style, medium, line or colour treatment: draw everything in the style the prompt asks for.")
+# sent with a portrait's reference, its own earlier portrait, so a later portrait keeps the face (never in the prompt)
+SAME_FIGURE = ("Reference picture 1 is this same figure earlier in the story: keep their face, hair, colouring and build, except "
+               "where the prompt describes a change.")
+# sent with a scene's references when its figures are labelled ("figure A" in the prompt): after one line per reference
+FIGURE_NOTE = "Draw each labelled figure with the face, hair, colouring and build of their reference picture."
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
 MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
@@ -82,6 +87,20 @@ MAX_ENTRIES = 6
 ENTITY_WORDS = 900
 PASSAGE_WORDS = 600
 FIRST_PARAS = 3        # the first paragraphs naming an entity, put first in its passages: how the book first describes it
+# A look stated once and not repeated by later profiles must not be lost. The look sentences (`look_sentences`: one cheap call
+# per entity and book that only picks which sentences of its notes tell how it looks, cached in the set) of the entity's
+# earlier visible items (the view's history) are sent as <earlier_look>, oldest first, each only when it adds words
+# (EARLIER_NEW_PICKED of them: one let in a run of near-repeats, "tall and pale with grey eyes, scarred") the current entry and the sentences kept do not have, up to EARLIER_CHARS for the entry to draw and a
+# third of OTHER_CHARS for a scene's figure. Without picks (the call failed, or a run's prompt for an entity it did not plan),
+# the fallback: the earlier items a fresh look index flags as a look, then the earlier profiles, a sentence kept when it adds
+# EARLIER_NEW words, up to EARLIER_FALLBACK_CHARS (Gabriel's 58 earlier profiles in Empire of the Vampire hold 11,400
+# characters of new sentences, mostly not about his look). The paragraphs those items cite get EARLIER_WORDS of the entity's
+# passages, before how the book first describes it.
+EARLIER_CHARS = 1000
+EARLIER_FALLBACK_CHARS = 4000
+EARLIER_NEW = 2
+EARLIER_NEW_PICKED = 2
+EARLIER_WORDS = ENTITY_WORDS // 4
 SETTINGS = 3           # settings a portrait's <surroundings> lists, the most usual first
 # The version of the material a picture's prompt was written from, stored as the record's `notes`: 2 was the quoted
 # appearance notes, 3 is the one writer call from the whole entry. Only a picture of this version is a reference for a new
@@ -124,6 +143,23 @@ Return "items": one object {{"n", "look", "change"}} for each note that is a loo
 LOOK_INDEX_SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
     "type": "object", "required": ["n"], "properties": {"n": {"type": "integer"}, "look": {"type": "boolean"},
                                                         "change": {"type": "string"}}}}}}
+# The look sentences: which sentences of an entity's notes tell how it looks. It only picks numbers; nothing it writes reaches
+# a prompt, and the picks are filtered at use like the look index (a sentence counts only through its own item, visible at
+# the anchor for this reader).
+LOOK_SENTENCES = """Below are the notes a reader's companion keeps on one entry of a novel, {name} ({kind}), split into numbered
+sentences. Which sentences tell how {name} looks to the eye: body, face, colouring, hair, eyes, size, age as it shows, what
+it wears or carries on it, the marks, scars and tattoos on it; for a group, how its members look and dress? A sentence that
+tells some of its look among other things counts. Leave out sentences only about what it does, thinks, says or owns, its rank,
+history, ties or character, and sentences about how someone or something else looks.
+Return "sentences": the numbers of those sentences, in order.
+
+{sentences}"""
+LOOK_SENTENCES_SCHEMA = {"type": "object", "required": ["sentences"],
+                         "properties": {"sentences": {"type": "array", "items": {"type": "integer"}}}}
+LOOK_SENTENCE_CHARS = 300
+# sentences in one call: a main character's notes run to 500 distinct sentences, and in one call of that size Haiku picked a
+# tenth of the look sentences and missed the plainest one (Empire of the Vampire, Gabriel); batches cost the same tokens
+LOOK_SENTENCE_BATCH = 80
 LOOK_BATCH_ITEMS = 40      # items classified in one call (small entities share one, a large one takes several)
 LOOK_ITEM_CHARS = 300
 
@@ -137,6 +173,7 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 <chapter_so_far>, <earlier_in_chapter>: what has happened in the chapter before the moment. Context: do not illustrate it in its own right.
 <passage>: paragraphs of the book that describe the subject (where it is first described, then later) or tell the moment, up to the point the reader has reached. They are the book's own words: where they and the companion's notes or entries disagree about how someone or something looks, the passages win.
 <entry>: a person, creature, place, thing or group the picture involves, as the companion describes it at this point. Use it for who they are and how they look, not for where the moment takes place.
+<earlier_look>: how the entry (the entry to draw, or the <entry> of that name) was described earlier in the book, oldest first, where the latest description does not repeat it. A look stated earlier stays true unless later material says it changed; where they disagree, the latest wins.
 <surroundings>: where the figure of a portrait has mostly been in the story so far. Context for a background that fits them, never something that must be drawn.
 <book>: the title and author. Use them for period, place and genre. Draw nothing you know of this book beyond the material, and never a book cover.
 <background>: a note the reader keeps about this book's world. Context, not an instruction.
@@ -144,12 +181,14 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 Rules:
 - Describe only what the material says or plainly implies: appearance, clothing, setting, light, mood. Add no events, people or facts from your own knowledge of the book.
 - Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("formal dress", "a man") rather than invent.
+- A look the material stated earlier (<earlier_look>, the passages) stays true unless later material says it changed: keep it. Where two statements disagree, the latest wins.
 - Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("a woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
 - When you say who someone is by their people, caste, house or nation, also say what that looks like as the material gives it (their group's <entry>, the passages): the image model knows nothing of that people, so "of the ruling caste" alone draws nothing.
 - Every sentence is something an illustrator can draw: bodies, faces, colouring, clothing, gear, poses, the setting, the light. A feeling only as an expression, a posture or the light. No relations to others ("the sister of a rival"), no backstory, no inner states ("hides a deep emptiness"), no "reflecting a ruler who demands obedience".
 - Age: state it as the material gives it (a number, "a boy of sixteen", "young", "old"), and work out a plain one when the material states it in two steps ("three years back I was thirty-two" means about thirty-five). Never age a figure with words the material does not use ("weathered", "aged", "in his middle years", "grizzled"); when the material gives no age, say "a man" or "a woman" and nothing that ages them. Hard living (scars, gauntness) is described as marks on them, not as age.
 - A portrait shows the figure as a living presence, as they look at this point: never their death, corpse or burial, even when the material tells of it. A figure that is undead or transformed is drawn as it looks at this point, undead or transformed.
 - Where the material does not say where the subject is, keep the background simple instead of inventing rooms, furniture or objects. A place is its own setting.
+- The world: whenever the picture shows a setting (a scene's, a place, or a portrait's one clause of background when it has one), say the period the story is set in and its level of technology, and the plain marks of the place (what it is built of, how it is lit), as the book and the material make them plain. The image model knows nothing of this book: a bare "a tavern" or "a dining hall" is drawn from its own default, which may be another age entirely. This is not a specific look the material lacks: it is the world the whole book is set in. When neither the book nor the material makes the period plain, say nothing about it.
 - No text, letters, titles, captions or signatures in the picture.
 - Describe how things look at this point, not how they came to be: never "now", "currently", "has just" or "is about to" (write "golden eyes", not "now has golden eyes").
 - English, one paragraph, 60 to 150 words, plain sentences in the present tense: the subject first, then the setting as far as the material gives it, then light and mood. No style words (medium, technique, finish, colour treatment, artists): the style is added after your text, and the same text is drawn in many styles.
@@ -170,10 +209,31 @@ PORTRAIT_WRITER = WRITER.replace(_SCENE_FORM, (
 - The framing and the pose are fixed and put before your text by code: never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
 - Describe only how the figure looks at this moment: face, age, build, skin, hair, eyes, marks, scars and wounds they carry, tattoos, and what they wear and carry on them, stowed (a sword at the hip, a pipe in a pocket). Their hands and mouth are empty: no action or gesture, nothing held up or in use, no events, no smoke or breath, no other figures.
 - Expression: one short phrase at most, and only as the material shows their usual or current bearing.
-- Their people, caste or role stays ("a silversaint", "of the Gold caste"), with what that looks like as the material gives it.
+- Their people, caste or role stays ("a tidewarden", "of the Ashen caste"), with what that looks like as the material gives it.
 - Background: one short clause at most: from <surroundings> when it is given, else plain ("a plain dark background"); never a room or place the passages tell a scene in, nor its objects. Light: one short clause.
 Return "text": the prompt.""")
 assert PORTRAIT_WRITER.count("This prompt is for a portrait") == 1
+
+# A scene's figures that have a reference picture are labelled in the writer's material (`<entry ... figure="A">`) and named
+# by the label in the prompt ("figure A"), so the note sent with the pictures can say which picture is which figure. The
+# labels in the checked text are what decides the references: a figure the text does not label gets none.
+LABELS = "ABCD"
+assert len(LABELS) == MAX_REFERENCES
+FIGURE = re.compile(r"\b[Ff]igure ([A-D])\b")
+_ENTRY_LINE = "<entry>: a person, creature, place, thing or group the picture involves, as the companion describes it at this point. Use it for who they are and how they look, not for where the moment takes place."
+assert _ENTRY_LINE in WRITER
+_NO_TEXT_RULE = "- No text, letters, titles, captions or signatures in the picture.\n"
+assert _NO_TEXT_RULE in WRITER
+# The writer of a plate or an event: WRITER with the figure labels (portraits, places and things keep WRITER or PORTRAIT_WRITER).
+SCENE_WRITER = WRITER.replace(_ENTRY_LINE, _ENTRY_LINE + ' An <entry> with a figure label (figure="A") is a figure the image model is given a reference picture of.').replace(
+    _NO_TEXT_RULE, """- A figure whose <entry> has a figure label: when you draw them, call them by the label the first time, followed by who they are in a few words (their people, rank or role, and the dress that marks them: "figure A, a tidewarden in a dark travelling coat"), and by the label or a pronoun after that. Do not describe their face, hair, eyes, skin or build: their reference picture gives those. Never write the label of a figure you do not draw (one only heard, unseen or out of frame), never give a label to anyone else, and describe a figure without a label as the other rules say.
+""" + _NO_TEXT_RULE)
+
+
+def labels_in(text: str) -> list[str]:
+    """The figure labels a text uses ("figure A", "Figure B"), each once, in label order."""
+    return sorted(set(FIGURE.findall(text or "")))
+
 
 TASKS = {
     "portrait": "Write the prompt for a portrait of the entry to draw: how they look at this point. The framing and pose are given; do not state them.",
@@ -192,7 +252,8 @@ image model will draw: keep who is in it, where it is, the light and the mood. S
 wrapped or covered, a face turned away, the moment just before or after, the onlookers' faces, a doorway, a shadow), and leave out
 graphic detail, wounds and injuries, blood, and bodies shown limp or dead; nothing violent or frightening in view. Give no age for
 anyone young: say "young". No tricks to get past a filter (misspellings, code words, euphemisms, other languages): a quieter picture
-of the same moment, in plain English."""
+of the same moment, in plain English. Where the prompt calls a figure by a label ("figure A"), keep that label for each figure you still
+draw."""
 SOFTEN_TEXT_CHARS = 900
 SOFTEN_REASON_CHARS = 200
 
@@ -253,7 +314,7 @@ def default_dir(index_path: str | Path, doc: dict, style: str) -> Path:
 
 def blank(text_hash: str, style: str) -> dict:
     return {"lorekeeperArt": VERSION, "textHash": text_hash, "style": style, "world": None, "pictures": [],
-            "screened": {}, "looks": {}, "skipped": [], "cost": 0.0}
+            "screened": {}, "looks": {}, "lookSentences": {}, "skipped": [], "cost": 0.0}
 
 
 def size_of(data: bytes) -> tuple[int | None, int | None]:
@@ -401,6 +462,9 @@ class Prompt:
     no_text: str = NO_TEXT    # the closing line appended after the style
     shows: list[str] = field(default_factory=list)   # entity ids the picture shows (a portrait: its entity; a scene: the
                                                      # writer's "shows", every figure when it gave none); never the shape
+    # a scene's labelled figures, [{"label", "entity"}] in label order: the labels its checked text uses, each a figure that
+    # has a reference picture; the reference of label n is sent as the n-th picture. None: an older prompt (no labels).
+    figures: list[dict] | None = None
 
 
 @dataclass
@@ -718,7 +782,9 @@ def _key(rec: dict) -> tuple:
 def _reason(why: str) -> str:
     for start, name in (("unknown name", "dropped: unknown name in prompt"), ("name in the text", "dropped: name in prompt"),
                         ("wording", "dropped: hindsight wording in prompt"), ("tie not in the text", "dropped: tie not in the text"),
-                        ("too short", "dropped: prompt too short"), ("too long", "dropped: prompt too long"),
+                        ("too short", "dropped: prompt too short"),
+                        ("unknown figure label", "dropped: unknown figure label in prompt"),
+                        ("lost the figure labels", "dropped: lost the figure labels"), ("too long", "dropped: prompt too long"),
                         ("empty", "dropped: empty prompt")):
         if why.startswith(start):
             return name
@@ -730,7 +796,9 @@ _EXPLAIN = (("name in the text: ", "a name the picture must not show: {}"),
             ("unknown name: ", "a name the book has not used by this point: {}"),
             ("wording: ", "wording that looks back on the story or ahead: {}"),
             ("tie not in the text: ", "a tie the book does not state: {}"),
-            ("copies the book: ", "words copied from the book: {}"))
+            ("copies the book: ", "words copied from the book: {}"),
+            ("unknown figure label: ", "a figure label the picture has no reference for: {}"),
+            ("lost the figure labels", "a rewrite that no longer labels the figures it draws{}"))
 
 
 def explain(why: str) -> str:
@@ -769,7 +837,9 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0) -> None:
+                 pause: float = 1.0, cheap_text=None) -> None:
+        """`text` writes the prompts; `cheap_text` (else `text`) makes the look sentences, the one choosing call the prompt
+        path may make (the Reader's sheet writes with a strong model and should pick with the cheap one)."""
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -777,6 +847,8 @@ class Illustrator:
                 raise ValueError("several indexes are drawn together only as books of one series (each with the same "
                                  "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
+        self.cheap = cheap_text if cheap_text is not None else text
+        self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
         self.portraits = portrait_cast(portraits)      # "main", "all" or None
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
         # `chapters` (the CLI's --chapters) limits scenes to those chapters and portraits to anchors up to the last of them;
@@ -855,11 +927,11 @@ class Illustrator:
         if self.books[bi].b.draw or bi in self._dirty:
             self.books[bi].b.sink.save(self.man[bi])
 
-    def _complete(self, prompt: str, schema: dict = SCHEMA, system: str = SYSTEM) -> dict:
+    def _complete(self, prompt: str, schema: dict = SCHEMA, system: str = SYSTEM, model=None) -> dict:
         """One text call; a failure (provider error, timeout, a reply that is not JSON) is retried once, then TextFailed."""
         for attempt in (0, 1):
             try:
-                out = self.text.complete(system, prompt, schema)
+                out = (model or self.text).complete(system, prompt, schema)
                 return out if isinstance(out, dict) else {}
             except llm.Cancelled:
                 raise
@@ -870,7 +942,8 @@ class Illustrator:
         return {}
 
     def _usage(self) -> float:
-        return float(getattr(getattr(self.text, "usage", None), "cost_usd", 0.0) or 0.0)
+        models = [self.text] + ([self.cheap] if self.cheap is not self.text else [])
+        return sum(float(getattr(getattr(m, "usage", None), "cost_usd", 0.0) or 0.0) for m in models)
 
     def text_spent(self) -> float:
         return self._usage() - self._usage0
@@ -906,10 +979,10 @@ class Illustrator:
                                                                if finished is None or self._bkey(j) in finished)))
 
     def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int],
-             finished: frozenset[str] | None = None) -> tuple[str | None, str]:
+             finished: frozenset[str] | None = None, check: Callable[[str], str] | None = None) -> tuple[str | None, str]:
         """(text, "") when a written text is usable at an anchor, else (None, reason): its length, a word the book has not
-        used by the anchor, hindsight or "now" wording, a tie the material does not state, talk about "the passage", and a
-        person's or creature's name."""
+        used by the anchor, hindsight or "now" wording, a tie the material does not state, talk about "the passage", a
+        person's or creature's name, and `check` (a scene's figure labels, `_label_check`)."""
         text = " ".join(str(text or "").split())
         n = _words(text)
         if n and n < words[0]:
@@ -927,22 +1000,40 @@ class Illustrator:
         hit = self.names[bi].find(got)
         if hit:
             return None, f"name in the text: {hit}"
+        if check is not None and (why := check(got)):
+            return None, why
         return got, ""
+
+    @staticmethod
+    def _label_check(given: set[str], keep: set[str] | None = None) -> Callable[[str], str]:
+        """The check of a scene's figure labels: every label the text uses is one the material gave (`given`); for a softened
+        prompt (`keep`: the labels of the refused text, a set even when empty), only those, and at least one of them when it
+        had any. A refused text with no label gives none: a rewrite never labels a figure that text left unlabelled."""
+        allowed = set(given) & set(keep) if keep is not None else set(given)
+
+        def check(text: str) -> str:
+            used = set(labels_in(text))
+            if bad := sorted(used - allowed):
+                return f"unknown figure label: figure {bad[0]}"
+            if keep and allowed and not used & allowed:
+                return "lost the figure labels"
+            return ""
+        return check
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
                     schema: dict = SCHEMA, finished: frozenset[str] | None = None,
-                    system: str = WRITER) -> tuple[str | None, str, dict]:
+                    system: str = WRITER, check: Callable[[str], str] | None = None) -> tuple[str | None, str, dict]:
         """One writer call, one rewrite naming what a check caught, then, when only a name is wrong, code replaces it by a
         role (`_Names.strip`) and checks the text again. (text, "", the reply) or (None, reason, the reply)."""
         out = self._complete(prompt, schema, system)
-        got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
+        got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, check)
         if got is None and why != "empty":
             tries = [(str(out.get("text") or ""), why, out)]
             out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, system)
-            got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
+            got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, check)
             if got is None:
                 for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
-                    fixed = self._fix(text_, why_, bi, anchor, source, words, finished)
+                    fixed = self._fix(text_, why_, bi, anchor, source, words, finished, check)
                     if fixed is not None:
                         with self.lock:
                             self.report.dropped["fixed: name replaced by a role"] += 1
@@ -950,27 +1041,30 @@ class Illustrator:
         return got, why, out
 
     def _fix(self, text: str, why: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-             finished: frozenset[str] | None = None) -> str | None:
+             finished: frozenset[str] | None = None, check: Callable[[str], str] | None = None) -> str | None:
         """The last try on a text that failed twice on a name: the names are replaced by a role ("the figure") and the text
         is checked again. None when it still fails, or failed for another reason."""
         for _ in range(8):
             if not why.startswith("name in the text"):
                 return None
             text = self.names[bi].strip(text)
-            got, why = self._vet(text, bi, anchor, source, words, finished)
+            got, why = self._vet(text, bi, anchor, source, words, finished, check)
             if got is not None:
                 return got
         return None
 
     def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-               finished: frozenset[str] | None = None, system: str = WRITER) -> tuple[str | None, str]:
-        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system)
+               finished: frozenset[str] | None = None, system: str = WRITER,
+               check: Callable[[str], str] | None = None) -> tuple[str | None, str]:
+        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system, check=check)
         return got, why
 
     @staticmethod
     def _form(kind: str) -> tuple[str, tuple[int, int]]:
         """The writer's system text and the word range its text is checked against, for a kind of picture."""
-        return (PORTRAIT_WRITER, PORTRAIT_WORDS) if kind == "portrait" else (WRITER, SCENE_WORDS)
+        if kind == "portrait":
+            return PORTRAIT_WRITER, PORTRAIT_WORDS
+        return (SCENE_WRITER if kind in ("plate", "event") else WRITER), SCENE_WORDS
 
     @staticmethod
     def _framed(kind: str, text: str) -> str:
@@ -1190,6 +1284,8 @@ class Illustrator:
                         got.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
             new += sum(self._is_new(bi, j, have) for j in got)
             jobs += got
+        if record and jobs:          # the figures of the scenes: their look sentences now, so no prompt waits on one
+            self.pick_looks(bi, [x for j in jobs for x in self._figures(j) if b.ents.get(x, {}).get("type") in PORTRAIT_TYPES])
         return jobs + ports
 
     def _chosen(self, ch: dict) -> bool:
@@ -1312,6 +1408,7 @@ class Illustrator:
         cast = self._portrait_cast(bi)
         if classify:
             self.classify(bi, [e["id"] for e in cast])
+            self.pick_looks(bi, [e["id"] for e in cast])
         jobs = []
         for e in cast:
             jobs += self._versions(bi, e)
@@ -1449,6 +1546,79 @@ class Illustrator:
                 self._save(bi)
 
 
+    # ---- the look sentences: which sentences of an entity's notes tell how it looks
+
+    @staticmethod
+    def _sentences(text: str) -> list[str]:
+        return [x for x in re.split(r"(?<=[.!?])\s+", " ".join(str(text or "").split())) if x]
+
+    def _look_items(self, bi: int, eid: str) -> list[dict]:
+        """The entity's facets and profiles in book bi (never an arc or a turning point), in reading order."""
+        return [it for it in self.items(bi, eid) if not it["id"].startswith("event:")]
+
+    def look_sentences(self, bi: int, eid: str, make: bool = False) -> dict[str, list[int]] | None:
+        """{item id: [the numbers, from 0, of its sentences (`_sentences`) that tell how the entity looks]} for its facets and
+        profiles in book bi, from the set's cache (`lookSentences[eid] = {"key", "picks"}`, keyed by a hash of the items' ids
+        and texts, so a rebuilt index picks again); {} when it has no items. On a miss, with `make`, one cheap call over all
+        its items (`LOOK_SENTENCES`, a call per LOOK_SENTENCE_BATCH distinct sentences) that only returns numbers, cached; else None, and
+        None when that call fails (the caller falls back). The cache is the whole book's, like the look index: a pick counts
+        only through its own item, which the caller takes from the view at the anchor (its `from` reached, its book read)."""
+        items = self._look_items(bi, eid)
+        if not items:
+            return {}
+        key = self._items_key(items)
+        ids = {i["id"] for i in items}
+
+        def fresh() -> dict | None:
+            got = self.man[bi].setdefault("lookSentences", {}).get(eid)
+            if isinstance(got, dict) and got.get("key") == key:
+                return {k: [int(n) for n in v] for k, v in (got.get("picks") or {}).items() if k in ids}
+            return None
+        if (got := fresh()) is not None or not make:
+            return got
+        with self._class_lock:
+            if (got := fresh()) is not None:
+                return got
+            where: dict[str, list[tuple[str, int]]] = {}       # a distinct sentence -> every (item, number) it occurs as
+            for it in items:
+                for n, sent in enumerate(self._sentences(it["text"])):
+                    where.setdefault(sent, []).append((it["id"], n))
+            order = list(where)
+            e = self.books[bi].ents[eid]
+            name = e["names"][0]["value"]
+            picks: dict[str, list[int]] = {}
+            for at in range(0, len(order), LOOK_SENTENCE_BATCH):      # numbered from 1 in each call
+                batch = order[at:at + LOOK_SENTENCE_BATCH]
+                lines = "\n".join(f"{n}. {sent[:LOOK_SENTENCE_CHARS]}" for n, sent in enumerate(batch, 1))
+                try:
+                    out = self._complete(LOOK_SENTENCES.format(name=name, kind=P.KINDS.get(e["type"], e["type"]),
+                                                               sentences=lines), LOOK_SENTENCES_SCHEMA, model=self.cheap)
+                except TextFailed as err:      # all or nothing: a partial pick would look like a full one
+                    self.log(f"  look sentences of {eid}: text model failed ({err.detail})")
+                    return None
+                for x in out.get("sentences") or [] if isinstance(out.get("sentences"), list) else []:
+                    try:
+                        n = int(x)
+                    except (TypeError, ValueError):
+                        continue
+                    if 1 <= n <= len(batch):
+                        for iid, k in where[batch[n - 1]]:
+                            if k not in picks.setdefault(iid, []):
+                                picks[iid].append(k)
+            picks = {k: sorted(v) for k, v in picks.items()}
+            with self.lock:
+                self.man[bi].setdefault("lookSentences", {})[eid] = {"key": key, "picks": picks}
+                self._dirty.add(bi)
+                self._save(bi)
+            return picks
+
+    def pick_looks(self, bi: int, eids) -> None:
+        """Make the look sentences of these entities of book bi ahead of their prompts (a run, while it plans); an entity with
+        one item has no earlier one to pick from and gets no call."""
+        for eid in dict.fromkeys(eids):
+            if eid in self.books[bi].ents and len(self._look_items(bi, eid)) > 1:
+                self.look_sentences(bi, eid, make=True)
+
     # ---- groups, by name
 
     @staticmethod
@@ -1534,6 +1704,33 @@ class Illustrator:
             which, them = f"Reference pictures {nums} are", "them"
         return LIKENESS.format(which=which, them=them)
 
+    @staticmethod
+    def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None) -> str:
+        """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
+        portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
+        labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
+        references drawn in another style, the likeness words (LIKENESS), numbered the same. A scene without labels (an older
+        prompt) gets the likeness words alone, as `likeness_note` words them. "" when there are no references."""
+        if not refs:
+            return ""
+        out = []
+        if kind == "portrait":
+            out.append(SAME_FIGURE)
+        elif labels is not None:
+            out += [f"Reference picture {n} is figure {lab}." for n, lab in enumerate(labels, 1) if lab]
+            if any(labels):
+                out.append(FIGURE_NOTE)
+        else:
+            return Illustrator.likeness_note(refs)
+        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
+        if other:
+            if len(other) == 1:
+                which, them = f"Reference picture {other[0]} is", "it"
+            else:
+                which, them = "Reference pictures " + ", ".join(map(str, other[:-1])) + f" and {other[-1]} are", "them"
+            out.append(LIKENESS.format(which=which, them=them))
+        return " ".join(out)
+
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
         paragraph of context when there is room, printed in book order."""
@@ -1548,20 +1745,26 @@ class Illustrator:
             return "", []
         return self.passage(bi, keep, upto, words)
 
-    def references(self, job: Job, shows: list[str], finished: set[str] | frozenset[str] | None = None) -> list[tuple[int, dict]]:
+    def references(self, job: Job, shows: list[str], finished: set[str] | frozenset[str] | None = None,
+                   figures: list[dict] | None = None) -> list[tuple[int, dict]]:
         """The pictures attached to a picture as (book index, record), as `make_prompt` attaches them: for a plate or an event,
         the current pictures of the entities it shows (`shows`, entity ids, e.g. `Prompt.shows`) and no others, most tied in
-        the view first, at most MAX_REFERENCES; for a look-change version of a portrait, the previous portrait; else none (a
-        first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
+        the view first, at most MAX_REFERENCES; for a portrait, the entity's latest usable portrait before its anchor (on
+        demand and in runs, a look-change version or not); else none (a first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
         pictures; a figure with none there takes its likeness from the edition's other style sets (`likeness_picture`, the
         record carrying `set`). `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
-        drawn for fewer books, is never attached."""
+        drawn for fewer books, is never attached. `figures` (a scene's `Prompt.figures`, its labelled figures): the current
+        picture of each labelled figure's entity in label order and no others, whatever `shows` says (a figure with none in
+        this set is left out; `draw` pairs pictures with labels by entity)."""
         bi = job.bi
         fin = self._finished(bi, finished if finished is not None else job.finished)
         pos = self._pos(bi, job.anchor)
         if job.kind in ("plate", "event"):
+            if figures is not None:
+                return [hit for f in figures if (hit := self._picture(f["entity"], pos, finished=fin))]
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
-        if job.kind == "portrait" and job.change:
+        if job.kind == "portrait":
+            # the same figure earlier in the story, so a later portrait keeps the face (a look change: the one before it)
             prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             return [prev] if prev else []
         return []
@@ -1570,6 +1773,12 @@ class Illustrator:
                     finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES; a picture
         drawn from a note of an older version is no reference."""
+        return [h for _, h in self._pictured(ids, pos, view, finished)]
+
+    def _pictured(self, ids: list[str], pos: tuple[int, int], view: dict,
+                  finished: frozenset[str] | None = None) -> list[tuple[str, tuple[int, dict]]]:
+        """(entity, its reference picture) for the entities among `ids` that have one, most tied in the view first, at most
+        MAX_REFERENCES: the figures a scene may label, in label order."""
         deg = Counter()
         for r in view["relations"]:
             deg[r["src"]] += 1
@@ -1577,7 +1786,24 @@ class Illustrator:
         found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._picture(eid, pos, finished=finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
-        return [h for _, h in found[:MAX_REFERENCES]]
+        return found[:MAX_REFERENCES]
+
+    @staticmethod
+    def ref_id(rec: dict) -> str | dict:
+        """A reference as a picture record stores it: a plain id in the same set, {"set", "id"} for a likeness."""
+        return {"set": rec["set"], "id": rec["id"]} if rec.get("set") else rec["id"]
+
+    @staticmethod
+    def pair_figures(figures: list[dict], refs: list[tuple[int, dict]], text: str | None = None) -> list[tuple[dict, tuple[int, dict] | None]]:
+        """Each labelled figure with its reference (the picture of its entity among `refs`, None when there is none), in
+        label order; with `text`, only the labels that text still uses (a person may take one out)."""
+        present = None if text is None else set(labels_in(text))
+        out = []
+        for f in sorted(figures or [], key=lambda f: str(f.get("label"))):
+            if present is not None and f.get("label") not in present:
+                continue
+            out.append((f, next(((j, r) for j, r in refs if r.get("target") == f.get("entity")), None)))
+        return out
 
     # ---- the writer's material (every piece from the view at the anchor, or paragraphs at or before it)
 
@@ -1610,6 +1836,92 @@ class Illustrator:
             used.append(f)
             size += len(t) + 1
         return " ".join(parts), used
+
+    _WORD = re.compile(r"[^\W\d_]{3,}")
+
+    def _content(self, text: str, skip: set[str]) -> set[str]:
+        """The words of a text that say something (three letters or more, lowercased), without the entry's own name words."""
+        return {w for w in (m.group(0).lower() for m in self._WORD.finditer(text)) if w not in skip}
+
+    def _earlier_look(self, bi: int, eid: str, v: dict, current: str, budget: int,
+                      fallback: int | None = None) -> tuple[str, list[tuple[int, dict, set[str]]]]:
+        """What earlier descriptions of a visible entry say of its look that its current one does not: (text, [(book, facet,
+        its new words)]). The candidates are the entry's history in the view (so each one is visible at the anchor, of this
+        book or of a finished earlier one, never past its own `from`; arcs never). With the look sentences of every book they
+        come from (`look_sentences`, made here on a miss when `pick_on_demand`: the one choosing call the prompt path may
+        make, one per LOOK_SENTENCE_BATCH sentences), only the picked sentences: the one adding the most words the current
+        description and the sentences kept do not have first (at least EARLIER_NEW_PICKED), up to `budget` characters.
+        Without them (the call failed): with a fresh look index, the items it flags as a look first, then the earlier
+        profiles; without one, the earlier profiles; oldest first, a sentence kept when it adds EARLIER_NEW words, up to
+        `fallback` characters (else `budget`). Printed in reading order."""
+        hist = v.get("history") or []
+        if not hist or budget <= 0:
+            return "", []
+        keys = {self._bkey(j): j for j in range(bi + 1)}
+        skip = {w.lower() for n in self._visible_names(v) for w in self._WORD.findall(n)}
+        seen = self._content(current, skip)
+        found: list[tuple[int, dict]] = []
+        for h in hist:
+            j = keys.get(str(h["book"])) if h.get("book") is not None else bi
+            if j is None:
+                continue
+            f = next((x for x in self.books[j].ents.get(eid, {}).get("facets", []) if x["id"] == h["id"]), None)
+            if f is not None and f.get("kind") != "arc":
+                found.append((j, f))
+        picks: dict[int, dict] = {}
+        for j in dict.fromkeys(j for j, _ in found):
+            got = self.look_sentences(j, eid, make=self.pick_on_demand)
+            if got is None:
+                picks = {}
+                break
+            picks[j] = got
+        if picks:                       # the picked sentences of every earlier item, oldest first
+            cands = [(j, f, [self._sentences(f["text"])[n] for n in picks[j].get(f["id"], [])
+                             if n < len(self._sentences(f["text"]))]) for j, f in found]
+            need = EARLIER_NEW_PICKED
+        else:                           # the fallback: look-flagged items, then earlier profiles, whole
+            flagged = [(j, f) for j, f in found if (self.look_index(j, eid).get(f["id"]) or {}).get("look")]
+            profiles = [(j, f) for j, f in found if f.get("kind") == "profile" and (j, f) not in flagged]
+            cands = [(j, f, self._sentences(f["text"])) for j, f in flagged + profiles]
+            need, budget = EARLIER_NEW, fallback or budget
+        parts, used, size = [], [], 0
+        if picks:
+            # the sentence that adds the most words not said yet goes first (the oldest on a tie), so a run of near-repeats
+            # ("tall and pale with grey eyes", forty times over a long book) gives way to a look told once
+            pool = [(j, f, (n, k), sent, self._content(sent, skip)) for n, (j, f, sents) in enumerate(cands)
+                    for k, sent in enumerate(sents)]      # (note, sentence within it): reading order within a note too
+            added: dict[tuple[int, str], tuple[int, dict, set[str]]] = {}
+            while pool:
+                best = max(range(len(pool)), key=lambda i: (len(pool[i][4] - seen), -i))
+                j, f, n, sent, w = pool.pop(best)
+                if len(w - seen) < need:
+                    break
+                if size + len(sent) + 1 > budget:
+                    continue
+                parts.append((j, self.books[j].ord_of.get(f["from"], -1), n, sent))
+                added.setdefault((j, f["id"]), (j, f, set()))[2].update(w - seen)
+                seen |= w
+                size += len(sent) + 1
+            parts.sort(key=lambda t: t[:3])
+            return " ".join(t[3] for t in parts), list(added.values())
+        for j, f, sents in cands:
+            new_words: set[str] = set()
+            for sent in sents:
+                w = self._content(sent, skip)
+                if len(w - seen) < need:
+                    continue
+                if size + len(sent) + 1 > budget:
+                    break
+                parts.append((j, self.books[j].ord_of.get(f["from"], -1), len(parts), sent))
+                new_words |= w - seen
+                seen |= w
+                size += len(sent) + 1
+            if new_words:
+                used.append((j, f, new_words))
+            if size >= budget:
+                break
+        parts.sort(key=lambda t: t[:3])
+        return " ".join(t[3] for t in parts), used
 
     def _groups_of(self, eid: str, view: dict, texts: list[str]) -> list[str]:
         """The visible groups an entity is tied to (any tie of the view), then those whose name its visible profile or
@@ -1730,10 +2042,12 @@ class Illustrator:
         return [x for x, _ in Counter(ids).most_common(4)]
 
     @staticmethod
-    def _tag(tag: str, v: dict, desc: str) -> str:
+    def _tag(tag: str, v: dict, desc: str, figure: str = "") -> str:
         head = f'<{tag} name="{_attr(v["name"])}" type="{TYPE_WORDS.get(v["type"], "thing")}"'
         if v.get("aliases"):
             head += f' also="{_attr(", ".join(v["aliases"][:3]))}"'
+        if figure:
+            head += f' figure="{figure}"'
         return f"{head}>{_esc(desc)}</{tag}>"
 
     def make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None = None) -> Prompt:
@@ -1760,9 +2074,11 @@ class Illustrator:
                 refused = refused[:-len(tail)].rstrip()
         if refused.startswith(PORTRAIT_FRAME):
             refused = refused[len(PORTRAIT_FRAME):].lstrip()
-        return self._make_prompt(job, finished, soften_request(refused, reason))
+        # the figures the refused text labelled keep their labels (and at least one of them must stay labelled)
+        return self._make_prompt(job, finished, soften_request(refused, reason), set(labels_in(refused)))
 
-    def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "") -> Prompt:
+    def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "",
+                     keep: set[str] | None = None) -> Prompt:
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1800,6 +2116,16 @@ class Illustrator:
             mine = used(job.target, shown)
             material.append(self._tag("entry_to_draw", v, desc))
             plain.append(desc)
+            # a look told earlier and not repeated since: the earlier descriptions, from the view's history at the anchor
+            earlier, said = self._earlier_look(bi, job.target, v, desc, EARLIER_CHARS, EARLIER_FALLBACK_CHARS)
+            if earlier:
+                material.append(f"<earlier_look>{_esc(earlier)}</earlier_look>")
+                plain.append(earlier)
+                for j, f, _ in said:
+                    if j == bi:
+                        sources.add(f["from"])
+                    else:
+                        inherits.add(self._bkey(j))
             # the passages, within one budget: first what the latest shown profile and details cite (the latest first, up to
             # about half the budget: how it looks at this point, an undead Lucy included), then how it was first described (the
             # first paragraphs that name it, and those its earliest profile and details cite), then the rest of what the shown
@@ -1818,11 +2144,29 @@ class Illustrator:
                     break
                 latest.append(x)
                 size += w
+            # then the paragraph each earlier look item rests on (its cited paragraph that holds most of the words it adds), up
+            # to EARLIER_WORDS: the book's own words for a look the current description no longer repeats
+            ranked = []
+            for j, f, new_words in said:
+                if j == bi:
+                    for x in cited([f]):
+                        hit = len(self._content(b.text.get(x, ""), set()) & new_words)
+                        if hit:
+                            ranked.append((-hit / len(new_words), -hit, x))
+            looked, size = [], 0
+            for _, _, x in sorted(ranked):      # the paragraph that holds most of what an earlier item adds, first
+                if x in latest or x in looked:
+                    continue
+                w = _words(b.text.get(x, ""))
+                if looked and size + w > EARLIER_WORDS:
+                    break
+                looked.append(x)
+                size += w
             early = sorted((f for f in self._own(bi, job.target).values() if b.ord_of[f["from"]] <= b.ord_of[anchor]),
                            key=lambda f: b.ord_of[f["from"]])
             first = [x for x, at in b.hits(job.target) if x <= upto and at <= upto][:FIRST_PARAS]
             first += cited([f for f in early if f.get("kind") == "profile"][:1] + [f for f in early if f.get("kind") != "profile"][:2])
-            seqs = list(dict.fromkeys(latest + first + cited(mine) + self._mentions(bi, job.target, upto, 8)))
+            seqs = list(dict.fromkeys(latest + looked + first + cited(mine) + self._mentions(bi, job.target, upto, 8)))
             passage, blocks = self._passage_first(bi, seqs, upto, ENTITY_WORDS)
             if v["type"] in PORTRAIT_TYPES:
                 others = self._groups_of(job.target, view, [f["text"] for f in shown])
@@ -1867,11 +2211,37 @@ class Illustrator:
             material.append(f"<passage>{_esc(passage)}</passage>")
             plain.append(passage)
             sources |= {b.anchor_at(s) for s in blocks}
+        # a scene's figures with a reference picture get a label, most tied first (A, B...): the writer names a figure it draws
+        # by its label, and the labels in its text decide which pictures are sent
+        label_of: dict[str, str] = {}
+        if scene:
+            pictured = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
+            found = self._pictured(pictured, self._pos(bi, anchor), view, fin)
+            label_of = {eid: LABELS[n] for n, (eid, _) in enumerate(found)}
         for eid in others[:MAX_ENTRIES]:
             desc, shown = self._describe(vis[eid], OTHER_CHARS)
+            earlier, said = "", []
+            if scene and eid in ids and vis[eid]["type"] in PORTRAIT_TYPES:   # a figure's look told earlier, within its budget
+                first, _ = self._earlier_look(bi, eid, vis[eid], desc, OTHER_CHARS // 3)
+                if first:
+                    # make room for it, then choose it against the entry as it is sent: a look in a detail the shorter
+                    # entry drops is no longer "said" and may come back in the earlier look
+                    short, short_shown = self._describe(vis[eid], OTHER_CHARS - len(first) - 1)
+                    earlier, said = self._earlier_look(bi, eid, vis[eid], short,
+                                                       min(OTHER_CHARS // 3, OTHER_CHARS - len(short) - 1))
+                    if earlier:
+                        desc, shown = short, short_shown
             used(eid, shown)
-            material.append(self._tag("entry", vis[eid], desc))
+            material.append(self._tag("entry", vis[eid], desc, label_of.get(eid, "")))
             plain.append(desc)
+            if earlier:
+                material.append(f'<earlier_look name="{_attr(vis[eid]["name"])}">{_esc(earlier)}</earlier_look>')
+                plain.append(earlier)
+                for j, f, _ in said:
+                    if j == bi:
+                        sources.add(f["from"])
+                    else:
+                        inherits.add(self._bkey(j))
         milieu = ""
         if job.kind == "portrait":
             places, srcs = self._settings(bi, job.target, anchor)
@@ -1894,19 +2264,27 @@ class Illustrator:
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
         system, words = self._form(job.kind)
-        body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system)
+        labels = self._label_check(set(label_of.values()), keep) if scene else None
+        body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system,
+                                          labels)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         body = self._framed(job.kind, body)
+        figures = None
         if scene:                          # an entity's own picture always shows it
-            ids = self._shown(out, ids, vis)
-        refs = self.references(job, ids, fin)
+            entity_of = {lab: eid for eid, lab in label_of.items()}
+            figures = [{"label": lab, "entity": entity_of[lab]} for lab in labels_in(body) if lab in entity_of]
+            labelled = [f["entity"] for f in figures]
+            # the labelled figures first; a figure the material labelled and the text does not is not drawn
+            ids = labelled + [x for x in self._shown(out, ids, vis) if x not in labelled and x not in label_of]
+        refs = self.references(job, ids, fin, figures)
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         style = self._style(bi)
         return Prompt(self._assemble(body, bi, style), body, anchor, job.shape or SHAPE_OF[job.kind], [], refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
-                      sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, NO_TEXT, list(ids))
+                      sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, NO_TEXT, list(ids),
+                      figures)
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
         """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
@@ -1998,7 +2376,24 @@ class Illustrator:
             self.reserved = max(0.0, self.reserved - amount)
             self.in_flight = max(0, self.in_flight - 1)
 
-    def _record(self, job: Job, pr: Prompt, pic: images.Drawn) -> dict:
+    def _attach(self, job: Job, pr: Prompt) -> tuple[list[tuple[int, dict, bytes]], list[str] | None, list[dict] | None]:
+        """What goes with the prompt being drawn (`pr.text`): (the references as (book, record, bytes), their labels in the same
+        order or None, the record's `figures` or None). A scene with labelled figures (`pr.figures`) sends, in label order, the
+        reference of each label its text still uses, and nothing for a label taken out or a figure it never labelled; every
+        other picture (an older prompt included) sends its references as before."""
+        if job.kind in ("plate", "event") and pr.figures is not None:
+            got, labels, figures = [], [], []
+            for f, hit in self.pair_figures(pr.figures, pr.references, pr.text):
+                data = self.reference_bytes(*hit) if hit else None
+                if data and len(got) < images.MAX_REFERENCES:
+                    got.append((hit[0], hit[1], data))
+                    labels.append(f["label"])
+                figures.append({"label": f["label"], "entity": f["entity"], "ref": self.ref_id(hit[1]) if data else None})
+            return got, labels, figures
+        return [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES], None, None
+
+    def _record(self, job: Job, pr: Prompt, pic: images.Drawn, sent: list[tuple[int, dict, bytes]] | None = None,
+                figures: list[dict] | None = None) -> dict:
         b = self.books[job.bi]
         fid = "p" + hashlib.sha256(pic.data).hexdigest()[:8]
         mime = pic.mime or "image/png"
@@ -2006,8 +2401,11 @@ class Illustrator:
         rec = {"id": fid, "kind": job.kind, "target": job.target,
                "chapter": (job.chapter or b.chapter_of(pr.anchor) or {}).get("title"), "from": pr.anchor,
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
-               "references": [{"set": r["set"], "id": r["id"]} if r.get("set") else r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
+               "references": [self.ref_id(r) for _, r in pr.references] if figures is None else [self.ref_id(r) for _, r, _ in sent or []],
+               "sources": pr.sources, "inherits": list(pr.inherits),
                **({"notes": pr.version} if pr.version is not None else {})}
+        if figures is not None:
+            rec["figures"] = figures
         if pr.partial:
             rec["partial"] = True
         rec.update({"provider": self.provider, "model": pic.model or self.model, "quality": self.quality, "shape": pr.shape,
@@ -2042,9 +2440,9 @@ class Illustrator:
         price = llm.image_price(self.provider, self.model, self.quality, pr.shape) or 0.0
         softened = retried = False
         while True:
-            got = [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES]
+            got, labels, figures = self._attach(job, pr)
             refs = [(d, r["mime"]) for _, r, d in got]
-            note = self.likeness_note([(j, r) for j, r, _ in got])
+            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels)
             why, amount = self._reserve(price)
             if why:
                 with self.lock:
@@ -2066,8 +2464,11 @@ class Illustrator:
                     try:
                         system, words = self._form(job.kind)
                         refused = pr.scene[len(PORTRAIT_FRAME):].lstrip() if pr.scene.startswith(PORTRAIT_FRAME) else pr.scene
+                        given = {f["label"] for f in pr.figures or []}
+                        keep = set(labels_in(refused)) & given
                         soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
-                                              self._finished(bi, job.finished), system)
+                                              self._finished(bi, job.finished), system,
+                                              self._label_check(given, keep) if pr.figures is not None else None)
                         soft = self._framed(job.kind, soft) if soft else soft
                     except TextFailed:
                         soft = None
@@ -2096,7 +2497,7 @@ class Illustrator:
                 return None
             self._release(amount)
             break
-        rec = self._record(job, pr, pic)
+        rec = self._record(job, pr, pic, got, figures)
         with self.lock:
             self.books[bi].b.sink.put(rec["file"], pic.data)
             self._dirty.add(bi)
@@ -2132,6 +2533,7 @@ class Illustrator:
         return self.report
 
     def _run(self) -> None:
+        self.pick_on_demand = False        # the look sentences are made while planning; a prompt that misses one falls back
         drawn = [bi for bi, b in enumerate(self.books) if b.b.draw and b.epub is not None]
         first: dict[int, int] = {}
         for bi in drawn:                   # a first count for the progress total
