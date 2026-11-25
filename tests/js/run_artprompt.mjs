@@ -1,0 +1,67 @@
+// artprompt.js: a picture prompt in its parts, and a style change made in the browser with no new prompt.
+//   node tests/js/run_artprompt.mjs
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import assert from "node:assert/strict";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const { composePrompt, promptParts, restyle, sentenceFor } = await import(join(here, "../../src/lorekeeper/web/static/js/artprompt.js"));
+let failed = 0;
+const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
+
+const reply = {
+  prompt: "A tall woman in a grey coat by a window. Ink drawing, bold lines. No text anywhere.",
+  body: "A tall woman in a grey coat by a window.", style: "Ink drawing, bold lines.", noText: "No text anywhere.",
+  styles: { ink: "Ink drawing, bold lines.", watercolour: "Soft watercolour washes." },
+};
+const parts = promptParts(reply);
+
+test("the parts join as art.py joins them, one space apart", () => {
+  assert.equal(composePrompt(parts.body, parts.style, parts.noText), reply.prompt);
+});
+test("an older server's reply has no parts", () => {
+  assert.equal(promptParts({ prompt: "x" }), null);
+  assert.equal(promptParts({ prompt: "x", body: "  " }), null);
+});
+test("a style's sentence: a listed one from the table, a custom one as written, an unlisted one unknown", () => {
+  assert.equal(sentenceFor(parts, "watercolour"), "Soft watercolour washes.");
+  assert.equal(sentenceFor(parts, "custom", "  linocut,\n two colours "), "linocut, two colours");
+  assert.equal(sentenceFor(parts, "custom", " "), "");
+  assert.equal(sentenceFor(parts, "oil"), null);
+});
+test("an unedited prompt is built again from its body", () => {
+  const r = restyle({ prompt: reply.prompt, written: reply.prompt, parts, old: parts.style, next: "Soft watercolour washes." });
+  assert.equal(r.prompt, "A tall woman in a grey coat by a window. Soft watercolour washes. No text anywhere.");
+  assert.equal(r.written, r.prompt);
+  assert.equal(r.missing, false);
+});
+test("an edited prompt keeps the edit and has its old style sentence replaced", () => {
+  const edited = reply.prompt.replace("tall", "very tall");
+  const r = restyle({ prompt: edited, written: reply.prompt, parts, old: parts.style, next: "Soft watercolour washes." });
+  assert.equal(r.prompt, "A very tall woman in a grey coat by a window. Soft watercolour washes. No text anywhere.");
+  assert.notEqual(r.prompt, r.written);   // still edited: closing the sheet asks first
+  assert.equal(r.missing, false);
+});
+test("an edited prompt without its style sentence is left as written, and says so", () => {
+  const edited = "A tall woman by a window, in pencil.";
+  const r = restyle({ prompt: edited, written: reply.prompt, parts, old: parts.style, next: "Soft watercolour washes." });
+  assert.equal(r.prompt, edited);
+  assert.equal(r.missing, true);
+  assert.equal(r.sentence, "Soft watercolour washes.");
+});
+test("an empty custom style and then a typed one", () => {
+  const a = restyle({ prompt: reply.prompt, written: reply.prompt, parts, old: parts.style, next: "" });
+  assert.equal(a.prompt, "A tall woman in a grey coat by a window. No text anywhere.");
+  const edited = a.prompt.replace("tall", "short");
+  const b = restyle({ prompt: edited, written: a.written, parts, old: a.sentence, next: "linocut, two colours" });
+  assert.equal(b.prompt, "A short woman in a grey coat by a window. linocut, two colours No text anywhere.");
+  assert.equal(b.missing, false);
+});
+test("a sentence with $ patterns is put in literally", () => {
+  const edited = reply.prompt + " ";
+  const r = restyle({ prompt: edited, written: reply.prompt, parts, old: parts.style, next: "Costs $& and $1." });
+  assert.ok(r.prompt.includes("Costs $& and $1."));
+});
+
+if (failed) { console.log(`${failed} failed`); process.exit(1); }
+console.log("all passed");
