@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/nightspine/lorekeeper/compare/v0.16.0...v0.17.0) (2026-11-25)
+
+
+### Features
+
+* choose the image model for pictures (Nano Banana 2.1, Lite, Pro, and OpenAI's) ([#103](https://github.com/nightspine/lorekeeper/issues/103)) ([7753703](https://github.com/nightspine/lorekeeper/commit/7753703ec4873f49dc1a4a1f325cc19d8e81185c))
+* portraits from every look the book gives, in each character's own surroundings, with no look word lists ([#107](https://github.com/nightspine/lorekeeper/issues/107)) ([07ae9ea](https://github.com/nightspine/lorekeeper/commit/07ae9ea12e20efe9278f480aca5e3eab2edc161c))
+
+
+### Bug Fixes
+
+* a picture prompt never fails forever on a name, and a refusal says what it caught ([#106](https://github.com/nightspine/lorekeeper/issues/106)) ([fea3267](https://github.com/nightspine/lorekeeper/commit/fea326738f85c80ea1077c63d7269ed6cff1dcf6))
+
 ## [0.16.0](https://github.com/nightspine/lorekeeper/compare/v0.15.0...v0.16.0) (2026-11-25)
 
 
