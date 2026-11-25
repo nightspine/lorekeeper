@@ -1330,7 +1330,7 @@ def test_a_dropped_prompt_says_the_check_and_the_word_only_when_the_reader_has_m
     assert il._say("name in the text: Oren", 0, "a5", None) == "a name the picture must not show: Oren"
     assert il._say("name in the text: Gabriel", 0, "a5", None) == "a name the book has not used by this point"   # met at a8
     assert il._say("name in the text: Gabriel", 0, "a9", None) == "a name the picture must not show: Gabriel"
-    assert il._say("name in the text: GABRIEL", 0, "a9", None) == "a name the picture must not show: GABRIEL"
+    assert il._say("name in the text: GABRIEL", 0, "a9", None) == "a name the book has not used by this point"   # case-sensitive
     assert il._say("unknown name: Valdemar", 0, "a11", None) == "a name the book has not used by this point"
     assert il._say("look not in the note: thin", 0, "a5", None) == "a look the book does not give this figure: thin"
     assert art.explain("wording: has just") == "wording that looks back on the story or ahead: has just"
@@ -1380,9 +1380,22 @@ def test_a_role_that_names_the_house_is_written_without_it():
 # combination: capitals with 'S, quotes around a name, both apostrophes, non-ASCII letters, particles, hyphens.
 SHAPE_NAMES = ["Mira", "Jonathan Harker", "Jean-François", "Gabriel de León", "Patrick O'Brien", "Cassius au Bellona", "Millers"]
 SHAPES = ["{n} waits.", "He sees {n} by the gate.", "The coat of {n}'s, {n}’s and {n}'S.", "A banner reads {N}.",
-          "A banner reads {N}'S coat and {N}’S hat.", "He calls 'Mira' and '{n}' and \"{n}\" and ‘{n}’.",
+          "A banner reads {N}'S coat and {N}’S hat.", "He calls '{n}' and \"{n}\" and ‘{n}’.",
           "A '{N}' sign.", "A half-{n} grin and {n}-like shadows.", "The {n}s' cart.", "The {N}S' cart.",
-          "Mr. {n} and Professor {n}’s owl.", "Behind them, {n}'s.", "\"{n},\" he says."]
+          "Mr. {n} and Professor {n}’s owl.", "Behind them, {n}'s.", "\"{n},\" he says.",
+          "He said '{n}'s'.", "A sign reads '{N}'S'.", "He said ‘{n}’s’.", "A sign reads ‘{N}’S’.", "'{n}' waits."]
+
+
+def planted_gone(names, name, t):
+    """`find` reports the planted name (or its plural), and nothing of it is left after `strip`."""
+    found = names.find(t).replace("’", "'").lower()
+    assert found and found.rstrip("s") in name.replace("’", "'").lower(), (t, found)
+    out = names.strip(t)
+    assert names.find(out) == "", (t, out)
+    for w in re.findall(r"[^\W\d_][\w'’]{2,}", name):
+        if w[0].isupper():
+            assert not re.search(re.escape(w), out, re.IGNORECASE), (t, out)
+    return out
 
 
 def shape_names():
@@ -1394,11 +1407,24 @@ def shape_names():
 @pytest.mark.parametrize("shape", SHAPES)
 @pytest.mark.parametrize("name", SHAPE_NAMES)
 def test_find_after_strip_is_empty_for_every_shape(name, shape):
-    names = shape_names()
-    t = shape.format(n=name, N=name.upper())
-    assert names.find(t), t
-    out = names.strip(t)
-    assert names.find(out) == "", (t, out)
+    planted_gone(shape_names(), name, shape.format(n=name, N=name.upper()))
+
+
+ORDINARY_SHAPES = ["Someone whispers '{n}' and turns.", "He calls ‘{n}’ twice.", "She sees the {n} by the gate.",
+                   "A banner of the {N} hangs.", "He fears the {n}'s hand.", "\"The {n},\" he says.", "'The {n}' waits."]
+
+
+@pytest.mark.parametrize("shape", ORDINARY_SHAPES)
+@pytest.mark.parametrize("name", ["Stranger", "Dead"])
+def test_an_ordinary_word_name_away_from_a_sentence_start_is_found_and_stripped(name, shape):
+    names = names_for([ent("dead", "the Dead", "group", frm="a2")])
+    planted_gone(names, name, shape.format(n=name, N=name.upper()))
+
+
+def test_an_ordinary_word_name_opening_a_sentence_is_no_name():
+    names = names_for([ent("dead", "the Dead", "group", frm="a2")])
+    for t in ("Stranger things wait.", "It ends. Dead leaves fall.", "Why? Stranger still, it rains."):
+        assert names.find(t) == "" and names.strip(t) == t
 
 
 def test_a_capitalised_possessive_and_curly_apostrophes_are_found():
@@ -1439,3 +1465,30 @@ def test_a_custom_style_naming_someone_is_stripped_in_the_assembled_prompt():
                          log=lambda *_: None, pause=0)
     pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
     assert "Oren" not in pr.text and not il.names[0].find(pr.text) and "the figure would draw it" in pr.text
+
+
+def test_a_softened_redraw_runs_the_same_last_name_check(monkeypatch):
+    # the quieter rewrite after a refusal is assembled again; a name still in it then (here forced in) is never drawn
+    quiet = ("A door stands ajar in a stone mill at dusk and a long shadow lies across the worn floor. A lamp burns low on a wooden table "
+             "beside a woven basket, and the last grey light comes through one small window. The room is quiet and empty and the air is still.")
+    real = art.Illustrator._assemble
+    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1:
+                        real(self, scene, notes, world, bi) + (" Oren" if scene.startswith(quiet[:20]) else ""))
+    t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
+    im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30])])
+    il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
+    assert not any("Oren" in c["prompt"] and c["prompt"].startswith(quiet[:20]) for c in im.calls)
+    assert rep.skipped["dropped: name in prompt"] == 2 and not pics(sink, "plate")
+
+
+def test_the_reason_never_shows_a_name_known_only_as_a_lowercase_word():
+    lower = ["They said the rain may come and the wind will rise before the evening fell.",
+             "Mira hoped the dawn would bring the miller home before the market day began."]
+    bk = book(("One", CH1), ("Two", CH2), ("Three", lower))
+    d = base_doc(bk)
+    d["entities"] += [ent("dawn", "Dawn", frm="a12"), ent("will", "Will", frm="a12"), ent("may", "May", frm="a12")]
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", log=lambda *_: None, pause=0)
+    hidden = "a name the book has not used by this point"
+    for w in ("Dawn", "Will", "May"):           # "at dawn", "will rise", "may come": the book never wrote the name
+        assert il._say(f"name in the text: {w}", 0, "a13", None) == hidden
+    assert il._say("name in the text: Mira", 0, "a13", None) == "a name the picture must not show: Mira"

@@ -25,7 +25,6 @@ from bisect import bisect_left, bisect_right
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from functools import cached_property
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -541,115 +540,156 @@ class Report:
         return out
 
 
-@dataclass(frozen=True)
 class _Names:
-    """The names a prompt may not use: full names of two words or more (one alternation), name words that are not ordinary
-    sentence words ("Mira"), and one-word names that are ordinary words ("Grace"), which count only away from a sentence's start."""
-    phrases: re.Pattern | None
-    tokens: frozenset[str]
-    alone: frozenset[str]
-    groups: frozenset[str] = frozenset()     # the names (and name words) of groups: replaced by "the people", not "the figure"
+    """The names a prompt may not use, and the one tokenizer `find` and `strip` share, so they never disagree: `strip`
+    replaces exactly the spans `find`'s scan (`_spans`) reports.
 
-    _TITLE = r"(?:(?:" + "|".join(sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*"
-    # One rule for both `find` and `strip`: a name is bounded by anything but a letter or digit (a space, a hyphen, a quote or
-    # an apostrophe: "half-Hagrid", "'Cassius au Bellona'"), and may carry a possessive in any case ('s, 'S, ’s, or s' / S').
-    _POS = r"(?:['’][sS]|(?<=[sS])['’])"
-    _COMPOUND = re.compile(r"(?<![\w-])[\w'’]+(?:-[\w'’]+)*")       # a word, with the hyphenated words joined to it
-    _OPENS = re.compile(r"(?:^|[.!?:;\"“”‘]\s*|(?:^|\s)['’]\s*)$")  # what a sentence's first word follows
-    _CAPITAL = re.compile(r"(?:^|[.!?\"“”‘]\s*|(?:^|[.!?]\s*)['’])$")                     # where a role word put in starts with a capital
+    A text is split into word runs: letters and digits with inner apostrophes ("O'Brien", "Mira's"); a hyphen, a quote or any
+    other mark ends a run ("half-Hagrid" is two runs, "'Mira'" is the run Mira). A run is compared without a trailing
+    possessive ('s or ’s in any case; for s' the apostrophe is outside the run anyway), with either apostrophe, as the name
+    writes it or all in capitals ("HAGRID"). A name is one run ("Mira", the plural "Bellonas" of a name word "Bellona") or a
+    sequence of runs joined by spaces, hyphens or a title's dot, lowercase particles included ("Cassius au Bellona",
+    "Jean-François", "Mrs. Figg"). A one-word name that is an ordinary sentence word ("Grace", "the Stranger") counts only
+    where it does not open a sentence: the previous non-space character is ".", "!" or "?", or there is none (a quote or an
+    apostrophe never opens one)."""
+
+    _RUN = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+    _GAP = re.compile(r"[\s-]+|\.\s*")                          # what joins the runs of one name
+    _BEFORE = re.compile(r"(?i)(?:(?<![\w'’-])(?:(?:the|a|an)\s+)?(?:(?:" + "|".join(
+        sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*)?$")   # an article and titles go too
+
+    def __init__(self, names: list[tuple[str, bool]]) -> None:
+        """`names`: (a name as the index has it, the entity is a group). An article and notes in brackets are taken off."""
+        self.tokens: dict[str, tuple[str, bool]] = {}    # folded -> (as written, group): name words that count anywhere
+        self.alone: dict[str, tuple[str, bool]] = {}     # one-word names that are ordinary words: "Stranger", "Grace"
+        self.phrases: dict[str, list[tuple[tuple[str, ...], bool]]] = {}   # first run folded -> (runs, group), longest first
+        for value, group in names:
+            value = " ".join(re.sub(r"\(.*?\)", " ", value).split())
+            value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
+            runs = [self._apos(self._base(m.group(0))) for m in self._RUN.finditer(value)]
+            if not runs:
+                continue
+            words = [r for r in runs if r[:1].isupper() and len(r) >= 3 and r.lower() not in P.TITLES
+                     and r.lower() not in ("the", "and", "van", "von")]
+            if len(runs) > 1:
+                self.phrases.setdefault(runs[0].lower(), []).append((tuple(runs), group))
+            elif words and words[0].lower() in SENTENCE_FIRST:
+                self._add(self.alone, words[0], group)
+            for w in words:
+                if w.lower() not in SENTENCE_FIRST:     # "Mira", "Harker"; never "Order" or "Dawn" alone
+                    self._add(self.tokens, w, group)
+        for v in self.phrases.values():
+            v.sort(key=lambda t: -len(t[0]))
 
     @staticmethod
-    def _apos(x: str) -> str:
-        return x.replace("’", "'")
+    def _add(table: dict, word: str, group: bool) -> None:
+        was = table.get(word.lower())
+        table[word.lower()] = (word, group or bool(was and was[1]))
 
-    @cached_property
-    def _lower(self) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-        return tuple(frozenset(self._apos(t).lower() for t in s) for s in (self.tokens, self.alone, self.groups))
+    # ---- the tokenizer
 
-    @cached_property
-    def _exact(self) -> tuple[frozenset[str], frozenset[str]]:
-        return tuple(frozenset(self._apos(t) for t in s) for s in (self.tokens, self.alone))
+    @staticmethod
+    def _base(run: str) -> str:
+        """A run without a trailing possessive ("Mira's", "MIRA’S": "Mira", "MIRA")."""
+        return re.sub(r"(?<=[^\W_])['’][sS]$", "", run)
 
-    def _kind(self, x: str) -> str:
-        """"token", "alone" or "" for one word as written: exactly (either apostrophe: "O’Brien" is "O'Brien"), or in capitals
-        ("HAGRID"), or the plural of a name word ("the Bellonas" of "Cassius au Bellona")."""
-        tokens, alone, _ = self._lower
-        exact_tokens, exact_alone = self._exact
-        for y in (x, x[:-1] if len(x) > 4 and x[-1] in "sS" else ""):
-            if not y:
+    @staticmethod
+    def _apos(s: str) -> str:
+        return s.replace("’", "'")
+
+    @classmethod
+    def _same(cls, run: str, name: str) -> bool:
+        """A run of the text is this word of a name: as the name writes it (either apostrophe), or all in capitals."""
+        run = cls._apos(run)
+        return run == name or (run.isupper() and run.lower() == name.lower())
+
+    def _runs(self, text: str) -> list[tuple[int, int, int, str]]:
+        """(start, end of the name part, end of the run, the name part) per run: the name part leaves a possessive out."""
+        out = []
+        for m in self._RUN.finditer(text):
+            base = self._base(m.group(0))
+            out.append((m.start(), m.start() + len(base), m.end(), base))
+        return out
+
+    @staticmethod
+    def _opens(text: str, at: int) -> bool:
+        before = text[:at].rstrip()
+        return not before or before[-1] in ".!?"
+
+    def _word(self, text: str, run: tuple[int, int, int, str]) -> bool | None:
+        """For a one-run name word: None when it is no name here, else whether it is a group's."""
+        s, _, _, w = run
+        for x in (w, w[:-1] if len(w) > 4 and w[-1] in "sS" else ""):     # "Bellonas" of "Bellona"
+            if not x:
                 continue
-            y = self._apos(y)
-            if y in exact_tokens or (y.isupper() and y.lower() in tokens):
-                return "token"
-            if y in exact_alone or (y.isupper() and y.lower() in alone):
-                return "alone"
-        return ""
+            for table, anywhere in ((self.tokens, True), (self.alone, False)):
+                hit = table.get(self._apos(x).lower())
+                if hit and self._same(x, hit[0]) and (anywhere or not self._opens(text, s)):
+                    return hit[1]
+        return None
 
-    def strip(self, text: str, attributive: bool = False) -> str:
-        """The text with every name it uses replaced by a role word: "Jonathan Harker's case" becomes "the figure's case" (a
-        title before it and an article go too; inside a hyphenated word, "half-Hagrid grin", the name becomes "figure"). The
-        last resort after a rewrite that still names someone; re-checked after. It removes every hit `find` reports: a
-        one-word ordinary name is kept exactly where `find` keeps it, as a sentence's first word ("Dawn breaks"), and "The
-        Stranger" opening a sentence goes, since its name word is not the first. `attributive` (a note's role, a noun phrase):
-        a name before a lowercase word is a modifier and goes with nothing put in ("A red-haired Weasley twin": "A red-haired
-        twin")."""
-        for _ in range(24):
-            hit = self.find(text)
-            if not hit:
-                break
-            role = "the people" if hit in self.groups or self._apos(hit).lower() in self._lower[2] else "the figure"
-            rx = re.compile(r"(?:(?<![\w-])(?P<pre>(?i:(?:(?:the|a|an)\s+)?" + self._TITLE + r")))?(?<!\w)(?P<name>"
-                            + re.escape(hit) + r")(?P<pos>" + self._POS + r")?(?!\w)")
-            alone = " " not in hit and self._kind(hit) == "alone"
+    def _spans(self, text: str) -> list[tuple[int, int, bool]]:
+        """(start, end, a group's name) of every name in the text, left to right, never overlapping; `end` leaves a
+        possessive out. The one scan that `find` and `strip` both use."""
+        runs, out, i = self._runs(text), [], 0
+        while i < len(runs):
+            hit = None
+            for key, group in self.phrases.get(self._apos(runs[i][3]).lower(), []):
+                seq = runs[i:i + len(key)]
+                if len(seq) == len(key) and all(self._same(r[3], k) for r, k in zip(seq, key)) and all(
+                        a[1] == a[2] and self._GAP.fullmatch(text[a[2]:b[0]]) for a, b in zip(seq, seq[1:])):
+                    hit = (runs[i][0], seq[-1][1], group, len(key))
+                    break
+            if hit is None and (group := self._word(text, runs[i])) is not None:
+                hit = (runs[i][0], runs[i][1], group, 1)
+            if hit:
+                out.append(hit[:3])
+            i += hit[3] if hit else 1
+        return out
 
-            def sub(m: re.Match) -> str:
-                before = text[:m.start("name")]
-                if alone and self._OPENS.search(before):
-                    return m.group(0)      # an ordinary word opening a sentence ("Dawn breaks") is no name
-                rest = text[m.end():]
-                if attributive and not m.group("pos"):
-                    if re.match(r"\s+[a-z]", rest):        # a modifier ("the Bellona heir"): it goes, the article stays
-                        return m.group("pre") or ""
-                    if text[:m.start()].strip() and re.fullmatch(r"[\s.,;:]*", rest):
-                        return "\x00"     # the head after other words ("A first-year Gryffindor"): it goes, with an "of"
-                if before.endswith("-") or text[m.end("name"):].startswith("-"):
-                    return (m.group("pre") or "") + role.split()[1] + ("'s" if m.group("pos") else "")   # "half-figure grin"
-                out = role + ("'s" if m.group("pos") else "")
-                return out[0].upper() + out[1:] if self._CAPITAL.search(text[:m.start()]) else out
-            new = rx.sub(sub, text)
-            # "a knight of House Bellona" is "a knight", not "a knight of"
-            new = re.sub(r"(?:\b(?:of|from|in|for|to|with|at|among)\s+)?\x00", "", new)
-            if new == text:
-                break
-            text = new
-        return " ".join(text.split())
+    # ---- the two calls
 
     def find(self, text: str) -> str:
-        """The first name the text uses, as it is written there ("Hagrid’s" gives "Hagrid", "HAGRID" stays), or "". A full
-        name counts anywhere (also in capitals, and inside a hyphenated word), a name word also as part of a hyphenated word
-        ("half-Hagrid", "Jean-François"), and a one-word ordinary name ("Grace", "the Stranger") only where it does not open a
-        sentence. `strip` removes whatever this finds."""
-        if self.phrases is not None and (m := self.phrases.search(text)):
-            return m.group(0)
-        for m in self._COMPOUND.finditer(text):
-            parts = m.group(0).split("-")
-            starts = [m.start()]
-            for p in parts[:-1]:
-                starts.append(starts[-1] + len(p) + 1)
-            # the whole word first ("Jean-François"), then every run of its hyphenated parts, longest first ("half-Hagrid")
-            runs = sorted(((i, j) for i in range(len(parts)) for j in range(i + 1, len(parts) + 1)), key=lambda r: r[0] - r[1])
-            for i, j in runs:
-                word = "-".join(parts[i:j])
-                base = word.lstrip("'’")                 # an opening quote is no part of the name ("'Mira'")
-                at = starts[i] + len(word) - len(base)
-                # as `strip` matches it: the name, then a possessive or a closing quote, then no letter
-                for x in dict.fromkeys((re.sub(self._POS + "$", "", base), base.rstrip("'’"), base)):
-                    if len(x) < 3 or not x[0].isupper() or re.search(r"['’]$", x):
-                        continue
-                    kind = self._kind(x)
-                    if kind == "token" or (kind == "alone" and not self._OPENS.search(text[:at])):
-                        return x
-        return ""
+        """The first name the text uses, as it is written there ("Hagrid’s" gives "Hagrid", "HAGRID" stays), or ""."""
+        spans = self._spans(text)
+        return text[spans[0][0]:spans[0][1]] if spans else ""
+
+    def strip(self, text: str, attributive: bool = False) -> str:
+        """The text with every name `find` reports replaced by a role word: "Jonathan Harker's case" becomes "the figure's
+        case" (an article and titles before it go too), a group's name becomes "the people", and a name joined by a hyphen
+        the bare noun ("half-Hagrid grin": "half-figure grin"). `attributive`, for a note's role (a noun phrase): a name before
+        a lowercase word is a modifier and goes with nothing put in ("A red-haired Weasley twin": "A red-haired twin"), and so
+        does a name at the end after other words, with an "of" before it ("a knight of House Bellona": "a knight")."""
+        out, last = [], 0
+        for s, e, group in self._spans(text):
+            role = "the people" if group else "the figure"
+            pos = re.match(r"['’][sS](?![^\W_])", text[e:]) or (re.match(r"['’](?![^\W_])", text[e:]) if text[e - 1] in "sS" else None)
+            end = e + (len(pos.group(0)) if pos else 0)
+            joined = text[s - 1:s] == "-" or text[end:end + 1] == "-"
+            pre = "" if joined else self._BEFORE.search(text[last:s]).group(0)
+            start = s - len(pre)
+            rest = text[end:]
+            if attributive and not pos and not joined and re.match(r"\s+[a-z]", rest):
+                put = pre                                # a modifier ("the Bellona heir"): it goes, the article stays
+            elif attributive and not pos and not joined and text[:start].strip() and re.fullmatch(r"[\s.,;:]*", rest):
+                put = "\x00"                             # the head after other words ("A first-year Gryffindor")
+            elif joined:
+                put = role.split()[1] + ("'s" if pos else "")
+            else:
+                put = role + ("'s" if pos else "")
+                if self._capital(text, start):
+                    put = put[0].upper() + put[1:]
+            out.append(text[last:start] + put)
+            last = end
+        new = "".join(out) + text[last:]
+        new = re.sub(r"(?:\b(?:of|from|in|for|to|with|at|among)\s+)?\x00", "", new)   # "a knight", not "a knight of"
+        return " ".join(new.split())
+
+    @staticmethod
+    def _capital(text: str, at: int) -> bool:
+        """A role word put in at `at` starts with a capital: only spaces and quotes after a ".", "!", "?" or the start."""
+        before = text[:at].rstrip(" \t\n\"'“”‘’")
+        return not before or before[-1] in ".!?"
 
 
 class NotVisible(ValueError):
@@ -891,33 +931,11 @@ class Illustrator:
     def _banned_names(self) -> dict[int, "_Names"]:
         """Per book, the names of every person, creature and group of it and the earlier books: a prompt names none."""
         out: dict[int, _Names] = {}
-        phrases: set[str] = set()
-        tokens: set[str] = set()
-        alone: set[str] = set()
-        groups: set[str] = set()
+        names: list[tuple[str, bool]] = []
         for b in self.books:
-            for e in b.doc["entities"]:
-                if e["type"] not in ("person", "creature", "group"):
-                    continue
-                for n in e["names"]:
-                    value = " ".join(re.sub(r"\(.*?\)", " ", n["value"]).split())
-                    value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
-                    toks = [t for t in re.findall(r"[A-Z][\w'’-]{2,}", value)
-                            if t.lower() not in P.TITLES and t.lower() not in ("the", "and", "van", "von")]
-                    if len(value.split()) > 1:
-                        phrases.add(value)
-                    elif toks and toks[0].lower() in SENTENCE_FIRST:
-                        alone.add(toks[0])      # "Grace", "the Stranger": a name only when not opening a sentence
-                    for t in toks:
-                        if t.lower() not in SENTENCE_FIRST:
-                            tokens.add(t)       # "Mira", "Harker"; never "Order" or "Dawn" alone
-                    if e["type"] == "group":
-                        groups |= {value, *toks}
-            forms = {f for x in phrases for f in (x, x.replace("'", "’"), x.replace("’", "'"))}   # either apostrophe
-            forms |= {x.upper() for x in forms}                 # "RUBEUS HAGRID" on a sign is the name too
-            rx = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(forms, key=len, reverse=True)) + r")(?!\w)") \
-                if phrases else None
-            out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone), frozenset(groups))
+            names += [(n["value"], e["type"] == "group") for e in b.doc["entities"]
+                      if e["type"] in ("person", "creature", "group") for n in e["names"]]
+            out[b.i] = _Names(list(names))
         return out
 
     def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int],
@@ -1838,7 +1856,7 @@ class Illustrator:
         if why.startswith("unknown name: "):
             return hidden
         word = why.split(": ", 1)[1]
-        rx = re.compile(r"(?<!\w)" + re.escape(word) + r"(?!\w)", re.IGNORECASE)    # "HAGRID" is the book's "Hagrid"
+        rx = re.compile(r"(?<!\w)" + re.escape(word) + r"(?!\w)")   # case-sensitive: "Dawn" is never shown off "at dawn"
         b = self.books[bi]
         upto = b.seq_of[anchor]
         if b.epub is not None and any(rx.search(t) for s, t in b.text.items() if s <= upto):
@@ -1992,8 +2010,12 @@ class Illustrator:
                     self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor,
                                detail=e.reason[:160], refused=True)
                     return None
-                pr.scene = soft
-                pr.text = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi)
+                text_ = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi)
+                if hit := self.names[bi].find(text_):     # the same last check as make_prompt's
+                    self._skip(bi, job.target, "dropped: name in prompt", final=True, kind=job.kind, anchor=job.anchor,
+                               detail=f"name in the text: {hit}")
+                    return None
+                pr.scene, pr.text = soft, text_
                 continue
             except llm.ProviderError as e:
                 self._release(amount)
