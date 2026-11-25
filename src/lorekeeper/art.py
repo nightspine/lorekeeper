@@ -303,10 +303,11 @@ Lines known so far (its era is 1 at first and one more after each stated jump of
 Return, in this order:
 - "when": in a few words, when this chapter's events happen as the text states or shows it: the age or stage of life of its
   main people, a year, or how far before or after the line before it.
+- "lines": for EVERY known line, {{"id": its id, "same_time": true when this chapter's events happen at that line's time (the
+  same people at the same stage of their lives, as its label, its people and where it left off show), else false}}.
 - "events": for EVERY numbered event, {{"n": its number, "line": the id of the known line it happens in, "new" for a line this
   chapter opens, or "other" only for a dream, a vision or a memory of a few lines inside a scene}}.
-- "strand": the line most of the chapter's events happen in, found by comparing your "when" with each known line's time (the
-  line before keeps the chapter only when the time is the same): a known id, or "new" with "label": the time of that line in a few
+- "strand": the line most of the chapter's events happen in: a known line you marked "same_time", or "new" when none is, with "label": the time of that line in a few
   plain words, never the telling: who is seen then, at what age or stage of life, and their situation (such as "the two sisters
   as children on the farm" or "the sailor, old, at the inn where he tells his tale").
 - "cue": {{"paragraph": the number of the paragraph where the chapter's own line first shows, "quote": 3 to 12 words copied
@@ -325,6 +326,8 @@ Its events, each with the start of the paragraph it is told in:
 # The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
 TIMELINE_SCHEMA = {"type": "object", "required": ["when", "events", "strand", "cue"], "properties": {
     "when": {"type": "string"},
+    "lines": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"},
+                                                                          "same_time": {"type": "boolean"}}}},
     "events": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"},
                                                                            "line": {"type": "string"}}}},
     "strand": {"type": "string"}, "label": {"type": "string"},
@@ -1739,6 +1742,12 @@ class Illustrator:
         if not out:
             return {"strand": None, "why": "no answer"}     # refused or cut off: this chapter is unknown, the rest goes on
         said = str(out.get("strand") or "").strip().strip(".").lower()
+        # the per-line check decides when it is plain: the one known line the reply says is at this chapter's time
+        same = [str(x.get("id") or "").strip().lower() for x in out.get("lines") or [] if isinstance(out.get("lines"), list)
+                and isinstance(x, dict) and x.get("same_time") is True]
+        same = [x for x in dict.fromkeys(same) if x in strands]
+        if len(same) == 1 and said != same[0]:
+            said = same[0]
         cue = out.get("cue") if isinstance(out.get("cue"), dict) else {}
         try:
             cn = int(cue.get("paragraph"))
@@ -1829,6 +1838,7 @@ class Illustrator:
                 said = f'\n  its latest chapter opens "{sents[0]}"' + (f' and ends "{sents[-1]}"' if len(sents) > 1 else "")
         who = ", ".join(n for n, _ in names.most_common(6))
         return (f"- {s['id']}: {s['label']}; era {min(s['era'], MAX_ERAS + 1)}" + (f"; first told in {first}" if first else "")
+                + (f"\n  its time in its latest chapter: {s['when']}" if s.get("when") else "")
                 + (f"\n  people seen in it: {who}" if who else "") + said)
 
     def _chapter_lab(self, bi: int, seq: int, fin: frozenset[str] | None) -> dict | None:

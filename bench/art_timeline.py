@@ -21,7 +21,7 @@ import sys
 import tempfile
 import time
 from collections import Counter
-from itertools import combinations
+from itertools import combinations, permutations
 from pathlib import Path
 
 from lorekeeper import art, epub, llm
@@ -115,15 +115,26 @@ def strand_count(il) -> int:
 def score_eotv1(il) -> dict:
     rows = [(t, lab, toc) for t, lab, toc in chapters_of(il, 0) if truth_eotv1(toc or 0)]
     by = Counter((lab or {}).get("strand") for _, lab, _ in rows)
-    # each strand stands for the truth group most of its chapters are in
-    group: dict = {}
-    for s in by:
-        group[s] = Counter(truth_eotv1(toc) for _, lab, toc in rows if (lab or {}).get("strand") == s).most_common(1)[0][0]
+    # the strands are matched one to one with the three truth groups, the way that agrees on most chapters; a strand left over
+    # stands for the group most of its chapters are in (an unknown chapter is always wrong)
+    strands = [s for s in by if s]
+    hits = {(s, g): sum(1 for _, lab, toc in rows if (lab or {}).get("strand") == s and truth_eotv1(toc) == g)
+            for s in strands for g in ("frame", "youth", "later")}
+    best, group = -1, {}
+    for perm in permutations(("frame", "youth", "later", None, None, None), len(strands)):
+        n = sum(hits[(s, g)] for s, g in zip(strands, perm) if g)
+        if n > best:
+            best, group = n, dict(zip(strands, perm))
+    for s in strands:
+        if group[s] is None:
+            group[s] = max(("frame", "youth", "later"), key=lambda g: hits[(s, g)])
+    group[None] = None
     ok = sum(1 for _, lab, toc in rows if lab and lab.get("strand") and group[lab["strand"]] == truth_eotv1(toc))
     wrong = [(toc, (lab or {}).get("strand"), truth_eotv1(toc)) for _, lab, toc in rows
              if not (lab and lab.get("strand") and group[lab["strand"]] == truth_eotv1(toc))]
     eras = Counter((lab or {}).get("era") for _, lab, _ in rows)
     groups = {s: g for s, g in group.items() if s}
+    by.pop(None, None)
     return {"chapters": len(rows), "correct": ok, "accuracy": round(ok / max(1, len(rows)), 3), "strands": len([s for s in by if s]),
             "groups": groups, "distinct": len(set(groups.values())) == len(groups), "wrong": wrong, "eras": dict(eras),
             "exceptions": sum(len((lab or {}).get("events", {})) for _, lab, _ in rows)}
