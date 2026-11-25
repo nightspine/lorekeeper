@@ -56,22 +56,36 @@ export function visibleWorld(world, { ords, position, book = null, finished = []
   return visibleAt(world.from, ords || new Map(), position, false) ? { text: world.text, own: true, from: world.from } : null;
 }
 
+/** The usable runs of a timeline at or before block `seq`, ordered by seq; at one seq a null run comes before a scope,
+ *  whatever the server's list order, so a cue on a chapter's first block always applies. Malformed runs are ignored. */
+function runsUpTo(timeline, seq) {
+  const runs = Array.isArray(timeline?.runs) ? timeline.runs : [];
+  if (!Number.isInteger(seq)) return [];
+  return runs.map((r, i) => ({ r, i }))
+    .filter(({ r }) => r && Number.isInteger(r.seq) && r.seq <= seq && (r.scope === null || (typeof r.scope === "string" && r.scope)))
+    .sort((a, b) => a.r.seq - b.r.seq || (b.r.scope === null) - (a.r.scope === null) || a.i - b.i)
+    .map(({ r }) => r);
+}
+
 /**
- * The scope ("s2.1": strand and era) of block `seq` from an art set's `timeline.runs` ([{ seq, scope }], sorted by seq;
- * a null run opens each labelled chapter, its scope starts at the chapter's cue), or null when unknown: no timeline,
- * no block, before the first run, before a chapter's cue. Runs come from the server, so anything malformed is ignored.
+ * The scope ("s2.1": strand and era) of block `seq` from an art set's `timeline.runs` ([{ seq, scope }]; a null run
+ * opens each labelled chapter, its scope starts at the chapter's cue), or null when unknown: no timeline, no block,
+ * before the first run, before a chapter's cue. A run after the block is never applied. Runs come from the server, so
+ * anything malformed is ignored.
  */
 export function scopeAt(timeline, seq) {
-  const runs = Array.isArray(timeline?.runs) ? timeline.runs : [];
-  if (!Number.isInteger(seq) || !runs.length) return null;
-  let best = null, bestSeq = -Infinity;
-  for (const r of runs) {
-    if (!r || !Number.isInteger(r.seq) || r.seq > seq) continue;
-    if (r.scope !== null && typeof r.scope !== "string") continue;
-    // The latest run at or before the block; at one seq a later entry wins, as the list's order says.
-    if (r.seq >= bestSeq) { bestSeq = r.seq; best = r.scope; }
-  }
-  return typeof best === "string" && best ? best : null;
+  const runs = runsUpTo(timeline, seq);
+  return runs.length ? runs.at(-1).scope : null;
+}
+
+/**
+ * The scope an entry's face follows at block `seq`: the scope there, else (inside a chapter before its cue) the last
+ * known scope before it, so the face never changes ahead of the cue. Null only before the book's first cue.
+ */
+export function faceScopeAt(timeline, seq) {
+  const runs = runsUpTo(timeline, seq);
+  for (let i = runs.length - 1; i >= 0; i--) if (runs[i].scope !== null) return runs[i].scope;
+  return null;
 }
 
 /**

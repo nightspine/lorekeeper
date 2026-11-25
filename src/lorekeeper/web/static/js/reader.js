@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, faceIndex, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, scopeAt, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
+import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, faceIndex, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, faceScopeAt, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -1764,11 +1764,12 @@ export function mountReader(root) {
       .sort((a, b) => bookRank(a.book) - bookRank(b.book) || a.ord - b.ord);
   }
   /** The scope ("s2.1": the line of telling and its era) of the block being read, from the book's art set timeline;
-   *  null without one, without the book file, or before the current chapter's cue (the face then stays the latest). */
+   *  before a chapter's cue it stays the last known scope, so the face never changes early. Null without a timeline,
+   *  without the book file, or before the book's first cue (the face is then the latest, as for a linear book). */
   function readerScope() {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     if (!set?.manifest?.timeline || !s.map?.exact) return null;
-    return scopeAt(set.manifest.timeline, s.map.seqAt(s.p));
+    return faceScopeAt(set.manifest.timeline, s.map.seqAt(s.p));
   }
   /** An entry's face: its visible pictures (oldest first) and the index of the one to show, the latest drawn for the time
    *  the reader's current block tells (a frame story and its flashbacks draw one figure at two ages), else the latest. */
