@@ -123,8 +123,8 @@ class Text:
     groups it picks (default none), `check(text, source)` which look phrases it calls unfounded (default none)."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None, look=None, change=None, groups=None,
-                 check=None, amend=None):
-        self.amend = amend
+                 check=None, amend=None, intro=None):
+        self.amend, self.intro = amend, intro
         self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
@@ -150,6 +150,8 @@ class Text:
             notes = re.findall(r"^(\d+)\. (.*)$", prompt.split("Notes on", 1)[1].split("Groups:")[0], re.M)
             groups = re.findall(r"^([A-Z])\. (.*)$", prompt.split("Groups:")[1], re.M)
             return {"groups": self.groups(who, notes, groups) if self.groups else []}
+        if "describes someone as they enter, before it gives their name" in prompt:
+            return {"paragraphs": self.intro(prompt) if self.intro else []}
         if "List every phrase of the prompt that says how a" in prompt:
             text = prompt.split("Prompt:\n", 1)[1]
             source = prompt.split("Notes and passage:\n", 1)[1].split("\n\nPrompt:")[0]
@@ -1714,7 +1716,7 @@ def test_a_persons_group_adds_its_members_look_and_no_name():
     t = Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild)
     il, rep, sink, t, im = run(d, bk, text_=t)
     [o] = [p for p in pics(sink, "portrait") if p["target"] == "oren"]
-    assert NOTES["Oren"].rstrip(".") + ". Like others of its people: white aprons dusted with flour." in o["prompt"]
+    assert NOTES["Oren"].rstrip(".") + ". Their people: white aprons dusted with flour." in o["prompt"]
     assert "Guild" not in o["prompt"] and o["appearance"].endswith("white aprons dusted with flour.")
     assert sink.m["groups"]["oren"]["picks"] == [{"group": "guild", "from": "a3", "until": None}]
     assert "a2" in o["sources"]                                  # the group note's own sources are the picture's
@@ -1796,7 +1798,7 @@ def test_a_portraits_background_is_its_figures_milieu_else_its_groups_home_else_
                          workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     pr = il.make_prompt(il.job("portrait", "oren", at="a5"))
-    assert "Place: Where its people live: stone houses by the river." in pr.text
+    assert "Place: Their people's home: stone houses by the river." in pr.text
     # (c) neither: plain and neutral, never the opening's places
     pr = il.make_prompt(il.job("portrait", "mira", at="a5"))
     assert "Plain, neutral background." in pr.text and art.PLAIN in pr.writer and "Place:" not in pr.text
@@ -1961,14 +1963,14 @@ def test_a_group_takes_a_look_slot_only_when_its_member_look_adds_to_the_figures
                          log=lambda *_: None, pause=0, portraits="all")
     assert il.groups_of(0, "oren", "a5") == ["guild", "hands", "owls", "valley"]   # one member each, then the Valley's two
     note, _, srcs, _ = il.figure_note(0, "oren", "a5")
-    assert note == (NOTES["Oren"] + " Like others of its people: white aprons dusted with flour."
-                    " Like others of its people: plain wool coats.")
+    assert note == (NOTES["Oren"] + " Their people: white aprons dusted with flour."
+                    " Their people: plain wool coats.")
     # the Mill hands' white hair is in his own note and the Owls show no look: neither takes a slot
-    assert "white hair from" not in note and note.count("Like others") == 2
+    assert "white hair from" not in note and note.count("Their people:") == 2
     monkey = art.MAX_GROUPS
     try:
         art.MAX_GROUPS = 1
-        assert il.figure_note(0, "oren", "a5")[0].count("Like others") == 1
+        assert il.figure_note(0, "oren", "a5")[0].count("Their people:") == 1
     finally:
         art.MAX_GROUPS = monkey
 
@@ -2131,3 +2133,68 @@ def test_a_look_check_that_fails_twice_skips_the_picture():
             return super().complete(system, prompt, schema, prefix)
     il, rep, sink, t, im = run(text_=Down())
     assert not im.calls and rep.skipped["skipped: text model failed"] == rep.skipped.total()
+
+
+# ---- round 3: recall on plainly described looks
+
+
+def intro_doc():
+    """Vesna is described as she enters ("A tall woman with white hair...") one paragraph before the book names her; none of
+    her index items says how she looks (Hermione in one Harry Potter index: "lots of bushy brown hair", nine paragraphs before
+    her name)."""
+    ch1 = CH1[:3] + ["A tall woman with white hair and a black shawl stood waiting at the gate of the mill.",
+                     "Vesna had walked all the way from the town across the river that same morning."] + CH1[3:]
+    bk = book(("One", ch1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("vesna", "Vesna", frm="a4", facets=[portrait("vesna", "a4", "A woman who walked from the town.")]))
+    return bk, d
+
+
+def test_a_figure_described_as_it_enters_before_its_name_gets_that_look():
+    bk, d = intro_doc()
+
+    def intro(prompt):
+        paras = dict(re.findall(r"^(\d+)\. (.*)$", prompt.split("Where the name first appears")[0], re.M))
+        return [int(n) for n, t in paras.items() if "white hair" in t] + [99]          # 99 is not a paragraph sent
+    t = Text(notes={"Vesna": ("a woman", ["tall", "white hair", "a black shawl"])}, intro=intro)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["vesna"][0]["text"] == "A woman: tall, white hair, a black shawl."
+    assert sink.m["intro"]["vesna"]["paragraphs"] == [3] and "a3" in sink.m["appearance"]["vesna"][0]["sources"]
+    asked = next(p for p in t.prompts if "describes someone as they enter" in p and "Vesna is first named" in p)
+    assert "Vesna had walked" in asked.split("Where the name first appears")[1] and "Gabriel" not in asked
+    # not picked: the paragraph that does not name her is not her own text, and the look is not quoted from it
+    _, rep2, sink2, _, _ = run(d, bk, text_=Text(notes={"Vesna": ("a woman", ["tall", "white hair", "a black shawl"])}))
+    assert "vesna" not in sink2.m["appearance"] or not sink2.m["appearance"]["vesna"][0]["text"]
+    # a resume asks nothing again
+    _, _, _, t3, _ = run(d, bk, sink, Text(notes={"Vesna": ("a woman", ["tall", "white hair", "a black shawl"])}, intro=intro))
+    assert not any("describes someone as they enter" in p and "Vesna" in p for p in t3.prompts)
+
+
+def test_a_detail_matches_its_quote_across_a_hyphenated_compound_and_a_final_e():
+    # Uncle Vernon's "purple face" on "purple-faced"; Hermione's "bushy hair" on "a bushy-haired girl"
+    assert art.detail_supported("purple face", "purple-faced") and art.detail_supported("bushy hair", "a bushy-haired girl")
+    assert art.detail_supported("a pale face", "his face was pale") and not art.detail_supported("a scar", "a scarlet cloak")
+    assert not art.detail_supported("pale skin", "the pale light") and not art.detail_supported("a big man", "many big hats")
+
+
+def test_a_detail_worded_beyond_its_short_quote_becomes_the_quote():
+    # "big, beefy build" on "A big, beefy man": the writer's "build" is not in the book, the quote is
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"][0]["text"] = "A big, beefy man with hardly any neck, who runs the mill."
+
+    def reply(prompt):
+        return {"role": "a miller", "role_look": [], "details": [
+            {"text": "big, beefy build", "quote": "A big, beefy man", "seen": True},
+            {"text": "a thick red neck", "quote": "A big, beefy man with hardly any neck, who runs the mill and", "seen": True}]}
+
+    class T(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "appearance note for Oren" in prompt:
+                self.prompts.append(prompt)
+                return reply(prompt)
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(d, bk, text_=T())
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: A big, beefy man."
+    assert rep.dropped["fixed: look detail in the book's own words"] == 1
+    assert rep.dropped["dropped: look detail not in the text"] == 1      # a long quote that does not hold "thick red" goes

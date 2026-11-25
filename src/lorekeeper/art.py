@@ -74,6 +74,8 @@ SCENE_WORDS = (35, 170)
 NOTE_WORDS = (1, 200)      # an appearance note is put together by code from the role and the quoted details
 MAX_DETAILS = 16           # details a note holds: a fill adds new ones only while it has room (nothing is dropped for them)
 MAX_HOME = 6               # a group note's details of where its members live
+INTRO_PARAS = 12           # paragraphs before an entity's first name that may describe it as it enters (within its chapter)
+OWN_WORDS = 8              # a quote this short stands as the detail itself when the writer's words go beyond it
 WORLD_WORDS = (15, 90)
 NOTE_VERSION = 2           # a note (and a picture drawn from one) of another version is never used for a new picture
 # A note is written from the paragraphs its look items cite first, then from paragraphs that name the entity, within these
@@ -207,6 +209,16 @@ are kept. Do not use the word "now"."""
 NOTE_AGAIN = """\n\nIn your first answer these details had no quote of the passages or notes that shows them about {who}: {bad}.
 Quote each detail word for word from the passages or notes, or leave it out."""
 
+INTRO = """A novel often describes someone as they enter, before it gives their name. Below are the paragraphs just before
+{who} is first named, numbered, then the paragraph where the name first appears. Which numbered paragraphs describe how {who}
+looks (not anyone else, and not only what {who} says or does)? Return "paragraphs": their numbers; an empty list when none does.
+
+{paras}
+
+Where the name first appears:
+{first}"""
+INTRO_SCHEMA = {"type": "object", "required": ["paragraphs"], "properties": {"paragraphs": {"type": "array", "items": {"type": "integer"}}}}
+
 LOOK_CHECK = """A picture prompt was written from the notes and passage below. List every phrase of the prompt that says how a
 figure (a person or a creature) looks, such as its body, face, hair, colouring, age, dress, marks or gear, and that the notes and
 passage do not state for that figure. Light, places, things, poses, gestures and expressions are not a figure's look. Copy each
@@ -305,7 +317,7 @@ def default_dir(index_path: str | Path, doc: dict, style: str) -> Path:
 
 def blank(text_hash: str, style: str) -> dict:
     return {"lorekeeperArt": VERSION, "textHash": text_hash, "style": style, "world": None, "pictures": [],
-            "appearance": {}, "screened": {}, "looks": {}, "groups": {}, "skipped": [], "cost": 0.0}
+            "appearance": {}, "screened": {}, "looks": {}, "groups": {}, "intro": {}, "skipped": [], "cost": 0.0}
 
 
 def size_of(data: bytes) -> tuple[int | None, int | None]:
@@ -364,8 +376,8 @@ def _base(w: str) -> str:
             break
     if len(w) >= 4 and w[-1] == w[-2] and w[-1] not in "aeiouls":
         w = w[:-1]                     # "scarr", "thinn"
-    if len(w) > 4 and w.endswith("e"):
-        w = w[:-1]                     # "pale" and "paler", "freckle" and "freckled"
+    if len(w) >= 4 and w.endswith("e"):
+        w = w[:-1]                     # "pale" and "paler", "freckle" and "freckled", "face" and "faced"
     return w
 
 
@@ -467,9 +479,9 @@ def _tidy(text: str) -> str:
 
 
 def group_look(details: list[str]) -> str:
-    """A group's members' look as a figure's note carries it, with no name: "Like others of its people: golden eyes, a winged
+    """A group's members' look as a figure's note carries it, with no name: "Their people: golden eyes, a winged
     sigil on the back of each hand."."""
-    return f"Like others of its people: {_list(details)}" if _list(details) else ""
+    return f"Their people: {_list(details)}" if _list(details) else ""
 
 
 def _list(details: list[str]) -> str:
@@ -1907,7 +1919,9 @@ class Illustrator:
             upto = b.seq_of[anchor]
             # the paragraphs the look items cite first (the newest first for a fill), then other paragraphs naming it
             pick = (new if mode == "fill" else looks)[::-1]
-            look_seqs: list[int] = []
+            # the paragraphs before its first name that describe it as it enters come first (a book often describes a newcomer
+            # before naming them), then those its look items cite
+            look_seqs: list[int] = [x for x in self._introduction(bi, eid, upto)] if e["type"] in PORTRAIT_TYPES and mode == "write" else []
             for it in pick:
                 for a in it["evidence"]:
                     if a in b.seq_of and b.seq_of[a] <= upto and b.seq_of[a] not in look_seqs:
@@ -1971,6 +1985,45 @@ class Illustrator:
                 self._save(bi)
             return {**note, "inherits": inherits} if (got or home) else {"why": "empty"}
 
+    def _introduction(self, bi: int, eid: str, upto: int) -> list[int]:
+        """The blocks among the INTRO_PARAS before the entity's first named paragraph (in its chapter, never past block `upto`)
+        that describe how it looks, as one cheap call picks them (`INTRO`). The call only chooses: a number that is not one of
+        the paragraphs sent is ignored, and a note may still quote only what those paragraphs say. Cached in the manifest as
+        `intro[eid] = {"key", "paragraphs"}` (block numbers only); a failed call picks none and is asked again next time."""
+        b = self.books[bi]
+        hits = b.hits(eid)
+        if not hits or hits[0][0] > upto:
+            return []
+        first = hits[0][0]
+        ch = next((c for c in b.chapters if c["lo"] <= first <= c["hi"]), None)
+        window = [x for x in range(max(ch["lo"] if ch else b.lo, first - INTRO_PARAS), first) if x in b.text]
+        if not window:
+            return []
+        key = f"{window[0]}-{first}"
+        got = self.man[bi].setdefault("intro", {}).get(eid)
+        if isinstance(got, dict) and got.get("key") == key:
+            return [x for x in got.get("paragraphs", []) if x in window]
+        who = (b.ents.get(eid) or {}).get("names", [{"value": eid}])[0]["value"]
+        paras = "\n\n".join(f"{n}. {b.text[x]}" for n, x in enumerate(window, 1))
+        try:
+            out = self._complete(INTRO.format(who=who, paras=paras, first=b.text[first]), INTRO_SCHEMA)
+        except TextFailed as e:
+            self.log(f"  introduction of {eid}: text model failed ({e.detail})")
+            return []
+        chosen = []
+        for x in out.get("paragraphs") or [] if isinstance(out.get("paragraphs"), list) else []:
+            try:
+                n = int(x)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= n <= len(window) and window[n - 1] not in chosen:
+                chosen.append(window[n - 1])
+        with self.lock:
+            self.man[bi]["intro"][eid] = {"key": key, "paragraphs": sorted(chosen)}
+            self._dirty.add(bi)
+            self._save(bi)
+        return sorted(chosen)
+
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
         paragraph of context when there is room, printed in book order."""
@@ -1995,8 +2048,8 @@ class Illustrator:
         quotes the change, `change_src`). The role keeps only words the entity's own text has, and every detail the role or an
         earlier detail already says goes (`compose_note`). (text, "", details, home, role) or ("", "empty", [], home, role) when
         no detail holds, or (None, reason, [], [], "") when the note fails a check."""
-        def kept(out: dict) -> tuple[list[dict], list[str], list[str], list[dict]]:
-            good, bad, not_look, home = [], [], [], []
+        def kept(out: dict) -> tuple[list[dict], list[str], list[str], list[dict], list[str]]:
+            good, bad, not_look, home, reworded = [], [], [], [], []
             for field_, into in (("details", good), ("home", home)):
                 for d in out.get(field_) or [] if isinstance(out.get(field_), list) else []:
                     if not isinstance(d, dict) or not str(d.get("text") or "").strip():
@@ -2007,21 +2060,28 @@ class Illustrator:
                         continue
                     if quoted(q, own) and detail_supported(t, q):
                         into.append({"text": t, "quote": q})
+                    elif quoted(q, own) and len(_toks(q)) <= OWN_WORDS and _content(t) & _content(q):
+                        # the writer's words go beyond its quote ("big, beefy build" on "A big, beefy man"): the quote is
+                        # the book's own short phrase about it, so it becomes the detail
+                        into.append({"text": q.strip(" ,.;:"), "quote": q})
+                        reworded.append(t)
                     else:
                         bad.append(t)
-            return good, bad, not_look, home
+            return good, bad, not_look, home, reworded
 
         out = self._complete(prompt, NOTE_SCHEMA)
-        good, bad, not_look, home = kept(out)
+        good, bad, not_look, home, reworded = kept(out)
         if bad:
             again = self._complete(prompt + NOTE_AGAIN.format(who=who, bad="; ".join(bad)[:500]), NOTE_SCHEMA)
             got2 = kept(again)
             if len(got2[0]) + len(got2[3]) >= len(good) + len(home):      # the reply kept is the one whose drops are counted
-                out, (good, bad, not_look, home) = again, got2
+                out, (good, bad, not_look, home, reworded) = again, got2
         with self.lock:
             for t in bad:
                 self.report.dropped["dropped: look detail not in the text"] += 1
                 self.log(f"    note for {eid}: dropped a look detail not in the text ({t[:80]})")
+            for t in reworded:
+                self.report.dropped["fixed: look detail in the book's own words"] += 1
             for t in not_look:
                 self.report.dropped["dropped: not a look detail"] += 1
                 self.log(f"    note for {eid}: dropped a detail that is no look ({t[:80]})")
@@ -2183,7 +2243,7 @@ class Illustrator:
             for gid in self.groups_of(bi, eid, anchor, finished)[:GROUPS_TRIED]:
                 g = self._note(bi, gid, anchor, "", finished)
                 if g.get("home"):
-                    return f"Where its people live: {_list([d['text'] for d in g['home']])}", list(g["sources"]), list(g["inherits"])
+                    return f"Their people's home: {_list([d['text'] for d in g['home']])}", list(g["sources"]), list(g["inherits"])
         return "", [], []
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
