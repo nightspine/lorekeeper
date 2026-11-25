@@ -1588,7 +1588,8 @@ def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():
     for rule in ("also say what that looks like as the material gives it", "Every sentence is something an illustrator can draw",
                  "the passages win", "Use no name at all except the names of peoples",
                  "A portrait shows the figure as a living presence", "never their death, corpse or burial",
-                 "undead or transformed is drawn as it looks at this point"):
+                 "undead or transformed is drawn as it looks at this point",
+                 "Never give a specific look the material does not state", "say less (\"aged\", \"formal dress\") rather than invent"):
         assert rule in art.WRITER
 
 
