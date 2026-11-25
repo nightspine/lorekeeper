@@ -53,10 +53,13 @@ def estimate(q: dict) -> dict:
         pics = pictures_at(c, level)
         drawn = (pics if c["n"] == 5 else 1 if c["n"] == 6 and pics else 0)
         rows.append({**c, "pictures": pics, "drawn": drawn})
-    plates = sum(r["pictures"] for r in rows if chosen is None or r["n"] in chosen)
+    # As the server answers since web round 2: `pictures` and `price` count only what is still to draw, `planned` all of it.
+    picked = [r for r in rows if chosen is None or r["n"] in chosen]
+    plates = sum(r["pictures"] for r in picked)
+    todo = sum(max(0, r["pictures"] - r["drawn"]) for r in picked)
     ports = PORTRAITS.get(q.get("portraits", ["main"])[0], 0)
-    return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": round((plates + ports) * 0.035, 4),
-            "provider": "gemini", "model": "nano", "chapters": rows}
+    return {"pictures": todo + ports, "plates": plates, "portraits": ports, "price": round((todo + ports) * 0.035, 4),
+            "planned": {"pictures": plates + ports}, "provider": "gemini", "model": "nano", "chapters": rows}
 
 
 def run(base: str, out: Path) -> int:
@@ -112,7 +115,7 @@ def run(base: str, out: Path) -> int:
             check("already drawn" in rows.nth(4).inner_text(), f"{tag}: drawn chapter says so")
             check("1 picture" in rows.nth(0).inner_text(), f"{tag}: count at main level")
             check("chapters" not in asked[-1], f"{tag}: all chosen sends no chapter list")
-            check(line.inner_text().startswith("About 16 pictures"), f"{tag}: estimate with all ({line.inner_text()})")
+            check(line.inner_text().startswith("About 14 pictures"), f"{tag}: estimate with all, drawn ones left out ({line.inner_text()})")
             no_scroll = page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             check(no_scroll, f"{tag}: nothing scrolls sideways")
             page.wait_for_timeout(400)   # the dialog's open animation
@@ -146,6 +149,13 @@ def run(base: str, out: Path) -> int:
             check(start.is_disabled(), f"{tag}: nothing chosen disables Start")
             check(line.inner_text() == "Choose at least one chapter, or portraits.", f"{tag}: the reason is said ({line.inner_text()})")
             page.screenshot(path=str(out / f"{tag}-nothing.png"))
+
+            # Only chapter 5, whose pictures are all drawn, and no portraits: the estimate answers 0 still to draw.
+            rows.nth(4).locator("input").click()
+            page.wait_for_function("document.querySelector('.art-est')?.textContent === 'Everything you chose is already drawn.'")
+            check(asked[-1].get("chapters") == ["5"], f"{tag}: asked for the drawn chapter alone ({asked[-1].get('chapters')})")
+            check(start.is_disabled(), f"{tag}: everything already drawn disables Start")
+            page.screenshot(path=str(out / f"{tag}-drawn.png"))
 
             dlg.get_by_role("button", name="All", exact=True).click()
             page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
