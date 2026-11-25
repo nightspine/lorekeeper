@@ -1411,6 +1411,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         else:
             arts.save(h, slug_, m)
 
+    def keep_scope(new: dict, old: dict) -> None:
+        """A record drawn again from an old one's prompt keeps that record's `scope` exactly (absent stays absent)."""
+        if "scope" in old:
+            new["scope"] = old["scope"]
+        else:
+            new.pop("scope", None)
+
     def picture_json(h: str, slug_: str, rec: dict) -> dict:
         return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
 
@@ -1516,7 +1523,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         m = arts.manifest(h, slug_) if slug_ else None
         body = copy.deepcopy(m) if m else artmod.blank(h, style or "")
         body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
+        tidy_timeline(body.get("timeline"))
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
+
+    def tidy_timeline(tl) -> None:
+        """The Reader reads only `timeline.runs` (and a picture's own `scope`); the strands' labels and the cue quotes are the
+        pipeline's working notes, written from chapters the reader may not have reached, so they never leave the server."""
+        if not isinstance(tl, dict):
+            return
+        for st in tl.get("strands") or []:
+            if isinstance(st, dict):
+                st.pop("label", None)
+        for ch in (tl.get("chapters") or {}).values():
+            if isinstance(ch, dict) and isinstance(ch.get("cue"), dict):
+                ch["cue"].pop("quote", None)
 
     def chapter_events(ctx: dict, il) -> dict[str, int]:
         """Non-minor events per chapter title of the plan (the EPUB's chapters, a repeated title as "Title (2)")."""
@@ -1720,6 +1740,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
+                # The story time the picture shows (`scope`) is stored, never derived again: the world-note hold may have
+                # moved `from` into another scope, and the prompt is the old one's. A record without it stays without.
+                keep_scope(new, rec)
                 old = arts.path(ctx["hash"], slug_, pid)
                 entry = journal_art(key, [old] if old and old.name != new["file"] else [],
                                     {"op": "redraw", "textHash": ctx["hash"], "style": slug_, "removed": [rec],
@@ -1731,6 +1754,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                             r["replaces"] = pid
                             if "inherits" not in rec:
                                 r.pop("inherits", None)
+                            keep_scope(r, rec)
                     man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
                     man["cost"] = round(sum(r.get("cost") or 0 for r in man["pictures"]), 6)
                     arts.save(ctx["hash"], slug_, man)

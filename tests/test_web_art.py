@@ -410,6 +410,64 @@ def test_a_redraw_keeps_the_earlier_books_its_prompt_carries(env):
     assert "inherits" not in stored[legacy["id"]]
 
 
+def test_a_redraw_keeps_the_story_time_its_picture_shows(env, monkeypatch):
+    """`scope` is stored, never derived: the redrawn record takes the old one's as it is, and a record without one (a
+    single-scope figure, an older set) gets none, even when the pipeline would now label it."""
+    env.key()
+    run_set(env, portraits=False)
+    record = art.Illustrator._record
+    monkeypatch.setattr(art.Illustrator, "_record", lambda self, *a: {**record(self, *a), "scope": "s9.9"})
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    first, second = man["pictures"][0], man["pictures"][1]
+    first["scope"] = "s2.1"
+    second.pop("scope", None)
+    path.write_text(json.dumps(man))
+
+    new = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={"note": "Younger"}).json()
+    assert new["scope"] == "s2.1"
+    stored = {p["id"]: p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert stored[new["id"]]["scope"] == "s2.1" and first["id"] not in stored
+
+    legacy = env.c.post(f"/api/library/{KEY}/art/{second['id']}/redraw", json={}).json()
+    assert "scope" not in legacy
+    assert all("scope" not in p for p in json.loads(path.read_text())["pictures"] if p["id"] == legacy["id"])
+    for entry in (legacy["undo"], new["undo"]):      # undone newest first
+        assert env.c.post(f"/api/library/{KEY}/undo/{entry}").status_code == 200
+    back = {p["id"]: p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert back[first["id"]]["scope"] == "s2.1"
+
+
+def test_the_manifest_route_gives_the_browser_the_timeline_and_each_scope(env):
+    """The Reader picks a figure's picture by the scope of the block being read, so the set comes with `timeline.runs`
+    and every picture with its `scope`; the strands' labels and the cue quotes stay on the server."""
+    env.key()
+    run_set(env, portraits=False)
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    timeline = {"strands": [{"id": "s1", "label": "the frame", "book": "mill", "from": "a1"},
+                            {"id": "s2", "label": "the miller's youth", "book": "mill", "from": "a9"}],
+                "chapters": {"One": {"key": "k1", "strand": "s1", "era": 1, "cue": {"seq": 1, "quote": "The mill"},
+                                     "events": {}},
+                             "Two": {"key": "k2", "strand": "s2", "era": 1, "cue": {"seq": 9, "quote": "Years before"},
+                                     "events": {"e3": "other"}}},
+                "runs": [{"seq": 1, "scope": None}, {"seq": 1, "scope": "s1.1"},
+                         {"seq": 8, "scope": None}, {"seq": 9, "scope": "s2.1"}]}
+    man["timeline"] = timeline
+    man["pictures"][0]["scope"] = "s2.1"
+    path.write_text(json.dumps(man))
+
+    body = env.c.get(f"/api/library/{KEY}/art?style=ink").json()
+    assert body["timeline"]["runs"] == timeline["runs"]
+    assert [s["id"] for s in body["timeline"]["strands"]] == ["s1", "s2"]
+    assert all("label" not in s for s in body["timeline"]["strands"])
+    two = body["timeline"]["chapters"]["Two"]
+    assert two["cue"] == {"seq": 9} and two["strand"] == "s2" and two["events"] == {"e3": "other"}
+    pics = {p["id"]: p for p in body["pictures"]}
+    assert pics[man["pictures"][0]["id"]]["scope"] == "s2.1"
+    assert json.loads(path.read_text())["timeline"] == timeline     # the stored set keeps its working notes
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)
