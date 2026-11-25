@@ -165,9 +165,104 @@ def run(base: str, out: Path) -> int:
     return 1 if fails else 0
 
 
+def run_real(base: str, out: Path, key: str) -> int:
+    """Against a real server and a real book (catalog `key` with an index built from its EPUB): the book, the index and
+    the estimate are the server's; only the provider list (an image key) and the run itself are mocked."""
+    out.mkdir(parents=True, exist_ok=True)
+    fails = 0
+
+    def check(ok: bool, what: str) -> None:
+        nonlocal fails
+        print(("ok   " if ok else "FAIL ") + what)
+        fails += 0 if ok else 1
+
+    with sync_playwright() as p:
+        browser = p.webkit.launch()
+        for width, theme in [(1280, "dark"), (393, "light")]:
+            tag = f"real-{width}-{theme}"
+            ctx = browser.new_context(viewport={"width": width, "height": 860 if width > 640 else 800}, device_scale_factor=2)
+            ctx.add_init_script(f"localStorage.setItem('lk-theme', '{theme}');")
+            page = ctx.new_page()
+            answers, runs = [], []
+
+            def route(r):
+                u = urlparse(r.request.url)
+                if u.path == "/api/providers":   # the server's own list and image models, with Gemini marked as set up
+                    resp = r.fetch()
+                    body = resp.json()
+                    for prov in body.get("providers", []):
+                        if prov.get("id") == "gemini":
+                            prov.update(ok=True, configured=True)
+                    return r.fulfill(response=resp, json=body)
+                if u.path.endswith("/art/run"):
+                    runs.append(json.loads(r.request.post_data or "{}"))
+                    return r.fulfill(json={"id": "job1"})
+                if u.path == "/api/art/estimate":
+                    resp = r.fetch()
+                    try:
+                        answers.append((parse_qs(u.query, keep_blank_values=True), resp.status, resp.json()))
+                    except Exception:
+                        answers.append((parse_qs(u.query, keep_blank_values=True), resp.status, None))
+                    return r.fulfill(response=resp)
+                return r.continue_()
+
+            page.route("**/api/**", route)
+            page.goto(f"{base}/#/book/{key}")
+            page.get_by_role("button", name="pictures").click()
+            dlg = page.locator("dialog.modal")
+            rows = dlg.locator(".art-ch-row")
+            rows.first.wait_for()
+            page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
+            page.wait_for_timeout(400)
+            q, status, body = answers[-1]
+            chs = (body or {}).get("chapters") or []
+            check(status == 200 and rows.count() == len(chs), f"{tag}: one row per chapter the estimate lists ({rows.count()} of {len(chs)})")
+            boxes = rows.locator("input")
+            agree = all(boxes.nth(i).is_disabled() == (not (c.get("pictures") or 0) > 0) for i, c in enumerate(chs))
+            check(agree, f"{tag}: a box is off exactly where the chapter gets no picture at the level")
+            odd = [c["n"] for c in chs if (c.get("pictures") or 0) > 0 and not c.get("events")]
+            print(f"     {len(chs)} chapters, {sum(1 for c in chs if (c.get('pictures') or 0) > 0)} choosable, events 0 but a picture: {odd}")
+            print(f"     estimate line: {dlg.locator('.art-est').inner_text()!r}")
+            page.screenshot(path=str(out / f"{tag}-dialog.png"))
+            first = next(i for i, c in enumerate(chs) if (c.get("pictures") or 0) > 0)
+            boxes.nth(first).click()
+            page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
+            page.wait_for_timeout(300)
+            q2, status2, body2 = answers[-1]
+            sent = q2.get("chapters", [None])[0]
+            check(status2 == 200 and sent is not None and str(chs[first]["n"]) not in sent.split(","),
+                  f"{tag}: unticking asks without that chapter (status {status2})")
+            check((body2 or {}).get("pictures", 0) < body["pictures"], f"{tag}: total drops ({body['pictures']} → {(body2 or {}).get('pictures')})")
+            dlg.get_by_role("button", name="None", exact=True).click()
+            page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
+            page.wait_for_timeout(300)
+            q3, status3, body3 = answers[-1]
+            check(status3 == 200 and q3.get("chapters") == [""] and (body3 or {}).get("plates") == 0,
+                  f"{tag}: no chapters, portraits only ({(body3 or {}).get('pictures')} pictures)")
+            dlg.get_by_text("No portraits").click()
+            check(dlg.get_by_role("button", name="Start drawing").is_disabled(), f"{tag}: nothing chosen disables Start")
+            dlg.get_by_role("button", name="All", exact=True).click()
+            dlg.get_by_text("No chapter pictures").click()
+            dlg.get_by_text("Main characters").click()
+            page.wait_for_function("document.querySelector('.art-est')?.textContent.startsWith('About')")
+            page.wait_for_timeout(300)
+            q4, status4, body4 = answers[-1]
+            check(status4 == 200 and q4.get("level") == ["none"] and (body4 or {}).get("plates") == 0 and (body4 or {}).get("portraits", 0) > 0,
+                  f"{tag}: level none, main characters: {(body4 or {}).get('portraits')} portraits, no plates")
+            page.screenshot(path=str(out / f"{tag}-portraits.png"))
+            dlg.get_by_role("button", name="Start drawing").click()
+            page.wait_for_function("location.hash.includes('job1')")
+            art = runs[-1].get("art", {}) if runs else {}
+            check(art.get("level") == "none" and art.get("portraits") == "main" and "chapters" not in art, f"{tag}: run config {art}")
+            ctx.close()
+        browser.close()
+    return 1 if fails else 0
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default="http://localhost:8791")
     ap.add_argument("--out", type=Path, default=Path("/tmp/art-chapters"))
+    ap.add_argument("--real", metavar="CATALOG_KEY", help="check a real book on a real server instead of the mocks")
     a = ap.parse_args()
-    sys.exit(run(a.base, a.out))
+    sys.exit(run_real(a.base, a.out, a.real) if a.real else run(a.base, a.out))
