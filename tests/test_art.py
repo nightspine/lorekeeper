@@ -1328,7 +1328,9 @@ def test_a_dropped_prompt_says_the_check_and_the_word_only_when_the_reader_has_m
     d = base_doc(bk)
     il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", log=lambda *_: None, pause=0)
     assert il._say("name in the text: Oren", 0, "a5", None) == "a name the picture must not show: Oren"
-    assert il._say("name in the text: Gabriel", 0, "a5", None) == "a name the picture must not show"    # not met until a8
+    assert il._say("name in the text: Gabriel", 0, "a5", None) == "a name the book has not used by this point"   # met at a8
+    assert il._say("name in the text: Gabriel", 0, "a9", None) == "a name the picture must not show: Gabriel"
+    assert il._say("name in the text: GABRIEL", 0, "a9", None) == "a name the picture must not show: GABRIEL"
     assert il._say("unknown name: Valdemar", 0, "a11", None) == "a name the book has not used by this point"
     assert il._say("look not in the note: thin", 0, "a5", None) == "a look the book does not give this figure: thin"
     assert art.explain("wording: has just") == "wording that looks back on the story or ahead: has just"
@@ -1372,3 +1374,68 @@ def test_a_role_that_names_the_house_is_written_without_it():
     il, pr = bellona_run(PORTRAIT_SCENE)
     [(eid, note)] = pr.notes
     assert eid == "cassius" and note.startswith("The heir:") and "Bellona" not in note, note
+
+
+# Review round 1: find and strip share one boundary and possessive rule, so whatever find reports strip takes out, in every
+# combination: capitals with 'S, quotes around a name, both apostrophes, non-ASCII letters, particles, hyphens.
+SHAPE_NAMES = ["Mira", "Jonathan Harker", "Jean-François", "Gabriel de León", "Patrick O'Brien", "Cassius au Bellona", "Millers"]
+SHAPES = ["{n} waits.", "He sees {n} by the gate.", "The coat of {n}'s, {n}’s and {n}'S.", "A banner reads {N}.",
+          "A banner reads {N}'S coat and {N}’S hat.", "He calls 'Mira' and '{n}' and \"{n}\" and ‘{n}’.",
+          "A '{N}' sign.", "A half-{n} grin and {n}-like shadows.", "The {n}s' cart.", "The {N}S' cart.",
+          "Mr. {n} and Professor {n}’s owl.", "Behind them, {n}'s.", "\"{n},\" he says."]
+
+
+def shape_names():
+    return names_for([ent("harker", "Jonathan Harker", frm="a2"), ent("jf", "Jean-François", frm="a2"),
+                      ent("leon", "Gabriel de León", frm="a2"), ent("ob", "Patrick O'Brien", frm="a2"),
+                      ent("cassius", "Cassius au Bellona", frm="a2"), ent("millers", "the Millers", "group", frm="a2")])
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("name", SHAPE_NAMES)
+def test_find_after_strip_is_empty_for_every_shape(name, shape):
+    names = shape_names()
+    t = shape.format(n=name, N=name.upper())
+    assert names.find(t), t
+    out = names.strip(t)
+    assert names.find(out) == "", (t, out)
+
+
+def test_a_capitalised_possessive_and_curly_apostrophes_are_found():
+    names = shape_names()
+    assert names.find("A MIRA'S banner.") == "MIRA" and names.find("JONATHAN HARKER'S coat") == "JONATHAN HARKER"
+    assert names.find("Patrick O’Brien waits.") == "Patrick O’Brien" and names.find("The O’BRIEN’S cart.") == "O’BRIEN"
+    assert names.strip("'Cassius au Bellona' rides.") == "'The figure' rides."
+    assert names.strip("JONATHAN HARKER'S coat") == "The figure's coat"
+
+
+def series_say():
+    """A two-book series: "Harker" is used only by the first book's index; the second book uses "Gabriel" from a8 on, and
+    has a Gabriel de León and a Patrick O'Brien it never names."""
+    bk0, bk1 = book(("One", CH1)), book(("One", CH1), ("Two", CH2))
+    d0 = doc(bk0, "b0", entities=[ent("harker", "Jonathan Harker")], events=[], recaps=[])
+    d0["work"]["title"] = "Harker's Mill"
+    d1 = base_doc(bk1)
+    d1["series"] = {"id": "mill", "book": "b1"}
+    d1["entities"] += [ent("leon", "Gabriel de León", frm="a8"), ent("ob", "Patrick O'Brien", frm="a8")]
+    return art.Illustrator([art.Book(d0, None, Mem(), None, draw=False), art.Book(d1, bk1, Mem(), "main")], Text(), Image(), "ink",
+                           log=lambda *_: None, pause=0)
+
+
+def test_the_reason_shows_a_name_only_when_the_whole_name_was_reached():
+    il = series_say()
+    hidden = "a name the book has not used by this point"
+    assert il._say("name in the text: Gabriel", 1, "a9", frozenset()) == "a name the picture must not show: Gabriel"
+    assert il._say("name in the text: Gabriel de León", 1, "a11", frozenset()) == hidden     # only "Gabriel" was met
+    assert il._say("name in the text: Patrick O'Brien", 1, "a11", frozenset()) == hidden
+    assert il._say("name in the text: Harker", 1, "a11", frozenset()) == hidden             # the earlier book is unfinished
+    assert il._say("name in the text: Harker", 1, "a11", frozenset({"b0"})) == "a name the picture must not show: Harker"
+    assert il._say("name in the text: Harker", 1, "a11", None) == "a name the picture must not show: Harker"
+
+
+def test_a_custom_style_naming_someone_is_stripped_in_the_assembled_prompt():
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem(), "main")], Text(), Image(), "drawn as Oren would draw it",
+                         log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
+    assert "Oren" not in pr.text and not il.names[0].find(pr.text) and "the figure would draw it" in pr.text

@@ -551,24 +551,37 @@ class _Names:
     groups: frozenset[str] = frozenset()     # the names (and name words) of groups: replaced by "the people", not "the figure"
 
     _TITLE = r"(?:(?:" + "|".join(sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*"
-    _COMPOUND = re.compile(r"(?<![\w'’-])[\w'’]+(?:-[\w'’]+)*")     # a word, with the hyphenated words joined to it
-    _OPENS = re.compile(r"(?:^|[.!?:;\"“”]\s*)$")                    # what a sentence's first word follows
-    _CAPITAL = re.compile(r"(?:^|[.!?\"“”]\s*)$")                     # where a role word put in starts with a capital
+    # One rule for both `find` and `strip`: a name is bounded by anything but a letter or digit (a space, a hyphen, a quote or
+    # an apostrophe: "half-Hagrid", "'Cassius au Bellona'"), and may carry a possessive in any case ('s, 'S, ’s, or s' / S').
+    _POS = r"(?:['’][sS]|(?<=[sS])['’])"
+    _COMPOUND = re.compile(r"(?<![\w-])[\w'’]+(?:-[\w'’]+)*")       # a word, with the hyphenated words joined to it
+    _OPENS = re.compile(r"(?:^|[.!?:;\"“”‘]\s*|(?:^|\s)['’]\s*)$")  # what a sentence's first word follows
+    _CAPITAL = re.compile(r"(?:^|[.!?\"“”‘]\s*|(?:^|[.!?]\s*)['’])$")                     # where a role word put in starts with a capital
+
+    @staticmethod
+    def _apos(x: str) -> str:
+        return x.replace("’", "'")
 
     @cached_property
     def _lower(self) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-        return tuple(frozenset(t.lower() for t in s) for s in (self.tokens, self.alone, self.groups))
+        return tuple(frozenset(self._apos(t).lower() for t in s) for s in (self.tokens, self.alone, self.groups))
+
+    @cached_property
+    def _exact(self) -> tuple[frozenset[str], frozenset[str]]:
+        return tuple(frozenset(self._apos(t) for t in s) for s in (self.tokens, self.alone))
 
     def _kind(self, x: str) -> str:
-        """"token", "alone" or "" for one word as written: exactly, or in capitals ("HAGRID"), or the plural of a name word
-        ("the Bellonas" of "Cassius au Bellona")."""
+        """"token", "alone" or "" for one word as written: exactly (either apostrophe: "O’Brien" is "O'Brien"), or in capitals
+        ("HAGRID"), or the plural of a name word ("the Bellonas" of "Cassius au Bellona")."""
         tokens, alone, _ = self._lower
+        exact_tokens, exact_alone = self._exact
         for y in (x, x[:-1] if len(x) > 4 and x[-1] in "sS" else ""):
             if not y:
                 continue
-            if y in self.tokens or (y.isupper() and y.lower() in tokens):
+            y = self._apos(y)
+            if y in exact_tokens or (y.isupper() and y.lower() in tokens):
                 return "token"
-            if y in self.alone or (y.isupper() and y.lower() in alone):
+            if y in exact_alone or (y.isupper() and y.lower() in alone):
                 return "alone"
         return ""
 
@@ -584,9 +597,9 @@ class _Names:
             hit = self.find(text)
             if not hit:
                 break
-            role = "the people" if hit in self.groups or hit.lower() in self._lower[2] else "the figure"
-            rx = re.compile(r"(?:(?<![\w'’-])(?P<pre>(?i:(?:(?:the|a|an)\s+)?" + self._TITLE + r")))?(?<![\w'’])(?P<name>"
-                            + re.escape(hit) + r")(?P<pos>['’]s|(?<=s)['’])?(?![\w'’])")
+            role = "the people" if hit in self.groups or self._apos(hit).lower() in self._lower[2] else "the figure"
+            rx = re.compile(r"(?:(?<![\w-])(?P<pre>(?i:(?:(?:the|a|an)\s+)?" + self._TITLE + r")))?(?<!\w)(?P<name>"
+                            + re.escape(hit) + r")(?P<pos>" + self._POS + r")?(?!\w)")
             alone = " " not in hit and self._kind(hit) == "alone"
 
             def sub(m: re.Match) -> str:
@@ -620,15 +633,21 @@ class _Names:
             return m.group(0)
         for m in self._COMPOUND.finditer(text):
             parts = m.group(0).split("-")
+            starts = [m.start()]
+            for p in parts[:-1]:
+                starts.append(starts[-1] + len(p) + 1)
             # the whole word first ("Jean-François"), then every run of its hyphenated parts, longest first ("half-Hagrid")
             runs = sorted(((i, j) for i in range(len(parts)) for j in range(i + 1, len(parts) + 1)), key=lambda r: r[0] - r[1])
             for i, j in runs:
                 word = "-".join(parts[i:j])
-                for x in dict.fromkeys((word, re.sub(r"['’]s$", "", word), re.sub(r"(?<=s)['’]$", "", word))):
-                    if len(x) < 3 or not x[0].isupper():
+                base = word.lstrip("'’")                 # an opening quote is no part of the name ("'Mira'")
+                at = starts[i] + len(word) - len(base)
+                # as `strip` matches it: the name, then a possessive or a closing quote, then no letter
+                for x in dict.fromkeys((re.sub(self._POS + "$", "", base), base.rstrip("'’"), base)):
+                    if len(x) < 3 or not x[0].isupper() or re.search(r"['’]$", x):
                         continue
                     kind = self._kind(x)
-                    if kind == "token" or (kind == "alone" and (i or not self._OPENS.search(text[:m.start()]))):
+                    if kind == "token" or (kind == "alone" and not self._OPENS.search(text[:at])):
                         return x
         return ""
 
@@ -894,7 +913,8 @@ class Illustrator:
                             tokens.add(t)       # "Mira", "Harker"; never "Order" or "Dawn" alone
                     if e["type"] == "group":
                         groups |= {value, *toks}
-            forms = phrases | {x.upper() for x in phrases}      # "RUBEUS HAGRID" on a sign is the name too
+            forms = {f for x in phrases for f in (x, x.replace("'", "’"), x.replace("’", "'"))}   # either apostrophe
+            forms |= {x.upper() for x in forms}                 # "RUBEUS HAGRID" on a sign is the name too
             rx = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(forms, key=len, reverse=True)) + r")(?!\w)") \
                 if phrases else None
             out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone), frozenset(groups))
@@ -1798,27 +1818,35 @@ class Illustrator:
             refs = [prev] if prev else []
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
-        # the last check, on everything the code put together: no name reaches the image model from a note either
-        if hit := names.find(" ".join([scene, world or ""] + [n for _, n in figures])):
+        # the last check, on the whole prompt as the image model gets it (`_assemble` strips what it can; a custom style may
+        # name someone too): what is still there drops the prompt
+        text = self._assemble(scene, [n for _, n in figures], world, bi)
+        if hit := names.find(text):
             raise Dropped("dropped: name in prompt", f"name in the text: {hit}", self._say(f"name in the text: {hit}", bi, anchor, fin))
-        return Prompt(self._assemble(scene, [n for _, n in figures], world, bi), scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
+        return Prompt(text, scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
                       sorted(inherits - {me}), fin is not None, world)
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
-        """`explain(why)` for the reader at `anchor`: a caught name only when every name word of it is one the book has used
-        by then (or a finished earlier book has); a name the book has not used yet is never shown, it could be a spoiler."""
+        """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
+        reader has reached (this book up to the anchor, or a finished earlier book's index); else "a name the book has not used
+        by this point", since it could be a spoiler. An unknown name is never shown."""
         phrase = explain(why)
         if not why.startswith(("name in the text: ", "unknown name: ")):
             return phrase
+        hidden = "a name the book has not used by this point"
+        if why.startswith("unknown name: "):
+            return hidden
         word = why.split(": ", 1)[1]
-        earlier = self._earlier[bi] if finished is None else frozenset().union(
-            *(self.books[j].first for j in range(bi) if self._bkey(j) in finished))
-        known = Known(self.books[bi].first, self.books[bi].seq_of[anchor], earlier)
-        caps = P._CAPS.findall(" ".join(x.capitalize() if x.isupper() else x for x in re.split(r"[\s-]+", word)))
-        if why.startswith("unknown name: ") or not caps or not all(w in known for w in caps):
-            return phrase.split(": ", 1)[0]
-        return phrase
+        rx = re.compile(r"(?<!\w)" + re.escape(word) + r"(?!\w)", re.IGNORECASE)    # "HAGRID" is the book's "Hagrid"
+        b = self.books[bi]
+        upto = b.seq_of[anchor]
+        if b.epub is not None and any(rx.search(t) for s, t in b.text.items() if s <= upto):
+            return phrase
+        for j in range(bi):         # a finished earlier book: every word of its index was read
+            if (finished is None or self._bkey(j) in finished) and rx.search(json.dumps(self.books[j].doc, ensure_ascii=False)):
+                return phrase
+        return hidden
 
     @staticmethod
     def _shown(out: dict, figures: list[tuple[str, str]], ids: list[str], vis: dict) -> tuple[list, list]:
@@ -1836,13 +1864,16 @@ class Illustrator:
         return [(eid, n) for eid, n in figures if eid in keep], [eid for eid in ids if eid in keep]
 
     def _assemble(self, scene: str, notes: list[str], world: str, bi: int = -1) -> str:
-        """What the image model gets: the scene, then the notes, the world note and the style, all added by code."""
+        """What the image model gets: the scene, then the notes, the world note and the style, all added by code. A name any of
+        them still carries (a custom style naming someone) is replaced by a role word, as in the scene."""
         parts = [scene.rstrip()]
         if notes:
             parts.append("Figures: " + " ".join(n.rstrip(".") + "." for n in notes))
         if world:
             parts.append("World: " + world.rstrip())
-        return " ".join(parts + [style_sentence(self.styles[bi]), NO_TEXT])
+        text = " ".join(parts + [style_sentence(self.styles[bi]), NO_TEXT])
+        names = self.names.get(bi if bi >= 0 else len(self.books) - 1)
+        return names.strip(text) if names is not None and names.find(text) else text
 
     # ---- cost and the cap
 
