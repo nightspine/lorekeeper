@@ -330,3 +330,10 @@ def test_max_tokens_is_a_truncated_empty_result():
     assert c.complete("s", "p", SCHEMA) == {}
     assert c.usage.truncated == 1
 
+
+
+def test_the_gemini_strong_preset_is_a_model_new_keys_can_use_with_its_price():
+    spec = llm.PROVIDERS["gemini"]
+    strong = next(m for m in spec["models"] if m["id"] == spec["strong"])
+    assert spec["strong"] == "gemini-3.1-pro-preview" and strong["price"] == (2.00, 12.00) and strong["tier"] == "strong"
+    assert "gemini-2.5-pro" not in {m["id"] for m in spec["models"]}      # answers 404 for new users
