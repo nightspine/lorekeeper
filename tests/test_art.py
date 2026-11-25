@@ -111,7 +111,7 @@ FAKE_LOOK = re.compile(r"\b(hair|haired|shawl|dress|coat|cloak|hooded|apron|boot
 FAKE_CHANGE = re.compile(r"\b(scarred|older than she was|lost an eye|eyes replaced)\b", re.IGNORECASE)
 
 
-WRITERS = (art.WRITER, art.PORTRAIT_WRITER)
+WRITERS = (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER)
 
 
 def unframed(prompt):
@@ -147,6 +147,11 @@ class Text:
         if system in WRITERS:
             scene = PORTRAIT_SCENE if is_portrait(prompt) and self.scene is SCENE else self.scene
             out = {"text": scene(prompt) if callable(scene) else scene}
+            if system == art.SCENE_WRITER and self.scene is SCENE:
+                # the default scene draws every labelled figure it says it drew (all of them with no `shows`), by its label
+                for name, label in re.findall(r'<entry name="([^"]*)"[^>]*? figure="([A-D])"', prompt):
+                    if self.shows is None or name in self.shows:
+                        out["text"] += f" Figure {label} waits by the wall."
             if self.shows is not None and "shows" in schema.get("properties", {}):
                 out["shows"] = self.shows
             return out
@@ -1223,7 +1228,8 @@ def test_an_on_demand_prompt_is_one_writer_call_and_nothing_else_on_a_fresh_set(
     for kind, target in (("portrait", "mira"), ("event", "e5"), ("plate", "Two"), ("place", "mill")):
         il, t = fresh()
         pr = il.make_prompt(il.job(kind, target, at="a11"))
-        assert len(t.prompts) == 1 and t.systems == [art.PORTRAIT_WRITER if kind == "portrait" else art.WRITER] and pr.body, kind
+        system = {"portrait": art.PORTRAIT_WRITER, "place": art.WRITER}.get(kind, art.SCENE_WRITER)
+        assert len(t.prompts) == 1 and t.systems == [system] and pr.body, kind
         assert il.man[0]["screened"] == {} and il.man[0]["looks"] == {}      # no screening, no look index on this path
 
 
@@ -1718,7 +1724,7 @@ def test_a_figure_with_no_picture_in_this_set_takes_its_likeness_from_another_st
     assert "likeness" in call["note"] and "never the drawing style" in call["note"] and call["note"] not in call["prompt"]
     assert rec["references"] == [{"set": "digital-art", "id": "pdig0001"}] and "likeness" not in rec["prompt"]
     assert digital.m["pictures"] == [pic("pdig0001", "mira", "a4")]         # the other set is only read
-    # once this set has its own current picture of her, that one is the reference and no note is sent
+    # once this set has its own current picture of her, that one is the reference and no likeness words are sent
     own = Mem()
     own.m = {**art.blank(d["editions"][0]["textHash"], "comic-strip"), "pictures": [pic("pcom0001", "mira", "a4")]}
     own.files["pcom0001.png"] = b"comic mira"
@@ -1728,7 +1734,9 @@ def test_a_figure_with_no_picture_in_this_set_takes_its_likeness_from_another_st
     pr = il2.make_prompt(job)
     assert [r["id"] for _, r in pr.references] == ["pcom0001"] and not pr.references[0][1].get("set")
     il2.draw(job, pr)
-    assert im2.calls[-1]["references"] == [b"comic mira"] and im2.calls[-1]["note"] == ""
+    # (her own picture, so no likeness words: only which reference is which figure)
+    assert im2.calls[-1]["references"] == [b"comic mira"] and im2.calls[-1]["note"] == (
+        "Reference picture 1 is figure A. " + art.FIGURE_NOTE)
 
 
 def test_a_likeness_is_never_past_the_anchor_older_partial_or_another_edition():
@@ -1805,7 +1813,7 @@ def test_a_portrait_is_a_likeness_with_the_framing_put_first_by_code():
     for kind, target in (("event", "e5"), ("plate", "Two"), ("place", "mill")):
         il, t = fresh()
         pr = il.make_prompt(il.job(kind, target, at="a11"))
-        assert t.systems == [art.WRITER] and art.PORTRAIT_FRAME not in pr.text, kind
+        assert t.systems == [art.WRITER if kind == "place" else art.SCENE_WRITER] and art.PORTRAIT_FRAME not in pr.text, kind
     # the checks take a portrait's own word range: a 150-word portrait is too long, a scene of that length is not
     long_ = " ".join(["A tall man with a grey coat stands still."] * 17)
     il, t = fresh(text_=Text(scene=long_))
@@ -1962,3 +1970,197 @@ def test_a_portrait_never_takes_one_past_its_anchor_or_from_an_unfinished_book_a
                          portraits="all", workers=1, log=lambda *_: None, pause=0)
     assert il.references(il.job("portrait", "mira", at="b2.a5", finished=set()), ["mira"]) == []
     assert [r["id"] for _, r in il.references(il.job("portrait", "mira", at="b2.a5", finished={"b1"}), ["mira"])] == ["pb1mira1"]
+
+
+# ---- figure labels: which reference picture is which figure (label-scene-figures, part 1)
+
+
+ROOM = ("A grey stone mill yard in the soft morning light, a wooden gate open onto a dusty road and low green hills beyond, the "
+        "river bright behind the turning wheel.")
+
+
+def labelled(text_):
+    """A set holding everyone's portrait (drawn by a run), and an Illustrator on it with the writer `text_` for scenes."""
+    il, rep, sink, t, im = run(level=None)
+    by = {p["target"]: p for p in pics(sink, "portrait")}
+    im2 = Image()
+    t2 = text_ if isinstance(text_, Text) else Text(scene=text_)
+    il2 = art.Illustrator([art.Book(il.books[0].doc, il.books[0].epub, sink)], t2, im2, "ink", portraits="all", workers=1,
+                          log=lambda *_: None, pause=0)
+    return il2, t2, im2, by, sink
+
+
+def test_only_figures_with_a_picture_get_a_label_most_tied_first():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["events"].append(event(7, 10, "Oren and Mira talk at the gate of the mill.", ["oren", "mira"]))
+    d["relations"] = [{"id": "r1", "from": "a3", "src": "mira", "dst": "oren", "label": "friend of", "basis": "stated",
+                       "evidence": ["a3"]}, {"id": "r2", "from": "a3", "src": "mira", "dst": "mill", "label": "visits",
+                                             "basis": "stated", "evidence": ["a3"]}]
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], "ink"), "pictures": [pic("pmira001", "mira", "a4"), pic("poren001", "oren", "a3")]}
+    t = Text()
+    il = art.Illustrator([art.Book(d, bk, sink)], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    il.make_prompt(il.job("event", "e6", at="a11"))      # Mira and the Stranger: only Mira has a portrait
+    w = writer_calls(t)[-1]
+    assert t.systems[-1] == art.SCENE_WRITER and '<entry name="Mira" type="person" figure="A">' in w
+    assert re.search(r'<entry name="the Stranger"[^>]*>', w) and 'figure="B"' not in w
+    pr = il.make_prompt(il.job("event", "e7", at="a11"))  # Oren and Mira: Mira has two ties, Oren one
+    w = writer_calls(t)[-1]
+    assert 'name="Mira" type="person" figure="A"' in w and 'name="Oren" type="person" figure="B"' in w
+    assert pr.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "oren"}]
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "poren001"]
+    il.make_prompt(il.job("event", "e2", at="a11"))      # e2 shows from a1: neither portrait is reached, no label
+    assert "figure=" not in writer_calls(t)[-1]
+    for rule in ('call them by the label the first time', '"figure A, a silversaint in a dark travelling coat"',
+                 "Do not describe their face, hair, eyes, skin or build", "Never write the label of a figure you do not draw"):
+        assert rule in art.SCENE_WRITER and rule not in art.WRITER and rule not in art.PORTRAIT_WRITER
+
+
+def test_references_are_the_labels_in_the_text_in_label_order_and_an_unseen_figure_gets_none():
+    # e6 names Mira (figure A) and the Stranger (figure B), both drawn: the writer draws only the Stranger; Mira is unseen
+    il, t, im, by, sink = labelled(Text(scene=lambda p: f"{ROOM} Figure B, a hooded traveller in a long cloak, waits at the gate.",
+                                        shows=["Mira", "the Stranger"]))
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert pr.figures == [{"label": "B", "entity": "stranger"}] and pr.shows == ["stranger"]
+    assert [r["id"] for _, r in pr.references] == [by["stranger"]["id"]]
+    rec = il.draw(job, pr)
+    call = im.calls[-1]
+    assert call["references"] == [sink.files[by["stranger"]["file"]]]
+    assert call["note"] == "Reference picture 1 is figure B. " + art.FIGURE_NOTE and call["note"] not in call["prompt"]
+    assert rec["references"] == [by["stranger"]["id"]]
+    assert rec["figures"] == [{"label": "B", "entity": "stranger", "ref": by["stranger"]["id"]}]
+    for name in ("Mira", "Stranger"):
+        assert name not in call["prompt"]
+    # both labelled, written B before A: references still go in label order
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} Figure B, a hooded traveller, talks with figure A, a young woman.")
+    job = il.job("event", "e6", at="a11")
+    rec = il.draw(job, il.make_prompt(job))
+    assert im.calls[-1]["references"] == [sink.files[by["mira"]["file"]], sink.files[by["stranger"]["file"]]]
+    assert im.calls[-1]["note"].startswith("Reference picture 1 is figure A. Reference picture 2 is figure B. ")
+    assert [f["label"] for f in rec["figures"]] == ["A", "B"]
+
+
+def test_a_label_the_material_did_not_give_gets_one_rewrite_then_the_picture_is_dropped():
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} Figure C stands by the gate." if "It was rejected" not in p
+                                   else f"{ROOM} Figure A stands by the gate.")
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert "It was rejected: unknown figure label: figure C" in writer_calls(t)[-1] and pr.figures == [{"label": "A", "entity": "mira"}]
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} Figure D stands by the gate.")
+    with pytest.raises(art.Dropped, match="dropped: unknown figure label in prompt") as e:
+        il.make_prompt(il.job("event", "e6", at="a11"))
+    assert e.value.say == "a figure label the picture has no reference for: figure D"
+
+
+def test_figure_labels_pass_the_name_checks():
+    il, t, im, by, sink = labelled(lambda p: f"Figure A waits at the gate. {ROOM} Beside her stands figure B.")
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert pr.body.startswith("Figure A waits") and [f["label"] for f in pr.figures] == ["A", "B"]
+    assert not il.names[0].find(pr.body) and art._opening_unknown(pr.body, il._known(0, "a11", None)) == ""
+
+
+def test_an_edited_text_without_a_label_drops_its_reference_and_a_label_with_no_reference_gets_nothing():
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} Figure A, a young woman, and figure B, a hooded traveller, stand at the gate.")
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    whole = pr.text
+    edited = whole.replace(" and figure B, a hooded traveller,", "")
+    rec = il.draw(job, pr, text=edited)
+    call = im.calls[-1]
+    assert call["references"] == [sink.files[by["mira"]["file"]]] and "figure B" not in call["note"]
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": by["mira"]["id"]}] and rec["references"] == [by["mira"]["id"]]
+    # a label typed in with no figure behind it, and a figure whose picture file is gone: no reference, no line in the note
+    sink.files.pop(by["mira"]["file"])
+    rec = il.draw(job, pr, text=whole + " Figure C watches.")
+    call = im.calls[-1]
+    assert call["references"] == [sink.files[by["stranger"]["file"]]] and call["note"] == "Reference picture 1 is figure B. " + art.FIGURE_NOTE
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": None},
+                              {"label": "B", "entity": "stranger", "ref": by["stranger"]["id"]}]
+    rec = il.draw(job, pr, text=ROOM + " " + ROOM)          # no label left: nothing is sent
+    assert im.calls[-1]["references"] == [] and im.calls[-1]["note"] == "" and rec["figures"] == [] and rec["references"] == []
+
+
+def test_the_note_numbers_the_labels_and_merges_the_likeness_words():
+    refs = [(0, {"id": "p1"}), (0, {"id": "p2", "set": "anime"}), (0, {"id": "p3", "set": "anime"})]
+    note = art.Illustrator.reference_note("event", refs, ["A", "B", "D"])
+    assert note == ("Reference picture 1 is figure A. Reference picture 2 is figure B. Reference picture 3 is figure D. "
+                    + art.FIGURE_NOTE + " Reference pictures 2 and 3 are drawn in another style. Take from them only the "
+                    "likeness of the figure (face, hair, build, marks), never the drawing style, medium, line or colour "
+                    "treatment: draw everything in the style the prompt asks for.")
+    assert art.Illustrator.reference_note("event", refs[:2], None) == art.Illustrator.likeness_note(refs[:2])   # older prompt
+    assert art.Illustrator.reference_note("event", [], ["A"]) == "" and art.Illustrator.reference_note("portrait", []) == ""
+    assert art.Illustrator.reference_note("plate", refs[:1], ["A"]) == "Reference picture 1 is figure A. " + art.FIGURE_NOTE
+
+
+def test_a_likeness_from_another_style_is_labelled_like_any_reference():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    im = Image()
+    il = comic(d, bk, {"digital-art": likeness_set(d, pic("pdig0001", "mira", "a4"))}, im=im)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert pr.figures == [{"label": "A", "entity": "mira"}]
+    rec = il.draw(job, pr)
+    assert im.calls[-1]["note"] == ("Reference picture 1 is figure A. " + art.FIGURE_NOTE + " Reference picture 1 is drawn in "
+                                    "another style. Take from it only the likeness of the figure (face, hair, build, marks), "
+                                    "never the drawing style, medium, line or colour treatment: draw everything in the style "
+                                    "the prompt asks for.")
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": {"set": "digital-art", "id": "pdig0001"}}]
+
+
+def test_soften_keeps_the_labels_of_the_figures_it_still_draws():
+    first = f"{ROOM} Figure B, a hooded traveller, grips figure A, a young woman, by the arm."
+    calm = f"{ROOM} Figure B, a hooded traveller, stands near figure A, a young woman, at the gate."
+    il, t, im, by, sink = labelled(lambda p: calm if "image model refused" in p else first)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    soft = il.soften(job, pr.text, "violence")
+    assert 'keep that label for each figure you still' in writer_calls(t)[-1]
+    assert soft.figures == pr.figures and [r["id"] for _, r in soft.references] == [by["mira"]["id"], by["stranger"]["id"]]
+    # a softened text that drops every label gets one rewrite naming it, then is dropped
+    il, t, im, by, sink = labelled(lambda p: ROOM + " " + ROOM if "image model refused" in p else first)
+    with pytest.raises(art.Dropped, match="lost the figure labels"):
+        il.soften(il.job("event", "e6", at="a11"), first, "violence")
+    assert "It was rejected: lost the figure labels" in writer_calls(t)[-1]
+    # nor may it label a figure the refused text did not
+    il, t, im, by, sink = labelled(lambda p: (f"{ROOM} Figure B waits by the gate in the cold." if "It was rejected" in p
+                                              else f"{ROOM} Figure A and figure B wait by the gate.")
+                                   if "image model refused" in p else f"{ROOM} Figure B waits by the gate in the cold.")
+    soft = il.soften(il.job("event", "e6", at="a11"), f"{ROOM} Figure B waits by the gate in the cold.", "violence")
+    assert "unknown figure label: figure A" in writer_calls(t)[-1] and soft.figures == [{"label": "B", "entity": "stranger"}]
+
+
+def test_a_runs_own_rewrite_after_a_refusal_keeps_the_labels():
+    first = f"{ROOM} Figure A, a young woman, grips figure B, a hooded traveller, by the arm."
+    calm = f"{ROOM} Figure A, a young woman, stands near the gate while a hooded traveller waits."
+    il, t, im, by, sink = labelled(lambda p: calm if "image model refused" in p else first)
+    im.refuse = [lambda prompt, n: n == 1]
+    job = il.job("event", "e6", at="a11")
+    rec = il.draw(job)
+    assert rec and il.report.softened == 1 and rec["figures"] == [{"label": "A", "entity": "mira", "ref": by["mira"]["id"]}]
+    assert im.calls[-1]["references"] == [sink.files[by["mira"]["file"]]]
+
+
+def test_an_older_prompt_without_figures_is_drawn_as_before():
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} A hooded traveller and a young woman stand at the gate.")
+    job = il.job("event", "e6", at="a11")
+    old = art.Prompt(text="A hooded traveller and a young woman stand at the gate. Ink.", scene="", anchor="a9", shape="landscape",
+                     references=[(0, by["mira"]), (0, by["stranger"])], version=art.NOTE_VERSION)
+    assert old.figures is None
+    rec = il.draw(job, old, text=old.text)
+    call = im.calls[-1]
+    assert call["references"] == [sink.files[by["mira"]["file"]], sink.files[by["stranger"]["file"]]] and call["note"] == ""
+    assert "figures" not in rec and rec["references"] == [by["mira"]["id"], by["stranger"]["id"]]
+
+
+def test_references_follow_the_figures_given_whatever_shows_says():
+    il, t, im, by, sink = labelled(lambda p: f"{ROOM} Figure B, a hooded traveller, waits at the gate.")
+    job = il.job("event", "e6", at="a11")
+    figs = [{"label": "B", "entity": "stranger"}]
+    assert [r["id"] for _, r in il.references(job, ["mira", "stranger"], None, figs)] == [by["stranger"]["id"]]
+    assert [r["id"] for _, r in il.references(job, ["mira", "stranger"])] == [by["mira"]["id"], by["stranger"]["id"]]   # older
+    pairs = art.Illustrator.pair_figures([{"label": "B", "entity": "mira"}, {"label": "A", "entity": "oren"}],
+                                         [(0, by["mira"])], "figure B only")
+    assert pairs == [({"label": "B", "entity": "mira"}, (0, by["mira"]))]
+    assert art.labels_in("Figure B and figure A; figures C, a figure Dx, figure E") == ["A", "B"]

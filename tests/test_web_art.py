@@ -622,7 +622,9 @@ def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env
     assert rec["references"] and all(x["set"] == "ink" and x["id"] in portraits.values() for x in rec["references"])
     call = env.image.calls[-1]
     assert call["references"] and len(call["references"]) == len(rec["references"])
-    assert call["note"] == art.Illustrator.likeness_note([(0, {"set": "ink"})] * len(rec["references"])) != ""
+    # which reference is which labelled figure, then the likeness words, numbered the same (one note)
+    labels = [f["label"] for f in rec["figures"] if f["ref"]]
+    assert call["note"] == art.Illustrator.reference_note("event", [(0, {"set": "ink"})] * len(rec["references"]), labels) != ""
     assert "likeness" in call["note"] and call["note"] not in call["prompt"]
     assert (env.data / "art" / env.hash / "ink" / "art.json").read_bytes() == ink_before
     assert rec["prompt"] == got["prompt"]                          # the likeness words are not in the person's text
