@@ -1244,8 +1244,10 @@ class Illustrator:
             sure, extra = self._scenes(bi, ch, level)
             if extra is None:            # level "all", not screened: up to one more picture per other non-minor event
                 pictures = max(1, len(major))
-                drawn = sum(k in held for k in sure) + sum(("event", e["id"], e["from"]) in held for e in major)
-                drawn = min(drawn, pictures)
+                # the plate on its own key, and event pictures (on-demand ones too) never filling the plate's slot: a
+                # chapter whose plate a run would still draw is never counted as all drawn
+                events_held = sum(("event", e["id"], e["from"]) in held for e in major)
+                drawn = sum(k in held for k in sure) + min(events_held, pictures - 1)
             else:
                 pictures = len(sure) + len(extra)
                 drawn = sum(k in held for k in sure + extra)
