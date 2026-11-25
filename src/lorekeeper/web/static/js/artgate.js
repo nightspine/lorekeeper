@@ -55,3 +55,16 @@ export function visibleWorld(world, { ords, position, book = null, finished = []
   // `from` goes with a note of this book: text shown from it is dropped if the position moves back before it.
   return visibleAt(world.from, ords || new Map(), position, false) ? { text: world.text, own: true, from: world.from } : null;
 }
+
+/**
+ * The background note the picture sheet shows, and whether the person may write one. Only the person's own note
+ * (`edited: true`) is shown, and only as `visibleWorld` allows at the position; an automatic note is no longer used, so
+ * it is never shown and may be replaced. A note of the person's own that is inherited from an earlier book, or hidden at
+ * this position, cannot be changed here (saving would overwrite text the reader may not see).
+ */
+export function sheetWorld(world, gate = {}) {
+  const seen = visibleWorld(world, gate);
+  const own = world?.edited === true;
+  const shown = seen && own ? seen : null;
+  return { world: shown, canEditWorld: shown ? shown.own === true : !own };
+}

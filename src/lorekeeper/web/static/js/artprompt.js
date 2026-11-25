@@ -36,18 +36,35 @@ export function sentenceFor(parts, style, custom = "") {
 /**
  * Swap the style sentence. `prompt` is what is on screen, `written` what the sheet last put there itself (the two differ
  * when the person edited the prompt), `old` the sentence in it now. Returns { prompt, written, sentence, missing }.
+ *
+ * In an edited prompt the sentence is replaced only in its slot: right before the no-text sentence (the last one there),
+ * or at the very end when the no-text sentence was taken out. Never anywhere in the body, where a short style ("ink")
+ * may also stand as an ordinary word; anything else leaves the text as written and `missing` says so.
  */
 export function restyle({ prompt, written, parts, old, next }) {
   const fresh = composePrompt(parts.body, next, parts.noText);
+  const nx = squash(next);
   if (prompt === written) return { prompt: fresh, written: fresh, sentence: next, missing: false };
-  const was = squash(old);
-  if (!was) {
-    // No sentence in it yet (an empty custom style): the new one goes before the no-text sentence when that still stands.
-    const nt = squash(parts.noText), k = nt ? prompt.lastIndexOf(nt) : -1;
-    if (k < 0 || !squash(next)) return { prompt, written: fresh, sentence: next, missing: squash(next) !== "" };
-    return { prompt: `${prompt.slice(0, k)}${squash(next)} ${prompt.slice(k)}`, written: fresh, sentence: next, missing: false };
+  const keep = (missing) => ({ prompt, written: fresh, sentence: next, missing });
+  const done = (text) => ({ prompt: text, written: fresh, sentence: next, missing: false });
+  const was = squash(old), nt = squash(parts.noText);
+  if (nt) {
+    // The slot before the no-text sentence: "<old> <noText>", or just "<noText>" when there was no sentence yet.
+    const slot = was ? `${was} ${nt}` : nt;
+    const k = prompt.lastIndexOf(slot);
+    if (k >= 0 && (k === 0 || /\s$/.test(prompt.slice(0, k)) || !was)) {
+      const before = prompt.slice(0, k), after = prompt.slice(k + slot.length);
+      const head = !was && before && !/\s$/.test(before) ? `${before} ` : before;
+      return done(`${head}${nx ? `${nx} ` : ""}${nt}${after}`);
+    }
   }
-  const at = prompt.indexOf(was);
-  if (at < 0) return { prompt, written: fresh, sentence: next, missing: squash(next) !== "" && !prompt.includes(squash(next)) };
-  return { prompt: prompt.slice(0, at) + squash(next) + prompt.slice(at + was.length), written: fresh, sentence: next, missing: false };
+  if (was) {
+    // No no-text sentence any more: the style sentence still closes the prompt.
+    const t = prompt.trimEnd();
+    if (t.endsWith(was) && (t.length === was.length || /\s/.test(t[t.length - was.length - 1]))) {
+      const base = t.slice(0, t.length - was.length);
+      return done(nx ? `${base}${nx}` : base.trimEnd());
+    }
+  }
+  return keep(nx !== "");
 }

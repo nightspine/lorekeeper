@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -92,6 +92,32 @@ test("an inherited note is never read as this book's, even when its anchor id co
 test("no note, or an empty one, shows nothing", () => {
   assert.equal(visibleWorld(null, { ords: book2, position: 4 }), null);
   assert.equal(visibleWorld({ text: "  ", from: "ch1.para01" }, { ords: book2, position: 4 }), null);
+});
+
+test("the picture sheet's note: an automatic note is never shown and may be replaced", () => {
+  const gate = { ords: book1, position: 3 };
+  const r = sheetWorld({ text: "Mines and tunnels.", from: "ch1.para01" }, gate);
+  assert.equal(r.world, null);
+  assert.equal(r.canEditWorld, true);
+  assert.deepEqual(sheetWorld(null, gate), { world: null, canEditWorld: true });
+});
+test("the picture sheet's note: the person's own visible note is shown and may be changed", () => {
+  const r = sheetWorld({ text: "A walled city.", edited: true, from: "ch1.para09" }, { ords: book1, position: 1 });
+  assert.equal(r.world?.text, "A walled city.");
+  assert.equal(r.canEditWorld, true);
+});
+test("the picture sheet's note: the person's own note hidden at the position is neither shown nor written over", () => {
+  const r = sheetWorld({ text: "A walled city.", edited: true, from: "ch2.para03" }, { ords: book1, position: 1 });
+  assert.deepEqual(r, { world: null, canEditWorld: false });
+  const hiddenBook = sheetWorld({ text: "A walled city.", edited: true, inherited: true, inherits: ["b1"], from: "ch1.para01" },
+    { ords: book2, position: 4, book: "b2", finished: [], earlier: ["b1"] });
+  assert.deepEqual(hiddenBook, { world: null, canEditWorld: false });
+});
+test("the picture sheet's note: an inherited own note is shown once its book is finished, but not changed here", () => {
+  const r = sheetWorld({ text: "A walled city.", edited: true, inherited: true, inherits: ["b1"], from: "ch1.para01" },
+    { ords: book2, position: 0, book: "b2", finished: ["b1"], earlier: ["b1"] });
+  assert.equal(r.world?.text, "A walled city.");
+  assert.equal(r.canEditWorld, false);
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

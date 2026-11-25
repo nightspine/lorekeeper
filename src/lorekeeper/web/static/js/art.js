@@ -60,7 +60,7 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-export { unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+export { sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
 
@@ -391,8 +391,9 @@ export async function openPictureSheet(opts) {
    *  the world note's own anchor. The Reader checks them against the position as it checks the moments. */
   sh.anchors = () => [st.anchor, opts.world?.from].filter((a) => typeof a === "string");
   /** The position moved back before that text: drop the prompt and the World line and write a new prompt here. */
-  sh.reposition = (world) => {
+  sh.reposition = ({ world = null, canEditWorld = false } = {}) => {
     opts.world = world || null;
+    opts.canEditWorld = canEditWorld;   // decided again for the position now: a note hidden here is never written over
     st.prompt = st.written = "";
     st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false;
     write();
@@ -472,8 +473,10 @@ export async function openPictureSheet(opts) {
   function paint() {
     textarea.value = st.prompt;
     const customField = h("input.input.art-custom", { value: st.custom, placeholder: "Describe the style, for example: linocut, two colours", "aria-label": "Custom style",
-      on: { input: (e) => { st.custom = e.target.value; st.slug = null; if (st.parts) applyStyle(); paintFoot(); },
-        change: (e) => { st.custom = e.target.value; applyStyle(); paintFoot(); } } });
+      // Swapped into the prompt once, on change (blur or Enter), not on every keystroke; Draw applies a pending one first.
+      on: { input: (e) => { st.custom = e.target.value; st.slug = null; paintFoot(); },
+        change: (e) => { st.custom = e.target.value; applyStyle(); paintFoot(); },
+        keydown: (e) => { if (e.key === "Enter") { e.preventDefault(); st.custom = e.target.value; applyStyle(); paintFoot(); } } } });
     const styleRow = h("div.art-chips", { role: "group", "aria-label": "Style" },
       STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { if (st.style !== slug) { st.style = slug; applyStyle(); paint(); } })),
       chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; applyStyle(); paint(); } body.querySelector(".art-custom")?.focus(); }));
@@ -591,6 +594,8 @@ export async function openPictureSheet(opts) {
 
   drawBtn.addEventListener("click", async () => {
     if (st.busy) return;
+    // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.
+    if (st.parts && sentenceFor(st.parts, st.style, st.custom) !== st.sentence) applyStyle();
     abort();
     const mine = ++gen;
     ctrl = new AbortController();

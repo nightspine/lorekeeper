@@ -63,5 +63,36 @@ test("a sentence with $ patterns is put in literally", () => {
   assert.ok(r.prompt.includes("Costs $& and $1."));
 });
 
+test("the reviewer's case: an edited prompt, Custom, then typing letter by letter never touches the body", () => {
+  const edited = reply.prompt.replace("grey", "dark");
+  let st = { prompt: edited, written: reply.prompt, sentence: parts.style };
+  for (const typed of ["", "i", "in", "ink"]) {
+    st = { ...st, ...restyle({ prompt: st.prompt, written: st.written, parts, old: st.sentence, next: typed }) };
+  }
+  assert.equal(st.prompt, "A tall woman in a dark coat by a window. ink No text anywhere.");
+  assert.equal(st.missing, false);
+});
+test("a short style that also stands in the body is swapped only in its slot", () => {
+  const p2 = { ...parts, body: "A woman with ink-black hair, ink on her fingers." };
+  const prompt = composePrompt(p2.body, "ink", p2.noText);
+  const edited = prompt.replace("woman", "girl");
+  const r = restyle({ prompt: edited, written: prompt, parts: p2, old: "ink", next: "Soft watercolour washes." });
+  assert.equal(r.prompt, "A girl with ink-black hair, ink on her fingers. Soft watercolour washes. No text anywhere.");
+});
+test("a style word in the body while the slot is gone counts as missing, never replaced there", () => {
+  const p2 = { ...parts, body: "A woman with ink-black hair, ink on her fingers." };
+  const prompt = composePrompt(p2.body, "ink", p2.noText);
+  const edited = "A girl with ink-black hair, ink on her fingers, by a fire.";
+  const r = restyle({ prompt: edited, written: prompt, parts: p2, old: "ink", next: "Oil paint." });
+  assert.equal(r.prompt, edited);
+  assert.equal(r.missing, true);
+});
+test("with the no-text sentence taken out, the style sentence that closes the prompt is swapped", () => {
+  const edited = "A very tall woman by a window. Ink drawing, bold lines.";
+  const r = restyle({ prompt: edited, written: reply.prompt, parts, old: parts.style, next: "Soft watercolour washes." });
+  assert.equal(r.prompt, "A very tall woman by a window. Soft watercolour washes.");
+  assert.equal(r.missing, false);
+});
+
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");
