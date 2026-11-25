@@ -406,12 +406,15 @@ def _sentences(text: str) -> list[list[str]]:
     return [t for t in (_toks(x) for x in re.split(r"(?<=[.!?;])\s+|\n+", text)) if t]
 
 
-def quoted(quote: str, source: str) -> bool:
+def quoted(quote: str, source: str, one: bool = False) -> bool:
     """Whether `quote` (2 words or more) is a phrase of `source`, word for word, ignoring case and punctuation. A quote with an
     ellipsis counts only when its pieces come in order within one sentence of the source ("dark ... hair" across two
-    sentences does not)."""
+    sentences does not). `one`: a single word counts too when it is no function word ("tall" of "He was tall, thin, and very
+    old"), for a look detail quoted from the entity's own paragraphs."""
     parts = [_toks(p) for p in re.split(r"\.\.\.|…", quote)]
     parts = [p for p in parts if p]
+    if one and len(parts) == 1 and len(parts[0]) == 1 and parts[0][0] not in _STOP and len(parts[0][0]) > 2:
+        return " " + parts[0][0] + " " in " " + " ".join(_toks(source)) + " "
     if not parts or sum(map(len, parts)) < 2:
         return False
     if len(parts) == 1:
@@ -2058,9 +2061,9 @@ class Illustrator:
                     if d.get("seen") is not True:      # a detail the writer does not call seen is no look
                         not_look.append(t)
                         continue
-                    if quoted(q, own) and detail_supported(t, q):
+                    if quoted(q, own, one=True) and detail_supported(t, q):
                         into.append({"text": t, "quote": q})
-                    elif quoted(q, own) and len(_toks(q)) <= OWN_WORDS and _content(t) & _content(q):
+                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and _content(t) & _content(q):
                         # the writer's words go beyond its quote ("big, beefy build" on "A big, beefy man"): the quote is
                         # the book's own short phrase about it, so it becomes the detail
                         into.append({"text": q.strip(" ,.;:"), "quote": q})

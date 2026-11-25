@@ -2198,3 +2198,22 @@ def test_a_detail_worded_beyond_its_short_quote_becomes_the_quote():
     assert sink.m["appearance"]["oren"][0]["text"] == "A miller: A big, beefy man."
     assert rep.dropped["fixed: look detail in the book's own words"] == 1
     assert rep.dropped["dropped: look detail not in the text"] == 1      # a long quote that does not hold "thick red" goes
+
+
+
+def test_a_one_word_look_quoted_from_the_figures_own_paragraphs_holds():
+    # Dumbledore's "tall" and "thin", quoted one word each from "He was tall, thin, and very old"
+    assert art.quoted("tall", "He was tall, thin, and very old.", one=True) and not art.quoted("tall", "He was tall.")
+    assert not art.quoted("the", "the man", one=True) and not art.quoted("tallow", "He was tall.", one=True)
+    t = Text(notes={"Oren": ("a miller", ["old", "broad"])})
+    real = t.complete
+
+    def complete(system, prompt, schema, prefix=None):
+        out = real(system, prompt, schema, prefix)
+        if "appearance note for Oren" in prompt:
+            for d in out["details"]:
+                d["quote"] = d["text"]                    # one word each, as Flash quoted Dumbledore's
+        return out
+    t.complete = complete
+    il, rep, sink, t, im = run(text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: old, broad."

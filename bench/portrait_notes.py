@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import os
 import sys
 import tempfile
@@ -56,21 +57,50 @@ def main(argv=None) -> int:
     ap.add_argument("--model")
     ap.add_argument("--classify", action="store_true", help="only the look index and the group pick (no book text needed)")
     ap.add_argument("--style", default="realism")
+    ap.add_argument("--main-cast", action="store_true", help="the main cast (`Illustrator.main_cast`) instead of the most named")
+    ap.add_argument("--notes-only", action="store_true", help="the figure notes only (no prompt is written), with each empty "
+                    "note's reason and the details its rules dropped")
     a = ap.parse_args(argv)
     doc = json.loads(Path(a.index).read_text())
     spec = llm.PROVIDERS[a.provider]
     text = llm.make(a.provider, a.model or spec["cheap"], api_key=llm.env_key(a.provider))
     bk = epub.read(a.epub) if a.epub else None
     tmp = Path(tempfile.mkdtemp(prefix="lk-bench-"))
-    il = art.Illustrator([art.Book(doc, bk, art.FileSink(tmp / "art"), None)], text, NoImage(), a.style,
-                         log=lambda m: print(m, file=sys.stderr), workers=1)
+    said: dict[str, list[str]] = {}
+
+    def log(m):
+        print(m, file=sys.stderr)
+        hit = re.match(r"\s*note for (\S+): (.*)", str(m))
+        if hit:
+            said.setdefault(hit.group(1), []).append(hit.group(2))
+    il = art.Illustrator([art.Book(doc, bk, art.FileSink(tmp / "art"), None)], text, NoImage(), a.style, log=log, workers=1,
+                         portraits="all")
     b = il.books[0]
     at = b.anchors[min(len(b.anchors) - 1, max(0, round(a.at * (len(b.anchors) - 1))))]["id"]
-    ents = pick(doc, a.entity)
+    ents = il.main_cast(0) if a.main_cast else pick(doc, a.entity)
     title = doc.get("work", {}).get("title", a.index)
     print(f"# {title}: at {at} ({a.at:.0%}), {len(ents)} entities, text model {a.provider}/{text.name}\n")
     if a.classify:
         classify(il, ents, at)
+    elif a.notes_only:
+        il.world(0)
+        for eid in ents:
+            name = b.ents[eid]["names"][0]["value"]
+            try:
+                job = il.job("portrait", eid, at=at)
+            except art.NotVisible:
+                print(f"## {name}: not visible at {at}\n")
+                continue
+            anchor = il._anchor(0, job.anchor)
+            note, why, _, _ = il.figure_note(0, eid, anchor)
+            print(f"## {name} (at {anchor}): " + (note or f"EMPTY ({why})"))
+            looks = [it for it in il.items(0, eid) if il.look_index(0, eid).get(it["id"], {}).get("look")]
+            if not note:
+                print(f"   look items: {len(looks)}; introduction paragraphs picked: "
+                      f"{(il.man[0].get('intro', {}).get(eid) or {}).get('paragraphs', [])}")
+            for x in said.get(eid, []):
+                print(f"   {x}")
+            print()
     else:
         if il.world(0):
             print("World:", (il.man[0]["world"] or {}).get("text", ""), "\n")
