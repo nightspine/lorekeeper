@@ -1249,6 +1249,252 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_nothing_from_it():
     assert len(im.calls) == n                                   # the full plate was already there
 
 
+def names_for(entities):
+    """The banned names of a one-book run over the fixture book with these entities."""
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"] = d["entities"] + entities
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", log=lambda *_: None, pause=0)
+    return il.names[0]
+
+
+@pytest.mark.parametrize("text_", [
+    "A half-Mira grin and an Oren-like frown.",                          # inside hyphenated words
+    "Mira's basket and Mira’s shawl, Oren's apron and Oren’s hat.",      # both apostrophes
+    "Mr. Oren waits; Professor Jonathan Harker’s case lies by Miss Mira.",   # titles before the name
+    "A banner reads MIRA and JONATHAN HARKER in the dark.",              # capitals, a one-word name and a full one
+    "The Stranger stands at the door. \"The Stranger waits,\" she says.",   # "The Stranger" opening a sentence
+    "The Millers’ cart and the Jean-François look by the half-Jonathan Harker gate.",
+])
+def test_strip_removes_every_name_find_reports(text_):
+    names = names_for([ent("harker", "Jonathan Harker", frm="a2"), ent("jf", "Jean-François", frm="a2"),
+                       ent("millers", "the Millers", "group", frm="a2")])
+    assert names.find(text_), text_
+    out = names.strip(text_)
+    assert not names.find(out), (out, names.find(out))
+    assert not re.search(r"Mira|Oren|Harker|MIRA|HARKER|Stranger|François|Millers", out), out
+
+
+def test_strip_keeps_an_ordinary_word_opening_a_sentence_and_puts_a_bare_noun_in_a_hyphenated_word():
+    names = names_for([ent("millers", "the Millers", "group", frm="a2")])
+    assert names.find("Stranger things wait.") == "" and names.strip("Stranger things wait.") == "Stranger things wait."
+    assert names.strip("A half-Mira grin; Oren-like.") == "A half-figure grin; figure-like."
+    assert names.strip("The Stranger stands.") == "The figure stands."
+    assert names.strip("A red-haired Oren twin.", attributive=True) == "A red-haired twin."
+    assert names.strip("A first-year Oren", attributive=True) == "A first-year"
+    assert names.strip("A knight of the Millers", attributive=True) == "A knight"
+    assert names.strip("The Millers", attributive=True) == "The people"
+    assert names.strip("Mira's helper", attributive=True) == "The figure's helper"
+
+
+def test_a_portrait_naming_itself_as_the_stranger_at_a_sentence_start_is_fixed_not_dropped():
+    # "The Stranger ..." opening the scene: find saw the name, strip left it (it took "The" for the sentence's first word)
+    def scene(p):
+        return ("The Stranger sits by the fire, " + PORTRAIT_SCENE[2:]) if "This is a portrait" in p else SCENE
+    il, rep, sink, t, im = run(text_=Text(scene=scene))
+    [s] = [p for p in pics(sink, "portrait") if p["target"] == "stranger"]
+    assert s["prompt"].startswith("The figure sits by the fire, head-and-shoulders portrait")
+    assert rep.dropped["fixed: name replaced by a role"] >= 1 and not rep.dropped["dropped: name in prompt"]
+
+
+def test_a_hyphenated_name_in_the_scene_is_fixed_not_dropped():
+    def scene(p):
+        return ("A half-Mira smile, " + PORTRAIT_SCENE[2:]) if "This is a portrait" in p else SCENE
+    il, rep, sink, t, im = run(text_=Text(scene=scene))
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert m["prompt"].startswith("A half-figure smile, head-and-shoulders portrait") and "Mira" not in m["prompt"]
+
+
+def test_a_name_in_an_appearance_note_role_never_reaches_the_prompt():
+    # the writer gave the note a role with a name in it ("a Mira miller"): taken out when the note is written
+    il, rep, sink, t, im = run(text_=Text(notes={"Oren": ("a Mira miller", NOTE_PARTS["Oren"][1])}))
+    assert sink.m["appearance"]["oren"][0]["text"].startswith("A miller:")
+    assert not any(re.search(r"\bOren\b", p["prompt"].split("Figures:")[1]) for p in pics(sink) if "Figures:" in p["prompt"])
+
+
+def test_a_stored_note_or_world_note_that_names_someone_is_stripped_in_the_prompt():
+    # a note stored before notes were checked for names, and a world note that names one: the prompt still names nobody
+    sink = Mem()
+    run(sink=sink)
+    sink.m["appearance"]["mira"][-1]["text"] = "Oren's helper: slight, dark braided hair."
+    sink.m["world"]["text"] = WORLD + " The Stranger roams it."
+    sink.m["pictures"] = [p for p in sink.m["pictures"] if p["target"] != "mira"]
+    il, rep, sink, t, im = run(sink=sink)
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert "Oren" not in m["prompt"] and "Stranger" not in m["prompt"] and "The figure's helper: slight" in m["prompt"]
+
+
+def test_a_dropped_prompt_says_the_check_and_the_word_only_when_the_reader_has_met_it():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", log=lambda *_: None, pause=0)
+    assert il._say("name in the text: Oren", 0, "a5", None) == "a name the picture must not show: Oren"
+    assert il._say("name in the text: Gabriel", 0, "a5", None) == "a name the book has not used by this point"   # met at a8
+    assert il._say("name in the text: Gabriel", 0, "a9", None) == "a name the picture must not show: Gabriel"
+    assert il._say("name in the text: GABRIEL", 0, "a9", None) == "a name the book has not used by this point"   # case-sensitive
+    assert il._say("unknown name: Valdemar", 0, "a11", None) == "a name the book has not used by this point"
+    assert il._say("look not in the note: thin", 0, "a5", None) == "a look the book does not give this figure: thin"
+    assert art.explain("wording: has just") == "wording that looks back on the story or ahead: has just"
+
+
+# Morning Star: Cassius au Bellona's portrait failed with "name in prompt" on every retry. A name with a lowercase particle, a
+# family name that is also a group's ("House Bellona"), and profiles that use it as a modifier ("the Bellona heir").
+CH_BELLONA = ["Cassius au Bellona rode to the mill at dawn in a long golden cloak and waited.",
+              "Men of House Bellona followed him with their banners high over the dusty road.",
+              "Mira saw the Bellona heir dismount and walk to the gate in his golden armour.",
+              "Oren said a Bellona knight had never asked for flour at his mill before then.",
+              "Cassius au Bellona laughed and paid Oren in gold for every sack in the cart.",
+              "The Bellonas left before noon and the dust of the road settled behind them all."]
+
+
+def bellona_run(scene, note=("the Bellona heir", ["a long golden cloak", "golden armour"])):
+    bk = book(("One", CH1), ("Two", CH_BELLONA))
+    d = base_doc(bk)
+    d["entities"] += [ent("cassius", "Cassius au Bellona", frm="a6", facets=[
+                          portrait("cassius", "a8", "The Bellona heir, a Bellona knight in a long golden cloak and golden armour."),
+                          {"id": "bk.cassius.f1", "kind": "role", "from": "a9", "basis": "stated", "evidence": ["a9"],
+                           "text": "A Bellona knight who pays in gold."}]),
+                      ent("house", "House Bellona", "group", frm="a7")]
+    d["events"] += [event(7, 6, "Cassius au Bellona rides to the mill.", ["cassius"]),
+                    event(8, 10, "Cassius au Bellona pays Oren in gold.", ["cassius", "oren"])]
+    t = Text(scene=lambda p: scene if "This is a portrait" in p else SCENE, notes={"Cassius au bellona": note})
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], t, Image(), "ink", log=lambda *_: None, pause=0)
+    return il, il.make_prompt(il.job("portrait", "cassius", at="a11"))
+
+
+@pytest.mark.parametrize("opening", ["Cassius au Bellona stands, ", "The Bellona heir stands, ", "A Bellona knight stands, ",
+                                     "The Bellonas' heir of House Bellona stands, ", "CASSIUS AU BELLONA stands, ",
+                                     "Cassius au Bellona’s half-Bellona sneer, "])
+def test_a_particle_name_and_a_house_name_in_a_portrait_scene_are_removed(opening):
+    il, pr = bellona_run(opening + PORTRAIT_SCENE[2:])
+    assert not re.search(r"(?i)bellona|cassius", pr.text), pr.text
+    assert not il.names[0].find(pr.text)
+
+
+def test_a_role_that_names_the_house_is_written_without_it():
+    il, pr = bellona_run(PORTRAIT_SCENE)
+    [(eid, note)] = pr.notes
+    assert eid == "cassius" and note.startswith("The heir:") and "Bellona" not in note, note
+
+
+# Review round 1: find and strip share one boundary and possessive rule, so whatever find reports strip takes out, in every
+# combination: capitals with 'S, quotes around a name, both apostrophes, non-ASCII letters, particles, hyphens.
+SHAPE_NAMES = ["Mira", "Jonathan Harker", "Jean-François", "Gabriel de León", "Patrick O'Brien", "Cassius au Bellona", "Millers"]
+SHAPES = ["{n} waits.", "He sees {n} by the gate.", "The coat of {n}'s, {n}’s and {n}'S.", "A banner reads {N}.",
+          "A banner reads {N}'S coat and {N}’S hat.", "He calls '{n}' and \"{n}\" and ‘{n}’.",
+          "A '{N}' sign.", "A half-{n} grin and {n}-like shadows.", "The {n}s' cart.", "The {N}S' cart.",
+          "Mr. {n} and Professor {n}’s owl.", "Behind them, {n}'s.", "\"{n},\" he says.",
+          "He said '{n}'s'.", "A sign reads '{N}'S'.", "He said ‘{n}’s’.", "A sign reads ‘{N}’S’.", "'{n}' waits."]
+
+
+def planted_gone(names, name, t):
+    """`find` reports the planted name (or its plural), and nothing of it is left after `strip`."""
+    found = names.find(t).replace("’", "'").lower()
+    assert found and found.rstrip("s") in name.replace("’", "'").lower(), (t, found)
+    out = names.strip(t)
+    assert names.find(out) == "", (t, out)
+    for w in re.findall(r"[^\W\d_][\w'’]{2,}", name):
+        if w[0].isupper():
+            assert not re.search(re.escape(w), out, re.IGNORECASE), (t, out)
+    return out
+
+
+def shape_names():
+    return names_for([ent("harker", "Jonathan Harker", frm="a2"), ent("jf", "Jean-François", frm="a2"),
+                      ent("leon", "Gabriel de León", frm="a2"), ent("ob", "Patrick O'Brien", frm="a2"),
+                      ent("cassius", "Cassius au Bellona", frm="a2"), ent("millers", "the Millers", "group", frm="a2")])
+
+
+@pytest.mark.parametrize("shape", SHAPES)
+@pytest.mark.parametrize("name", SHAPE_NAMES)
+def test_find_after_strip_is_empty_for_every_shape(name, shape):
+    planted_gone(shape_names(), name, shape.format(n=name, N=name.upper()))
+
+
+ORDINARY_SHAPES = ["Someone whispers '{n}' and turns.", "He calls ‘{n}’ twice.", "She sees the {n} by the gate.",
+                   "A banner of the {N} hangs.", "He fears the {n}'s hand.", "\"The {n},\" he says.", "'The {n}' waits."]
+
+
+@pytest.mark.parametrize("shape", ORDINARY_SHAPES)
+@pytest.mark.parametrize("name", ["Stranger", "Dead"])
+def test_an_ordinary_word_name_away_from_a_sentence_start_is_found_and_stripped(name, shape):
+    names = names_for([ent("dead", "the Dead", "group", frm="a2")])
+    planted_gone(names, name, shape.format(n=name, N=name.upper()))
+
+
+def test_an_ordinary_word_name_opening_a_sentence_is_no_name():
+    names = names_for([ent("dead", "the Dead", "group", frm="a2")])
+    for t in ("Stranger things wait.", "It ends. Dead leaves fall.", "Why? Stranger still, it rains."):
+        assert names.find(t) == "" and names.strip(t) == t
+
+
+def test_a_capitalised_possessive_and_curly_apostrophes_are_found():
+    names = shape_names()
+    assert names.find("A MIRA'S banner.") == "MIRA" and names.find("JONATHAN HARKER'S coat") == "JONATHAN HARKER"
+    assert names.find("Patrick O’Brien waits.") == "Patrick O’Brien" and names.find("The O’BRIEN’S cart.") == "O’BRIEN"
+    assert names.strip("'Cassius au Bellona' rides.") == "'The figure' rides."
+    assert names.strip("JONATHAN HARKER'S coat") == "The figure's coat"
+
+
+def series_say():
+    """A two-book series: "Harker" is used only by the first book's index; the second book uses "Gabriel" from a8 on, and
+    has a Gabriel de León and a Patrick O'Brien it never names."""
+    bk0, bk1 = book(("One", CH1)), book(("One", CH1), ("Two", CH2))
+    d0 = doc(bk0, "b0", entities=[ent("harker", "Jonathan Harker")], events=[], recaps=[])
+    d0["work"]["title"] = "Harker's Mill"
+    d1 = base_doc(bk1)
+    d1["series"] = {"id": "mill", "book": "b1"}
+    d1["entities"] += [ent("leon", "Gabriel de León", frm="a8"), ent("ob", "Patrick O'Brien", frm="a8")]
+    return art.Illustrator([art.Book(d0, None, Mem(), None, draw=False), art.Book(d1, bk1, Mem(), "main")], Text(), Image(), "ink",
+                           log=lambda *_: None, pause=0)
+
+
+def test_the_reason_shows_a_name_only_when_the_whole_name_was_reached():
+    il = series_say()
+    hidden = "a name the book has not used by this point"
+    assert il._say("name in the text: Gabriel", 1, "a9", frozenset()) == "a name the picture must not show: Gabriel"
+    assert il._say("name in the text: Gabriel de León", 1, "a11", frozenset()) == hidden     # only "Gabriel" was met
+    assert il._say("name in the text: Patrick O'Brien", 1, "a11", frozenset()) == hidden
+    assert il._say("name in the text: Harker", 1, "a11", frozenset()) == hidden             # the earlier book is unfinished
+    assert il._say("name in the text: Harker", 1, "a11", frozenset({"b0"})) == "a name the picture must not show: Harker"
+    assert il._say("name in the text: Harker", 1, "a11", None) == "a name the picture must not show: Harker"
+
+
+def test_a_custom_style_naming_someone_is_stripped_in_the_assembled_prompt():
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem(), "main")], Text(), Image(), "drawn as Oren would draw it",
+                         log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
+    assert "Oren" not in pr.text and not il.names[0].find(pr.text) and "the figure would draw it" in pr.text
+
+
+def test_a_softened_redraw_runs_the_same_last_name_check(monkeypatch):
+    # the quieter rewrite after a refusal is assembled again; a name still in it then (here forced in) is never drawn
+    quiet = ("A door stands ajar in a stone mill at dusk and a long shadow lies across the worn floor. A lamp burns low on a wooden table "
+             "beside a woven basket, and the last grey light comes through one small window. The room is quiet and empty and the air is still.")
+    real = art.Illustrator._assemble
+    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1:
+                        real(self, scene, notes, world, bi) + (" Oren" if scene.startswith(quiet[:20]) else ""))
+    t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
+    im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30])])
+    il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
+    assert not any("Oren" in c["prompt"] and c["prompt"].startswith(quiet[:20]) for c in im.calls)
+    assert rep.skipped["dropped: name in prompt"] == 2 and not pics(sink, "plate")
+
+
+def test_the_reason_never_shows_a_name_known_only_as_a_lowercase_word():
+    lower = ["They said the rain may come and the wind will rise before the evening fell.",
+             "Mira hoped the dawn would bring the miller home before the market day began."]
+    bk = book(("One", CH1), ("Two", CH2), ("Three", lower))
+    d = base_doc(bk)
+    d["entities"] += [ent("dawn", "Dawn", frm="a12"), ent("will", "Will", frm="a12"), ent("may", "May", frm="a12")]
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", log=lambda *_: None, pause=0)
+    hidden = "a name the book has not used by this point"
+    for w in ("Dawn", "Will", "May"):           # "at dawn", "will rise", "may come": the book never wrote the name
+        assert il._say(f"name in the text: {w}", 0, "a13", None) == hidden
+    assert il._say("name in the text: Mira", 0, "a13", None) == "a name the picture must not show: Mira"
+
+
 # ---- whose portraits: the main cast by default
 
 

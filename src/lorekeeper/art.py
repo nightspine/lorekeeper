@@ -545,50 +545,156 @@ class Report:
         return out
 
 
-@dataclass(frozen=True)
 class _Names:
-    """The names a prompt may not use: full names of two words or more (one alternation), name words that are not ordinary
-    sentence words ("Mira"), and one-word names that are ordinary words ("Grace"), which count only away from a sentence's start."""
-    phrases: re.Pattern | None
-    tokens: frozenset[str]
-    alone: frozenset[str]
-    groups: frozenset[str] = frozenset()     # the names (and name words) of groups: replaced by "the people", not "the figure"
+    """The names a prompt may not use, and the one tokenizer `find` and `strip` share, so they never disagree: `strip`
+    replaces exactly the spans `find`'s scan (`_spans`) reports.
 
-    _TITLE = r"(?:(?:" + "|".join(sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*"
+    A text is split into word runs: letters and digits with inner apostrophes ("O'Brien", "Mira's"); a hyphen, a quote or any
+    other mark ends a run ("half-Hagrid" is two runs, "'Mira'" is the run Mira). A run is compared without a trailing
+    possessive ('s or ’s in any case; for s' the apostrophe is outside the run anyway), with either apostrophe, as the name
+    writes it or all in capitals ("HAGRID"). A name is one run ("Mira", the plural "Bellonas" of a name word "Bellona") or a
+    sequence of runs joined by spaces, hyphens or a title's dot, lowercase particles included ("Cassius au Bellona",
+    "Jean-François", "Mrs. Figg"). A one-word name that is an ordinary sentence word ("Grace", "the Stranger") counts only
+    where it does not open a sentence: the previous non-space character is ".", "!" or "?", or there is none (a quote or an
+    apostrophe never opens one)."""
 
-    def strip(self, text: str) -> str:
-        """The text with every name it uses replaced by a role word: "Jonathan Harker's case" becomes "the figure's case" (a
-        title before it and an article go too). The last resort after a rewrite that still names someone; re-checked after."""
-        for _ in range(12):
-            hit = self.find(text)
-            if not hit:
-                break
-            role = "the people" if hit in self.groups else "the figure"
-            rx = re.compile(r"(?<![\w-])(?i:(?:(?:the|a|an)\s+)?" + self._TITLE + ")" + re.escape(hit) + r"(?:['’]s)?(?![\w-])")
+    _RUN = re.compile(r"[^\W_]+(?:['’][^\W_]+)*")
+    _GAP = re.compile(r"[\s-]+|\.\s*")                          # what joins the runs of one name
+    _BEFORE = re.compile(r"(?i)(?:(?<![\w'’-])(?:(?:the|a|an)\s+)?(?:(?:" + "|".join(
+        sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*)?$")   # an article and titles go too
 
-            def sub(m: re.Match) -> str:
-                out = role + ("'s" if re.search(r"['’]s$", m.group(0)) else "")
-                start = not text[:m.start()].strip() or re.search(r"[.!?:;\"“”]\s*$", text[:m.start()])
-                if start and hit in self.alone:      # an ordinary word opening a sentence ("Dawn breaks") is no name
-                    return m.group(0)
-                return out[0].upper() + out[1:] if start else out
-            new = rx.sub(sub, text)
-            if new == text:
-                break
-            text = new
-        return " ".join(text.split())
+    def __init__(self, names: list[tuple[str, bool]]) -> None:
+        """`names`: (a name as the index has it, the entity is a group). An article and notes in brackets are taken off."""
+        self.tokens: dict[str, tuple[str, bool]] = {}    # folded -> (as written, group): name words that count anywhere
+        self.alone: dict[str, tuple[str, bool]] = {}     # one-word names that are ordinary words: "Stranger", "Grace"
+        self.phrases: dict[str, list[tuple[tuple[str, ...], bool]]] = {}   # first run folded -> (runs, group), longest first
+        for value, group in names:
+            value = " ".join(re.sub(r"\(.*?\)", " ", value).split())
+            value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
+            runs = [self._apos(self._base(m.group(0))) for m in self._RUN.finditer(value)]
+            if not runs:
+                continue
+            words = [r for r in runs if r[:1].isupper() and len(r) >= 3 and r.lower() not in P.TITLES
+                     and r.lower() not in ("the", "and", "van", "von")]
+            if len(runs) > 1:
+                self.phrases.setdefault(runs[0].lower(), []).append((tuple(runs), group))
+            elif words and words[0].lower() in SENTENCE_FIRST:
+                self._add(self.alone, words[0], group)
+            for w in words:
+                if w.lower() not in SENTENCE_FIRST:     # "Mira", "Harker"; never "Order" or "Dawn" alone
+                    self._add(self.tokens, w, group)
+        for v in self.phrases.values():
+            v.sort(key=lambda t: -len(t[0]))
+
+    @staticmethod
+    def _add(table: dict, word: str, group: bool) -> None:
+        was = table.get(word.lower())
+        table[word.lower()] = (word, group or bool(was and was[1]))
+
+    # ---- the tokenizer
+
+    @staticmethod
+    def _base(run: str) -> str:
+        """A run without a trailing possessive ("Mira's", "MIRA’S": "Mira", "MIRA")."""
+        return re.sub(r"(?<=[^\W_])['’][sS]$", "", run)
+
+    @staticmethod
+    def _apos(s: str) -> str:
+        return s.replace("’", "'")
+
+    @classmethod
+    def _same(cls, run: str, name: str) -> bool:
+        """A run of the text is this word of a name: as the name writes it (either apostrophe), or all in capitals."""
+        run = cls._apos(run)
+        return run == name or (run.isupper() and run.lower() == name.lower())
+
+    def _runs(self, text: str) -> list[tuple[int, int, int, str]]:
+        """(start, end of the name part, end of the run, the name part) per run: the name part leaves a possessive out."""
+        out = []
+        for m in self._RUN.finditer(text):
+            base = self._base(m.group(0))
+            out.append((m.start(), m.start() + len(base), m.end(), base))
+        return out
+
+    @staticmethod
+    def _opens(text: str, at: int) -> bool:
+        before = text[:at].rstrip()
+        return not before or before[-1] in ".!?"
+
+    def _word(self, text: str, run: tuple[int, int, int, str]) -> bool | None:
+        """For a one-run name word: None when it is no name here, else whether it is a group's."""
+        s, _, _, w = run
+        for x in (w, w[:-1] if len(w) > 4 and w[-1] in "sS" else ""):     # "Bellonas" of "Bellona"
+            if not x:
+                continue
+            for table, anywhere in ((self.tokens, True), (self.alone, False)):
+                hit = table.get(self._apos(x).lower())
+                if hit and self._same(x, hit[0]) and (anywhere or not self._opens(text, s)):
+                    return hit[1]
+        return None
+
+    def _spans(self, text: str) -> list[tuple[int, int, bool]]:
+        """(start, end, a group's name) of every name in the text, left to right, never overlapping; `end` leaves a
+        possessive out. The one scan that `find` and `strip` both use."""
+        runs, out, i = self._runs(text), [], 0
+        while i < len(runs):
+            hit = None
+            for key, group in self.phrases.get(self._apos(runs[i][3]).lower(), []):
+                seq = runs[i:i + len(key)]
+                if len(seq) == len(key) and all(self._same(r[3], k) for r, k in zip(seq, key)) and all(
+                        a[1] == a[2] and self._GAP.fullmatch(text[a[2]:b[0]]) for a, b in zip(seq, seq[1:])):
+                    hit = (runs[i][0], seq[-1][1], group, len(key))
+                    break
+            if hit is None and (group := self._word(text, runs[i])) is not None:
+                hit = (runs[i][0], runs[i][1], group, 1)
+            if hit:
+                out.append(hit[:3])
+            i += hit[3] if hit else 1
+        return out
+
+    # ---- the two calls
 
     def find(self, text: str) -> str:
-        if self.phrases is not None and (m := self.phrases.search(text)):
-            return m.group(0)
-        for m in re.finditer(r"[A-Z][\w'’-]{2,}", text):
-            w = m.group(0)
-            for x in (w, re.sub(r"['’]s$", "", w)):
-                if x in self.tokens:
-                    return x
-                if x in self.alone and not re.search(r"(^|[.!?:;\"“”]\s*)$", text[:m.start()]):
-                    return x
-        return ""
+        """The first name the text uses, as it is written there ("Hagrid’s" gives "Hagrid", "HAGRID" stays), or ""."""
+        spans = self._spans(text)
+        return text[spans[0][0]:spans[0][1]] if spans else ""
+
+    def strip(self, text: str, attributive: bool = False) -> str:
+        """The text with every name `find` reports replaced by a role word: "Jonathan Harker's case" becomes "the figure's
+        case" (an article and titles before it go too), a group's name becomes "the people", and a name joined by a hyphen
+        the bare noun ("half-Hagrid grin": "half-figure grin"). `attributive`, for a note's role (a noun phrase): a name before
+        a lowercase word is a modifier and goes with nothing put in ("A red-haired Weasley twin": "A red-haired twin"), and so
+        does a name at the end after other words, with an "of" before it ("a knight of House Bellona": "a knight")."""
+        out, last = [], 0
+        for s, e, group in self._spans(text):
+            role = "the people" if group else "the figure"
+            pos = re.match(r"['’][sS](?![^\W_])", text[e:]) or (re.match(r"['’](?![^\W_])", text[e:]) if text[e - 1] in "sS" else None)
+            end = e + (len(pos.group(0)) if pos else 0)
+            joined = text[s - 1:s] == "-" or text[end:end + 1] == "-"
+            pre = "" if joined else self._BEFORE.search(text[last:s]).group(0)
+            start = s - len(pre)
+            rest = text[end:]
+            if attributive and not pos and not joined and re.match(r"\s+[a-z]", rest):
+                put = pre                                # a modifier ("the Bellona heir"): it goes, the article stays
+            elif attributive and not pos and not joined and text[:start].strip() and re.fullmatch(r"[\s.,;:]*", rest):
+                put = "\x00"                             # the head after other words ("A first-year Gryffindor")
+            elif joined:
+                put = role.split()[1] + ("'s" if pos else "")
+            else:
+                put = role + ("'s" if pos else "")
+                if self._capital(text, start):
+                    put = put[0].upper() + put[1:]
+            out.append(text[last:start] + put)
+            last = end
+        new = "".join(out) + text[last:]
+        new = re.sub(r"(?:\b(?:of|from|in|for|to|with|at|among)\s+)?\x00", "", new)   # "a knight", not "a knight of"
+        return " ".join(new.split())
+
+    @staticmethod
+    def _capital(text: str, at: int) -> bool:
+        """A role word put in at `at` starts with a capital: only spaces and quotes after a ".", "!", "?" or the start."""
+        before = text[:at].rstrip(" \t\n\"'“”‘’")
+        return not before or before[-1] in ".!?"
 
 
 class NotVisible(ValueError):
@@ -598,9 +704,10 @@ class NotVisible(ValueError):
 class Dropped(ValueError):
     """No usable prompt came out: the message is the report's reason, `detail` the check's own words ("unknown name: Vlad")."""
 
-    def __init__(self, reason: str, detail: str = "") -> None:
+    def __init__(self, reason: str, detail: str = "", say: str = "") -> None:
         super().__init__(reason)
         self.detail = detail
+        self.say = say            # the same for the person who asked, the caught word only when the reader has met it
 
 
 class TextFailed(ValueError):
@@ -721,6 +828,24 @@ def _reason(why: str) -> str:
     return f"dropped: {why}"
 
 
+# What a failed check says to the person who asked for the picture: the check and the word it caught.
+_EXPLAIN = (("name in the text: ", "a name the picture must not show: {}"),
+            ("unknown name: ", "a name the book has not used by this point: {}"),
+            ("look not in the note: ", "a look the book does not give this figure: {}"),
+            ("wording: ", "wording that looks back on the story or ahead: {}"),
+            ("tie not in the text: ", "a tie the book does not state: {}"),
+            ("copies the book: ", "words copied from the book: {}"))
+
+
+def explain(why: str) -> str:
+    """One phrase for a check's reason ("name in the text: Hagrid" gives "a name the picture must not show: Hagrid")."""
+    why = " ".join(str(why or "").split())
+    for start, phrase in _EXPLAIN:
+        if why.startswith(start):
+            return phrase.format(why[len(start):].strip())
+    return {"too short": "a text too short to draw from", "too long": "a text too long", "empty": "no text at all"}.get(why, why)
+
+
 def portrait_cast(value) -> str | None:
     """Whose portraits a run draws, normalized: "main", "all", or None for no portraits. True (an older config) means "all"."""
     if value is True:
@@ -823,31 +948,11 @@ class Illustrator:
     def _banned_names(self) -> dict[int, "_Names"]:
         """Per book, the names of every person, creature and group of it and the earlier books: a prompt names none."""
         out: dict[int, _Names] = {}
-        phrases: set[str] = set()
-        tokens: set[str] = set()
-        alone: set[str] = set()
-        groups: set[str] = set()
+        names: list[tuple[str, bool]] = []
         for b in self.books:
-            for e in b.doc["entities"]:
-                if e["type"] not in ("person", "creature", "group"):
-                    continue
-                for n in e["names"]:
-                    value = " ".join(re.sub(r"\(.*?\)", " ", n["value"]).split())
-                    value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
-                    toks = [t for t in re.findall(r"[A-Z][\w'’-]{2,}", value)
-                            if t.lower() not in P.TITLES and t.lower() not in ("the", "and", "van", "von")]
-                    if len(value.split()) > 1:
-                        phrases.add(value)
-                    elif toks and toks[0].lower() in SENTENCE_FIRST:
-                        alone.add(toks[0])      # "Grace", "the Stranger": a name only when not opening a sentence
-                    for t in toks:
-                        if t.lower() not in SENTENCE_FIRST:
-                            tokens.add(t)       # "Mira", "Harker"; never "Order" or "Dawn" alone
-                    if e["type"] == "group":
-                        groups |= {value, *toks}
-            rx = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(x) for x in sorted(phrases, key=len, reverse=True)) + r")(?!\w)") \
-                if phrases else None
-            out[b.i] = _Names(rx, frozenset(tokens), frozenset(alone), frozenset(groups))
+            names += [(n["value"], e["type"] == "group") for e in b.doc["entities"]
+                      if e["type"] in ("person", "creature", "group") for n in e["names"]]
+            out[b.i] = _Names(list(names))
         return out
 
     def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int],
@@ -1575,7 +1680,8 @@ class Illustrator:
                 self.report.dropped["dropped: look word in the role not quoted"] += len(unquoted)
         have = {_base(w) for w in _toks(source)}
         role = " ".join(w for w in role.split() if not _toks(w) or all(x in _STOP or _base(x) in have for x in _toks(w)))
-        text = compose_note(role, [d["text"] for d in good], same)
+        names = self.names[bi]       # a note names nobody: "A red-haired Weasley twin" is "A red-haired twin"
+        text = compose_note(names.strip(role, attributive=True), [names.strip(d["text"]) for d in good], same)
         if not text or NO_LOOK.search(text):
             return "", "empty", []
         got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
@@ -1674,7 +1780,9 @@ class Illustrator:
         upto, pos = b.seq_of[anchor], self._pos(bi, anchor)
         view = self.view(bi, anchor, fin)
         vis = {x["id"]: x for x in view["entities"]}
+        names = self.names[bi]
         world, wfrom, inherits = self._world_text(bi, pos, fin)
+        world = names.strip(world) if world else world     # a note stored earlier or by an earlier book may name someone
         inherits = set(inherits)
         sources = {job.anchor} | ({wfrom} if wfrom else set())
         if job.event:                      # the moment shown: its text, setting and figures reach the prompt
@@ -1688,11 +1796,13 @@ class Illustrator:
             note, why, srcs, books = self.ensure_note(bi, eid, anchor, job.change if job.kind == "portrait" and eid == job.target else "",
                                                       fin)
             if note:
-                figures.append((eid, note))
+                figures.append((eid, names.strip(note)))
                 sources |= set(srcs)
                 inherits |= set(books)
             elif job.kind in ENTITY_KINDS and eid == job.target:
-                raise ValueError("skipped: no look described" if why == "empty" else _reason(why))
+                if why == "empty":
+                    raise ValueError("skipped: no look described")
+                raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         if job.kind in ENTITY_KINDS:
             e = b.ents.get(job.target) or {}
             seqs = self._mentions(bi, job.target, upto, 8) if job.kind == "portrait" else \
@@ -1747,7 +1857,7 @@ class Illustrator:
         looks = dict(figures).get(job.target, "") if job.kind in ENTITY_KINDS else check
         scene, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA, looks=looks)
         if scene is None:
-            raise Dropped(_reason(why), why)
+            raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         if job.kind not in ENTITY_KINDS:   # an entity's own picture always shows it
             figures, ids = self._shown(out, figures, ids, vis)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
@@ -1760,9 +1870,35 @@ class Illustrator:
             refs = [prev] if prev else []
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
-        return Prompt(self._assemble(scene, [n for _, n in figures], world, bi), scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
+        # the last check, on the whole prompt as the image model gets it (`_assemble` strips what it can; a custom style may
+        # name someone too): what is still there drops the prompt
+        text = self._assemble(scene, [n for _, n in figures], world, bi)
+        if hit := names.find(text):
+            raise Dropped("dropped: name in prompt", f"name in the text: {hit}", self._say(f"name in the text: {hit}", bi, anchor, fin))
+        return Prompt(text, scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
                       sorted(inherits - {me}), fin is not None, world)
+
+    def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
+        """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
+        reader has reached (this book up to the anchor, or a finished earlier book's index); else "a name the book has not used
+        by this point", since it could be a spoiler. An unknown name is never shown."""
+        phrase = explain(why)
+        if not why.startswith(("name in the text: ", "unknown name: ")):
+            return phrase
+        hidden = "a name the book has not used by this point"
+        if why.startswith("unknown name: "):
+            return hidden
+        word = why.split(": ", 1)[1]
+        rx = re.compile(r"(?<!\w)" + re.escape(word) + r"(?!\w)")   # case-sensitive: "Dawn" is never shown off "at dawn"
+        b = self.books[bi]
+        upto = b.seq_of[anchor]
+        if b.epub is not None and any(rx.search(t) for s, t in b.text.items() if s <= upto):
+            return phrase
+        for j in range(bi):         # a finished earlier book: every word of its index was read
+            if (finished is None or self._bkey(j) in finished) and rx.search(json.dumps(self.books[j].doc, ensure_ascii=False)):
+                return phrase
+        return hidden
 
     @staticmethod
     def _shown(out: dict, figures: list[tuple[str, str]], ids: list[str], vis: dict) -> tuple[list, list]:
@@ -1780,13 +1916,16 @@ class Illustrator:
         return [(eid, n) for eid, n in figures if eid in keep], [eid for eid in ids if eid in keep]
 
     def _assemble(self, scene: str, notes: list[str], world: str, bi: int = -1) -> str:
-        """What the image model gets: the scene, then the notes, the world note and the style, all added by code."""
+        """What the image model gets: the scene, then the notes, the world note and the style, all added by code. A name any of
+        them still carries (a custom style naming someone) is replaced by a role word, as in the scene."""
         parts = [scene.rstrip()]
         if notes:
             parts.append("Figures: " + " ".join(n.rstrip(".") + "." for n in notes))
         if world:
             parts.append("World: " + world.rstrip())
-        return " ".join(parts + [style_sentence(self.styles[bi]), NO_TEXT])
+        text = " ".join(parts + [style_sentence(self.styles[bi]), NO_TEXT])
+        names = self.names.get(bi if bi >= 0 else len(self.books) - 1)
+        return names.strip(text) if names is not None and names.find(text) else text
 
     # ---- cost and the cap
 
@@ -1905,8 +2044,12 @@ class Illustrator:
                     self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor,
                                detail=e.reason[:160], refused=True)
                     return None
-                pr.scene = soft
-                pr.text = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi)
+                text_ = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi)
+                if hit := self.names[bi].find(text_):     # the same last check as make_prompt's
+                    self._skip(bi, job.target, "dropped: name in prompt", final=True, kind=job.kind, anchor=job.anchor,
+                               detail=f"name in the text: {hit}")
+                    return None
+                pr.scene, pr.text = soft, text_
                 continue
             except llm.ProviderError as e:
                 self._release(amount)

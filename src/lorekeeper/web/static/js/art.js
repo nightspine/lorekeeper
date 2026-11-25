@@ -598,10 +598,12 @@ export async function openPictureSheet(opts) {
 }
 
 /** One sentence for a prompt the server could not write. "dropped" is the pipeline's own check refusing what the model wrote
- *  (a name, hindsight wording...): asking again usually gives a usable one. */
+ *  (a name, hindsight wording...): asking again usually gives a usable one. `why` names the check and the word it caught
+ *  ("a name the picture must not show: Hagrid"), when the server could say it without revealing anything. */
 function promptError(e) {
   if (e.code === "not-visible") return "This isn't revealed at your position yet.";
   if (e.code === "dropped") {
+    if (e.why) return `The prompt that came back had ${e.why}. Write it again for another one.`;
     const reason = String(e.message || "").replace(/^(dropped|skipped):\s*/, "");
     return `The prompt that came back didn't pass the checks (${reason}). Write it again for another one.`;
   }

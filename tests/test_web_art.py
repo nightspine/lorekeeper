@@ -770,6 +770,8 @@ def test_a_dropped_prompt_keeps_no_world_note_it_wrote(env, route):
     env.text.scene = lambda prompt: SCENE_WITH_NAME                        # the writer names someone the book never does: dropped
     r = env.c.post(f"/api/library/{KEY}/art/{route}", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."})
     assert r.status_code == 422 and r.json()["code"] == "dropped", r.text
+    # the check is named for the person, but never the name itself: the book has not used it (it could be a spoiler)
+    assert r.json()["why"] == "a name the book has not used by this point" and "Valdemar" not in r.text
     assert any("visual world note" in p for p in env.text.prompts) and world_of(env) is None
     assert env.image.calls == []
 
