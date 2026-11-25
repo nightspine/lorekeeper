@@ -15,7 +15,7 @@ SCENE = ("A woman with a basket on her arm stands at a wooden gate beside a grey
          "green hills in the distance, the river bright beyond the mill wheel.")
 # Appearance notes as the fake writer returns them: a role and look details, each quoted from the entity's profile below.
 NOTE_PARTS = {"Mira": ("a young woman", ["slight", "of about twenty", "dark braided hair", "a brown shawl", "a plain grey dress"]),
-              "Oren": ("an old miller", ["broad", "white hair", "flour on his sleeves", "a leather apron"]),
+              "Oren": ("a miller", ["old", "broad", "white hair", "flour on his sleeves", "a leather apron"]),
               "Gabriel": ("a rider", ["tall", "fair", "short hair", "a blue coat", "tall riding boots"]),
               "Stranger": ("a traveller", ["hooded", "a long black cloak", "of middle height", "face is never seen"])}
 NOTES = {k: art.compose_note(r, ds) for k, (r, ds) in NOTE_PARTS.items()}
@@ -647,6 +647,108 @@ def test_look_details_the_passages_and_notes_do_not_show_are_dropped():
     # nothing supported: no note, no portrait
     il, rep, sink, t, im = run(text_=Text(notes={"Mira": ("a young woman", ["dark hair worn up", "a pale oval face"])}))
     assert "mira" not in {p["target"] for p in pics(sink, "portrait")} and rep.skipped["skipped: no look described"] == 1
+
+
+# ---- portraits round 2 (review-portraits.md): no look reaches a picture unless the text states it
+
+def test_a_role_carries_no_look_its_details_do_not_quote():
+    # the role "a young man with dark hair and a pale face" beside one honest quoted detail: every role word is somewhere in what
+    # was sent, but none in a kept detail's quote, so the role keeps no look
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"][0]["text"] = ("The old man, with a long white moustache, who runs the mill; a young boy with dark "
+                                             "hair and a pale face helps him.")
+    t = Text(notes={"Oren": ("a young man with dark hair and a pale face", ["a long white moustache"])})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    [o] = [p for p in pics(sink, "portrait") if p["target"] == "oren"]
+    assert o["appearance"] == "A man: a long white moustache." and rep.dropped["dropped: look word in the role not quoted"] == 4   # young, dark, hair, pale
+    # a look word in the role that a kept detail quotes stays ("old" on "The old miller")
+    t = Text(notes={"Oren": ("an old miller", ["old", "broad"])})
+    il, rep, sink, t, im = run(text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "An old miller: old, broad."
+
+
+def test_a_quote_is_a_phrase_of_the_text_and_holds_every_word_of_its_detail():
+    src = "She had dark eyes. Her hair was long. The pale light fell on a scarlet cloak. A tall man, with a long white moustache."
+    assert art.quoted("a long white moustache", src) and not art.quoted("long grey moustache", src)
+    assert not art.quoted("dark ... hair", src)                   # pieces from two sentences
+    assert art.quoted("a tall man ... white moustache", src)      # in order within one sentence
+    assert not art.quoted("white moustache ... a tall man", src)  # out of order
+    assert not art.detail_supported("pale skin", "the pale light")          # "skin" rides on nothing
+    assert not art.detail_supported("dark hair", "dark eyes")
+    assert art.detail_supported("dressed in black", "clad in black")        # a word naming only the kind of detail may
+    # whole words with their endings, never a prefix
+    assert not art.detail_supported("a scar", "a scarlet cloak") and not art.detail_supported("a big man", "many big hats")
+    assert art.detail_supported("a scar", "a scarred face") and art.detail_supported("older", "the old miller")
+    assert art.detail_supported("white moustaches", "a long white moustache") and art.detail_supported("freckled", "freckles")
+    # in a run: the cross-sentence ellipsis and the borrowed "skin" are dropped, the real phrase kept
+    t = Text(notes={"Mira": ("a woman", ["dark braided hair", "pale skin"])})
+
+    def note(prompt):
+        return {"role": "a woman", "details": [{"text": "dark braided hair", "quote": "with dark braided hair"},
+                                               {"text": "a slight frame", "quote": "dark ... hair"},
+                                               {"text": "pale skin", "quote": "a plain grey dress"}]}
+    t.notes["Mira"] = None
+    real = t.complete
+
+    def complete(system, prompt, schema, prefix=None):
+        if "appearance note for Mira" in prompt:
+            t.prompts.append(prompt)
+            return note(prompt)
+        return real(system, prompt, schema, prefix)
+    t.complete = complete
+    il, rep, sink, t2, im = run(text_=t)
+    assert sink.m["appearance"]["mira"][0]["text"] == "A woman: dark braided hair."
+    assert rep.dropped["dropped: look detail not in the text"] == 2
+
+
+def test_a_quote_from_a_paragraph_that_only_gives_context_is_not_the_figures():
+    # Peter Hawkins with the Count's moustache: the paragraph beside his mention describes someone else
+    ch1 = ["Mira walked to the mill behind a stranger with a long white moustache that morning."] + CH1[1:]
+    bk = book(("One", ch1), ("Two", CH2))
+    d = base_doc(bk)
+    il, rep, sink, t, im = run(d, bk, text_=Text(notes={"Oren": ("a miller", ["broad", "a long white moustache"])}))
+    assert any("a long white moustache" in p for p in t.prompts if "appearance note for Oren" in p)   # it was sent, as context
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad."
+    assert rep.dropped["dropped: look detail not in the text"] == 1
+
+
+def test_a_portrait_scene_gives_no_colour_or_shape_its_note_lacks():
+    # the check run's Mina face on a note that is only "a brown shawl"
+    note = "A woman: a brown shawl."
+    assert art.unlooked("Her pale, oval face is turned to the window.", note) in ("pale", "oval")
+    assert art.unlooked("She turns, her hair was dark and loose.", note) == "hair"
+    assert art.figure_looks("her hair was dark and loose") == ["dark", "loose"]
+    assert art.unlooked("Her brown shawl is drawn close.", note) == ""
+    assert art.unlooked("Her thin red lips part.", note) in ("thin", "red")     # a body part described is a look (the live Count)
+    for fine in ("A turn of the head toward a dark window.", "Her hands folded in her lap against a plain dark background.",
+                 "Pale light falls across her face from one side.", "A faint smile on her lips, her teeth just showing."):
+        assert art.unlooked(fine, note) == "", fine
+    def scene(p):
+        if "This is a portrait" in p and "- Mira:" in p:
+            return PORTRAIT_SCENE.replace("the figure turned", "the figure with a pale, oval face turned")
+        return PORTRAIT_SCENE if "This is a portrait" in p else SCENE
+    il, rep, sink, t, im = run(text_=Text(notes={"Mira": ("a woman", ["a brown shawl"])}, scene=scene))
+    [m] = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert "pale" not in m["prompt"].split("Figures:")[0] and "oval" not in m["prompt"]     # taken out after the rewrite
+    assert any(re.search("It was rejected: look not in the note: (pale|oval)", p) for p in t.prompts)
+
+
+def test_the_drops_counted_are_those_of_the_reply_kept():
+    # the first reply is kept (more details hold); the rewrite's discarded non-looks are not counted
+    class T(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "appearance note for Mira" in prompt:
+                self.prompts.append(prompt)
+                if "had no quote" in prompt:
+                    return {"role": "a woman", "details": [{"text": "a kind soul", "quote": "x y"},
+                                                           {"text": "a cheerful heart", "quote": "x y"}]}
+                return {"role": "a woman", "details": [{"text": "slight", "quote": "A slight young"},
+                                                       {"text": "red hair", "quote": "red hair"}]}
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(text_=T())
+    assert sink.m["appearance"]["mira"][0]["text"] == "A woman: slight."
+    assert rep.dropped["dropped: look detail not in the text"] == 1 and rep.dropped["dropped: not a look detail"] == 0
 
 
 def test_names_are_replaced_by_a_role_when_the_rewrite_still_names_someone():
