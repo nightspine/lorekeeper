@@ -1272,7 +1272,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return sorted(set(fin))
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    portraits: bool = True):
+                    portraits: str | bool | None = "main"):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
@@ -1530,14 +1530,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.get("/api/art/estimate")
     @art_route
-    def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: bool = True,
+    def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: str = "main",
                      provider: str | None = None, model: str | None = None, quality: str = "standard"):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all)."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main or all.")
-        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=portraits)
+        # main, all or none; true and false from an older page mean all and none
+        cast = {"true": "all", "false": None, "none": None, "main": "main", "all": "all"}.get(portraits.lower(), "?")
+        if cast == "?":
+            raise ArtRefusal(422, "bad-config", "portraits must be main, all or none.")
+        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=cast)
         got = il.counts()
         # `drawable` is the screening's count, None before a chapter is screened; then a level "all" run draws up to the
         # chapter's non-minor events (read from the index, not from the pipeline's internals).

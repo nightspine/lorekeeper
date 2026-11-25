@@ -616,9 +616,12 @@ function promptError(e) {
  * { el, config() → the job's `art` object or null when "Draw pictures" is off, refresh() }. `estimate(params)` is
  * asked for the line "About 52 pictures, about $1.75"; `fallback()` gives a rough count when it cannot answer.
  */
+// The portrait choice: `st.cast` is "main", "all" or "none"; the job config sends "main", "all" or false, the estimate the word.
+const CAST_SUMMARY = { main: ", main characters' portraits", all: ", everyone's portraits", none: "" };
+
 export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art" } = {}) {
   const d = artDefaults();
-  const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", portraits: true,
+  const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
     quality: d.quality, provider: null, model: null, cap: d.cap };
   let provs = null;
   const line = h("p.art-est", { role: "status" });
@@ -642,7 +645,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   });
   const slug = () => (st.style === "custom" ? st.custom.trim() : st.style);
   function paint() {
-    sum.textContent = st.on ? `${styleLabel(slug())}, ${st.level === "main" ? "one per chapter" : "every moment"}${st.portraits ? ", portraits" : ""}` : "Off";
+    sum.textContent = st.on ? `${styleLabel(slug())}, ${st.level === "main" ? "one per chapter" : "every moment"}${CAST_SUMMARY[st.cast]}` : "Off";
     if (provs && !provs.length) {
       clear(body, h("p.hint", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Settings")));
       line.textContent = "";
@@ -656,7 +659,6 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     };
     const custom = h("input.input.art-custom", { value: st.custom, disabled: !st.on, placeholder: "Describe the style", "aria-label": "Custom style",
       on: { change: (e) => { st.custom = e.target.value; refresh(); } } });
-    const portraits = h("input", { type: "checkbox", id: `${idPrefix}-portraits`, checked: st.portraits, disabled: !st.on, on: { change: (e) => { st.portraits = e.target.checked; paint(); } } });
     // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
     const levels = (st.provider ? levelsOf(st.provider, st.model) : QUALITIES).map(([k]) => k);
     if (st.provider) st.quality = fitQuality(st.provider, st.model, st.quality);
@@ -677,7 +679,10 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       h("div.field", h("span.label", "How many"), h("div.prows", { role: "radiogroup", "aria-label": "How many" },
         radio("level", "main", "The main moment of each chapter"),
         radio("level", "all", "Every moment worth drawing"))),
-      h("label.switch", { for: `${idPrefix}-portraits` }, portraits, h("span", h("span.label.label-block", "Portraits of the characters"))),
+      h("div.field", h("span.label", "Portraits"), h("div.prows", { role: "radiogroup", "aria-label": "Portraits" },
+        radio("cast", "main", "Main characters", "The characters the story is most about, up to 12 a book."),
+        radio("cast", "all", "Everyone with a part"),
+        radio("cast", "none", "No portraits"))),
       h("div.field", h("span.label", "Quality"), h("div.seg", { role: "group", "aria-label": "Quality" },
         QUALITIES.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(st.quality === k), disabled: !st.on || !levels.includes(k),
           title: levels.includes(k) ? null : `This model has no ${l} quality`, on: { click: () => { st.quality = k; paint(); } } }, l)))),
@@ -696,7 +701,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     const mine = ++seq;
     line.textContent = "Counting the pictures…";
     let r = null;
-    try { r = await estimate?.({ style: slug(), level: st.level, portraits: st.portraits, quality: st.quality, provider: st.provider.id, model: st.model }); } catch { r = null; }
+    try { r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model }); } catch { r = null; }
     if (mine !== seq) return;
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
@@ -709,7 +714,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   paint();
   return {
     el,
-    config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.portraits, quality: st.quality,
+    config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
       provider: st.provider.id, model: st.model || null, cap: st.cap } : null),
     refresh,
     ready: () => Boolean(st.provider && slug()),

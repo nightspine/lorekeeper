@@ -385,7 +385,7 @@ function configure(target, book, ctx, fromJob = null) {
     estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", chapters: [...picked].filter((n) => storySet.has(n)).length, ...q }),
     fallback: (st) => {
       const n = [...picked].filter((n) => storySet.has(n)).length;
-      return `About ${n} chapter picture${n === 1 ? "" : "s"}${st.level === "all" ? " or more" : ""}${st.portraits ? ", plus portraits" : ""}; the count is set once the index is written.`;
+      return `About ${n} chapter picture${n === 1 ? "" : "s"}${st.level === "all" ? " or more" : ""}${st.cast === "main" ? ", plus portraits of the main characters" : st.cast === "all" ? ", plus portraits" : ""}; the count is set once the index is written.`;
     },
   });
 
