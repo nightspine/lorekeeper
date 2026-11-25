@@ -1326,8 +1326,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
             ph = artstore.text_hash(d)
             if artstore.HASH.fullmatch(ph):
-                books_.append(artmod.Book(d, None, arts.sink(ph, arts.resolve(ph, style)[1]), None, draw=False))
-        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], style), None))
+                books_.append(arts.book(d, None, ph, arts.resolve(ph, style)[1], None, draw=False))
+        books_.append(arts.book(ctx["doc"], art_epub(ctx), ctx["hash"], style, None))
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0), image, slug_
 

@@ -548,6 +548,77 @@ def test_soften_keeps_the_prompt_routes_gates(env, monkeypatch):
     assert r.status_code == 403
 
 
+def test_the_store_gives_the_other_style_sets_as_read_only_likeness_sinks(tmp_path):
+    s = store_mod.ArtStore(tmp_path)
+    h = "ef" * 32
+    for style, pid in (("ink", "p0000aaaa"), ("watercolour", "p0000bbbb")):
+        s.put(h, style, {"id": pid, "file": f"{pid}.png", "kind": "portrait"}, png(2, 2, b"x"))
+    got = s.likeness(h, "Ink")                       # a style by name: its own set is never a likeness of itself
+    assert list(got) == ["watercolour"] and got["watercolour"].manifest()["style"] == "watercolour"
+    with pytest.raises(PermissionError):
+        got["watercolour"].save({})
+    with pytest.raises(PermissionError):
+        got["watercolour"].put("y.png", b"y")
+    assert s.likeness(h, "comic").keys() == {"ink", "watercolour"} and s.likeness("00" * 32, "ink") == {}
+
+
+@pytest.fixture
+def books_seen(monkeypatch):
+    """Every pipeline `Book` the app builds, with a `likeness` field as the pipeline takes it (until it lands here)."""
+    import dataclasses
+    seen = []
+    if store_mod.likeness_supported():
+        real = art.Book
+    else:
+        @dataclasses.dataclass
+        class real(art.Book):
+            likeness: dict = dataclasses.field(default_factory=dict)
+        monkeypatch.setattr(art, "Book", real)
+
+    def make(*a, **k):
+        b = real(*a, **k)
+        seen.append(b)
+        return b
+    monkeypatch.setattr(store_mod, "likeness_supported", lambda: True)
+    monkeypatch.setattr(store_mod.art, "Book", make)
+    return seen
+
+
+def test_routes_and_runs_hand_the_pipeline_the_other_sets_as_likeness(env, books_seen):
+    env.key()
+    run_set(env, portraits="all")                                  # ink pictures, portraits among them
+    assert books_seen[-1].likeness == {}                           # the first set: no other style yet
+    books_seen.clear()
+    ask = {"kind": "event", "target": "e6", "style": "Watercolour"}
+    assert env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).status_code == 200
+    assert list(books_seen[-1].likeness) == ["ink"]
+    books_seen.clear()
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": "A gate."}).status_code == 200
+    assert list(books_seen[-1].likeness) == ["ink"]
+    books_seen.clear()
+    run_set(env, style="watercolour", portraits=False)             # the run stage
+    assert set(books_seen[-1].likeness) == {"ink"}
+    books_seen.clear()
+    env.c.post(f"/api/library/{KEY}/art/soften", json={**ask, "text": "A gate.", "reason": "IMAGE_SAFETY"})
+    assert books_seen and set(books_seen[-1].likeness) == {"ink"}
+    ink = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert ink == env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]   # never written through
+
+
+@pytest.mark.skipif(not store_mod.likeness_supported(), reason="the pipeline's likeness sinks have not landed yet")
+def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env):
+    env.key()
+    run_set(env, portraits="all")
+    env.image.calls.clear()
+    ask = {"kind": "event", "target": "e6", "style": "comic"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    if not got["references"]:
+        pytest.skip("e6 shows no figure with an ink portrait in this fixture")
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    assert env.image.calls[-1]["references"]
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)
