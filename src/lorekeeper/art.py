@@ -81,7 +81,7 @@ NOTE_VERSION = 2           # a note (and a picture drawn from one) of another ve
 LOOK_PASSAGE_WORDS = 600
 NOTE_PASSAGE_WORDS = 900
 NOTE_ITEMS_CHARS = 3000    # of the look items' own texts sent with a note, the latest first
-LOOK_BATCH_ITEMS = 80      # items classified in one call: several small entities share a call, a large one takes several
+LOOK_BATCH_ITEMS = 40      # items classified in one call (small entities share one, a large one takes several); Flash returned no flags at all for 80
 LOOK_ITEM_CHARS = 300
 
 _STOP = frozenset("a an the of with and or in on at to by for from his her its their is are has have who which that as "
@@ -134,8 +134,9 @@ LOOK_INDEX = """Below are notes a reader's companion keeps on some entries of a 
   what it is made of. False for what it does, thinks, says or owns, its rank, history or character.
 - "change": when the note records a lasting change in how THIS entry looks (a scar or wound it keeps, a lost eye or limb, a body
   remade, a new form, a disguise, ageing, a new way of dressing it keeps), a short phrase of what changed, in the note's words.
-  Otherwise "". What the entry does to something else ("drags a dead deer", "burns a letter") is no change of its own look, and
-  a death alone is no change of look.
+  Otherwise "". The notes of one entry are in reading order: a change is one the entry's earlier notes above do not show yet
+  (a note that restates a look told before is a look, not a change). What the entry does to something else ("drags a dead deer",
+  "burns a letter") is no change of its own look, and a death alone is no change of look.
 A note marked "(a turning point it is in)" may be about others too: flag it only for what it says of this entry.
 Return "items": one object {{"n", "look", "change"}} for each note that is a look or a change; leave the others out.
 
@@ -1544,7 +1545,7 @@ class Illustrator:
     # ---- the look index: which of an entity's items describe its look, and which change it
 
     def items(self, bi: int, eid: str) -> list[dict]:
-        """The entity's own items in book bi, in index order: its facets and profiles (never an arc) and the turning points that
+        """The entity's own items in book bi, in reading order: its facets and profiles (never an arc) and the turning points that
         name it, each as {"id", "from", "text", "evidence"} (a turning point's id is "event:<id>")."""
         b = self.books[bi]
         out = [{"id": f["id"], "from": f["from"], "text": f["text"], "evidence": f.get("evidence", [])}
@@ -1552,7 +1553,7 @@ class Illustrator:
         out += [{"id": "event:" + ev["id"], "from": ev["from"], "text": ev["summary"], "evidence": ev.get("evidence", [])}
                 for ev in b.doc.get("events", []) if ev.get("kind") == "turn" and eid in ev.get("entities", [])
                 and ev["from"] in b.ord_of]
-        return out
+        return sorted(out, key=lambda it: b.ord_of[it["from"]])
 
     @staticmethod
     def _items_key(items: list[dict]) -> str:
@@ -1651,15 +1652,18 @@ class Illustrator:
         return any(re.search(r"(?<![\w-])" + re.escape(n) + r"(?:s|es)?(?![\w])", text) for n in names)
 
     def _group_candidates(self, bi: int, eid: str) -> list[str]:
-        """The group entities of the run's books up to bi whose name one of the entity's own items uses."""
+        """The group entities of the run's books up to bi whose name one of the entity's own items uses, or that it has a tie of
+        no kind to (an index older than tie kinds: the tie may be membership or enmity, so the pick decides)."""
         texts = [it["text"] for it in self.items(bi, eid)]
+        tied = {r["dst"] if r["src"] == eid else r["src"] for j in range(bi + 1) for r in self.books[j].doc.get("relations", [])
+                if eid in (r["src"], r["dst"]) and "kind" not in r}
         seen, out = set(), []
         for j in range(bi + 1):
             for e in self.books[j].doc["entities"]:
                 if e["type"] == "group" and e["id"] not in seen and e["id"] != eid:
                     seen.add(e["id"])
                     names = self._group_names(e["id"])
-                    if names and any(self._names_in(names, t) for t in texts):
+                    if names and (e["id"] in tied or any(self._names_in(names, t) for t in texts)):
                         out.append(e["id"])
         return out[:26]
 
@@ -1700,13 +1704,17 @@ class Illustrator:
             gid = cands[letters.index(ltr)]
             names = self._group_names(gid)
             uses = [it for it in items if self._names_in(names, it["text"])]
-            if not uses or any(p["group"] == gid for p in picks):
+            tied = any(eid in (r["src"], r["dst"]) and gid in (r["src"], r["dst"]) for r in b.doc.get("relations", []))
+            if not (uses or tied) or any(p["group"] == gid for p in picks):
                 continue
             try:
                 f, u = int(x.get("from") or 0), int(x.get("until") or 0)
             except (TypeError, ValueError):
                 f, u = 0, 0
-            start = items[f - 1]["from"] if 1 <= f <= len(items) else min((it["from"] for it in uses), key=b.ord_of.get)
+            first = min((it["from"] for it in uses), key=b.ord_of.get) if uses else \
+                min((r["from"] for r in b.doc.get("relations", []) if eid in (r["src"], r["dst"]) and gid in (r["src"], r["dst"])
+                     and r["from"] in b.ord_of), key=b.ord_of.get, default=items[0]["from"])
+            start = items[f - 1]["from"] if 1 <= f <= len(items) else first
             until = items[u - 1]["from"] if 1 <= u <= len(items) and b.ord_of[items[u - 1]["from"]] > b.ord_of[start] else None
             picks.append({"group": gid, "from": start, "until": until})
         with self.lock:
@@ -1736,14 +1744,14 @@ class Illustrator:
 
     def groups_of(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None) -> list[str]:
         """The groups an entity belongs to at an anchor, most specific first (fewest members): groups visible there that it has
-        a tie to (family, alliance or service, or a tie of no kind) and the model's picks (`group_picks`) whose membership began
+        a tie of kind family, alliance or service to, and the model's picks (`group_picks`) whose membership began
         at or before the anchor and has not ended by it."""
         b = self.books[bi]
         view = self.view(bi, anchor, self._finished(bi, finished))
         vis = {x["id"]: x for x in view["entities"] if x.get("type") == "group"}
         out = []
         for r in view["relations"]:
-            if eid in (r["src"], r["dst"]) and r.get("kind") in (None, "family", "alliance", "service"):
+            if eid in (r["src"], r["dst"]) and r.get("kind") in ("family", "alliance", "service"):
                 other = r["dst"] if r["src"] == eid else r["src"]
                 if other in vis and other not in out:
                     out.append(other)

@@ -113,13 +113,17 @@ def classify(il, ents: list[str], at: str) -> None:
         idx = il.look_index(0, eid)
         print(f"## {e['names'][0]['value']} ({e['type']}): {sum(1 for x in idx.values() if x['look'])} look items, "
               f"{sum(1 for x in idx.values() if x['change'])} look changes")
-        for item, x in il.items(0, eid):
+        for item in il.items(0, eid):
             got = idx.get(item["id"])
             if got and (got["look"] or got["change"]):
                 flag = ("look" if got["look"] else "") + (f" CHANGE: {got['change']}" if got["change"] else "")
                 print(f"   {item['from']:>16} {flag:<40} {item['text'][:110]}")
         if e["type"] in art.PORTRAIT_TYPES:
-            for anchor in sorted({i["from"] for i, _ in il.items(0, eid)} | {at}, key=b.ord_of.get)[::max(1, len(idx) // 6)] + [at]:
+            picks = il.group_picks(0, eid)
+            print("   group picks: " + "; ".join(f"{b.ents[p['group']]['names'][0]['value']} from {p['from']}"
+                                                 + (f" until {p['until']}" if p.get("until") else "") for p in picks))
+            marks = sorted({p["from"] for p in picks} | {p["until"] for p in picks if p.get("until")} | {at}, key=b.ord_of.get)
+            for anchor in marks:
                 gs = il.groups_of(0, eid, anchor)
                 print(f"   groups at {anchor}: {[b.ents[g]['names'][0]['value'] for g in gs]}")
         print()
