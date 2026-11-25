@@ -95,9 +95,10 @@ class _Base:
     def _redact(self, text: str) -> str:
         return text.replace(self.api_key, "***") if self.api_key else text
 
-    def _fail(self, message: str, status: int | None = None) -> ProviderError:
-        """A ProviderError whose text never holds the API key, even if the provider echoed it."""
-        return ProviderError(self._redact(message), status)
+    def _fail(self, message: str, status: int | None = None, sent: bool | None = None) -> ProviderError:
+        """A ProviderError whose text never holds the API key, even if the provider echoed it. `sent=False` marks a request
+        that surely never reached the provider (refused connection, unknown host, 429): the only kind a caller may send again."""
+        return ProviderError(self._redact(message), status, sent)
 
     def _send(self, url: str, headers: dict, body: bytes) -> tuple[int, dict | str]:
         """POST a billed request. It is sent again only when it was surely never accepted: the connection
@@ -113,7 +114,7 @@ class _Base:
                 reason = getattr(e, "reason", e)
                 last = f"could not reach {self.base_url}: {reason}"
                 if not isinstance(reason, (ConnectionRefusedError, socket.gaierror)):
-                    raise self._fail(f"{self.name}: {last}") from e
+                    raise self._fail(f"{self.name}: {last}") from e   # sent: unknown
             except (TimeoutError, ConnectionError) as e:
                 raise self._fail(f"{self.name}: the request failed after it was sent: {e}") from e
             else:
@@ -122,7 +123,7 @@ class _Base:
                 last = f"HTTP 429: {llm._error_text(out)}"
             if attempt < self.retries:
                 time.sleep(self.backoff * 2 ** attempt)
-        raise self._fail(f"{self.name}: {last}", 429 if last.startswith("HTTP 429") else None)
+        raise self._fail(f"{self.name}: {last}", 429 if last.startswith("HTTP 429") else None, sent=False)
 
 
 # Reasons Gemini gives when it will not draw (finishReason on a candidate with no picture).

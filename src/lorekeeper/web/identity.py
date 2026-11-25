@@ -90,7 +90,8 @@ class Identity:
 
     def _busy(self, items: list[dict]) -> bool:
         paths = {str(it["path"]) for it in items}
-        return any(j.status in ("queued", "running", "stopping") and j.output in paths for j in self.jobs.jobs.values())
+        return any(j.status in ("queued", "running", "stopping") and j.output in paths and getattr(j, "kind", "index") != "art"
+                   for j in self.jobs.jobs.values())   # a pictures run never writes the index
 
     # ---- queries -------------------------------------------------------------------------------
 
@@ -427,7 +428,35 @@ class Identity:
             tmp.replace(p)
         return entry
 
-    def undo(self, key: str, merge_id: str) -> dict:
+    def snapshot(self, key: str, keep: list[Path], meta: dict) -> dict:
+        """Journal a change to the pictures (not an index document): copy the files in `keep` into the entry for its undo
+        and return the entry. Nothing is copied back by `undo` itself: the caller's `revert` puts back or takes out exactly
+        what the entry touched, so pictures share the one undo history of the book's group and an undo never touches
+        anything drawn since."""
+        gid, _ = self.group(key)
+        if len({p.name for p in keep}) != len(keep):
+            raise ValueError("two files with one name")
+        entry = {"id": uuid.uuid4().hex[:12], "group": gid, "at": time.time(), "keepNames": [], "dropNames": [],
+                 **meta, "files": []}
+        snap = self.dir / entry["id"]
+        snap.mkdir(parents=True, exist_ok=True)
+        for p in keep:
+            shutil.copy2(p, snap / p.name)
+        (snap / "entry.json").write_text(json.dumps(entry, indent=2))
+        return entry
+
+    def discard(self, entry_id: str) -> None:
+        shutil.rmtree(self.dir / entry_id, ignore_errors=True)
+
+    def latest(self, key: str) -> dict | None:
+        """The journal entry `undo` would revert for this key's group."""
+        gid, _ = self.group(key)
+        journal = self._journal(gid)
+        return journal[-1] if journal else None
+
+    def undo(self, key: str, merge_id: str, revert=None) -> dict:
+        """Undo the latest entry of the group. `revert(entry, snapshot folder)` is called for a pictures entry before its
+        snapshot goes, and does the whole of its undo."""
         with self._lock:
             gid, items = self.group(key)
             journal = self._journal(gid)
@@ -436,6 +465,10 @@ class Identity:
             if self._busy(items):
                 raise RuntimeError("a build is writing one of these indexes; undo once it has finished")
             snap = self.dir / merge_id
+            if journal[-1].get("kind") == "art":
+                if revert is None:
+                    raise LookupError("this change to the pictures is undone from the pictures")
+                revert(journal[-1], snap)
             for f in journal[-1]["files"]:
                 p = Path(f)
                 shutil.copy2(snap / p.name, p)
@@ -443,7 +476,8 @@ class Identity:
                 if state.exists():
                     shutil.copy2(state, p.with_name(p.name + ".state"))
             shutil.rmtree(snap)
-            return {"undone": merge_id, "kind": journal[-1].get("kind", "merge"), "what": journal[-1].get("what")}
+            return {"undone": merge_id, "kind": journal[-1].get("kind", "merge"), "what": journal[-1].get("what"),
+                    **({"art": journal[-1]["art"]} if journal[-1].get("art") else {})}
 
     def _journal(self, gid: str) -> list[dict]:
         if not self.dir.is_dir():
