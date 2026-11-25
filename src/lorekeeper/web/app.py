@@ -528,13 +528,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         presets = [{"id": m["id"], "label": m["label"], "price": m["price"], "tier": m["tier"]} for m in spec["models"]]
         known = {m["id"] for m in presets}
         live = [{"id": i, "label": i, "price": None, "tier": None} for i in (cached or {}).get("live", []) if i not in known]
+        img = llm.IMAGE_PROVIDERS.get(pid)
+        # The image models the person may choose: names, prices per quality (a number, per shape, or absent = unknown)
+        # and the quality levels each offers. None for a provider that cannot draw.
+        images = {"default": img["default"], "cheap": img["cheap"], "strong": img["strong"],
+                  "models": [{"id": m["id"], "label": m["label"], "tier": m["tier"], "price": m["price"],
+                              "levels": list(m.get("levels") or img["quality"])} for m in img["models"]]} if img else None
         return {"id": pid, "label": spec["label"], "kind": spec["kind"], "key_url": spec["key_url"], "key_env": spec["key_env"],
                 "configured": configured, "source": keys.source(pid), "masked": keys.masked(pid),
                 "ok": bool(cached and cached["ok"]), "error": cached["error"] if cached else None,
                 "base_url": cfg.get("base_url") or spec["base_url"], "model": cfg.get("model"),
                 "models": presets, "liveModels": live,
                 "default": spec["default"] or cfg.get("model"), "cheap": spec["cheap"] or cfg.get("model"),
-                "strong": spec["strong"] or cfg.get("model")}
+                "strong": spec["strong"] or cfg.get("model"), "images": images}
 
     def provider_id(pid: str) -> str:
         pid = "claude" if pid == "anthropic" else pid
