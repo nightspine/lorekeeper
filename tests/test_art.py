@@ -123,8 +123,8 @@ class Text:
     groups it picks (default none), `check(text, source)` which look phrases it calls unfounded (default none)."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None, look=None, change=None, groups=None,
-                 check=None, amend=None, intro=None, timeline=None):
-        self.amend, self.intro, self.timeline = amend, intro, timeline
+                 check=None, amend=None, intro=None, timeline=None, shows_at=None):
+        self.amend, self.intro, self.timeline, self.shows_at = amend, intro, timeline, shows_at
         self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
@@ -136,6 +136,9 @@ class Text:
         self.prompts.append(prompt)
         if "say which line of telling it belongs to" in prompt:
             return (self.timeline or one_line)(tl_parts(prompt))
+        if "Below are paragraphs that mention" in prompt:     # the paragraph check: by default each shows its chapter's time
+            paras = re.findall(r"^(\d+)\. \[(s\d+)\] (.*)$", prompt, re.M)
+            return {"paragraphs": [{"n": int(n), "line": (self.shows_at or (lambda t, m: m))(t, m)} for n, m, t in paras]}
         if "Which of them are a visible moment" in prompt:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
@@ -2639,3 +2642,31 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_a_timeline_without_
     assert s2.m["timeline"]["chapters"]["Three"]["strand"] == "s1" and "partial" not in json.dumps(s2.m["timeline"])
     mine = il._walk(1, frozenset())
     assert 0 not in mine["books"] and list(mine["strands"]) == ["s2"] and mine["books"][1]["Three"]["scope"] == "s2.1"
+
+
+def test_a_frame_paragraph_inside_a_chapter_of_the_tale_stays_out_of_the_tales_note():
+    youth = ["When she was a girl Mira carried baskets to the mill each morning.",
+             "Young Mira had dark braided hair and a brown shawl that summer.",
+             "In her cell the old woman Mira has white hair and a scarred face now.",
+             "The miller Oren greeted young Mira at the gate with a smile."]
+    bk = book(("Prologue", FRAME), ("One", youth))
+    fac = lambda i, at, txt: {"id": f"bk.mira.f{i}", "from": at, "basis": "stated", "evidence": [at], "text": txt}  # noqa: E731
+    mira = ent("mira", "Mira", facets=[fac(1, "a0", "An old woman with white hair, held in a cell."),
+                                       fac(2, "a4", "A girl with dark braided hair and a brown shawl."),
+                                       fac(3, "a5", "The old woman has white hair and a scarred face.")])
+    oren = ent("oren", "Oren", frm="a6", facets=[portrait("oren", "a6", "The miller with flour on his sleeves and a leather apron.")])
+    d = doc(bk, entities=[mira, oren], events=[event(1, 1, "Old Mira begins to tell the scribe her story.", ["mira"], "turn"),
+                                               event(2, 6, "Young Mira meets the miller Oren at the gate.", ["mira", "oren"], "turn")],
+            recaps=[recap(1, 2, "Prologue"), recap(2, 6, "One")])
+    table = {"Prologue": FRAME_TL["Prologue"], "One": ("new", "her girlhood at the mill", 1, "When she was a girl")}
+
+    def youth_note(shows):
+        t = Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(table), shows_at=shows)
+        _, _, sink, t, _ = run(d, bk, text_=t)
+        return next(n for n in sink.m["appearance"]["mira"] if n.get("scope") == "s2.1"), sink
+    note, _ = youth_note(None)                     # the chapter's time for every paragraph: the old woman's hair comes in
+    assert "white hair" in note["text"]
+    note, sink = youth_note(lambda text, marked: "s1" if "cell" in text else marked)
+    assert "white hair" not in note["text"] and "braided" in note["text"]
+    assert sink.m["shows"]["mira"]["5"]["line"] == "s1"
+    assert "bk.mira.f3" not in note["items"]

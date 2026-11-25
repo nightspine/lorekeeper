@@ -326,6 +326,20 @@ Its opening, numbered by paragraph:
 
 Its events, each with the start of the paragraph it is told in:
 {events}"""
+SHOWS_AT = """A novel tells more than one time. These are its lines of telling, each set at one time:
+{catalog}
+
+Below are paragraphs that mention {who}, numbered, each marked with the line its chapter is told in. For each paragraph, at which
+line's time does it show {who}? The marked line; another line's id when the paragraph shows {who} at that other time (a scene of
+the frame, or a description of the teller as he or she is then, inside a chapter of the tale, or the reverse); or "none" when it
+shows {who} at no one time (a look back across the years, a summary of a life).
+Return "paragraphs": one {{"n": its number, "line": a line id or "none"}} for every paragraph.
+
+{paras}"""
+SHOWS_SCHEMA = {"type": "object", "required": ["paragraphs"], "properties": {"paragraphs": {"type": "array", "items": {
+    "type": "object", "required": ["n", "line"], "properties": {"n": {"type": "integer"}, "line": {"type": "string"}}}}}}
+SHOWS_BATCH = 30           # paragraphs per call of the paragraph check
+SHOWS_WORDS = 90           # of each paragraph sent to it
 # The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
 TIMELINE_SCHEMA = {"type": "object", "required": ["when", "lines", "events", "strand", "cue"], "properties": {
     "when": {"type": "string"},
@@ -1612,7 +1626,8 @@ class Illustrator:
                             blocks[sq] = exc[eid] if blocks.get(sq, exc[eid]) == exc[eid] else None
                 cue = (lab.get("cue") or {}).get("seq", ch["lo"]) if scope else ch["lo"]
                 books[j][ch["title"]] = {"lo": ch["lo"], "hi": ch["hi"], "scope": scope, "cue": cue, "events": exc,
-                                         "blocks": blocks, "strand": s if s in strands else None}
+                                         "blocks": blocks, "strand": s if s in strands else None, "key": keys[n],
+                                         "eras": {k: v["era"] for k, v in strands.items()}}
                 last = s if s in strands else None
         out = {"strands": strands, "books": books, "last": last}
         with self.lock:
@@ -1843,6 +1858,72 @@ class Illustrator:
         return (f"- {s['id']}: {s['label']}; era {min(s['era'], MAX_ERAS + 1)}" + (f"; first told in {first}" if first else "")
                 + (f"\n  its time in its latest chapter: {s['when']}" if s.get("when") else "")
                 + (f"\n  people seen in it: {who}" if who else "") + said)
+
+    def shows_at(self, bi: int, eid: str, seqs, upto: int, fin: frozenset[str] | None = None) -> dict[int, str | None]:
+        """{block: scope} for paragraphs naming an entity drawn per story time: at which line's time each one shows it (a frame
+        paragraph inside a chapter of the tale shows the teller at the frame's time, which the chapter's scope cannot say). One
+        cheap call per SHOWS_BATCH paragraphs not checked yet, which only chooses (a line id among those known by block `upto`, or
+        "none"); cached in the manifest as `shows[eid][block] = {"k": the chapter's label key, "line"}`, so a relabelled chapter
+        is checked again. A paragraph the call leaves out, or one of a failed call, keeps its chapter's scope; "none" is None."""
+        b = self.books[bi]
+        w = self._walk(bi, fin)
+        labs = w["books"].get(bi, {})
+        of = {}
+        for s in sorted({x for x in seqs if x in b.text and x <= upto}):
+            ch = next((c for c in b.chapters if c["lo"] <= s <= c["hi"]), None)
+            if ch and ch["title"] in labs and labs[ch["title"]]["scope"]:
+                of[s] = labs[ch["title"]]
+        store = (self.man[bi].setdefault("shows", {}) if self._finished(bi, fin) is None else
+                 self._tl_partial.setdefault(("shows", bi, fin), {})).setdefault(eid, {})
+        out: dict[int, str | None] = {}
+        todo = []
+        for s, lab in of.items():
+            got = store.get(str(s))
+            if isinstance(got, dict) and got.get("k") == lab["key"]:
+                out[s] = self._line_scope(got.get("line"), lab)
+            else:
+                todo.append(s)
+        known = {k: v for k, v in w["strands"].items() if b.ord_of.get(v["from"], -1) <= b.ord_of[b.anchor_at(upto)]
+                 or v["book"] != self._bkey(bi)}
+        e = next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
+        who = e["names"][0]["value"] if e else eid
+        catalog = "\n".join(f"- {k}: {v['label']}" for k, v in known.items())
+        for i in range(0, len(todo), SHOWS_BATCH):
+            batch = todo[i:i + SHOWS_BATCH]
+            paras = "\n\n".join(f"{n}. [{of[s]['strand']}] " + " ".join(b.text[s].split()[:SHOWS_WORDS]) for n, s in enumerate(batch, 1))
+            try:
+                got = self._complete(SHOWS_AT.format(catalog=catalog, who=who, paras=paras), SHOWS_SCHEMA)
+            except TextFailed as e2:
+                self.log(f"  paragraph check for {eid}: text model failed ({e2.detail})")
+                got = {}
+            said = {}
+            for x in got.get("paragraphs") or [] if isinstance(got.get("paragraphs"), list) else []:
+                try:
+                    n = int(x.get("n"))
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                line = str(x.get("line") or "").strip().strip(".").lower()
+                if 1 <= n <= len(batch) and (line in known or line == "none"):
+                    said[batch[n - 1]] = line
+            with self.lock:
+                for s in batch:
+                    if s in said:
+                        store[str(s)] = {"k": of[s]["key"], "line": said[s]}
+                    out[s] = self._line_scope(said.get(s, of[s]["strand"]), of[s])
+                if said and self._finished(bi, fin) is None:
+                    self._dirty.add(bi)
+                    self._save(bi)
+        return out
+
+    @staticmethod
+    def _line_scope(line: str | None, lab: dict) -> str | None:
+        """A line id said of a paragraph, as the scope it has in that paragraph's chapter."""
+        if not line or line == "none":
+            return None
+        if line == lab["strand"]:
+            return lab["scope"]
+        era = lab["eras"].get(line)
+        return f"{line}.{era}" if era and era <= MAX_ERAS else None
 
     def _chapter_lab(self, bi: int, seq: int, fin: frozenset[str] | None) -> dict | None:
         ch = next((c for c in self.books[bi].chapters if c["lo"] <= seq <= c["hi"]), None)
@@ -2587,6 +2668,13 @@ class Illustrator:
             looks = [it for it in self.items(bi, eid) if idx.get(it["id"], {}).get("look") and b.ord_of[it["from"]] <= at
                      and not it["id"].startswith("event:")    # a turning point counts only as a change of its own look
                      and (scope is None or self.item_scope(bi, it, finished) == scope)]
+            shows: dict[int, str | None] = {}
+            if scope:
+                # the paragraphs a scope's note may be written from: each checked for the time it shows the entity at
+                upto0 = b.seq_of[anchor]
+                ev = {b.seq_of[a] for it in looks for a in it["evidence"] if a in b.seq_of}
+                shows = self.shows_at(bi, eid, ev, upto0, finished)
+                looks = [it for it in looks if all(shows.get(b.seq_of[a], scope) == scope for a in it["evidence"] if a in b.seq_of)]
             looks.sort(key=lambda it: b.ord_of[it["from"]])
             done = set(cur.get("items", [])) if cur and hit[0] == bi else set()
             new = [it for it in looks if it["id"] not in done]
@@ -2612,12 +2700,23 @@ class Illustrator:
             # before naming them), then those its look items cite
             look_seqs: list[int] = self._in_scope(bi, self._introduction(bi, eid, upto), scope, finished) \
                 if e["type"] in PORTRAIT_TYPES and mode == "write" else []
+            facets = [f for f in ([ve["profile"]] if ve["profile"] else []) + ve["facets"]
+                      if scope is None or self._facet_scope(bi, eid, f, finished) == scope]
+            if scope:
+                pool = self._mentions(bi, eid, upto, 24, scope, finished)
+                fseqs = {b.seq_of[a] for f in facets for x in self.books[bi].ents.get(eid, {}).get("facets", []) if x["id"] == f["id"]
+                         for a in x.get("evidence", []) if a in b.seq_of}
+                shows.update(self.shows_at(bi, eid, set(look_seqs) | set(pool) | fseqs, upto, finished))
+                look_seqs = [x for x in look_seqs if shows.get(x, scope) == scope]
+                facets = [f for f in facets if all(shows.get(b.seq_of[a], scope) == scope for x in b.ents.get(eid, {}).get("facets", [])
+                                                   if x["id"] == f["id"] for a in x.get("evidence", []) if a in b.seq_of)]
             for it in pick:
                 for a in it["evidence"]:
                     if a in b.seq_of and b.seq_of[a] <= upto and b.seq_of[a] not in look_seqs:
                         look_seqs.append(b.seq_of[a])
             lp, lused = self._passage_first(bi, look_seqs, upto, LOOK_PASSAGE_WORDS)
-            rest = [s for s in self._mentions(bi, eid, upto, 10, scope, finished) if s not in set(lused)]
+            rest = [s for s in (P._sample([x for x in pool if shows.get(x, scope) == scope], 10) if scope else
+                                self._mentions(bi, eid, upto, 10, scope, finished)) if s not in set(lused)]
             left = max(150, NOTE_PASSAGE_WORDS - sum(_words(b.text[s]) for s in lused))
             mp, mused = self.passage(bi, rest, upto, left) if rest else ("", [])
             passages = "\n…\n".join(x for x in (lp, mp) if x)
@@ -2630,8 +2729,6 @@ class Illustrator:
                 shown_items.append(it)
                 size += len(it["text"])
             listed = {it["id"] for it in shown_items}
-            facets = [f for f in ([ve["profile"]] if ve["profile"] else []) + ve["facets"]
-                      if scope is None or self._facet_scope(bi, eid, f, finished) == scope]
             shown = [f for f in facets[:9 if ve["profile"] and scope is None else 8] if f["id"] not in listed]
             own_from = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             srcs = {b.anchor_at(s) for s in used} | {it["from"] for it in shown_items} | {own_from[f["id"]] for f in shown if f["id"] in own_from}
