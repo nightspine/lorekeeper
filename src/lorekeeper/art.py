@@ -516,6 +516,7 @@ class Prompt:
     partial: bool = False     # written for a reader who has not finished every earlier book
     world: str = ""           # the world note text pasted in
     milieu: str = ""          # the surroundings pasted in (a portrait's figure's milieu, a scene's place note)
+    version: int | None = NOTE_VERSION   # the note version its notes were written in (None: older, or not known)
 
 
 @dataclass
@@ -2404,7 +2405,7 @@ class Illustrator:
                "chapter": (job.chapter or b.chapter_of(pr.anchor) or {}).get("title"), "from": pr.anchor,
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
                "references": [r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
-               "notes": NOTE_VERSION}
+               **({"notes": pr.version} if pr.version is not None else {})}
         if pr.partial:
             rec["partial"] = True
         if job.kind in ENTITY_KINDS:
