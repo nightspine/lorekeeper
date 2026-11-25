@@ -828,7 +828,7 @@ def test_counts_need_no_model_call():
     il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     c = il.counts()
     row = {"drawable": None, "pictures": 1, "drawn": 0, "chosen": True}
-    assert c == {"plates": 2, "portraits": 4, "chapters": [{"n": 1, "title": "One", "events": 2, **row},
+    assert c == {"plates": 2, "portraits": 4, "new_portraits": 4, "chapters": [{"n": 1, "title": "One", "events": 2, **row},
                                                            {"n": 2, "title": "Two", "events": 3, **row}]}
     assert not t.prompts
     il.run()
@@ -912,6 +912,22 @@ def test_an_event_picture_never_counts_as_the_plate_of_an_unscreened_chapter():
     assert one["title"] == "One" and one["drawable"] is None and one["pictures"] == 1 and one["drawn"] == 0
     two = il.counts(level="all")["chapters"][1]
     assert two["pictures"] == 3 and two["drawn"] == 1                  # its plate, held; no event picture yet
+
+
+def test_counts_say_how_many_portraits_a_run_would_still_draw():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    _, _, sink, _, _ = run(d, bk, level=None, portraits="all")
+    il = art.Illustrator([art.Book(d, bk, sink, None)], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    c = il.counts(level="none")
+    assert c["portraits"] > 0 and c["new_portraits"] == 0                # every one drawn
+    first = next(p for p in sink.m["pictures"] if p["kind"] == "portrait")
+    sink.m["pictures"] = [p for p in sink.m["pictures"] if p is not first]
+    il = art.Illustrator([art.Book(d, bk, sink, None)], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    again = il.counts(level="none")
+    assert again["new_portraits"] == 1 and again["portraits"] == c["portraits"]
 
 
 def test_illustrate_command_level_none_draws_portraits_only(tmp_path, monkeypatch):

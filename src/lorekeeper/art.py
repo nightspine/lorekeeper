@@ -1232,7 +1232,8 @@ class Illustrator:
         the CLI's --chapters take), `drawable` the fresh screening's count of visible moments or None when not screened yet,
         `events` the non-minor events, `pictures` what the chapter would get at the level whether chosen or not (0 for a
         chapter with no events: it can never get one), `drawn` how many of those the set already holds, `chosen` whether
-        this run draws its scenes."""
+        this run draws its scenes; `new_portraits`: how many of the portrait jobs a run would still draw (not in the set
+        and not a final skip)."""
         bi = len(self.books) - 1 if bi < 0 else bi
         b = self.books[bi]
         level = scene_level(level)
@@ -1259,7 +1260,9 @@ class Illustrator:
         if self.chapter_filter:
             end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
             ports = [j for j in ports if b.seq_of[j.anchor] <= end]
-        return {"plates": plates, "portraits": len(ports), "chapters": chapters}
+        have = self._have(bi)
+        return {"plates": plates, "portraits": len(ports), "new_portraits": sum(self._is_new(bi, j, have) for j in ports),
+                "chapters": chapters}
 
     def _profiles(self, bi: int, eid: str) -> list[tuple[int, int, dict]]:
         """(book, ordinal, facet) of the entity's profiles in books 0..bi, in reading order."""

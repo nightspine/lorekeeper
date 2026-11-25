@@ -1412,7 +1412,8 @@ def test_a_chapter_choice_limits_scenes_but_never_portraits(env):
     pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
     assert [p["target"] for p in pics if p["kind"] == "plate"] == ["Chapter Two"]
     est = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink", "portraits": "all"}).json()
-    assert len([p for p in pics if p["kind"] == "portrait"]) == est["portraits"] > 0    # every portrait, not cut at a chapter
+    assert len([p for p in pics if p["kind"] == "portrait"]) == est["planned"]["portraits"] > 0   # not cut at a chapter
+    assert est["portraits"] == 0                                               # all drawn: nothing left to price
 
 
 def test_a_run_refuses_an_unknown_chapter_or_nothing_to_draw(env):
@@ -1447,13 +1448,28 @@ def test_the_estimate_follows_the_level_and_the_chapter_choice(env):
     assert all(r["pictures"] == 0 and not r["chosen"] for r in lvl["chapters"])
     every = est(level="all", chapters=f"{rows[0]['n']},{rows[1]['n']}").json()
     assert every["plates"] == sum(r["pictures"] for r in every["chapters"]) >= 2
-    for bad in ("x", "1;2", "999", "-1"):
+    for bad in ("x", "1;2", "999", "-1", "²", "１", "٢", "1,²"):
         r = est(chapters=bad)
         assert r.status_code == 422 and r.json()["code"] == "bad-config", bad
     assert est(level="some").json()["code"] == "bad-config"
     run_set(env, portraits=False)
     after = est().json()
     assert all(r["drawn"] == r["pictures"] == 1 for r in after["chapters"])   # "already drawn"
+    assert after["plates"] == after["pictures"] == 0 and after["price"] == 0  # a rerun would draw nothing new
+    assert after["planned"] == {"pictures": 2, "plates": 2, "portraits": 0}
+
+
+def test_the_estimate_prices_only_what_a_run_would_still_draw(env):
+    env.key()
+    q = {"key": KEY, "style": "ink", "portraits": "all"}
+    before = env.c.get("/api/art/estimate", params=q).json()
+    assert before["planned"] == {k: before[k] for k in ("pictures", "plates", "portraits")}   # nothing drawn yet
+    ns = chapter_ns(env)
+    run_set(env, chapters=[ns["Chapter One"]], portraits="all")
+    after = env.c.get("/api/art/estimate", params=q).json()
+    assert after["planned"] == before["planned"] and after["plates"] == 1 and after["portraits"] == 0
+    each = llm.image_price("gemini", GEMINI, "standard", "landscape")
+    assert after["pictures"] == 1 and after["price"] == pytest.approx(each)
 
 
 def test_the_estimate_leaves_out_front_matter_with_nothing_to_draw(env, monkeypatch):
