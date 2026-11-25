@@ -1648,8 +1648,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
         none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
-        what it would get at the level whether chosen or not (`pictures`) and how many of those are drawn (`drawn`); the
-        totals count only the chosen chapters, plus the portraits, which the chapter choice never limits."""
+        what it would get at the level whether chosen or not (`pictures`) and how many of those are drawn (`drawn`). The
+        totals (`pictures`, `plates`, `portraits`, `price`) count what a run would still draw: the chosen chapters'
+        pictures not drawn yet, plus the new portraits, which the chapter choice never limits; `planned` has the same
+        three counts with what is already drawn included."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1660,7 +1662,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         chosen = None
         if chapters is not None:
             parts = [x.strip() for x in chapters.split(",") if x.strip()]
-            if len(parts) > 10000 or not all(x.isdigit() for x in parts):
+            if len(parts) > 10000 or not all(re.fullmatch(r"[0-9]{1,9}", x) for x in parts):   # ASCII only
                 raise ArtRefusal(422, "bad-config", "chapters must be chapter numbers separated by commas.")
             chosen = {int(x) for x in parts}
         il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=cast)
@@ -1669,18 +1671,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         il.scene_chapters = chosen     # the chapter choice limits scenes only (art.Illustrator's `scene_chapters`)
         got = il.counts(level=level)
         rows = story_rows(il, got["chapters"])
-        plates = got["plates"]
+        # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
+        plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
         chapters_ = [{"n": c["n"], "title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
                       "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"]}
                      for c in rows]
-        ports = got["portraits"]
+        ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
         each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
         price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
-                "model": name, "level": level, "chapters": chapters_}
+                "model": name, "level": level, "chapters": chapters_,
+                "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
     def art_file(text_hash: str, style: str, pid: str):
