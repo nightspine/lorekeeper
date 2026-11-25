@@ -193,6 +193,7 @@ def run(d=None, bk=None, sink=None, text_=None, image=None, **kw):
     sink = sink or Mem()
     text_, image = text_ or Text(), image or Image()
     kw.setdefault("workers", 1)
+    kw.setdefault("portraits", "all")    # the older rule: these tests are about portraits, not about who is main cast
     il = art.Illustrator([art.Book(d, bk, sink, kw.pop("level", "main"))], text_, image, kw.pop("style", "ink"), log=lambda *_: None,
                          pause=0, **kw)
     return il, il.run(), sink, text_, image
@@ -431,7 +432,7 @@ def test_a_later_book_reuses_notes_and_pictures_and_redraws_only_on_a_look_chang
     bk1, d1, bk2, d2 = series_docs()
     s1, s2 = Mem(), Mem()
     t, im = Text(), Image()
-    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.run()
     one = {p["target"]: p for p in pics(s1, "portrait")}
     two = pics(s2, "portrait")
@@ -457,12 +458,12 @@ def test_a_later_book_may_append_one_sentence_to_the_world_but_never_an_edited_n
                 self.prompts.append(prompt)
                 return {"text": "Machines and iron rails cross the valley."}
             return super().complete(system, prompt, schema, prefix)
-    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], More(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], More(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.run()
     assert s2.m["world"]["text"] == WORLD + " Machines and iron rails cross the valley." and s2.m["world"]["base"] == WORLD
     # an edited world note is inherited as it is
     s1b, s2b = Mem(), Mem()
-    il = art.Illustrator([art.Book(d1, bk1, s1b), art.Book(d2, bk2, s2b)], More(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(d1, bk1, s1b), art.Book(d2, bk2, s2b)], More(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     il.man[0]["world"].update({"text": "My own words about a green valley.", "edited": True})
     il.run()
@@ -474,7 +475,7 @@ def test_an_earlier_book_without_its_epub_is_only_read():
     bk1, d1, bk2, d2 = series_docs()
     s1 = Mem()
     t = Text(notes={"Mira": ("a young woman", ["scarred", "older and harder"])})
-    il = art.Illustrator([art.Book(d1, None, s1, None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, None, s1, None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     rep = il.run()
     assert s1.m is None and rep.drawn > 0
@@ -487,7 +488,7 @@ def test_on_demand_job_and_prompt_refuse_a_target_the_reader_has_not_reached():
     d["entities"][2]["facets"].append({"id": "bk.mill.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
                                        "text": "A grey stone mill with a wooden gate and a wheel on the river."})
     t = Text(notes={"Mill": ("a mill", ["grey stone", "a wooden gate"])})
-    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     with pytest.raises(art.NotVisible):
         il.job("event", "e4", at="a3")
@@ -962,7 +963,7 @@ def test_a_series_book_draws_a_portrait_the_earlier_book_planned_but_did_not_dra
                 raise images.ImageRefused("safety")
             return super().draw(prompt, shape=shape, quality=quality, references=references)
     s1, s2 = Mem(), Mem()
-    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2)], Text(), RefuseOrenOnce(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2)], Text(), RefuseOrenOnce(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     rep = il.run()
     assert "oren" not in {p["target"] for p in pics(s1, "portrait")} and rep.refused == 1
@@ -971,7 +972,7 @@ def test_a_series_book_draws_a_portrait_the_earlier_book_planned_but_did_not_dra
 
 def test_on_demand_job_refuses_an_unknown_chapter_and_finds_an_earlier_books_entity():
     bk1, d1, bk2, d2 = series_docs()
-    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     with pytest.raises(ValueError, match="no such chapter"):
         il.job("plate", "Nowhere")
@@ -1054,7 +1055,7 @@ def test_anchor_ids_shared_by_two_books_are_never_confused(monkeypatch):
     bk1, d1, bk2, d2 = series_shared_ids()
     d1["entities"][3]["facets"][0].update({"from": "a7", "evidence": ["a7"]})   # the stranger's book-one profile at a7
     s1, s2 = Mem(), Mem()
-    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2, "all")], Text(), Image(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2, "all")], Text(), Image(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     rep = il.run()
     assert s1.m["world"]["from"] == "a5" and s2.m["world"]["book"] == "b1" and s2.m["world"]["inherited"]
@@ -1090,7 +1091,7 @@ def test_text_spent_on_notes_counts_against_the_cap():
 
 def test_a_reservation_is_released_by_the_amount_it_reserved():
     il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
-                         Text(), Image(), "ink", cap=10, log=lambda *_: None, pause=0)
+                         Text(), Image(), "ink", portraits="all", cap=10, log=lambda *_: None, pause=0)
     _, a = il._reserve(0.0)                    # an unknown price, nothing drawn yet: reserves 0
     il.last_cost = 0.04
     _, b = il._reserve(0.0)                    # reserves the last picture's cost
@@ -1103,7 +1104,7 @@ def test_a_reservation_is_released_by_the_amount_it_reserved():
 def test_an_on_demand_picture_of_a_read_only_book_saves_that_books_set():
     bk1, d1, bk2, d2 = series_docs()
     s1 = Mem()
-    il = art.Illustrator([art.Book(d1, bk1, s1, None, draw=False), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, bk1, s1, None, draw=False), art.Book(d2, bk2, Mem())], Text(), Image(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     rec = il.draw(il.job("portrait", "stranger", at="b2.a3"))
     assert rec and s1.m and [p["id"] for p in s1.m["pictures"]] == [rec["id"]] and rec["file"] in s1.files
@@ -1145,7 +1146,7 @@ def test_a_trailing_anchor_not_in_the_epub_is_never_reached():
     d = base_doc(bk)
     d["anchors"][-1]["fp"] = "0000000000000000"
     d["anchors"][-2]["fp"] = "0000000000000001"
-    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", log=lambda *_: None)
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", portraits="all", log=lambda *_: None)
     b = il.books[0]
     assert b.seq_of["a11"] == b.seq_of["a10"] == len(bk.blocks) and b.hi == len(bk.blocks) - 1 and b.seq_of["a9"] == 9
 
@@ -1166,7 +1167,7 @@ def test_ordinary_words_of_a_group_name_are_not_names():
 
 def test_an_on_demand_plate_screens_its_chapter_and_shows_the_turning_point():
     bk = book(("One", CH1), ("Two", CH2))
-    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     j = il.job("plate", "One")
     assert j.event and j.event["id"] == "e2"
@@ -1175,7 +1176,7 @@ def test_an_on_demand_plate_screens_its_chapter_and_shows_the_turning_point():
 def test_counts_need_no_model_call():
     bk = book(("One", CH1), ("Two", CH2))
     t = Text()
-    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     c = il.counts()
     assert c == {"plates": 2, "portraits": 4, "chapters": [{"title": "One", "drawable": None}, {"title": "Two", "drawable": None}]}
     assert not t.prompts
@@ -1187,7 +1188,7 @@ def test_counts_need_no_model_call():
 def test_an_edited_prompt_is_never_softened_and_its_refusal_is_raised():
     bk = book(("One", CH1), ("Two", CH2))
     t, im = Text(), Image(refuse=[lambda prompt, n: True])
-    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.world(0)
     with pytest.raises(images.ImageRefused):
         il.draw(il.job("plate", "One"), text="My own words: a mill at dusk, a woman at the gate, nothing else in view at all.")
@@ -1212,7 +1213,7 @@ class TwoWorlds(Text):
 def test_every_picture_says_which_earlier_books_its_prompt_inherits():
     bk1, d1, bk2, d2 = series_docs()
     s1, s2 = Mem(), Mem()
-    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), Image(), "ink", workers=1,
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), Image(), "ink", portraits="all", workers=1,
                          log=lambda *_: None, pause=0)
     il.run()
     assert all(p["inherits"] == [] for p in pics(s1))
@@ -1224,7 +1225,7 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_nothing_from_it():
     bk1, d1, bk2, d2 = series_docs()
     s1, s2 = Mem(), Mem()
     t, im = TwoWorlds(), Image()
-    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", workers=1, log=lambda *_: None, pause=0)
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     il.run()                                                     # a build: book one counts as read
     full = next(p for p in pics(s2, "plate"))
     with pytest.raises(art.NotVisible):
@@ -1243,7 +1244,7 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_nothing_from_it():
     assert not pr2.partial and pr2.inherits == ["b1"] and WORLD in pr2.text
     assert (rec["kind"], rec["target"], rec["from"]) not in il._have(1) or full["from"] == rec["from"]
     n = len(im.calls)
-    art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), im, "ink", workers=1, log=lambda *_: None,
+    art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], TwoWorlds(), im, "ink", portraits="all", workers=1, log=lambda *_: None,
                     pause=0).run()
     assert len(im.calls) == n                                   # the full plate was already there
 
@@ -1492,3 +1493,109 @@ def test_the_reason_never_shows_a_name_known_only_as_a_lowercase_word():
     for w in ("Dawn", "Will", "May"):           # "at dawn", "will rise", "may come": the book never wrote the name
         assert il._say(f"name in the text: {w}", 0, "a13", None) == hidden
     assert il._say("name in the text: Mira", 0, "a13", None) == "a name the picture must not show: Mira"
+
+
+# ---- whose portraits: the main cast by default
+
+
+def cast_doc(counts, turns=None, froms=None, profiled=None, minor=0):
+    """A book whose people are named by `counts[i]` non-minor events (and `turns[i]` of them turning points), each first
+    appearing at block `froms[i]`; `minor` events naming everyone; `profiled[i]` False leaves person i without a profile."""
+    bk = book(("One", CH1), ("Two", CH2))
+    n = len(counts)
+    turns, froms, profiled = turns or [0] * n, froms or list(range(n)), profiled or [True] * n
+    ents = [ent(f"p{i}", f"Person{i}", frm=f"a{froms[i] % 12}",
+                facets=[portrait(f"p{i}", "a11", "A tall woman with dark hair and a grey coat.")] if profiled[i] else [])
+            for i in range(n)]
+    evs = []
+    for i, c in enumerate(counts):
+        for k in range(c):
+            evs.append(event(len(evs), 11, f"Person{i} does something that changes the story.", [f"p{i}"],
+                             "turn" if k < turns[i] else None))
+    for _ in range(minor):
+        evs.append(event(len(evs), 11, "A small moment.", [e["id"] for e in ents], "minor"))
+    return bk, doc(bk, entities=ents, events=evs, recaps=[recap(1, 5, "One")])
+
+
+def plan_of(bk, d, portraits="main"):
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", portraits=portraits, workers=1, log=lambda *_: None, pause=0)
+    return il, [(j.target, j.anchor) for j in il._portrait_jobs(0)]
+
+
+def test_main_cast_keeps_the_most_named_and_drops_a_character_named_by_two_events():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)       # Mira is named by 3 non-minor events, Oren and the Stranger by 2, Gabriel by 1; all have portraits
+    il, main = plan_of(bk, d)
+    assert il.portraits == "main" and il.main_cast(0) == ["mira"] and {t for t, _ in main} == {"mira"}
+    assert {t for t, _ in plan_of(bk, d, "all")[1]} == {"mira", "oren", "stranger", "gabriel"}
+    assert il.counts()["portraits"] == 1
+
+
+def test_main_cast_needs_a_share_of_the_books_events_that_grows_with_the_book():
+    # 100 non-minor events: at least ceil(5% of 100) = 5 are needed, so 4 is not enough though it passes MAIN_CAST_MIN
+    bk, d = cast_doc([5, 4] + [1] * 91)
+    assert plan_of(bk, d)[0].main_cast(0) == ["p0"]
+    bk, d = cast_doc([5, 4, 3], minor=100)      # minor events never count: 12 non-minor events, 3 is enough
+    assert plan_of(bk, d)[0].main_cast(0) == ["p0", "p1", "p2"]
+
+
+def test_main_cast_is_at_most_twelve_by_events_then_turning_points_then_first_appearance():
+    counts = [3] * 11 + [4, 4, 5]
+    turns = [0] * 11 + [0, 1, 0]
+    froms = list(range(11, 0, -1)) + [0, 0, 0]     # p10 appears first of the threes, p0 last
+    bk, d = cast_doc(counts, turns, froms)
+    cast = plan_of(bk, d)[0].main_cast(0)
+    assert len(cast) == art.MAIN_CAST_MAX == 12
+    assert cast[:3] == ["p13", "p12", "p11"]
+    assert cast[3:] == [f"p{i}" for i in range(10, 1, -1)]      # p1 and p0, the last to appear, are left out
+
+
+def test_main_cast_needs_a_profile_and_only_people_and_creatures():
+    bk, d = cast_doc([6, 6, 6], profiled=[True, False, True])
+    d["entities"][2]["type"] = "place"
+    assert plan_of(bk, d)[0].main_cast(0) == ["p0"]
+
+
+def test_all_is_the_older_rule_and_true_means_all():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("ada", "Ada", frm="a2", facets=[portrait("ada", "a2", "A small girl with red hair.", prefix="x")]))
+    d["entities"][-1]["facets"][0]["id"] = "bk.ada.f1"     # a plain profile, named by no event: never planned
+    il, every = plan_of(bk, d, "all")
+    assert plan_of(bk, d, True)[0].portraits == "all" and plan_of(bk, d, True)[1] == every
+    assert [t for t, _ in every] == ["mira", "oren", "stranger", "gabriel"]
+    assert plan_of(bk, d, None)[0].counts()["portraits"] == 0 and plan_of(bk, d, False)[0].portraits is None
+    with pytest.raises(ValueError):
+        art.portrait_cast("some")
+
+
+def test_a_character_the_main_cast_leaves_out_can_still_be_drawn_on_demand():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    assert "gabriel" not in il.main_cast(0)
+    job = il.job("portrait", "gabriel", at="a11")
+    pr = il.make_prompt(job)
+    rec = il.draw(job, pr)
+    assert rec and rec["kind"] == "portrait" and rec["target"] == "gabriel"
+
+
+def test_the_illustrate_command_takes_main_all_or_none(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    i1 = _cli_index(tmp_path, base_doc(bk), bk, "b.lore.json")
+    monkeypatch.setattr(cli, "_make_model", lambda args, model=None, provider=None: Text())
+    monkeypatch.setattr(llm, "make_image", lambda *a, **k: Image())
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    seen = []
+    real = art.Illustrator
+
+    def spy(*a, **k):
+        il = real(*a, **k)
+        seen.append(il.portraits)
+        return il
+    monkeypatch.setattr(art, "Illustrator", spy)
+    for flags in ([], ["--portraits", "all"], ["--portraits", "none"], ["--no-portraits"]):
+        assert cli.main(["illustrate", str(i1), "--epub", "1.epub", "--out", str(tmp_path / "o"), "--limit", "0", *flags]) == 0
+    assert seen == ["main", "all", None, None]

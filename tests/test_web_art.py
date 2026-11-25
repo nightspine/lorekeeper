@@ -88,7 +88,7 @@ def wait_for(c, job_id, statuses=("done", "failed", "stopped"), timeout=15):
 
 
 def run_set(e, **cfg):
-    r = e.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "level": "main", "cap": 10, **cfg}})
+    r = e.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "level": "main", "cap": 10, "portraits": "all", **cfg}})
     assert r.status_code == 200, r.text
     return wait_for(e.c, r.json()["id"])
 
@@ -626,7 +626,7 @@ def test_a_stop_in_the_pictures_stage_leaves_the_build_resumable(tmp_path, monke
     box["mgr"] = app.state.jobs
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
         meta = upload(c, tmp_path)
-        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "cap": 10}}}).json()
+        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {"style": "ink", "cap": 10, "portraits": "all"}}}).json()
         stopped = wait_for(c, job["id"])
         assert stopped["status"] == "stopped" and stopped["progress"]["resumeFrom"] == "art", stopped
         first = len(im.calls)
@@ -788,3 +788,70 @@ def test_a_world_note_already_there_is_never_taken_back(env):
 SCENE_WITH_NAME = ("At a wooden gate beside a grey stone mill, Valdemar waits with a basket on his arm, while a miller dusted with "
                    "flour watches from the doorway. Soft morning light falls across the packed earth of the yard and a path leads "
                    "off toward low green hills in the distance under a pale sky.")
+
+
+# ---- choosing the image model
+
+
+def test_the_providers_list_carries_each_image_table(env):
+    got = {p["id"]: p for p in env.c.get("/api/providers").json()["providers"]}
+    assert got["claude"]["images"] is None and got["mistral"]["images"] is None
+    gem = got["gemini"]["images"]
+    assert gem["default"] == llm.IMAGE_PROVIDERS["gemini"]["default"]
+    models = {m["id"]: m for m in gem["models"]}
+    assert set(models) == {m["id"] for m in llm.IMAGE_PROVIDERS["gemini"]["models"]}
+    assert models["gemini-3-pro-image"]["label"] == "Nano Banana Pro"
+    assert models["gemini-3-pro-image"]["price"]["standard"] == llm.image_price("gemini", "gemini-3-pro-image", "standard")
+    assert models["gemini-3.1-flash-lite-image"]["levels"] == ["draft", "standard"]
+    assert models[GEMINI]["levels"] == ["draft", "standard", "best"]
+    assert got["openai"]["images"]["models"]
+
+
+def test_the_chosen_image_model_reaches_the_provider_and_the_price(env, monkeypatch):
+    env.key()
+    asked = []
+
+    def make(provider, model=None, api_key=None, base_url=None):
+        asked.append((provider, model))
+        return env.image
+    monkeypatch.setattr(llm, "make_image", make)
+    pro = "gemini-3-pro-image"
+    q = {"kind": "event", "target": "e5", "style": "ink", "provider": "gemini", "model": pro}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=q).json()
+    assert got["model"] == pro and got["price"] == llm.image_price("gemini", pro, "standard", "landscape")
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**q, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    assert asked and all(a == ("gemini", pro) for a in asked)
+    est = env.c.get("/api/art/estimate", params={"key": KEY, "provider": "gemini", "model": pro}).json()
+    assert est["model"] == pro
+
+
+# ---- which portraits a run draws
+
+
+def test_the_art_config_takes_main_all_or_false_for_portraits():
+    from lorekeeper.web.jobs import art_config
+    base = {"style": "ink", "cap": 10}
+    assert art_config(base)["portraits"] == "main"                           # missing: the main cast
+    assert art_config({**base, "portraits": True})["portraits"] == "all"      # an older page or a resumed older job
+    assert art_config({**base, "portraits": "all"})["portraits"] == "all"
+    assert art_config({**base, "portraits": "main"})["portraits"] == "main"
+    assert art_config({**base, "portraits": False})["portraits"] is False
+    for bad in ("none", "everyone", 1, 0, None, []):
+        with pytest.raises(ValueError):
+            art_config({**base, "portraits": bad})
+    stored = art_config({**base, "portraits": "all"})
+    assert art_config(stored) == stored and art_config(art_config(base)) == art_config(base)    # a resume reads it back
+
+
+def test_the_estimate_counts_portraits_of_the_main_cast_by_default(env):
+    env.key()
+
+    def ports(**q):
+        r = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink", **q})
+        assert r.status_code == 200, r.text
+        return r.json()["portraits"]
+    every = ports(portraits="all")
+    assert ports() == ports(portraits="main") < every and ports(portraits="true") == every
+    assert ports(portraits="none") == ports(portraits="false") == 0
+    assert env.c.get("/api/art/estimate", params={"key": KEY, "portraits": "some"}).json()["code"] == "bad-config"

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import struct
@@ -58,6 +59,10 @@ WORLD_MIN_WORDS = 1500  # the world note is written from the first story chapter
 MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
+MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
+MAIN_CAST_SHARE = 0.05  # ...and by at least this share of the book's non-minor events (rounded up)
+MAIN_CAST_MAX = 12     # main cast: at most this many characters per book, most named first
+CASTS = ("main", "all")  # whose portraits a run draws: the main cast, or everyone with a part (the older rule)
 PASSAGE_WORDS = 600
 WORKERS = 3
 SCENE_WORDS = (35, 170)
@@ -841,11 +846,22 @@ def explain(why: str) -> str:
     return {"too short": "a text too short to draw from", "too long": "a text too long", "empty": "no text at all"}.get(why, why)
 
 
+def portrait_cast(value) -> str | None:
+    """Whose portraits a run draws, normalized: "main", "all", or None for no portraits. True (an older config) means "all"."""
+    if value is True:
+        return "all"
+    if not value:
+        return None
+    if value in CASTS:
+        return value
+    raise ValueError(f"portraits must be one of main, all or none, not {value!r}")
+
+
 class Illustrator:
     """The pipeline over one or more books in series reading order. `run()` draws whole sets; `job`, `make_prompt`
     and `draw` are the pieces the Reader's on-demand drawing calls one at a time."""
 
-    def __init__(self, books: list[Book], text, image, style: str, *, portraits: bool = True, quality: str = "standard",
+    def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
                  pause: float = 1.0) -> None:
@@ -856,7 +872,8 @@ class Illustrator:
                 raise ValueError("several indexes are drawn together only as books of one series (each with the same "
                                  "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
-        self.portraits, self.quality, self.cap, self.max_pictures = portraits, quality, cap, max_pictures
+        self.portraits = portrait_cast(portraits)      # "main", "all" or None
+        self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
         self.chapter_filter, self.series, self.workers = chapters, series, workers
         self.log, self.progress, self.pause = log, progress, pause
         self.provider = getattr(image, "provider", "") or ""
@@ -1408,12 +1425,29 @@ class Illustrator:
                     out.append((j, b.ord_of[f["from"]], f))
         return sorted(out, key=lambda t: t[:2])
 
+    def main_cast(self, bi: int) -> list[str]:
+        """The characters book bi is most about: people and creatures with a profile named by at least
+        max(MAIN_CAST_MIN, ceil(MAIN_CAST_SHARE x the book's non-minor events)) of this book's non-minor events, at most
+        MAIN_CAST_MAX of them, ranked by those events, then by turning points, then by first appearance."""
+        b = self.books[bi]
+        evs = [e for e in b.doc.get("events", []) if e.get("kind") != "minor"]
+        named = Counter(x for e in evs for x in set(e.get("entities", [])))
+        turns = Counter(x for e in evs if e.get("kind") == "turn" for x in set(e.get("entities", [])))
+        need = max(MAIN_CAST_MIN, math.ceil(MAIN_CAST_SHARE * len(evs)))
+        order = {e["id"]: i for i, e in enumerate(b.doc["entities"])}
+        first = lambda e: (b.ord_of.get(e["from"], len(b.ord_of)), order[e["id"]])     # noqa: E731
+        keep = [e for e in b.doc["entities"] if e["type"] in PORTRAIT_TYPES and named[e["id"]] >= need
+                and self._profiles(bi, e["id"])]
+        keep.sort(key=lambda e: (-named[e["id"]], -turns[e["id"]], first(e)))
+        return [e["id"] for e in keep[:MAIN_CAST_MAX]]
+
     def _portrait_jobs(self, bi: int) -> list[Job]:
         """A portrait per person and creature at the first point the index describes it, and a new one (the earlier kept) when its
         look changes: a new profile whose first sentence has a look word the last one lacked, or a checked fact or turning point
         recording a wound, a death, a change of form. An entity drawn in an earlier book is not drawn again without such a change."""
         b = self.books[bi]
         named = Counter(x for e in b.doc.get("events", []) if e.get("kind") != "minor" for x in e.get("entities", []))
+        cast = self.main_cast(bi) if self.portraits == "main" else None
         jobs = []
         for e in b.doc["entities"]:
             eid = e["id"]
@@ -1422,7 +1456,7 @@ class Illustrator:
             profs = self._profiles(bi, eid)
             mine = [p for p in profs if p[0] == bi]
             written = [p for p in mine if ".portrait-" in p[2]["id"]]
-            if not profs or not (written or named[eid] >= 2):
+            if not profs or (eid not in cast if cast is not None else not (written or named[eid] >= 2)):
                 continue
             # only a drawn picture counts: one planned in an earlier book and then skipped does not
             before = any(r["kind"] == "portrait" and r["target"] == eid and not r.get("partial")

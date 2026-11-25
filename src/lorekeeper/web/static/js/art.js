@@ -21,6 +21,8 @@ const SHAPE_OF = { plate: "landscape", event: "landscape", portrait: "portrait",
 export const ENTITY_KINDS = new Set(["portrait", "place", "thing"]);
 /** The image providers' names, for "on Gemini" (the record holds the id). */
 const PROVIDER_LABEL = { gemini: "Gemini", openai: "OpenAI" };
+/** "Nano Banana Pro on Gemini": the model a picture was drawn with, by name when the server has listed it. */
+const modelFact = (r) => [modelLabel(r.provider, r.model), r.provider ? `on ${PROVIDER_LABEL[r.provider] || r.provider}` : null].filter(Boolean).join(" ");
 
 /** A style slug as words: the known ones by name, a custom one as the person wrote it (the manifest's `style`). */
 export function styleLabel(slug, text = null) {
@@ -44,12 +46,14 @@ export const artOn = () => read("lk-art-on", "1") !== "0";
 export const setArtOn = (on) => write("lk-art-on", on ? "1" : "0");
 export const artStyle = () => read("lk-art-style", null);
 export const setArtStyle = (slug) => write("lk-art-style", slug || null);
-/** The Settings "Pictures" defaults for new pictures: style, quality, the per-run cap, and the image provider. */
+/** The Settings "Pictures" defaults for new pictures: style, quality, the per-run cap, the image provider and its model
+ *  (null: the provider's default; a model the provider does not list is ignored where it is used, `modelFor`). */
 export function artDefaults() {
   let d = {};
   try { d = JSON.parse(read("lk-art-defaults", "{}")) || {}; } catch {}
   return { style: typeof d.style === "string" ? d.style : "digital-art", quality: ["draft", "standard", "best"].includes(d.quality) ? d.quality : "standard",
-    cap: Number.isFinite(+d.cap) && +d.cap > 0 ? +d.cap : 10, provider: typeof d.provider === "string" ? d.provider : null };
+    cap: Number.isFinite(+d.cap) && +d.cap > 0 ? +d.cap : 10, provider: typeof d.provider === "string" ? d.provider : null,
+    model: typeof d.model === "string" ? d.model : null };
 }
 export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ ...artDefaults(), ...d }));
 
@@ -91,37 +95,67 @@ export function forgetArt(key = null) {
 let provCache = null;
 export function imageProviders({ fresh = false } = {}) {
   if (fresh || !provCache || Date.now() - provCache.at > 60000) {
-    const promise = api.providers().then((r) => (r.providers || []).filter((p) => canDraw(p))).catch(() => []);
+    const promise = api.providers().then((r) => {
+      const all = r.providers || [];
+      for (const p of all) for (const m of imageModels(p)) MODEL_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
+      return all.filter((p) => canDraw(p));
+    }).catch(() => []);
     provCache = { at: Date.now(), promise };
   }
   return provCache.promise;
 }
+/** Image model names by "provider\nid", from every /api/providers reply (the lightbox names the model a picture was drawn with). */
+const MODEL_LABEL = new Map();
+/** A model's name ("Nano Banana Pro"), else its id when the server has not said (or no longer lists it). */
+export const modelLabel = (provider, id) => (id ? MODEL_LABEL.get(`${provider}\n${id}`) || id : "");
 /** A provider row from /api/providers that draws: its image table, or (older server) Gemini or OpenAI by id. */
 export const drawsPictures = (p) => Boolean(p && (p.images || p.id === "gemini" || p.id === "openai"));
 const canDraw = (p) => drawsPictures(p) && p.ok;
-/** The quality levels a provider's default (or named) image model offers; all three when the server does not say. */
+/** The image models a provider offers ([{ id, label, price, levels }]), as the server lists them; [] without a table. */
+export function imageModels(p) {
+  const ms = p?.images && Array.isArray(p.images.models) ? p.images.models : [];
+  return ms.filter((m) => m && typeof m.id === "string" && m.id);
+}
+/** The image model to use with a provider: the wanted one when the provider lists it, else its default. Null without a
+ *  table (an older server: it then picks the default itself). */
+export function modelFor(p, want = null) {
+  const ms = imageModels(p);
+  if (!ms.length) return null;
+  if (want && ms.some((m) => m.id === want)) return want;
+  return ms.some((m) => m.id === p.images.default) ? p.images.default : ms[0].id;
+}
+const modelRow = (p, model) => { const id = modelFor(p, model); return imageModels(p).find((m) => m.id === id) || null; };
+/** The quality levels an image model offers (the provider's default when none is named); all three when the server does not say. */
 export function levelsOf(p, model = null) {
-  const m = p?.images?.models?.find((x) => x.id === (model || p.images.default));
+  const m = modelRow(p, model);
   const lv = Array.isArray(m?.levels) && m.levels.length ? m.levels : ["draft", "standard", "best"];
   return QUALITIES.filter(([k]) => lv.includes(k));
 }
-/** USD for one picture with a provider's default image model at a quality and shape: a number, null when the table says
- *  the price is unknown, undefined when the server sent no image table (then the prompt route's price stands). */
-export function imagePrice(p, quality = "standard", shape = "landscape") {
-  const m = p?.images?.models?.find((x) => x.id === p.images.default);
+/** The quality to draw at with a model: the wanted one when the model offers it, else Standard, else its first level. */
+export function fitQuality(p, model, quality) {
+  const lv = levelsOf(p, model).map(([k]) => k);
+  return lv.includes(quality) ? quality : lv.includes("standard") ? "standard" : lv[0];
+}
+/** USD for one picture with an image model (the provider's default when none is named) at a quality and shape: a number,
+ *  null when the table says the price is unknown, undefined when the server sent no image table (then the prompt route's
+ *  price stands). */
+export function imagePrice(p, quality = "standard", shape = "landscape", model = null) {
+  const m = modelRow(p, model);
   if (!m) return undefined;
   const v = m.price && typeof m.price === "object" ? m.price[quality] : null;
   if (typeof v === "number") return v;
   if (v && typeof v === "object" && typeof v[shape] === "number") return v[shape];
   return null;
 }
-/** The image model's label and its price for one picture at a quality ("Nano Banana 2.1, about 3 cents a picture"). */
-export function imageLine(p, quality = "standard") {
-  const m = p?.images?.models?.find((x) => x.id === p.images.default);
+/** An image model's name and its price for one picture at a quality ("Nano Banana 2.1, about 3 cents a picture"). A model
+ *  without that quality is priced at the one it would draw at, and says so ("..., about 3 cents a picture at Standard"). */
+export function imageLine(p, quality = "standard", model = null) {
+  const m = modelRow(p, model);
   if (!m) return drawsPictures(p) ? "Can draw" : "Can't draw";
-  const price = typeof m.price === "object" && m.price ? m.price[quality] : null;
-  const one = typeof price === "number" ? price : price && typeof price === "object" ? price.landscape ?? null : null;
-  return `${m.label || m.id}, ${one != null ? `${money(one)} a picture` : "price unknown"}`;
+  const q = fitQuality(p, m.id, quality);
+  const one = imagePrice(p, q, "landscape", m.id);
+  const at = q !== quality ? ` at ${QUALITIES.find(([k]) => k === q)?.[1] || q}` : "";
+  return `${m.label || m.id}, ${one != null ? `${money(one)} a picture${at}` : `price unknown${at}`}`;
 }
 
 // ---- picture elements ----------------------------------------------------------------------------
@@ -196,7 +230,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     prev.disabled = i === 0; next.disabled = i === items.length - 1;
     const facts = [
       ["Style", styleLabel(it.style || r.style, it.styleText)],
-      ["Model", [r.model, r.provider ? `on ${PROVIDER_LABEL[r.provider] || r.provider}` : null].filter(Boolean).join(" ")],
+      ["Model", modelFact(r)],
       ["Quality", r.quality ? `${r.quality[0].toUpperCase()}${r.quality.slice(1)}` : null],
       ["Cost", typeof r.cost === "number" ? (r.cost > 0 ? money(r.cost).replace(/^about /, "") : "Price unknown") : null],
       ["Drawn", when(r.created)],
@@ -206,7 +240,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     clear(how, h("details.lb-details", h("summary", icon("chevron"), "How this was drawn"),
       hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
-        h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h("dd", v)])))));
+        h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : "dd", v)])))));
     clear(acts, it.canEdit ? [
       it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
@@ -261,6 +295,13 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   showModalLocked(dlg);
   paint();
   closeBtn.focus({ preventScroll: true });
+  // The model's name comes with the providers list; until it has arrived the id stands, then the line is put right in
+  // place (a repaint would close "How this was drawn" under the person's eyes).
+  imageProviders().then(() => {
+    const dd = dlg.isConnected ? how.querySelector(".lb-model") : null;
+    const r = items[i]?.rec;
+    if (dd && r) dd.textContent = modelFact(r);
+  });
   return { close };
 }
 
@@ -306,7 +347,7 @@ export async function openPictureSheet(opts) {
   const st = {
     kind: opts.kind, target: opts.target,
     style: opts.style || d.style, custom: "", shape: SHAPE_OF[opts.kind] || "landscape",
-    quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0],
+    quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0], model: null,
     prompt: "", written: "", price: null, asked: null, slug: null, promptStyle: null,
     busy: false, closed: false,
   };
@@ -315,6 +356,9 @@ export async function openPictureSheet(opts) {
     st.slug = STYLE_LABEL[st.style] ? null : opts.style;   // the art set's own slug for its custom style
     st.style = "custom";
   }
+  // The Settings model when it is the Settings provider's, else the provider's default (null: an older server picks).
+  st.model = modelFor(st.provider, st.provider.id === d.provider ? d.model : null);
+  st.quality = fitQuality(st.provider, st.model, st.quality);
   // The style as sent to the server (a known slug, or the person's words), and the folder slug pictures are filed under:
   // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
   const styleText = () => (st.style === "custom" ? st.custom.trim() : st.style);
@@ -363,10 +407,10 @@ export async function openPictureSheet(opts) {
     st.busy = true;
     clear(body, loading("Writing a prompt from what you have read…"));
     paintFoot();
-    const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, shape: st.shape };
+    const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
     try {
       const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
-        quality: asked.quality, provider: asked.provider, ...here() }, ctrl.signal);
+        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
       st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
       st.price = typeof r.price === "number" ? r.price : null;
@@ -415,9 +459,31 @@ export async function openPictureSheet(opts) {
       chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; paint(); } body.querySelector(".art-custom")?.focus(); }));
     const seg = (label, list, value, set) => h("div.seg", { role: "group", "aria-label": label },
       list.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(value === k), on: { click: () => { set(k); paint(); } } }, l)));
-    const levels = levelsOf(st.provider);
-    if (!levels.some(([k]) => k === st.quality)) st.quality = levels[levels.length > 1 ? 1 : 0][0];
-    const provSel = provs.length > 1 ? h("select.select.art-prov", { "aria-label": "Draw with", on: { change: (e) => { st.provider = provs.find((p) => p.id === e.target.value) || provs[0]; paint(); } } },
+    // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
+    const levels = levelsOf(st.provider, st.model).map(([k]) => k);
+    st.quality = fitQuality(st.provider, st.model, st.quality);
+    const modelName = (m) => m.label || m.id;
+    const qualitySeg = h("div.seg", { role: "group", "aria-label": "Quality" },
+      QUALITIES.map(([k, l]) => {
+        const off = !levels.includes(k);
+        const name = off ? modelName(imageModels(st.provider).find((m) => m.id === st.model) || { id: st.model || "" }) : "";
+        return h("button", { type: "button", "aria-pressed": String(st.quality === k), disabled: off,
+          title: off && name ? `${name} has no ${l} quality` : null, on: { click: () => { st.quality = k; paint(); } } }, l);
+      }));
+    // The models of the chosen provider: chips for three or fewer, else a select; each with its price at the quality chosen.
+    const models = imageModels(st.provider);
+    const setModel = (id) => { st.model = id; st.quality = fitQuality(st.provider, id, st.quality); paint(); };
+    const priceOf = (m) => { const pr = imagePrice(st.provider, fitQuality(st.provider, m.id, st.quality), st.shape, m.id); return pr != null ? money(pr) : "price unknown"; };
+    const modelPick = models.length > 1 ? (models.length <= 3
+      ? h("div.art-chips.art-models", { role: "group", "aria-label": "Model" }, models.map((m) =>
+        chip([`${modelName(m)},`, h("span.chip-price", priceOf(m))], st.model === m.id, () => { if (st.model !== m.id) setModel(m.id); })))
+      : h("select.select.art-model#art-model", { on: { change: (e) => setModel(e.target.value) } },
+        models.map((m) => h("option", { value: m.id, selected: m.id === st.model }, `${modelName(m)}, ${priceOf(m)}`)))) : null;
+    const provSel = provs.length > 1 ? h("select.select.art-prov", { "aria-label": "Draw with", on: { change: (e) => {
+      st.provider = provs.find((p) => p.id === e.target.value) || provs[0];
+      st.model = modelFor(st.provider);   // another provider starts from its own default model
+      st.quality = fitQuality(st.provider, st.model, st.quality);
+      paint(); } } },
       provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider.id }, p.label))) : null;
     const moments = (opts.moments || []).length > 1 ? h("div.art-field",
       h("span.label", "Moment"),
@@ -438,8 +504,9 @@ export async function openPictureSheet(opts) {
       h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
       h("div.art-row",
         h("div.art-field", h("span.label", "Shape"), seg("Shape", SHAPES, st.shape, (k) => { st.shape = k; })),
-        h("div.art-field", h("span.label", "Quality"), seg("Quality", levels, st.quality, (k) => { st.quality = k; })),
+        h("div.art-field", h("span.label", "Quality"), qualitySeg),
         provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
+      modelPick ? h("div.art-field", models.length <= 3 ? h("span.label", "Model") : h("label.label", { for: "art-model" }, "Model"), modelPick) : null,
       opts.world ? worldLine() : null,
       err);
     textarea.id = "art-prompt";
@@ -473,10 +540,10 @@ export async function openPictureSheet(opts) {
   }
   /** The price for this picture as chosen now: the image table's, else the prompt route's when it was asked for the same choices. */
   function price() {
-    const known = imagePrice(st.provider, st.quality, st.shape);
+    const known = imagePrice(st.provider, st.quality, st.shape, st.model);
     if (known !== undefined) return known;
     const a = st.asked;
-    return a && a.quality === st.quality && a.provider === st.provider.id && a.shape === st.shape ? st.price : null;
+    return a && a.quality === st.quality && a.provider === st.provider.id && a.model === st.model && a.shape === st.shape ? st.price : null;
   }
   function paintFoot() {
     const stale = st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
@@ -485,10 +552,10 @@ export async function openPictureSheet(opts) {
     const pr = price();
     // Without the image table the price is the prompt route's, for the choices it was asked with; other choices say so
     // rather than show a number for the wrong quality or provider.
-    const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.shape === st.shape;
+    const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.model === st.model && st.asked.shape === st.shape;
     footNote.textContent = st.busy ? "" : stale ? "Write the prompt again for this style first."
       : pr != null ? `${money(pr)[0].toUpperCase()}${money(pr).slice(1)} for this picture`
-        : imagePrice(st.provider, st.quality, st.shape) === undefined && st.asked && !asked ? "Write it again to see the price for these choices" : "Price unknown";
+        : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Write it again to see the price for these choices" : "Price unknown";
   }
 
   drawBtn.addEventListener("click", async () => {
@@ -502,7 +569,7 @@ export async function openPictureSheet(opts) {
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, ...here() }, ctrl.signal);
+        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...here() }, ctrl.signal);
       const rec = r?.record || r;
       const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);
@@ -551,10 +618,13 @@ function promptError(e) {
  * { el, config() → the job's `art` object or null when "Draw pictures" is off, refresh() }. `estimate(params)` is
  * asked for the line "About 52 pictures, about $1.75"; `fallback()` gives a rough count when it cannot answer.
  */
+// The portrait choice: `st.cast` is "main", "all" or "none"; the job config sends "main", "all" or false, the estimate the word.
+const CAST_SUMMARY = { main: ", main characters' portraits", all: ", everyone's portraits", none: "" };
+
 export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art" } = {}) {
   const d = artDefaults();
-  const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", portraits: true,
-    quality: d.quality, provider: null, cap: d.cap };
+  const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
+    quality: d.quality, provider: null, model: null, cap: d.cap };
   let provs = null;
   const line = h("p.art-est", { role: "status" });
   const body = h("div.art-form-body");
@@ -563,10 +633,21 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   const sum = h("span.sum-hint");
   const el = always ? h("div.art-form", body, line)
     : h("details.advanced.art-group", { open: open || null }, h("summary", icon("chevron"), "Pictures", sum), h("div.advanced-body", body, line));
-  imageProviders().then((list) => { provs = list; st.provider = list.find((p) => p.id === d.provider) || list[0] || null; paint(); });
+  // The Settings provider and model (the model only with its own provider), else the first provider and its default model.
+  const pickProvider = (p, want = null) => {
+    st.provider = p || null;
+    st.model = p ? modelFor(p, want) : null;
+    if (p) st.quality = fitQuality(p, st.model, st.quality);
+  };
+  imageProviders().then((list) => {
+    provs = list;
+    const p = list.find((x) => x.id === d.provider) || list[0] || null;
+    pickProvider(p, p && p.id === d.provider ? d.model : null);
+    paint();
+  });
   const slug = () => (st.style === "custom" ? st.custom.trim() : st.style);
   function paint() {
-    sum.textContent = st.on ? `${styleLabel(slug())}, ${st.level === "main" ? "one per chapter" : "every moment"}${st.portraits ? ", portraits" : ""}` : "Off";
+    sum.textContent = st.on ? `${styleLabel(slug())}, ${st.level === "main" ? "one per chapter" : "every moment"}${CAST_SUMMARY[st.cast]}` : "Off";
     if (provs && !provs.length) {
       clear(body, h("p.hint", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Settings")));
       line.textContent = "";
@@ -580,9 +661,13 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     };
     const custom = h("input.input.art-custom", { value: st.custom, disabled: !st.on, placeholder: "Describe the style", "aria-label": "Custom style",
       on: { change: (e) => { st.custom = e.target.value; refresh(); } } });
-    const portraits = h("input", { type: "checkbox", id: `${idPrefix}-portraits`, checked: st.portraits, disabled: !st.on, on: { change: (e) => { st.portraits = e.target.checked; paint(); } } });
-    const levels = st.provider ? levelsOf(st.provider) : QUALITIES;
-    if (!levels.some(([k]) => k === st.quality)) st.quality = levels[0][0];
+    // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
+    const levels = (st.provider ? levelsOf(st.provider, st.model) : QUALITIES).map(([k]) => k);
+    if (st.provider) st.quality = fitQuality(st.provider, st.model, st.quality);
+    const models = st.provider ? imageModels(st.provider) : [];
+    const modelSel = models.length > 1 ? h(`select.select.art-model-sel#${idPrefix}-model`, { disabled: !st.on, on: { change: (e) => {
+      st.model = modelFor(st.provider, e.target.value); st.quality = fitQuality(st.provider, st.model, st.quality); paint(); } } },
+    models.map((m) => h("option", { value: m.id, selected: m.id === st.model }, imageLine(st.provider, st.quality, m.id)))) : null;
     // Dollars and cents: a small first run ("Stop at $0.30") is a reasonable way to try a style.
     const cap = h("input.input.w-90", { type: "number", min: "0.05", step: "0.05", id: `${idPrefix}-cap`, value: String(st.cap), disabled: !st.on, inputmode: "decimal",
       on: { change: (e) => { const v = +e.target.value; st.cap = Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : 10; e.target.value = String(st.cap); refresh(); } } });
@@ -596,13 +681,18 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       h("div.field", h("span.label", "How many"), h("div.prows", { role: "radiogroup", "aria-label": "How many" },
         radio("level", "main", "The main moment of each chapter"),
         radio("level", "all", "Every moment worth drawing"))),
-      h("label.switch", { for: `${idPrefix}-portraits` }, portraits, h("span", h("span.label.label-block", "Portraits of the characters"))),
+      h("div.field", h("span.label", "Portraits"), h("div.prows", { role: "radiogroup", "aria-label": "Portraits" },
+        radio("cast", "main", "Main characters", "The characters the story is most about, up to 12 a book."),
+        radio("cast", "all", "Everyone with a part"),
+        radio("cast", "none", "No portraits"))),
       h("div.field", h("span.label", "Quality"), h("div.seg", { role: "group", "aria-label": "Quality" },
-        levels.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(st.quality === k), disabled: !st.on, on: { click: () => { st.quality = k; paint(); } } }, l)))),
+        QUALITIES.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(st.quality === k), disabled: !st.on || !levels.includes(k),
+          title: levels.includes(k) ? null : `This model has no ${l} quality`, on: { click: () => { st.quality = k; paint(); } } }, l)))),
       provs && provs.length > 1 ? h("div.field", h("label", { for: `${idPrefix}-prov` }, "Draw with"),
-        h(`select.select#${idPrefix}-prov`, { disabled: !st.on, on: { change: (e) => { st.provider = provs.find((p) => p.id === e.target.value); paint(); } } },
-          provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider?.id }, `${p.label}, ${imageLine(p, st.quality)}`)))) : null,
-      provs && provs.length === 1 ? h("p.hint", `Drawn with ${provs[0].label}: ${imageLine(provs[0], st.quality)}.`) : null,
+        h(`select.select#${idPrefix}-prov`, { disabled: !st.on, on: { change: (e) => { pickProvider(provs.find((p) => p.id === e.target.value)); paint(); } } },
+          provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider?.id }, p.label)))) : null,
+      modelSel ? h("div.field", h("label", { for: `${idPrefix}-model` }, "Image model"), modelSel)
+        : provs && provs.length === 1 ? h("p.hint", `Drawn with ${provs[0].label}: ${imageLine(provs[0], st.quality, st.model)}.`) : null,
       h("div.field.art-cap", h("label", { for: `${idPrefix}-cap` }, "Stop at"), h("span.art-cap-row", "$", cap),
         h("p.hint", "The run stops drawing there and keeps what it drew.")));
     refresh();
@@ -613,7 +703,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     const mine = ++seq;
     line.textContent = "Counting the pictures…";
     let r = null;
-    try { r = await estimate?.({ style: slug(), level: st.level, portraits: st.portraits, quality: st.quality, provider: st.provider.id }); } catch { r = null; }
+    try { r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model }); } catch { r = null; }
     if (mine !== seq) return;
     if (r && Number.isFinite(+r.pictures)) {
       const n = +r.pictures;
@@ -626,8 +716,8 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
   paint();
   return {
     el,
-    config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.portraits, quality: st.quality,
-      provider: st.provider.id, model: st.provider.images?.default || null, cap: st.cap } : null),
+    config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
+      provider: st.provider.id, model: st.model || null, cap: st.cap } : null),
     refresh,
     ready: () => Boolean(st.provider && slug()),
   };

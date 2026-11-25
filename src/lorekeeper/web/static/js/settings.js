@@ -6,7 +6,7 @@ import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./ap
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
-import { artDefaults, drawsPictures, imageLine, imageProviders, QUALITIES, setArtDefaults, STYLES, styleLabel } from "./art.js";
+import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, imageProviders, levelsOf, modelFor, QUALITIES, setArtDefaults, STYLES, styleLabel } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 // A 100,000-word novel at standard depth, measured on a fact-checked run: 1.2 input and 0.58 output tokens per word.
@@ -382,12 +382,25 @@ export function mountSettings(root) {
       STYLES.map(([k, l]) => h("option", { value: k, selected: k === d.style }, l)), h("option", { value: "custom", selected: !known }, "Custom…"));
     const custom = h("input.input#pic-custom", { hidden: known, value: known ? "" : d.style, placeholder: "Describe the style", "aria-label": "Custom style",
       on: { change: (e) => { if (e.target.value.trim()) save({ style: e.target.value.trim() }, "Style"); } } });
+    // The provider new pictures are drawn with, and its model: the saved one when that provider lists it, else its default.
+    const current = provs.find((p) => p.id === d.provider) || provs[0] || null;
+    const model = current ? modelFor(current, current.id === d.provider ? d.model : null) : null;
+    const offered = current ? levelsOf(current, model).map(([k]) => k) : QUALITIES.map(([k]) => k);
     const quality = h("select.select#pic-quality", { on: { change: (e) => save({ quality: e.target.value }, "Quality") } },
-      QUALITIES.map(([k, l]) => h("option", { value: k, selected: k === d.quality }, l)));
+      QUALITIES.map(([k, l]) => h("option", { value: k, selected: k === (current ? fitQuality(current, model, d.quality) : d.quality), disabled: !offered.includes(k) }, l)));
     const cap = h("input.input.w-90#pic-cap", { type: "number", min: "0.05", step: "0.05", inputmode: "decimal", value: String(d.cap),
       on: { change: (e) => save({ cap: +e.target.value > 0 ? Math.round(+e.target.value * 100) / 100 : 10 }, "Limit") } });
-    const prov = provs.length > 1 ? h("select.select#pic-prov", { on: { change: (e) => save({ provider: e.target.value }, "Provider") } },
-      provs.map((p) => h("option", { value: p.id, selected: p.id === (d.provider || provs[0].id) }, `${p.label}, ${imageLine(p, d.quality)}`))) : null;
+    // Another provider starts from its own default model.
+    const prov = provs.length > 1 ? h("select.select#pic-prov", { on: { change: (e) => save({ provider: e.target.value, model: null }, "Provider") } },
+      provs.map((p) => h("option", { value: p.id, selected: p.id === current?.id }, p.label))) : null;
+    const models = current ? imageModels(current) : [];
+    // A model without the default quality draws at the one it has, so the quality is saved with it.
+    const modelSel = models.length ? h("select.select#pic-model", { on: { change: (e) => {
+      const id = modelFor(current, e.target.value);
+      save({ provider: current.id, model: id, quality: fitQuality(current, id, d.quality) }, "Image model"); } } },
+    models.map((m) => h("option", { value: m.id, selected: m.id === model }, imageLine(current, d.quality, m.id)))) : null;
+    const modelName = models.find((m) => m.id === model)?.label;
+    if (modelName) lines.pictures.textContent = `${styleLabel(d.style)}, ${d.quality}, ${modelName}`;
     const sets = h("div.pic-sets", h("p.set-note", "Looking for pictures…"));
     clear(panes.pictures,
       head("pictures", "Pictures", provs.length ? "What new pictures start from, and the pictures kept on this server." : null),
@@ -396,7 +409,8 @@ export function mountSettings(root) {
         row(h("label", { for: "pic-style" }, "Style"), h("div.pic-style", style, custom)),
         row(h("label", { for: "pic-quality" }, "Quality"), quality),
         row(h("label", { for: "pic-cap" }, "Stop a run at"), h("span.pic-cap", "$", cap)),
-        prov ? row(h("label", { for: "pic-prov" }, "Draw with"), prov) : provs.length === 1 ? row("Draws with", `${provs[0].label}, ${imageLine(provs[0], d.quality)}`) : null),
+        prov ? row(h("label", { for: "pic-prov" }, "Draw with"), prov) : provs.length === 1 ? row("Draws with", modelSel ? provs[0].label : `${provs[0].label}, ${imageLine(provs[0], d.quality)}`) : null,
+        modelSel ? row(h("label", { for: "pic-model" }, "Image model"), modelSel) : null),
       h("h3.pic-sets-h", "Pictures on this server"), sets,
       howItWorks(
         "These choices are kept in this browser and fill in the Pictures choices on the build form, on a book's page and in the Reader's Draw a picture sheet.",
