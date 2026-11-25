@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
+import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -950,7 +950,7 @@ export function mountReader(root) {
     else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
       // The moments are still revealed but the prompt or the World line was written from further on: drop both and write
       // the prompt again at the position now (the server refuses it if the picture itself is held past here).
-      s.art.sheet.sh.reposition(visibleWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
+      s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
     }
     const repaint = () => {
       frame = 0;
@@ -1862,15 +1862,13 @@ export function mountReader(root) {
     return h("button.linkish.art-draw", { type: "button", on: { click: (ev) => drawPicture({ ...choices[0], title: tidyTitle(r.title), moments: choices, drawnLine: line, from: ev.currentTarget }) } },
       icon("sparkle"), "Draw a picture");
   }
-  /** The world note as the reader may see it at the position (null when its anchor is ahead or it comes from a book not finished). */
   /** The books of the reading order before `book` (the ones a later book's text may carry content from). */
   const booksBefore = (book) => { if (!s.series) return []; const o = s.series.orders[s.order] || []; const i = o.indexOf(book); return i > 0 ? o.slice(0, i) : []; };
-  /** The world note as the reader may see it at the position, or null (artgate.visibleWorld: its anchor in this book is
-   *  reached and every earlier book it carries is finished; an inherited note is never compared with this book's anchors). */
-  function visibleWorld(set) {
+  /** The background note the picture sheet shows and whether it may be written (artgate.sheetWorld), at the position now. */
+  function sheetWorld(set) {
     const ords = ordsOf(s.doc);
     const front = s.map.frontier(s.p);
-    return worldGate(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
+    return worldForSheet(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
       book: s.series ? s.book : null, finished: finishedSet() || [], earlier: booksBefore(s.book) });
   }
   /** The title of the first earlier book a picture's prompt carries content from and the reader has not finished, or null. */
@@ -1883,11 +1881,11 @@ export function mountReader(root) {
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
   function drawPicture({ kind, target, title, moments = null, drawnLine = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
-    const world = visibleWorld(set);
+    const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
     const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
-      style: s.art.slug || null, styles: s.art.styles, world, canEditWorld: Boolean(world?.own),
+      style: s.art.slug || null, styles: s.art.styles, world, canEditWorld,
       // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
       srcFor: (rec, slug) => (set?.manifest?.textHash ? artUrl(rec, set.manifest.textHash, slug) : null),
       canShow: (rec) => {
