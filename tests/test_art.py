@@ -122,7 +122,8 @@ class Text:
     groups it picks (default none), `check(text, source)` which look phrases it calls unfounded (default none)."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None, look=None, change=None, groups=None,
-                 check=None):
+                 check=None, amend=None):
+        self.amend = amend
         self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
@@ -158,6 +159,8 @@ class Text:
             return {"text": self.world}
         if "fixed appearance note" in prompt:
             who = re.search(r"appearance note for (.+?) \(", prompt).group(1).replace("the ", "").capitalize()
+            if "The text now shows a change" in prompt and self.amend:
+                return self.amend(prompt)
             if "The text now shows a change" in prompt:      # an amended note: what changed, quoted from the change
                 ds = [m.group(0) for m in re.finditer(r"\b(older|scar\w*)( \w+){0,3}", prompt.split("The text now shows")[1][:200])]
                 return {"role": "young woman", "details": [{"text": d, "quote": d} for d in dict.fromkeys(ds)]
@@ -184,12 +187,12 @@ def note_reply(note, prompt):
         return {"role": "a figure", "details": [{"text": m.group(0), "quote": m.group(0)}] if m else []}
     if not note:
         return {"role": "", "details": []}
-    role, ds = note if isinstance(note, tuple) else ("", [note])
-    out = []
-    for d in ds:
+    role, ds, home = (note + ([],))[:3] if isinstance(note, tuple) else ("", [note], [])
+
+    def q(d):
         m = re.search(r"(\w+[ ,]+)?" + re.escape(d) + r"([ ,]+\w+)?", prompt)
-        out.append({"text": d, "quote": m.group(0) if m else d})
-    return {"role": role, "details": out}
+        return {"text": d, "quote": m.group(0) if m else d}
+    return {"role": role, "details": [q(d) for d in ds], "home": [q(d) for d in home]}
 
 
 def png(w, h, salt):
@@ -1672,3 +1675,209 @@ def test_the_illustrate_command_takes_main_all_or_none(tmp_path, monkeypatch):
     for flags in ([], ["--portraits", "all"], ["--portraits", "none"], ["--no-portraits"]):
         assert cli.main(["illustrate", str(i1), "--epub", "1.epub", "--out", str(tmp_path / "o"), "--limit", "0", *flags]) == 0
     assert seen == ["main", "all", None, None]
+
+# ---- portrait fidelity: the look index, groups, milieu, era note and fuller notes
+
+
+GUILD_PARTS = ("a guild", ["white aprons dusted with flour"], ["stone houses by the river"])
+
+
+def guild_doc(tie=False, settings=False):
+    """The mill with a group: Oren is of the Guild (his own item says so), whose members' look and homes its profile states."""
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"].append({"id": "bk.oren.f1", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                       "text": "A member of the Guild of millers who has run the mill for years."})
+    d["entities"].append(ent("guild", "Guild", "group", frm="a2", facets=[portrait(
+        "guild", "a2", "The Guild's members wear white aprons dusted with flour and live in stone houses by the river.")]))
+    if tie:
+        d["relations"] = [{"id": "rel1", "src": "oren", "dst": "guild", "label": "member of", "kind": "alliance", "from": "a3",
+                           "basis": "stated", "evidence": ["a3"]}]
+    if settings:
+        d["events"][1]["setting"] = {"text": "the mill yard"}
+        d["events"][3]["setting"] = {"text": "the mill", "place": "mill"}
+        d["entities"][2]["facets"].append({"id": "bk.mill.f1", "from": "a6", "basis": "stated", "evidence": ["a6"],
+                                           "text": "A grey stone mill with a wooden gate and a wheel on the river."})
+    return bk, d
+
+
+def pick_guild(who, notes, groups):
+    n = next(int(n) for n, t in notes if "Guild" in t)
+    return [{"group": ltr, "from": n, "until": 0} for ltr, name in groups if name.startswith("Guild")] if who == "Oren" else []
+
+
+def test_a_persons_group_adds_its_members_look_and_no_name():
+    bk, d = guild_doc()
+    t = Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    [o] = [p for p in pics(sink, "portrait") if p["target"] == "oren"]
+    assert NOTES["Oren"].rstrip(".") + ". Like others of its people: white aprons dusted with flour." in o["prompt"]
+    assert "Guild" not in o["prompt"] and o["appearance"].endswith("white aprons dusted with flour.")
+    assert sink.m["groups"]["oren"]["picks"] == [{"group": "guild", "from": "a3", "until": None}]
+    assert "a2" in o["sources"]                                  # the group note's own sources are the picture's
+    picks = [p for p in t.prompts if "Which of the groups is" in p]
+    assert [re.search(r"groups is (\w+)", p).group(1) for p in picks] == ["Oren"]   # no one else's items name a group: no call
+    # a resume asks nothing again
+    _, _, _, t2, _ = run(d, bk, sink, Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild))
+    assert not t2.prompts
+
+
+def test_a_group_pick_is_kept_only_for_a_listed_group_named_in_the_persons_own_items():
+    bk, d = guild_doc()
+    d["entities"].append(ent("order", "Order of Owls", "group", frm="a2"))
+    t = Text(notes={"Guild": GUILD_PARTS},
+             groups=lambda who, notes, groups: [{"group": "Z"}, {"group": "A", "from": 99}, {"group": "B"}])
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    asked = next(p for p in t.prompts if "Which of the groups is" in p)
+    assert "Order of Owls" not in asked                          # Oren's items never name it: not even offered
+    assert sink.m["groups"]["oren"]["picks"] == [{"group": "guild", "from": "a3", "until": None}]   # from: where his item names it
+    # a tie to a visible group counts with no pick at all
+    bk, d = guild_doc(tie=True)
+    il, rep, sink, t, im = run(d, bk, text_=Text(notes={"Guild": GUILD_PARTS}))
+    assert il.groups_of(0, "oren", "a5") == ["guild"] and il.groups_of(0, "oren", "a2") == []    # the tie is from a3
+
+
+def test_membership_ends_where_the_pick_says_and_the_most_specific_groups_come_first():
+    bk, d = guild_doc()
+    d["entities"][1]["facets"].append({"id": "bk.oren.f2", "from": "a9", "basis": "stated", "evidence": ["a9"],
+                                       "text": "Leaves the Guild and joins the Riders of the hills."})
+    d["entities"].append(ent("riders", "Riders", "group", frm="a8"))
+    d["entities"].append(ent("valley", "Valley folk", "group", frm="a1"))
+    d["entities"][0]["facets"].append({"id": "bk.mira.f8", "from": "a2", "basis": "stated", "evidence": ["a2"],
+                                       "text": "One of the Valley folk, as are all at the mill."})
+    d["entities"][1]["facets"].append({"id": "bk.oren.f3", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                       "text": "Valley folk born and bred."})
+
+    def groups(who, notes, groups):
+        num = {t[:20]: int(n) for n, t in notes}
+        at = {name.split(" (")[0]: ltr for ltr, name in groups}
+        leave = next(int(n) for n, t in notes if t.startswith("Leaves the Guild"))
+        if who != "Oren":
+            return [{"group": at["Valley folk"]}]
+        return [{"group": at["Guild"], "until": leave}, {"group": at["Riders"], "from": leave}, {"group": at["Valley folk"]}]
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(groups=groups), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    assert il.groups_of(0, "oren", "a5") == ["guild", "valley"]            # the Guild has one member here, the Valley folk two
+    assert il.groups_of(0, "oren", "a10") == ["riders", "valley"]          # he left the Guild at a9
+    assert il.groups_of(0, "oren", "a1") == []                            # nothing he is a member of is shown yet
+
+
+def test_a_group_note_written_from_content_after_the_anchor_is_refused():
+    bk, d = guild_doc()
+    sink = Mem()
+    sink.m = {**art.blank("sha256:tbk", "ink"), "appearance": {"guild": [
+        {"v": art.NOTE_VERSION, "from": "a3", "text": "A guild: white aprons.", "role": "a guild",
+         "details": [{"text": "white aprons", "quote": "wear white aprons"}], "home": [], "sources": ["a10"], "inherits": [],
+         "items": ["bk.guild.portrait-1"]}]}}
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild), Image(), "ink",
+                         workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    with pytest.raises(ValueError, match="written from content after its anchor"):
+        il.make_prompt(il.job("portrait", "oren", at="a5"))
+
+
+def test_a_portraits_background_is_its_figures_milieu_else_its_groups_home_else_plain():
+    # (a) the setting of its events, the latest chapter weighing most, as the place's note when it links a place
+    bk, d = guild_doc(settings=True)
+    t = Text(notes={"Guild": GUILD_PARTS, "Mill": ("a mill", ["grey stone", "a wooden gate"])}, groups=pick_guild)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    assert il.milieu(0, "oren", "a5")[0] == "the mill yard."
+    text, srcs, _ = il.milieu(0, "oren", "a11")
+    assert text == art.compose_note("a mill", ["grey stone", "a wooden gate"]) and "a6" in srcs
+    pr = il.make_prompt(il.job("portrait", "oren", at="a5"))
+    assert "Place: the mill yard." in pr.text and pr.milieu == "the mill yard." and art.BACKGROUND in pr.writer
+    assert "a1" in pr.sources
+    # (b) no setting: where the members of its groups live
+    bk, d = guild_doc()
+    il = art.Illustrator([art.Book(d, bk, Mem())], Text(notes={"Guild": GUILD_PARTS}, groups=pick_guild), Image(), "ink",
+                         workers=1, log=lambda *_: None, pause=0)
+    il.world(0)
+    pr = il.make_prompt(il.job("portrait", "oren", at="a5"))
+    assert "Place: Where its people live: stone houses by the river." in pr.text
+    # (c) neither: plain and neutral, never the opening's places
+    pr = il.make_prompt(il.job("portrait", "mira", at="a5"))
+    assert "Plain, neutral background." in pr.text and art.PLAIN in pr.writer and "Place:" not in pr.text
+
+
+def test_a_scenes_place_is_its_settings_note():
+    bk, d = guild_doc(settings=True)
+    t = Text(notes={"Guild": GUILD_PARTS, "Mill": ("a mill", ["grey stone", "a wooden gate"])}, groups=pick_guild)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    two = next(p for p in pics(sink, "plate") if p["target"] == "Two")      # its moment, e4, is set at the mill
+    assert "Place: " + art.compose_note("a mill", ["grey stone", "a wooden gate"]) in two["prompt"]
+    writer = next(p for p in t.scenes() if "A hooded stranger comes to the mill" in p and "main moment" in p)
+    assert "Place (added by the program" in writer
+
+
+def test_the_world_note_is_an_era_note_and_an_old_one_is_written_again():
+    il, rep, sink, t, im = run()
+    asked = next(p for p in t.prompts if "visual world note" in p)
+    assert "era note" in asked and "no landscape, architecture" in asked and sink.m["world"]["era"]
+    assert all("World (true of every picture" not in p and "Era (the time, technology and materials true of every picture" in p
+               for p in t.scenes())
+    assert all("suits the world" not in p for p in t.scenes())
+    old = Mem()
+    old.m = {**art.blank("sha256:tbk", "ink"), "world": {"text": "Mines and tunnels everywhere.", "edited": False, "from": "a5",
+                                                         "book": "bk", "sources": ["a5"]}}
+    il, rep, old, t, im = run(sink=old)
+    assert old.m["world"]["text"] == WORLD and old.m["worldOld"]["world"]["text"] == "Mines and tunnels everywhere."
+    edited = Mem()
+    edited.m = {**art.blank("sha256:tbk", "ink"), "world": {"text": "My own words.", "edited": True, "from": "a0"}}
+    il, rep, edited, t, im = run(sink=edited)
+    assert edited.m["world"]["text"] == "My own words." and not any("visual world note" in p for p in t.prompts)
+
+
+def test_the_look_index_is_cached_by_the_items_and_a_rebuilt_entity_is_classified_again(monkeypatch):
+    monkeypatch.setattr(art, "LOOK_BATCH_ITEMS", 2)
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    il, rep, sink, t, im = run(d, bk)
+    calls = [p for p in t.prompts if "notes a reader's companion keeps on some entries" in p]
+    assert len(calls) >= 3 and all(len(re.findall(r"^\d+\. ", c, re.M)) <= 2 for c in calls)   # small batches
+    assert set(sink.m["looks"]) == {"mira", "oren", "stranger", "gabriel"}
+    d2 = base_doc(bk)
+    d2["entities"][0]["facets"][0]["text"] += " She hums."
+    il, rep, sink, t2, im = run(d2, bk, sink)
+    again = [p for p in t2.prompts if "notes a reader's companion keeps on some entries" in p]
+    assert len(again) == 1 and "She hums" in again[0] and "## Oren" not in again[0]
+    assert il.counts()["portraits"] == 4 and il._portrait_jobs(0, classify=False)
+
+
+def test_an_amended_note_replaces_the_detail_the_change_supersedes_quoting_the_change():
+    # Darrow carved: rust-red hair becomes golden hair; the other details still hold
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Her hair was cut short and dyed golden by the stranger."})
+
+    def amend(prompt):
+        n = next(int(m.group(1)) for m in re.finditer(r"^(\d+)\. (.*)$", prompt, re.M) if "braided" in m.group(2))
+        return {"role": "", "drop": [n], "details": [{"text": "short golden hair", "quote": "hair was cut short and dyed golden"}]}
+    t = Text(change=lambda txt: "dyed golden" if "dyed golden" in txt else "", amend=amend)
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    ms = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert [p["from"] for p in ms] == ["a5", "a10"] and ms[1]["references"] == [ms[0]["id"]]
+    assert "dark braided hair" in ms[0]["appearance"] and "dark braided hair" not in ms[1]["appearance"]
+    assert ms[1]["appearance"].startswith("The same young woman") and "short golden hair" in ms[1]["appearance"]
+    assert "a brown shawl" in ms[1]["appearance"] and rep.dropped["replaced: look detail the change supersedes"] == 1
+    # a drop with no new detail quoting the change drops nothing
+    t = Text(change=lambda txt: "dyed golden" if "dyed golden" in txt else "",
+             amend=lambda p: {"role": "", "drop": [1, 2], "details": [{"text": "a brown shawl", "quote": "brown shawl and"}]})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    m2 = [p for p in pics(sink, "portrait") if p["target"] == "mira"][-1]
+    assert "slight" in m2["appearance"] and "dark braided hair" in m2["appearance"]
+
+
+def test_a_reader_who_has_not_finished_the_earlier_book_gets_no_group_only_it_has():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"].append(ent("guild", "Guild", "group", frm="a2", facets=[portrait(
+        "guild", "a2", "The Guild's members wear white aprons dusted with flour and live in stone houses by the river.")]))
+    d2["entities"][1]["facets"].append({"id": "b2.oren.f1", "from": "b2.a3", "basis": "stated", "evidence": ["b2.a3"],
+                                        "text": "Still of the Guild of millers."})
+    t = TwoWorlds(notes={"Guild": GUILD_PARTS}, groups=pick_guild)
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], t, Image(), "ink", workers=1,
+                         log=lambda *_: None, pause=0)
+    full = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished={"b1"}))
+    assert "white aprons" in full.text and "b1" in full.inherits
+    own = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished=set()))
+    assert own.partial and "white aprons" not in own.text and own.inherits == []
