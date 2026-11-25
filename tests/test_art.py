@@ -135,8 +135,9 @@ class Text:
     `look(text)` and `change(text)` say how it classifies an entity's item (default: the FAKE_ regexes above); `scene` is the
     writer's text (a string, or a function of the writer's prompt), `shows` the figures it says it drew."""
 
-    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None):
-        self.scene, self.shows, self.screen = scene, shows, screen
+    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None, picks=None):
+        # `picks`: how it picks look sentences (a function of the sentence; default `look`), False: that call fails
+        self.scene, self.shows, self.screen, self.picks = scene, shows, screen, picks
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
         self.change = change or (lambda t: (m.group(0) if (m := FAKE_CHANGE.search(t)) else ""))
         self.prompts, self.systems = [], []
@@ -159,6 +160,11 @@ class Text:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
             return {"moments": keep}
+        if "Which sentences tell how" in prompt:
+            if self.picks is False:
+                raise RuntimeError("the cheap model is down")
+            lines = re.findall(r"^(\d+)\. (.*)$", prompt.split("\n\n", 1)[1], re.M)
+            return {"sentences": [int(n) for n, t in lines if (self.picks or self.look)(t)]}
         if "notes a reader's companion keeps on some entries" in prompt:
             out = []
             for n, t in re.findall(r"^(\d+)\. (.*)$", prompt.split("\n## ", 1)[-1], re.M):
@@ -1879,7 +1885,7 @@ def test_an_earlier_profile_reaches_a_portraits_material_with_its_paragraph_only
     assert "A look the material stated earlier" in art.WRITER and "<earlier_look>" in art.PORTRAIT_WRITER
     il.make_prompt(il.job("portrait", "mira", at="a5"))               # her hair profile is the current one, not an earlier look
     w = writer_calls(t)[-1]
-    assert "braided" not in tag(w, "earlier_look") and "braided" in tag(w, "entry_to_draw") and "silver coin" not in w
+    assert "braided" not in (tag(w, "earlier_look") or "") and "braided" in tag(w, "entry_to_draw") and "silver coin" not in w
     il.make_prompt(il.job("portrait", "mira", at="a1"))               # nothing past the reader's position
     w = writer_calls(t)[-1]
     assert "braided" not in w and "single heavy braid" not in w and "silver coin" not in w
@@ -1896,22 +1902,22 @@ def test_an_earlier_books_look_reaches_the_material_only_when_the_reader_finishe
     assert "braided" not in writer_calls(t)[-1] and pr.inherits == []
 
 
-def test_a_fresh_look_index_puts_an_earlier_look_item_first_and_without_one_only_profiles_are_sent(monkeypatch):
+def test_without_look_sentences_a_fresh_look_index_puts_an_earlier_look_item_first_and_else_only_profiles_go(monkeypatch):
     bk, d = look_doc()
     mira = d["entities"][0]
     mira["facets"] += [{"id": "bk.mira.f1", "from": "a1", "basis": "stated", "evidence": ["a1"], "text": "Has a freckled face and a crooked nose."},
                        {"id": "bk.mira.f2", "from": "a6", "basis": "stated", "evidence": ["a6"], "replaces": ["bk.mira.f1"],
                         "text": "Has a sunburnt face."}]
-    il, t = fresh(d, bk)                        # no look index: the replaced detail is no profile, so it is not sent
+    il, t = fresh(d, bk, text_=Text(picks=False))   # no picks, no look index: the replaced detail is no profile, not sent
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     assert "crooked nose" not in writer_calls(t)[-1] and "braided hair" in tag(writer_calls(t)[-1], "earlier_look")
-    il, t = fresh(d, bk, text_=Text(look=lambda txt: "crooked nose" in txt))
+    il, t = fresh(d, bk, text_=Text(look=lambda txt: "crooked nose" in txt, picks=False))
     il.classify(0, ["mira"])
-    monkeypatch.setattr(art, "EARLIER_CHARS", 45)    # room for one sentence: the flagged one goes first
+    monkeypatch.setattr(art, "EARLIER_FALLBACK_CHARS", 45)    # room for one sentence: the flagged one goes first
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert "crooked nose" in got and "braided" not in got
-    monkeypatch.setattr(art, "EARLIER_CHARS", 2000)
+    monkeypatch.setattr(art, "EARLIER_FALLBACK_CHARS", 2000)
     il.make_prompt(il.job("portrait", "mira", at="a11"))
     got = tag(writer_calls(t)[-1], "earlier_look")    # both, printed in reading order
     assert got.index("crooked nose") < got.index("braided hair")
@@ -2164,3 +2170,109 @@ def test_references_follow_the_figures_given_whatever_shows_says():
                                          [(0, by["mira"])], "figure B only")
     assert pairs == [({"label": "B", "entity": "mira"}, (0, by["mira"]))]
     assert art.labels_in("Figure B and figure A; figures C, a figure Dx, figure E") == ["A", "B"]
+
+
+# ---- the look sentences: which earlier sentences tell the look (label-scene-figures, round 1b)
+
+
+def picks_of(t):
+    return [p for p in t.prompts if "Which sentences tell how" in p]
+
+
+def picked_doc():
+    bk, d = look_doc()
+    d["entities"][0]["facets"][1]["text"] = ("A young woman who sells eggs at the market. She wears her long dark hair in a braid. "
+                                             "She carries baskets to the mill.")
+    return bk, d
+
+
+def test_earlier_look_holds_only_the_picked_sentences_and_a_second_prompt_makes_no_call():
+    bk, d = picked_doc()
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    w = writer_calls(t)[-1]
+    assert tag(w, "earlier_look") == "She wears her long dark hair in a braid." and "single heavy braid" in tag(w, "passage")
+    assert len(picks_of(t)) == 1 and "Mira (a character)" in picks_of(t)[0]
+    assert il.man[0]["lookSentences"]["mira"]["picks"] == {"bk.mira.portrait-2": [1]}
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il2 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il2.make_prompt(il2.job("portrait", "mira", at="a11"))       # the cache is in the set: another Illustrator reads it
+    assert len(picks_of(t)) == 1 and picks_of(il2.text) == [] and art.EARLIER_CHARS == 1000
+    d["entities"][0]["facets"][1]["text"] += " She hums."         # a rebuilt index: the key changes, it picks again
+    il3 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], Text(), Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    il3.make_prompt(il3.job("portrait", "mira", at="a11"))
+    assert len(picks_of(il3.text)) == 1
+
+
+def test_a_picked_sentence_counts_only_through_its_own_item_at_the_anchor_and_for_a_finished_book():
+    bk, d = picked_doc()
+    d["entities"][0]["facets"].append(portrait("mira", "a10", "A young woman with a scar across her cheek.", 4))
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "mira", at="a9"))          # the cache covers the a10 item, the material does not
+    assert il.man[0]["lookSentences"]["mira"]["picks"]["bk.mira.portrait-4"] == [0]
+    w = writer_calls(t)[-1]
+    assert "scar" not in w and tag(w, "earlier_look") == "She wears her long dark hair in a braid."
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"][0]["facets"].append(portrait("mira", "a10", "A young woman who keeps a coin. She wears a red ribbon in her hair.", 2))
+    t = Text()
+    il = art.Illustrator([art.Book(d1, bk1, Mem(), None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink",
+                         portraits="all", workers=1, log=lambda *_: None, pause=0)
+    il.make_prompt(il.job("portrait", "mira", at="b2.a5", finished=set()))
+    assert picks_of(t) == [] and "ribbon" not in writer_calls(t)[-1] and "braided" not in writer_calls(t)[-1]
+    pr = il.make_prompt(il.job("portrait", "mira", at="b2.a5", finished={"b1"}))
+    got = tag(writer_calls(t)[-1], "earlier_look")
+    assert len(picks_of(t)) == 1 and "dark braided hair" in got and "red ribbon" in got and "b1" in pr.inherits
+
+
+def test_a_failed_pick_falls_back_and_is_not_cached():
+    bk, d = picked_doc()
+    il, t = fresh(d, bk, text_=Text(picks=False))
+    il.make_prompt(il.job("portrait", "mira", at="a11"))        # no error: the earlier profiles, whole sentences that add words
+    got = tag(writer_calls(t)[-1], "earlier_look")
+    assert "long dark hair in a braid" in got and "sells eggs" in got
+    assert "mira" not in il.man[0]["lookSentences"] and len(picks_of(t)) == 2     # tried (and retried) once, not stored
+
+
+def test_a_run_picks_while_planning_and_its_prompts_never_wait_on_a_pick():
+    bk, d = picked_doc()
+    d["events"].append(event(7, 10, "Mira hides the coin under a loose stone by the well.", ["mira"]))
+    t, cheap = Text(), Text()
+    il = art.Illustrator([art.Book(d, bk, Mem(), "all")], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None,
+                         pause=0, cheap_text=cheap)
+    il.run()
+    assert picks_of(t) == [] and [p.split(",")[1] for p in picks_of(cheap)] == [" Mira (a character)"]   # the cheap model
+    assert il.man[0]["lookSentences"]["mira"]["picks"]
+    assert not il.pick_on_demand
+    il2 = art.Illustrator([art.Book(d, bk, Mem(), "all")], Text(picks=False), Image(), "ink", portraits="all", workers=1,
+                          log=lambda *_: None, pause=0)
+    il2.plan(0)                                       # planning tries; a run then never calls at prompt time
+    n = len(picks_of(il2.text))
+    il2.pick_on_demand = False
+    il2.make_prompt(il2.job("portrait", "mira", at="a11"))
+    assert len(picks_of(il2.text)) == n and "sells eggs" in writer_calls(il2.text)[-1]    # the fallback
+
+
+def test_a_look_told_once_beats_a_run_of_near_repeats_and_a_long_pick_is_batched(monkeypatch):
+    bk, d = look_doc()
+    repeats = [portrait("mira", "a1", f"A tall young woman with grey eyes and a {w} shawl.", 10 + n)
+               for n, w in enumerate(["brown", "dun", "tawny", "russet", "umber"])]
+    once = portrait("mira", "a6", "She wears her long dark hair in a braid with copper rings.", 20)
+    d["entities"][0]["facets"] = repeats + [once, portrait("mira", "a9", "A young woman who keeps a coin.", 30)]
+    monkeypatch.setattr(art, "EARLIER_CHARS", 120)      # room for two sentences
+    monkeypatch.setattr(art, "LOOK_SENTENCE_BATCH", 3)
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    got = tag(writer_calls(t)[-1], "earlier_look")
+    assert "copper rings" in got and got.index("shawl") < got.index("copper rings")   # chosen by what it adds, printed in order
+    assert len(picks_of(t)) == 3                       # 7 distinct sentences, 3 a call (each numbered from 1)
+    assert set(il.man[0]["lookSentences"]["mira"]["picks"]) == {f"bk.mira.portrait-{n}" for n in (10, 11, 12, 13, 14, 20)}
+    calls = iter([None, RuntimeError("down"), RuntimeError("down")])
+
+    class Flaky(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "Which sentences tell how" in prompt and (e := next(calls, None)):
+                raise e
+            return super().complete(system, prompt, schema, prefix)
+    il, t = fresh(d, bk, text_=Flaky())                # the second batch fails: nothing is kept, the fallback is used
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    assert "mira" not in il.man[0]["lookSentences"] and tag(writer_calls(t)[-1], "earlier_look")
