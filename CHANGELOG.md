@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/nightspine/lorekeeper/compare/v0.18.0...v0.19.0) (2026-11-25)
+
+
+### Features
+
+* Redraw writes a new prompt, refused pictures can be rewritten, likeness across styles, portraits show the look ([#114](https://github.com/nightspine/lorekeeper/issues/114)) ([5ab6e18](https://github.com/nightspine/lorekeeper/commit/5ab6e18e79ddfe33c51b7012b8a5de1ddb24afee))
+
 ## [0.18.0](https://github.com/nightspine/lorekeeper/compare/v0.17.0...v0.18.0) (2026-11-25)
 
 
