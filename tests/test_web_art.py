@@ -756,7 +756,70 @@ def series_env(tmp_path, monkeypatch):
     app = web_app.create_app(tmp_path / "data", [("examples", idx)], [epubs], ollama_url="http://127.0.0.1:9",
                              allowed_hosts=("testserver",), auth=False)
     with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        c.text, c.data_dir, c.hash_one = t, tmp_path / "data", store_mod.text_hash(d1)
         yield c, seen
+
+
+def earlier_portrait(c, eid="mira") -> str:
+    """Book one's ink set gets a current portrait of `eid`, an entity book two shows: a reference only for a reader who
+    finished book one."""
+    folder = c.data_dir / "art" / c.hash_one / "ink"
+    folder.mkdir(parents=True, exist_ok=True)
+    data = png(64, 64, b"book one")
+    rec = {"id": "p0000b001", "kind": "portrait", "target": eid, "chapter": "One", "from": "b1a3", "file": "p0000b001.png",
+           "mime": "image/png", "width": 64, "height": 64, "prompt": "A slight young woman.", "references": [],
+           "sources": ["b1a3"], "inherits": [], "notes": art.NOTE_VERSION}
+    (folder / rec["file"]).write_bytes(data)
+    m = art.blank(c.hash_one, "ink")
+    m["pictures"] = [rec]
+    (folder / "art.json").write_text(json.dumps(m))
+    return rec["id"]
+
+
+def test_a_prompt_cached_for_every_book_finished_is_not_drawn_for_a_reader_with_none(series_env, monkeypatch):
+    c, _ = series_env
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    ask = {"kind": "event", "target": "e6", "style": "ink"}
+    assert c.post(f"/api/library/{KEY}/art/prompt", json=ask).status_code == 200       # no `finished`: every book read
+    n = len(c.text.prompts)
+    r = c.post(f"/api/library/{KEY}/art/draw", json={**ask, "finished": [], "prompt": "A gate."})
+    assert r.status_code == 200, r.text
+    assert len(c.text.prompts) > n                          # [] is not None: the cache missed and wrote for this reader
+    assert r.json()["partial"] is True
+    n = len(c.text.prompts)
+    assert c.post(f"/api/library/{KEY}/art/draw", json={**ask, "finished": [], "prompt": "A gate."}).status_code == 200
+    assert len(c.text.prompts) == n                         # and [] is its own key, used again
+
+
+def test_a_scene_drawn_in_another_style_never_takes_an_unfinished_books_picture(series_env, monkeypatch):
+    c, _ = series_env
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    pid = earlier_portrait(c)
+    ask = {"kind": "event", "target": "e6"}
+    # every earlier book read: book one's portrait is a reference in ink (the setup holds)
+    got = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "style": "watercolour"}).json()
+    rec = c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "ink", "prompt": got["prompt"]}).json()
+    assert pid in rec["references"] and "one" in rec["inherits"]
+    # book one not finished: the prompt written in watercolour, drawn in ink, never takes it
+    got = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "style": "watercolour", "finished": []}).json()
+    rec = c.post(f"/api/library/{KEY}/art/draw",
+                 json={**ask, "style": "ink", "finished": [], "prompt": got["prompt"]}).json()
+    assert pid not in rec["references"] and "one" not in rec["inherits"] and rec["partial"] is True
+
+
+def test_a_draw_on_a_miss_of_other_text_is_hidden_until_every_earlier_book_is_finished(series_env, monkeypatch):
+    c, _ = series_env
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    ask = {"kind": "event", "target": "e5", "style": "ink", "finished": []}
+    # text from somewhere else (a prompt written for a reader with book one finished, say): every earlier book
+    rec = c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": "A gate at dusk."}).json()
+    assert rec["inherits"] == ["one"] and rec["partial"] is True
+    # the prompt just written for this reader, drawn as written: only what it carries
+    got = c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "target": "e6", "style": "anime"}).json()
+    remember, recall, cache = c.app.state.art_prompts
+    cache.clear()                                           # a miss again, and the text is the fresh prompt's own
+    rec = c.post(f"/api/library/{KEY}/art/draw", json={**ask, "target": "e6", "style": "anime", "prompt": got["prompt"]}).json()
+    assert rec["inherits"] == got["inherits"] == []
 
 
 def test_the_prompt_route_reads_only_the_books_the_reader_finished(series_env):
@@ -785,6 +848,11 @@ def test_a_text_model_failure_is_a_502_not_a_missing_target(env, monkeypatch):
     monkeypatch.setattr(art.Illustrator, "make_prompt", fails)
     r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"})
     assert r.status_code == 502 and r.json()["code"] == "model-failed"
+
+
+def shown_world(e, style="ink"):
+    """The world note the Reader gets for a style: the edition's background note, set or no set."""
+    return e.c.get(f"/api/library/{KEY}/art", params={"style": style}).json()["world"]
 
 
 def world_of(e, style="ink"):
@@ -819,7 +887,7 @@ def test_a_world_note_already_there_is_never_taken_back(env):
     env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A grey valley of mills."})
     env.text.scene = lambda prompt: SCENE_WITH_NAME
     r = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."})
-    assert r.status_code == 422 and world_of(env)["text"] == "A grey valley of mills."
+    assert r.status_code == 422 and shown_world(env)["text"] == "A grey valley of mills."
 
 
 # a name the book never uses (the writer's memory): dropped after the rewrite, since only a known name can be replaced by a role
@@ -833,7 +901,8 @@ SCENE_WITH_NAME = ("At a wooden gate beside a grey stone mill, Valdemar waits wi
 
 def test_the_prompt_comes_in_parts_with_every_style_sentence(env):
     env.key()
-    env.c.put(f"/api/library/{KEY}/art/world", json={"style": "Moody blue gouache", "text": "A grey valley."})
+    custom = {"kind": "event", "target": "e5", "style": "Moody blue gouache", "prompt": "A gate."}
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json=custom).status_code == 200
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"}).json()
     assert got["prompt"] == " ".join([got["body"], got["style"], got["noText"]])
     assert got["style"] == art.STYLES["ink"] and got["noText"] == art.NO_TEXT
@@ -918,6 +987,64 @@ def test_the_background_note_is_the_books_in_every_style(env):
     m = json.loads((env.data / "art" / env.hash / "anime" / "art.json").read_text())
     ink = json.loads((env.data / "art" / env.hash / "ink" / "art.json").read_text())
     assert m["style"] == "anime" and m["textHash"] == ink["textHash"]
+
+
+def old_set(env, style, world, picture=False):
+    """A set as an older server left it: its own edited world note."""
+    folder = env.data / "art" / env.hash / style
+    folder.mkdir(parents=True, exist_ok=True)
+    m = art.blank(env.hash, style)
+    m["world"] = {"text": world, "edited": True, "from": env.doc["anchors"][0]["id"]}
+    (folder / "art.json").write_text(json.dumps(m))
+    return folder
+
+
+def test_the_background_note_is_one_file_per_edition_and_a_draw_never_changes_it(env):
+    env.key()
+    old_set(env, "ink", "An older note, written in ink.")
+    time.sleep(0.02)
+    old_set(env, "watercolour", "The newest note, written in watercolour.")
+    # first read: the newest edited note becomes the edition's file
+    assert shown_world(env, "anime")["text"] == "The newest note, written in watercolour."
+    bg = json.loads((env.data / "art" / env.hash / "background.json").read_text())
+    assert bg["text"] == "The newest note, written in watercolour." and bg["edited"] is True
+    # drawing rewrites ink's art.json (now the newest file): the edition's note stays, in every style and for the writer
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink",
+                                                            "prompt": "A gate."}).status_code == 200
+    for st in ("ink", "watercolour", "anime"):
+        assert shown_world(env, st)["text"] == "The newest note, written in watercolour."
+    assert env.c.app.state.jobs.art_store.sink(env.hash, "ink").manifest()["world"]["text"].startswith("The newest")
+    # a note written now replaces it in the file and every set; undo puts both back
+    r = env.c.put(f"/api/library/{KEY}/art/world", json={"style": "anime", "text": "A grey valley of mills."})
+    assert json.loads((env.data / "art" / env.hash / "background.json").read_text())["text"] == "A grey valley of mills."
+    assert world_of(env, "ink")["text"] == world_of(env, "watercolour")["text"] == "A grey valley of mills."
+    assert not (env.data / "art" / env.hash / "anime").exists()     # the note needs no set of its own
+    undo(env, r.json()["undo"])
+    assert shown_world(env, "anime")["text"] == "The newest note, written in watercolour."
+    assert world_of(env, "ink")["text"] == "The newest note, written in watercolour."   # as the draw had written it
+
+
+def test_a_world_note_that_fails_halfway_puts_back_what_it_wrote(env, monkeypatch):
+    old_set(env, "ink", "Ink's note.")
+    old_set(env, "watercolour", "Watercolour's note.")
+    assert shown_world(env)["text"]                         # the file exists before the write
+    before = (env.data / "art" / env.hash / "background.json").read_text()
+    real, n = store_mod.ArtStore.save, []
+
+    def flaky(self, h, style, m):
+        n.append(style)
+        if len(n) == 2:
+            raise OSError("disk full")
+        return real(self, h, style, m)
+    monkeypatch.setattr(store_mod.ArtStore, "save", flaky)
+    with pytest.raises(OSError):
+        env.c.put(f"/api/library/{KEY}/art/world", json={"style": "ink", "text": "A grey valley of mills."})
+    monkeypatch.setattr(store_mod.ArtStore, "save", real)
+    assert world_of(env, "ink")["text"] == "Ink's note." and world_of(env, "watercolour")["text"] == "Watercolour's note."
+    assert (env.data / "art" / env.hash / "background.json").read_text() == before
+    journal = [json.loads(p.read_text()) for p in (env.data / "merges").glob("*/entry.json")] \
+        if (env.data / "merges").is_dir() else []
+    assert not any(e.get("what") == "changed the world note" for e in journal)
 
 
 def test_an_older_art_set_still_loads_and_draws(env):
