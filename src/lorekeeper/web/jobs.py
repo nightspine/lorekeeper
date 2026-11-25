@@ -415,12 +415,22 @@ class JobManager:
     def cheap_model(self, job_provider: str | None = None):
         """The cheap model for background writing (descriptions): the run's own cloud provider,
         else the first configured one; None when no cloud provider is set up."""
+        got = self.text_choice("cheap", job_provider)
+        return self.cloud_model(*got) if got else None
+
+    def strong_model(self, job_provider: str | None = None):
+        """As `cheap_model`, the provider's strong tier (the picture sheet's prompt writer)."""
+        got = self.text_choice("strong", job_provider)
+        return self.cloud_model(*got) if got else None
+
+    def text_choice(self, tier: str = "cheap", job_provider: str | None = None) -> tuple[str, str] | None:
+        """(provider, model name) of the `tier` text model `cheap_model` / `strong_model` give, or None."""
         order = ([job_provider] if job_provider in self.configured() else []) + self.configured()
         for p in order:
             spec = llm.PROVIDERS[p]
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else spec["cheap"]
+            name = (self.provider_config(p) or {}).get("model") if p == "custom" else spec[tier]
             if name:
-                return self.cloud_model(p, name)
+                return p, name
         return None
 
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
@@ -535,7 +545,7 @@ class JobManager:
                     self._emit(job, {"type": "log", "line": f"pictures: {title} names no edition, so its pictures are not read"})
                     continue
                 books.append(artmod.Book(d, None, store.sink(ph, store.resolve(ph, style)[1]), None, draw=False))
-            books.append(artmod.Book(doc, book, store.sink(h, slug), cfg["level"]))
+            books.append(artmod.Book(doc, book, store.sink(h, style), cfg["level"]))
             box: dict = {}
 
             def progress(done: int, total: int) -> None:
@@ -566,7 +576,7 @@ class JobManager:
             self._emit(job, {"type": "log", "line": f"pictures: failed ({type(e).__name__}: {e}); the pictures drawn so far are kept"})
             return {"failed": str(e), "drawn": len(added)}
         out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
-               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, "held": rep.held,
+               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, **({"held": rep.held} if getattr(rep, "held", 0) else {}),
                "reasons": rep.reasons[:200], "style": slug, "textHash": h}
         self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
         for line in rep.lines()[:40]:

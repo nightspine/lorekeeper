@@ -21,6 +21,7 @@ import time
 import urllib.request
 import uuid
 from collections import OrderedDict
+import dataclasses
 from dataclasses import asdict
 from pathlib import Path
 
@@ -1252,11 +1253,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 arts.take_out(h, slug_, a["added"])
             if a.get("removed"):
                 arts.put_back(h, slug_, a["removed"], snap)
-            if a.get("op") == "world":
+            if a.get("op") == "world" and "sets" not in a:     # an entry from before notes were per edition
                 m = arts.manifest(h, slug_)
                 if m is not None:
                     m["world"] = a.get("before")
                     arts.save(h, slug_, m)
+        if a.get("op") == "world" and "sets" in a:
+            for sl, was in a["sets"].items():
+                with arts.lock(h, sl):
+                    m = arts.manifest(h, sl)
+                    if m is not None:
+                        m["world"] = was
+                        arts.save(h, sl, m)
 
     def art_finished(ctx: dict, body: dict) -> list[str] | None:
         """The reader's finished books (`finished`: series book keys, each an earlier book of this one); None = the Reader's
@@ -1272,7 +1280,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return sorted(set(fin))
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    portraits: str | bool | None = "main"):
+                    portraits: str | bool | None = "main", tier: str = "cheap"):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
@@ -1281,7 +1289,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
         if quality not in QUALITIES:
             raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
-        text_model = jobs.cheap_model(None) if text_needed else None
+        # One picture asked for in the sheet is written by the strong tier (`tier`); runs keep the cheap one.
+        text_model = (jobs.strong_model(None) if tier == "strong" else jobs.cheap_model(None)) if text_needed else None
         if text_model is None and text_needed:
             raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
         try:
@@ -1293,8 +1302,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
             ph = artstore.text_hash(d)
             if artstore.HASH.fullmatch(ph):
-                books_.append(artmod.Book(d, None, arts.sink(ph, slug_), None, draw=False))
-        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], slug_), None))
+                books_.append(artmod.Book(d, None, arts.sink(ph, arts.resolve(ph, style)[1]), None, draw=False))
+        books_.append(artmod.Book(ctx["doc"], art_epub(ctx), arts.sink(ctx["hash"], style), None))
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0), image, slug_
 
@@ -1362,54 +1371,79 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "refused" if why.startswith("refused") else "skipped", why)
         return rec
 
-    WORLD_KEYS = ("world", "worldOwn")
-
-    def prompt_for(il, ctx: dict, slug_: str, args: tuple):
-        """(job, Prompt) for one picture, as the prompt and draw routes both need it. The world note this reader's pictures use
-        (the book's own when an earlier book is unfinished) is written first, once, as a run writes it, and a world note
-        written here is taken back when no prompt comes out (the picture is then held back, not visible or dropped). Appearance
-        notes written on the way stay: they are the entity's, at their own anchors."""
-        job = art_job(*args)                     # not visible even before a world note holds it: no call at all
-        h, fin = ctx["hash"], args[-1]
-        before = arts.manifest(h, slug_)
+    def prompt_for(il, args: tuple):
+        """(job, Prompt) for one picture, as the prompt and draw routes both need it: one writer call (two with its rewrite).
+        Nothing else is written on the way: no world note, no appearance note (the person's own background note is read by
+        the pipeline from the set, as saved by `PUT .../art/world`)."""
+        job = art_job(*args)                     # not visible: no call at all
         try:
-            il.world(len(il.books) - 1, finished=None if fin is None else set(fin))
-            if arts.manifest(h, slug_) != before:
-                job = art_job(*args)
-            try:
-                return job, il.make_prompt(job)
-            except artmod.NotVisible as e:
-                raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
-            except artmod.TextFailed as e:
-                raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
-            except artmod.Dropped as e:   # the check and the word it caught, for the person to act on
-                raise ArtRefusal(422, "dropped", str(e), e.say) from e
-            except ValueError as e:
-                raise ArtRefusal(422, "dropped", str(e)) from e
-        except ArtRefusal:
-            untake_world(h, slug_, before)
-            raise
+            return job, il.make_prompt(job)
+        except artmod.NotVisible as e:
+            raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
+        except artmod.TextFailed as e:
+            raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+        except artmod.Dropped as e:   # the check and the word it caught, for the person to act on
+            raise ArtRefusal(422, "dropped", str(e), e.say) from e
+        except ValueError as e:
+            raise ArtRefusal(422, "dropped", str(e)) from e
 
-    def untake_world(h: str, slug_: str, before: dict | None) -> None:
-        """Put the set's world notes back as they were before this request; a set this request began and left with nothing
-        else in it goes altogether."""
-        m = arts.manifest(h, slug_)
-        if m is None or all(m.get(k) == (before or {}).get(k) for k in WORLD_KEYS):
-            return
-        for k in WORLD_KEYS:
-            if before is not None and k in before:
-                m[k] = before[k]
-            elif before is None and k == "world":
-                m[k] = None
-            else:
-                m.pop(k, None)
-        folder = arts.folder(h, slug_)
-        if before is None and not m.get("pictures") and not m.get("appearance"):
-            (folder / "art.json").unlink(missing_ok=True)
-            if folder.is_dir() and not any(folder.iterdir()):
-                folder.rmdir()
-        else:
-            arts.save(h, slug_, m)
+    def sentence_of(il, style: str) -> str:
+        """The style sentence code appends for a style text (the pipeline's, so the sheet swaps in exactly what a run uses)."""
+        fn = getattr(il, "style_sentence", None)
+        return fn(style) if fn else artmod.style_sentence(style)
+
+    def prompt_parts(il, pr, style: str) -> tuple[str, str, str]:
+        """(body, style sentence, no-text sentence) of a Prompt: the writer's text carries no style words, so a style is
+        changed by swapping the sentence, with no new call."""
+        sentence = sentence_of(il, style)
+        no_text = getattr(pr, "no_text", None) or artmod.NO_TEXT
+        body = getattr(pr, "body", None)
+        if body is None:                  # a Prompt without parts: its text minus the two sentences code appended
+            body = pr.text
+            for tail in (no_text, getattr(pr, "style", None) or sentence):
+                body = body[:-len(tail)].rstrip() if tail and body.endswith(tail) else body
+        return body, sentence, no_text
+
+    def style_sentences(il, h: str) -> dict[str, str]:
+        """slug -> style sentence for every listed style and every set this edition has (a custom one by its stored text)."""
+        out = {k: sentence_of(il, k) for k in artmod.STYLES}
+        for st in arts.styles(h):
+            if st.get("style") and st["slug"] not in out:
+                out[st["slug"]] = sentence_of(il, st["style"])
+        return out
+
+    def prompt_key(key: str, job, fin) -> tuple:
+        """What a cached Prompt is for: never the style or the shape, which change no word the writer wrote."""
+        return (key, job.kind, job.target, job.anchor, tuple(fin or ("*",)))
+
+    def restyled(il, job, pr, slug_: str, made_in: str):
+        """A cached Prompt made for one set, ready to draw into this one: the chosen shape, and when the set differs its
+        references taken again from this set's pictures, of the same entities (a set's pictures are the only references
+        it sends). `inherits` keeps what the text carries and adds what the new references carry."""
+        pr.shape = job.shape or artmod.SHAPE_OF[job.kind]
+        if made_in == slug_:
+            return pr
+        pos = (job.bi, il.books[job.bi].ord_of[pr.anchor])
+        fin = None if job.finished is None else frozenset(job.finished)
+        look_change = job.kind == "portrait"     # a portrait's one reference is its previous version
+        shows = getattr(pr, "shows", None)       # the entities the picture shows; else those its references were of
+        ids = list(shows) if shows is not None and not look_change else [r["target"] for _, r in pr.references]
+        refs = []
+        for t in dict.fromkeys(ids):
+            hit = (il.latest_picture(t, pos, ("portrait",), strict=True, finished=fin, current=True) if look_change
+                   else il.latest_picture(t, pos, finished=fin, current=True))
+            if hit:
+                refs.append(hit)
+        if not look_change:                      # as the pipeline picks a scene's: most tied in the view first
+            refs = refs[:images.MAX_REFERENCES]
+        def book_key(j: int) -> str:   # as the pipeline stores book keys: the series book key, else the index id
+            d = il.books[j].doc
+            return str((d.get("series") or {}).get("book") or d.get("id") or j)
+        inherits = set(pr.inherits)
+        for j, r in refs:
+            inherits |= set(r.get("inherits", [])) | ({book_key(j)} if j != job.bi else set())
+        pr.references, pr.inherits = refs, sorted(inherits - {book_key(job.bi)})
+        return pr
 
     def picture_json(h: str, slug_: str, rec: dict) -> dict:
         return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
@@ -1443,17 +1477,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     prompts: OrderedDict[tuple, tuple[float, object]] = OrderedDict()
     prompts_lock = threading.Lock()
 
-    def remember_prompt(k: tuple, pr) -> None:
+    def remember_prompt(k: tuple, pr, slug_: str = "") -> None:
         with prompts_lock:
-            prompts[k] = (time.time(), pr)
+            prompts[k] = (time.time(), pr, slug_)
             prompts.move_to_end(k)
             while len(prompts) > 32:
                 prompts.popitem(last=False)
 
-    def recall_prompt(k: tuple):
+    def recall_prompt(k: tuple, with_slug: bool = False):
+        """The cached Prompt (a copy), or None; `with_slug`: (Prompt, the slug of the set it was made for)."""
         with prompts_lock:
             hit = prompts.get(k)
-        return copy.copy(hit[1]) if hit and time.time() - hit[0] < 3600 else None
+        pr = copy.copy(hit[1]) if hit and time.time() - hit[0] < 3600 else None
+        return ((pr, hit[2]) if pr else (None, "")) if with_slug else pr
 
     app.state.art_prompts = (remember_prompt, recall_prompt, prompts)   # for tests
 
@@ -1514,7 +1550,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         styles = arts.styles(h)
         slug_ = artmod.style_slug(style) if style else (styles[0]["slug"] if styles else None)
         m = arts.manifest(h, slug_) if slug_ else None
-        body = copy.deepcopy(m) if m else artmod.blank(h, style or "")
+        body = copy.deepcopy(m) if m else {**artmod.blank(h, style or ""), "world": arts.background(h)}
         body["pictures"] = [picture_json(h, slug_, r) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
@@ -1597,7 +1633,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.post("/api/library/{key}/art/prompt")
     async def art_prompt(key: str, request: Request):
-        """Write the prompt for one picture (one text call, nothing drawn): {prompt, anchor, references, price}."""
+        """Write the prompt for one picture (one writer call, nothing drawn). The answer has the prompt whole and in its parts
+        (`body`, the `style` sentence, `noText`) with the sentence of every style (`styles`, by slug), so the sheet changes
+        style, shape, quality, provider or model without asking again; plus anchor, references, price, slug, inherits."""
         body = await json_body(request)
 
         @art_route
@@ -1609,18 +1647,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"))
+                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
-                job, pr = prompt_for(il, ctx, slug_, args)
+                job, pr = prompt_for(il, args)
+            stored = arts.resolve(ctx["hash"], style)[1]
+            body_, sentence, no_text = prompt_parts(il, pr, stored)
             # The price of the chosen provider and quality, also before its key is added.
             prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
             name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-            out = {"prompt": pr.text, "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape, "kind": job.kind,
-                   "target": job.target, "references": ref_json(il, pr.references, slug_), "provider": prov, "model": name,
-                   "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+            # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
+            wp, wn = jobs.text_choice("strong") or (None, None)
+            out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
+                   "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
+                   "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
+                   "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
                    "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
-            remember_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))), pr)
+            remember_prompt(prompt_key(key, job, fin), pr, slug_)
             return out
         return await work()
 
@@ -1641,15 +1684,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"))
+                                               body.get("model"), tier="strong")   # a cache miss writes as the sheet does
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job = art_job(*args)
-                pr = recall_prompt((key, job.kind, job.target, slug_, job.shape, job.anchor, tuple(fin or ("*",))))
-                if pr is None:   # for its anchor and references (the person's text is drawn), with the prompt route's rollback
-                    job, pr = prompt_for(il, ctx, slug_, args)
+                # The prompt route's Prompt, whatever style it was asked in, for its anchor, sources and references (the
+                # person's text is drawn); a miss writes it once.
+                pr, made_in = recall_prompt(prompt_key(key, job, fin), with_slug=True)
+                if pr is None:
+                    job, pr = prompt_for(il, args)
+                    remember_prompt(prompt_key(key, job, fin), copy.copy(pr), slug_)
+                    made_in = slug_
+                pr = restyled(il, job, pr, slug_, made_in)
                 rec = draw_given(il, job, pr, text_)
                 entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_, "added": [rec["id"]]},
                                     f"drew a picture ({rec['kind']})")
@@ -1712,11 +1760,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
                 # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from
                 # before `inherits` existed gets none on the new one either, so the Reader keeps treating it as unknown.
-                pr = artmod.Prompt(text_, text_, rec["from"], rec.get("shape") or job.shape,
-                                   [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
-                                   list(rec.get("sources") or [rec["from"]]),
+                kept = {f.name for f in dataclasses.fields(artmod.Prompt)}   # older fields only while the pipeline has them
+                pr = artmod.Prompt(text=text_, scene=text_, anchor=rec["from"], shape=rec.get("shape") or job.shape,
+                                   references=refs, sources=list(rec.get("sources") or [rec["from"]]),
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
-                                   partial=bool(rec.get("partial")), version=rec.get("notes"))
+                                   partial=bool(rec.get("partial")),
+                                   **({"notes": [(rec["target"], rec["appearance"])] if rec.get("appearance") else []}
+                                      if "notes" in kept else {}),
+                                   **({"version": rec.get("notes")} if "version" in kept else {}))
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
@@ -1744,7 +1795,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     @app.put("/api/library/{key}/art/world")
     async def art_world(key: str, request: Request):
-        """The person's own world note for a style's set (`edited: true`: never rewritten by a run)."""
+        """The person's own note on the book's world (`edited: true`), the writer's background note. It is the edition's,
+        not a style's: written into every set of the edition (the chosen style's made if needed), and a set made later
+        starts with it (`ArtStore.sink`). One journal entry; its undo puts every set's note back. Nothing writes a world
+        note automatically any more."""
         body = await json_body(request)
         try:
             ctx = art_index(key)
@@ -1753,24 +1807,31 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not text_ or len(text_) > artstore.MAX_WORLD:
                 raise ArtRefusal(422, "bad-text", f"Write the world note in 1 to {artstore.MAX_WORLD} characters.")
             art_busy(ctx["hash"])
-            slug_, style = arts.resolve(ctx["hash"], style)
-            with arts.lock(ctx["hash"], slug_):
-                m = arts.manifest(ctx["hash"], slug_)
-                if m is None:   # a new set; an existing one is never replaced by an empty manifest
-                    m = artmod.blank(next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")),
-                                          ctx["hash"]), style)
-                entry = journal_art(key, [], {"op": "world", "textHash": ctx["hash"], "style": slug_, "before": m.get("world")},
-                                    "changed the world note")
-                # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
-                m["world"] = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
-                try:
-                    arts.save(ctx["hash"], slug_, m)
-                except Exception:
-                    identity.discard(entry["id"])
-                    raise
+            h = ctx["hash"]
+            chosen, style = arts.resolve(h, style)
+            built = next((e.get("textHash") for e in ctx["doc"].get("editions", []) if e.get("builtFrom")), h)
+            # The person's words come from no passage, so nothing is held back for them: the book's first anchor.
+            world = {"text": text_, "edited": True, "from": ctx["doc"]["anchors"][0]["id"]}
+            slugs = [chosen] + [st["slug"] for st in arts.styles(h) if st["slug"] != chosen]
+            before = {sl: (arts.manifest(h, sl) or {}).get("world") for sl in slugs}
+            entry = journal_art(key, [], {"op": "world", "textHash": h, "style": chosen, "before": before[chosen],
+                                          "sets": before}, "changed the world note")
+            try:
+                for sl in slugs:
+                    with arts.lock(h, sl):
+                        m = arts.manifest(h, sl)
+                        if m is None:   # a new set; an existing one is never replaced by an empty manifest
+                            if sl != chosen:
+                                continue
+                            m = artmod.blank(built, style)
+                        m["world"] = world
+                        arts.save(h, sl, m)
+            except Exception:
+                identity.discard(entry["id"])
+                raise
         except ArtRefusal as e:
             return art_error(e.status, e.code, e.detail)
-        return {"world": m["world"], "undo": entry["id"]}
+        return {"world": world, "undo": entry["id"]}
 
     # ---- duplicate entities ----------------------------------------------------------------------
 
