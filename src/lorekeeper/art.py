@@ -88,6 +88,24 @@ NOTE_PASSAGE_WORDS = 900
 NOTE_ITEMS_CHARS = 3000    # of the look items' own texts sent with a note, the latest first
 LOOK_BATCH_ITEMS = 40      # items classified in one call (small entities share one, a large one takes several); Flash returned no flags at all for 80
 LOOK_ITEM_CHARS = 300
+# Story time: a book that tells more than one time (a frame, a flashback strand, two timelines, a nested tale, a prologue years
+# apart, a long jump forward) draws each figure as it looks at the time the scene tells. A *scope* is (strand, era), written
+# "s2.1": a strand is a line of telling, an era a stretch of it between stated jumps of years. A book with one scope draws as
+# before; an entity whose items span two or more scopes gets a note, references and portraits per scope.
+STORY_TIME = True          # label the chapters' lines of telling (one cheap call per chapter); False draws as before
+# a scope's first portrait takes the figure's portrait from another scope as a likeness reference. Off: on Empire of the Vampire
+# (Nano Banana 2.1, draft) the reference carried the other time's age, stubble, dress and gear into the portrait, whatever the
+# note said (bench/art_timeline.py ab, 2026-11-24); only the note decides.
+LIKENESS_REFERENCE = False
+MAX_STRANDS = 4            # lines of telling per series; a chapter opening a fifth is unknown
+MAX_ERAS = 4               # eras per strand; a chapter past the fourth is unknown
+MAX_SCOPE_VERSIONS = 5     # portraits per entity per book over all its scopes (MAX_VERSIONS within one)
+OPENING_WORDS = 200        # of a chapter's opening sent to the timeline call (the time is often stated a few lines in)
+EVIDENCE_WORDS = 25        # of the paragraph each event cites
+OTHER = "other"            # an event told in no known line (a dream, a vision, a brief memory): its figures get passage only
+PASSAGE = "passage"        # a figure drawn from the passage only: no fixed note, no reference
+LIKENESS = ("The reference shows the same figure at another time of life: keep the likeness; age, marks and dress follow the "
+            "note.")
 
 _STOP = frozenset("a an the of with and or in on at to by for from his her its their is are has have who which that as "
                   "very rather quite somewhat".split())
@@ -264,6 +282,79 @@ KINDS_WHAT = {
 }
 BACKGROUND = "in the surroundings they belong to, given below as their place (the program adds it after your text)."
 PLAIN = "against a plain, neutral background with no place in it."
+TIMELINE = """A reader's companion draws the people of a novel as they look at the time each scene shows. Below is one chapter
+of the novel, read in order: say which line of telling it belongs to.
+
+A line of telling is one TIME the story is set in, kept up over chapters. Most books have one. Some have several: the time of a
+frame (someone telling, writing or remembering the story, with whoever listens) and the time of the tale; or two or more times,
+years apart, that the book moves between (the same people as children in some chapters and as adults in others).
+- Decide by WHEN the chapter's events happen, never by who tells them or how. The frame's line holds only the scenes at the time
+  of the telling (the teller and the listener themselves); what the tale shows happens at the tale's time, even when it is told
+  aloud, in quotation marks or in the first person. A chapter that opens in the frame and then tells the past at length is in
+  the line of that past; its frame scenes are exceptions (see "events").
+- Times years apart that the book moves between are separate lines, even inside one tale and one frame: a teller's boyhood
+  and his life as a grown man are two lines. A chapter set years before or after the line it follows goes to the known line
+  set at that time, or opens a new line.
+- Not a new line: the story moving on by hours, days or months; another narrator, viewpoint, character or place at the same
+  time or within months; a marriage, an illness or any other change in people's lives; letters, diaries and reports written in
+  the story's own time; a dream, a vision or a memory of a few lines inside a scene (mark its
+  events "other").
+- A chapter goes on in the line of the chapter before when its opening shows no other time. At a new part or section, decide
+  afresh from the opening: its time (an age, a date, years passed), its people and their situation.
+
+Lines known so far (its era is 1 at first and one more after each stated jump of years):
+{catalog}
+{previous}
+Return, in this order:
+- "when": in a few words, when this chapter's events happen as the text states or shows it: the age or stage of life of its
+  main people, a year, or how far before or after the line before it.
+- "gap": how many years lie between this chapter's events and the previous chapter's events, before or after (0 when it is
+  less than a year).
+- "lines": for EVERY known line, {{"id": its id, "same_time": true when this chapter's events happen in that line's years
+  (where it left off, or soon after), whoever the chapter follows; false when they are set years before or after it, or in the
+  frame when the line is the tale (or the reverse)}}.
+- "events": for EVERY numbered event, {{"n": its number, "line": the id of the known line it happens in, "new" for a line this
+  chapter opens, or "other" only for a dream, a vision or a memory of a few lines inside a scene}}.
+- "strand": the line most of the chapter's events happen in: a known line you marked "same_time", or "new" when none is, with "label": the time of that line in a few
+  plain words, never the telling: who is seen then, at what age or stage of life, and their situation (such as "the two sisters
+  as children on the farm" or "the sailor, old, at the inn where he tells his tale").
+- "cue": {{"paragraph": the number of the paragraph where the chapter's own line first shows, "quote": 3 to 12 words copied
+  exactly from that paragraph that show it}}. For a chapter that simply goes on from the previous one, paragraph 1.
+- "skip": true only when the chapter goes on in its line but itself states a jump forward long enough that looks change (years
+  pass: children have grown up, adults have aged), with "skip_quote": the words of the cue paragraph that state the jump. False
+  for days, weeks or months, and for a new line.
+
+Chapter: {path}
+
+Its opening, numbered by paragraph:
+{opening}
+
+Its events, each with the start of the paragraph it is told in:
+{events}"""
+SHOWS_AT = """A novel tells more than one time. These are its lines of telling, each set at one time:
+{catalog}
+
+Below are paragraphs that mention {who}, numbered, each marked with the line its chapter is told in. For each paragraph, at which
+line's time does it show {who}? The marked line; another line's id when the paragraph shows {who} at that other time (a scene of
+the frame, or a description of the teller as he or she is then, inside a chapter of the tale, or the reverse); or "none" when it
+shows {who} at no one time (a look back across the years, a summary of a life).
+Return "paragraphs": one {{"n": its number, "line": a line id or "none"}} for every paragraph.
+
+{paras}"""
+SHOWS_SCHEMA = {"type": "object", "required": ["paragraphs"], "properties": {"paragraphs": {"type": "array", "items": {
+    "type": "object", "required": ["n", "line"], "properties": {"n": {"type": "integer"}, "line": {"type": "string"}}}}}}
+SHOWS_BATCH = 30           # paragraphs per call of the paragraph check
+SHOWS_WORDS = 90           # of each paragraph sent to it
+# The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
+TIMELINE_SCHEMA = {"type": "object", "required": ["when", "gap", "lines", "events", "strand", "cue"], "properties": {
+    "when": {"type": "string"}, "gap": {"type": "number"},
+    "lines": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"},
+                                                                          "same_time": {"type": "boolean"}}}},
+    "events": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"},
+                                                                           "line": {"type": "string"}}}},
+    "strand": {"type": "string"}, "label": {"type": "string"},
+    "cue": {"type": "object", "properties": {"paragraph": {"type": "integer"}, "quote": {"type": "string"}}},
+    "skip": {"type": "boolean"}, "skip_quote": {"type": "string"}}}
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
 SOFTEN = """\n\nThe image model refused to draw this: "{text}". Write a quieter composition of the same moment: nothing graphic,
 nothing violent or frightening in view (a doorway, a shadow, a face turned away, the room afterwards). Keep who and where."""
@@ -596,6 +687,7 @@ class Job:
     change: str = ""          # a portrait's reason for a new version (what changed), "" for the first
     shape: str = ""
     finished: frozenset[str] | None = None   # earlier book keys the reader finished (None: all, as a run)
+    scope: str | None = None  # a portrait's story time ("s2.1") for an entity drawn per scope; None for one with one scope
 
 
 @dataclass
@@ -614,6 +706,8 @@ class Prompt:
     world: str = ""           # the world note text pasted in
     milieu: str = ""          # the surroundings pasted in (a portrait's figure's milieu, a scene's place note)
     version: int | None = NOTE_VERSION   # the note version its notes were written in (None: older, or not known)
+    scope: str | None = None  # the story time its figures' notes and references are of (None: one scope, as before)
+    likeness: bool = False    # a reference shows the figure at another time: code says so after the notes
 
 
 @dataclass
@@ -924,11 +1018,13 @@ class _B:
                     marks.append((r.get("title") or f"Part {len(marks) + 1}", start))
                 start = self.seq_of[r["from"]] + 1
         out, seen = [], Counter()
+        head = ""                          # a table-of-contents entry with no story of its own just before (a part's page)
         for n, (title, start) in enumerate(marks):
             end = marks[n + 1][1] - 1 if n + 1 < len(marks) else max(self.hi, start)
             evs = [e for e in d.get("events", []) if e["from"] in self.seq_of and start <= self.seq_of[e["from"]] <= end]
             rcs = [r for r in recaps if start <= self.seq_of[r["from"]] <= end]
             if not evs and not rcs:
+                head = title if out else ""
                 continue
             seen[title] += 1
             key = title if seen[title] == 1 else f"{title} ({seen[title]})"
@@ -936,7 +1032,9 @@ class _B:
             # whose moment, figures and passage come from any of them, is never written from content after it
             last = max([r["from"] for r in rcs] + [e["from"] for e in evs], key=self.ord_of.get)
             words = sum(_words(t) for s, t in self.text.items() if start <= s <= end)
-            out.append({"n": n + 1, "title": key, "lo": start, "hi": end, "events": evs, "recaps": rcs, "last": last, "words": words})
+            out.append({"n": n + 1, "title": key, "lo": start, "hi": end, "events": evs, "recaps": rcs, "last": last, "words": words,
+                        "path": [head, title] if head else [title]})
+            head = ""
         return out
 
     def chapter_of(self, anchor: str) -> dict | None:
@@ -945,7 +1043,9 @@ class _B:
 
 
 def _key(rec: dict) -> tuple:
-    return rec["kind"], rec["target"], rec["from"]
+    """What a picture is, for a resume: its kind, target, anchor and, for a portrait, its story time (None for one of an entity
+    with one scope, and for an older record). A scene's scope follows from its moment, so it is no part of the key."""
+    return rec["kind"], rec["target"], rec["from"], rec.get("scope") if rec["kind"] == "portrait" else None
 
 
 # What a failed check is called in the report.
@@ -995,7 +1095,7 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0) -> None:
+                 pause: float = 1.0, story_time: bool | None = None, likeness: bool | None = None) -> None:
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -1025,6 +1125,14 @@ class Illustrator:
         self._members: dict[int, dict[str, list[int]]] = {}
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
+        self.story_time = STORY_TIME if story_time is None else story_time
+        self.likeness = LIKENESS_REFERENCE if likeness is None else likeness
+        self._tl_lock = threading.RLock()
+        self._tl_version = 0              # bumped whenever a chapter is labelled: the scope memos below are rebuilt
+        self._tl_memo: dict[tuple, dict] = {}
+        self._presence_memo: dict[tuple, list] = {}
+        self._tl_partial: dict[tuple, dict] = {}   # timelines of a reader who has not finished every earlier book: never stored
+        self._tl_failed: set[tuple] = set()        # (book, finished) whose labelling failed in this run: unknown from there
         self.man: list[dict] = []
         self.styles: list[str] = []       # each set's own style text: the one stored first, for every style of the same slug
         for b in self.books:
@@ -1236,8 +1344,10 @@ class Illustrator:
             prev = s
         return "\n".join(out), used
 
-    def _mentions(self, bi: int, eid: str, upto: int, k: int = 6) -> list[int]:
-        return P._sample([s for s, at in self.books[bi].hits(eid) if s <= upto and at <= upto], k)
+    def _mentions(self, bi: int, eid: str, upto: int, k: int = 6, scope: str | None = None,
+                  fin: frozenset[str] | None = None) -> list[int]:
+        """Up to k blocks naming the entity up to block `upto`, sampled evenly; with a `scope`, only blocks told in it."""
+        return P._sample(self._in_scope(bi, [s for s, at in self.books[bi].hits(eid) if s <= upto and at <= upto], scope, fin), k)
 
     # ---- the world note
 
@@ -1432,6 +1542,527 @@ class Illustrator:
             return w["from"]
         return anchor
 
+    # ---- story time: the line of telling (strand) and the era each chapter tells, and the scope of what is drawn
+
+    def _tl_get(self, j: int, fin: frozenset[str] | None) -> dict:
+        """The timeline book j's labels are read from for a reader of book bi who finished `fin` (None: all): the manifest's
+        when every book before j is finished, else an in-memory one (labels made with fewer books are never stored)."""
+        fj = self._finished(j, fin)
+        if fj is None:
+            return self.man[j].get("timeline") or {}
+        return self._tl_partial.get((j, fj)) or {}
+
+    def _tl_put(self, j: int, fin: frozenset[str] | None) -> dict:
+        fj = self._finished(j, fin)
+        if fj is None:
+            tl = self.man[j].setdefault("timeline", {})
+        else:
+            tl = self._tl_partial.setdefault((j, fj), {})
+        tl.setdefault("strands", [])
+        tl.setdefault("chapters", {})
+        return tl
+
+    def _tl_books(self, bi: int, fin: frozenset[str] | None) -> list[int]:
+        """The books whose lines of telling a reader of book bi knows: bi and the earlier books they finished."""
+        return [j for j in range(bi + 1) if j == bi or fin is None or self._bkey(j) in fin]
+
+    def _tl_keys(self, j: int, fin: frozenset[str] | None) -> list[str]:
+        """Each chapter's key: its title and non-minor events (`_screen_key`), chained to the chapter before (the last one of
+        the previous book the reader knows), so a rebuilt index is labelled again from its first changed chapter on."""
+        memo = ("keys", j, fin)
+        if memo in self._tl_memo:
+            return self._tl_memo[memo]
+        books = [x for x in self._tl_books(j, fin) if x < j]
+        prev = self._tl_keys(books[-1], fin)[-1:] if books else []
+        prev = prev[0] if prev else ""
+        out = []
+        for ch in self.books[j].chapters:
+            evs = [e for e in ch["events"] if e.get("kind") != "minor"]
+            prev = hashlib.sha256(json.dumps([prev, ch["title"], self._screen_key(evs)], ensure_ascii=False).encode()).hexdigest()[:16]
+            out.append(prev)
+        self._tl_memo[memo] = out
+        return out
+
+    def _walk(self, bi: int, fin: frozenset[str] | None = None) -> dict:
+        """The labelled chapters of the books a reader of book bi knows, replayed in reading order (in each book its labelled
+        prefix only): {"strands": {id: {"id", "label", "book", "from", "era"}}, "books": {j: {title: chapter}}, "last":
+        the last labelled chapter's strand or None}, each chapter {"lo", "hi", "scope", "cue", "events", "blocks"}: its scope
+        ("s2.1", None when unknown), the block its scope starts at, its events' own scopes (an exception: a scope, OTHER or
+        None) and the blocks those events cite. No model call."""
+        memo = ("walk", bi, fin, self._tl_version)
+        with self.lock:
+            if memo in self._tl_memo:
+                return self._tl_memo[memo]
+        strands: dict[str, dict] = {}
+        books: dict[int, dict] = {}
+        last = None
+        for j in self._tl_books(bi, fin):
+            b, tl, keys = self.books[j], self._tl_get(j, fin), self._tl_keys(j, fin)
+            got = tl.get("chapters") or {}
+            books[j] = {}
+            for n, ch in enumerate(b.chapters):
+                lab = got.get(ch["title"])
+                if not isinstance(lab, dict) or lab.get("key") != keys[n]:
+                    break
+                s, era = lab.get("strand"), lab.get("era")
+                if s and lab.get("label") and s not in strands and isinstance(era, int):
+                    cue = (lab.get("cue") or {}).get("seq", ch["lo"])
+                    strands[s] = {"id": s, "label": lab["label"], "book": self._bkey(j), "from": b.anchor_at(cue), "era": 1}
+                scope = None
+                if s in strands and isinstance(era, int):
+                    strands[s]["era"] = era
+                    strands[s]["last"] = (j, ch["title"])
+                    if lab.get("when"):
+                        strands[s]["when"] = lab["when"]
+                    scope = f"{s}.{era}" if era <= MAX_ERAS else None
+                exc, blocks = {}, {}
+                for eid, x in (lab.get("events") or {}).items():
+                    if x == OTHER:
+                        exc[eid] = OTHER
+                    elif x in strands:
+                        e2 = strands[x]["era"]
+                        exc[eid] = f"{x}.{e2}" if e2 <= MAX_ERAS else None
+                    else:
+                        continue
+                    ev = b.events.get(eid)
+                    for a in (ev or {}).get("evidence", []):
+                        if a in b.seq_of:
+                            sq = b.seq_of[a]
+                            blocks[sq] = exc[eid] if blocks.get(sq, exc[eid]) == exc[eid] else None
+                cue = (lab.get("cue") or {}).get("seq", ch["lo"]) if scope else ch["lo"]
+                books[j][ch["title"]] = {"lo": ch["lo"], "hi": ch["hi"], "scope": scope, "cue": cue, "events": exc,
+                                         "blocks": blocks, "strand": s if s in strands else None, "key": keys[n],
+                                         "eras": {k: v["era"] for k, v in strands.items()}}
+                last = s if s in strands else None
+        out = {"strands": strands, "books": books, "last": last}
+        with self.lock:
+            self._tl_memo[memo] = out
+        return out
+
+    def timeline(self, bi: int = -1, upto: int | None = None, finished=None) -> None:
+        """Label the chapters of book bi (and of the earlier books the reader knows, first) with the line of telling and the era
+        each tells: one cheap call per chapter, in reading order, up to the chapter holding block `upto` (None: the whole book),
+        resumable (a chapter whose chained key still matches is not asked again). The call for a chapter sees that chapter's
+        heading, its opening, its events and the lines known so far (their recaps' first and last sentence), never anything
+        after it, and a label is never revised. Code keeps a label only when it holds: a new line or a jump of years needs a
+        quote found in the cue paragraph, an event's line must be a known one or "other", MAX_STRANDS and MAX_ERAS bound
+        them; a chapter that fails them is stored as unknown. A failed call, or the cost cap, leaves that chapter and the rest
+        unlabelled (unknown) for this run. For a reader who finished fewer earlier books (`finished`) the labels are made with
+        only those books' lines and kept in memory, never stored. Nothing is labelled without the book's EPUB."""
+        if not self.story_time:
+            return
+        bi = len(self.books) - 1 if bi < 0 else bi
+        fin = self._finished(bi, finished)
+        with self._tl_lock:
+            for j in self._tl_books(bi, fin):
+                if not self._label_book(j, fin, upto if j == bi else None):
+                    return
+
+    def _label_book(self, j: int, fin: frozenset[str] | None, upto: int | None) -> bool:
+        """Label book j's chapters up to block `upto`; False when it stopped (a failure or the cap)."""
+        b = self.books[j]
+        if b.epub is None:
+            return True                     # an earlier book that is only read: its stored labels are used as they are
+        fj = self._finished(j, fin)
+        if (j, fj) in self._tl_failed:
+            return False
+        keys = self._tl_keys(j, fin)
+        for n, ch in enumerate(b.chapters):
+            if upto is not None and ch["lo"] > upto:
+                break
+            lab = (self._tl_get(j, fin).get("chapters") or {}).get(ch["title"])
+            if isinstance(lab, dict) and lab.get("key") == keys[n]:
+                continue
+            with self.lock:
+                if self._over_cap():
+                    self.stop = self.stop or f"cost cap ${self.cap:.2f} reached"
+            if self.stop:
+                self._tl_failed.add((j, fj))
+                return False
+            try:
+                got = self._label_chapter(j, fin, ch)
+            except TextFailed as e:
+                self.log(f"  timeline of {ch['title']}: text model failed ({e.detail})")
+                self._tl_failed.add((j, fj))
+                return False
+            with self.lock:
+                tl = self._tl_put(j, fin)
+                tl["chapters"][ch["title"]] = {"key": keys[n], **got}
+                self._tl_version += 1
+                self._tl_memo = {k: v for k, v in self._tl_memo.items() if k[0] == "keys"}
+                self._presence_memo.clear()
+                if fj is None:
+                    w = self._walk(j, fin)
+                    tl["strands"] = [{k: v for k, v in s.items() if k not in ("era", "last", "when")} for s in w["strands"].values()
+                                     if s["book"] == self._bkey(j)]
+                    tl["runs"] = self._runs(j, w)
+                    self._dirty.add(j)
+                    self._save(j)
+        return True
+
+    def _runs(self, j: int, w: dict) -> list[dict]:
+        """The story time of book j's blocks for the Reader: [{"seq", "scope"}] sorted by block, a run starting at each
+        chapter's first block (None until the chapter's cue, then its scope), None for a chapter not labelled."""
+        b = self.books[j]
+        out: list[dict] = []
+
+        def put(seq: int, scope) -> None:
+            if out and out[-1]["seq"] == seq:
+                out[-1]["scope"] = scope
+                if len(out) > 1 and out[-2]["scope"] == scope:
+                    out.pop()
+            elif not out or out[-1]["scope"] != scope:
+                out.append({"seq": seq, "scope": scope})
+        labs = w["books"].get(j, {})
+        for n, ch in enumerate(b.chapters):
+            lab = labs.get(ch["title"])
+            put(ch["lo"], None)
+            if lab and lab["scope"]:
+                put(lab["cue"], lab["scope"])
+            nxt = b.chapters[n + 1]["lo"] if n + 1 < len(b.chapters) else None
+            if nxt is not None and nxt > ch["hi"] + 1:
+                put(ch["hi"] + 1, None)      # a stretch no chapter covers (a part's page): unknown
+        return out
+
+    def _label_chapter(self, j: int, fin: frozenset[str] | None, ch: dict) -> dict:
+        """One timeline call for a chapter, checked: {"strand", "era", "cue": {"seq", "quote"}, "events", "label"?, "skip"?}
+        or {"strand": None, "why"} for a label that does not hold. Raises TextFailed."""
+        b = self.books[j]
+        w = self._walk(j, fin)                 # the chapters before this one (labels are made in order)
+        strands = w["strands"]
+        prev = w["last"]
+        # the opening: whole paragraphs until OPENING_WORDS, then the events with the start of the paragraph each cites
+        paras: list[int] = []
+        lines, n_words = [], 0
+        for s in range(ch["lo"], ch["hi"] + 1):
+            if s not in b.text:
+                continue
+            ws = b.text[s].split()
+            take = ws[:max(1, OPENING_WORDS - n_words)]
+            paras.append(s)
+            lines.append(f"[{len(paras)}] " + " ".join(take) + (" …" if len(take) < len(ws) else ""))
+            n_words += len(take)
+            if n_words >= OPENING_WORDS:
+                break
+        evs = [e for e in ch["events"] if e.get("kind") != "minor"]
+        ev_lines = []
+        for n, e in enumerate(evs, 1):
+            seqs = sorted(b.seq_of[a] for a in e.get("evidence", []) if a in b.seq_of and b.seq_of[a] in b.text)
+            line = f"{n}. {' '.join(e['summary'].split())}"
+            if seqs:
+                s = seqs[0]
+                if s not in paras:
+                    paras.append(s)
+                ws = b.text[s].split()
+                line += f"\n   [{paras.index(s) + 1}] " + " ".join(ws[:EVIDENCE_WORDS]) + (" …" if len(ws) > EVIDENCE_WORDS else "")
+            ev_lines.append(line)
+        cat = [self._catalog_line(s, w) for s in strands.values()]
+        catalog = "\n".join(cat) if cat else '(none yet: this is the first chapter, so return "new")'
+        previous = f"The previous chapter was told in {prev}.\n" if prev else ""
+        out = self._complete(TIMELINE.format(catalog=catalog, previous=previous, path=" > ".join(ch["path"]),
+                                             opening="\n".join(lines) or "(no text)",
+                                             events="\n".join(ev_lines) or "(none)"), TIMELINE_SCHEMA)
+        if not out:
+            return {"strand": None, "why": "no answer"}     # refused or cut off: this chapter is unknown, the rest goes on
+        said = str(out.get("strand") or "").strip().strip(".").lower()
+        # the per-line check decides when it is plain: the one known line the reply says is at this chapter's time
+        same = [str(x.get("id") or "").strip().lower() for x in out.get("lines") or [] if isinstance(out.get("lines"), list)
+                and isinstance(x, dict) and x.get("same_time") is True]
+        same = [x for x in dict.fromkeys(same) if x in strands]
+        if len(same) == 1 and said != same[0]:
+            said = same[0]
+        # looks change over years: a chapter the reply puts less than a year from the chapter before opens no new line
+        try:
+            gap = abs(float(out.get("gap")))
+        except (TypeError, ValueError):
+            gap = None
+        if said == "new" and prev and gap is not None and gap < 1:
+            said = prev
+        cue = out.get("cue") if isinstance(out.get("cue"), dict) else {}
+        try:
+            cn = int(cue.get("paragraph"))
+        except (TypeError, ValueError):
+            cn = 0
+        cue_seq = paras[cn - 1] if 1 <= cn <= len(paras) else None
+        quote = " ".join(str(cue.get("quote") or "").split())
+
+        def found(q: str) -> bool:
+            t = _toks(q)
+            return bool(t) and cue_seq in b.text and f" {' '.join(t)} " in f" {' '.join(_toks(b.text[cue_seq]))} "
+        if said == "new" or (not strands and said not in strands):
+            if strands:
+                if len(strands) >= MAX_STRANDS:
+                    return {"strand": None, "why": "too many lines of telling"}
+                if not found(quote):
+                    return {"strand": None, "why": "new line without a quoted cue"}
+            else:
+                cue_seq, quote = ch["lo"], quote if found(quote) else ""    # the first line of all is no shift: nothing to show
+            ids = {s["id"] for jj in range(len(self.books)) for s in (self.man[jj].get("timeline") or {}).get("strands", [])}
+            k = len(strands) + 1
+            while f"s{k}" in ids or f"s{k}" in strands:
+                k += 1
+            sid = f"s{k}"
+            got = {"strand": sid, "label": " ".join(str(out.get("label") or "").split())[:120] or "a line of telling", "era": 1,
+                   "cue": {"seq": cue_seq, "quote": quote}}
+        elif said in strands:
+            era = strands[said]["era"]
+            sq = " ".join(str(out.get("skip_quote") or "").split())
+            skip = out.get("skip") is True and found(sq)
+            got = {"strand": said, "era": era + 1 if skip else era}
+            if skip:
+                got["skip"] = sq
+            if cue_seq is None or (prev == said and not skip):
+                cue_seq = ch["lo"]          # the chapter goes on in the line before it: known from its first block
+            got["cue"] = {"seq": cue_seq, "quote": quote if found(quote) else ""}
+        else:
+            return {"strand": None, "why": "no such line of telling"}
+        when = " ".join(str(out.get("when") or "").split())[:160]
+        if when:
+            got["when"] = when             # internal: the line's latest time, shown with it to the next chapters' calls
+        known = set(strands) | {got["strand"]}
+        exc = {}
+        for x in out.get("events") or [] if isinstance(out.get("events"), list) else []:
+            if not isinstance(x, dict):
+                continue
+            try:
+                n = int(x.get("n"))
+            except (TypeError, ValueError):
+                continue
+            s = str(x.get("line") or x.get("strand") or "").strip().strip(".").lower()
+            if s == "new" and said == "new":
+                s = got["strand"]           # the line this chapter opens
+            if 1 <= n <= len(evs) and s != got["strand"] and (s == OTHER or s in known):
+                exc[evs[n - 1]["id"]] = s
+        got["events"] = exc
+        return got
+
+    def _catalog_line(self, s: dict, w: dict) -> str:
+        """One known line for the timeline call, from what is labelled so far only: its id and label, where it was first told
+        (its first chapter's heading), the people its events name most, its era, and its latest chapter's opening and last
+        recap sentence (else its first and last events)."""
+        names: Counter = Counter()
+        first = None
+        for j, labs in w["books"].items():
+            b = self.books[j]
+            for c in b.chapters:
+                lab = labs.get(c["title"])
+                if not lab:
+                    continue
+                for e in c["events"]:
+                    own = lab["events"].get(e["id"])
+                    if (own or "").split(".")[0] == s["id"] or (own is None and e["id"] not in lab["events"] and lab["strand"] == s["id"]):
+                        if first is None:
+                            first = " > ".join(c["path"])
+                        for x in e.get("entities", []):
+                            ent = next((bb.ents[x] for bb in self.books if x in bb.ents), None)
+                            if ent and ent["type"] in PORTRAIT_TYPES:
+                                names[ent["names"][0]["value"]] += 1
+        said = ""
+        jj, title = s.get("last", (None, None))
+        if jj is not None:
+            c = next((c for c in self.books[jj].chapters if c["title"] == title), None)
+            sents = [x for r in (c or {}).get("recaps", []) for x in re.split(r"(?<=[.!?])\s+", " ".join(r["text"].split())) if x]
+            if not sents:
+                sents = [" ".join(e["summary"].split()) for e in (c or {}).get("events", []) if e.get("kind") != "minor"]
+            if sents:
+                said = f'\n  its latest chapter opens "{sents[0]}"' + (f' and ends "{sents[-1]}"' if len(sents) > 1 else "")
+        who = ", ".join(n for n, _ in names.most_common(6))
+        return (f"- {s['id']}: {s['label']}; era {min(s['era'], MAX_ERAS + 1)}" + (f"; first told in {first}" if first else "")
+                + (f"\n  its time in its latest chapter: {s['when']}" if s.get("when") else "")
+                + (f"\n  people seen in it: {who}" if who else "") + said)
+
+    def shows_at(self, bi: int, eid: str, seqs, upto: int, fin: frozenset[str] | None = None) -> dict[int, str | None]:
+        """{block: scope} for paragraphs naming an entity drawn per story time: at which line's time each one shows it (a frame
+        paragraph inside a chapter of the tale shows the teller at the frame's time, which the chapter's scope cannot say). One
+        cheap call per SHOWS_BATCH paragraphs not checked yet, which only chooses (a line id among those known by block `upto`, or
+        "none"); cached in the manifest as `shows[eid][block] = {"k": the chapter's label key, "line"}`, so a relabelled chapter
+        is checked again. A paragraph the call leaves out, or one of a failed call, keeps its chapter's scope; "none" is None."""
+        b = self.books[bi]
+        w = self._walk(bi, fin)
+        labs = w["books"].get(bi, {})
+        of = {}
+        for s in sorted({x for x in seqs if x in b.text and x <= upto}):
+            ch = next((c for c in b.chapters if c["lo"] <= s <= c["hi"]), None)
+            if ch and ch["title"] in labs and labs[ch["title"]]["scope"]:
+                of[s] = labs[ch["title"]]
+        store = (self.man[bi].setdefault("shows", {}) if self._finished(bi, fin) is None else
+                 self._tl_partial.setdefault(("shows", bi, fin), {})).setdefault(eid, {})
+        out: dict[int, str | None] = {}
+        todo = []
+        for s, lab in of.items():
+            got = store.get(str(s))
+            if isinstance(got, dict) and got.get("k") == lab["key"]:
+                out[s] = self._line_scope(got.get("line"), lab)
+            else:
+                todo.append(s)
+        known = {k: v for k, v in w["strands"].items() if b.ord_of.get(v["from"], -1) <= b.ord_of[b.anchor_at(upto)]
+                 or v["book"] != self._bkey(bi)}
+        e = next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
+        who = e["names"][0]["value"] if e else eid
+        catalog = "\n".join(f"- {k}: {v['label']}" for k, v in known.items())
+        for i in range(0, len(todo), SHOWS_BATCH):
+            batch = todo[i:i + SHOWS_BATCH]
+            paras = "\n\n".join(f"{n}. [{of[s]['strand']}] " + " ".join(b.text[s].split()[:SHOWS_WORDS]) for n, s in enumerate(batch, 1))
+            try:
+                got = self._complete(SHOWS_AT.format(catalog=catalog, who=who, paras=paras), SHOWS_SCHEMA)
+            except TextFailed as e2:
+                self.log(f"  paragraph check for {eid}: text model failed ({e2.detail})")
+                got = {}
+            said = {}
+            for x in got.get("paragraphs") or [] if isinstance(got.get("paragraphs"), list) else []:
+                try:
+                    n = int(x.get("n"))
+                except (AttributeError, TypeError, ValueError):
+                    continue
+                line = str(x.get("line") or "").strip().strip(".").lower()
+                if 1 <= n <= len(batch) and (line in known or line == "none"):
+                    said[batch[n - 1]] = line
+            with self.lock:
+                for s in batch:
+                    if s in said:
+                        store[str(s)] = {"k": of[s]["key"], "line": said[s]}
+                    out[s] = self._line_scope(said.get(s, of[s]["strand"]), of[s])
+                if said and self._finished(bi, fin) is None:
+                    self._dirty.add(bi)
+                    self._save(bi)
+        return out
+
+    @staticmethod
+    def _line_scope(line: str | None, lab: dict) -> str | None:
+        """A line id said of a paragraph, as the scope it has in that paragraph's chapter."""
+        if not line or line == "none":
+            return None
+        if line == lab["strand"]:
+            return lab["scope"]
+        era = lab["eras"].get(line)
+        return f"{line}.{era}" if era and era <= MAX_ERAS else None
+
+    def _chapter_lab(self, bi: int, seq: int, fin: frozenset[str] | None) -> dict | None:
+        ch = next((c for c in self.books[bi].chapters if c["lo"] <= seq <= c["hi"]), None)
+        return self._walk(bi, fin)["books"].get(bi, {}).get(ch["title"]) if ch else None
+
+    def scope_of(self, bi: int, anchor: str, fin: frozenset[str] | None = None) -> str | None:
+        """The story time at an anchor: its chapter's scope from the chapter's cue on, else None (not labelled, or before)."""
+        if not self.story_time or anchor not in self.books[bi].seq_of:
+            return None
+        s = self.books[bi].seq_of[anchor]
+        lab = self._chapter_lab(bi, s, fin)
+        return lab["scope"] if lab and s >= lab["cue"] else None
+
+    def _block_scope(self, bi: int, seq: int, fin: frozenset[str] | None = None) -> str | None:
+        """The story time of one block: an exception event's when it is that event's evidence, else its chapter's."""
+        lab = self._chapter_lab(bi, seq, fin)
+        if not lab:
+            return None
+        if seq in lab["blocks"]:
+            return lab["blocks"][seq]
+        return lab["scope"] if seq >= lab["cue"] else None
+
+    def event_scope(self, bi: int, ev: dict, fin: frozenset[str] | None = None) -> str | None:
+        """An event's story time: its exception (a scope, OTHER, or None for a line past the caps), else its chapter's at its
+        anchor."""
+        if not self.story_time or ev.get("from") not in self.books[bi].seq_of:
+            return None
+        lab = self._chapter_lab(bi, self.books[bi].seq_of[ev["from"]], fin)
+        if lab and ev["id"] in lab["events"]:
+            return lab["events"][ev["id"]]
+        return self.scope_of(bi, ev["from"], fin)
+
+    def item_scope(self, bi: int, it: dict, fin: frozenset[str] | None = None) -> str | None:
+        """The story time of an item (a facet, a profile, a turning point "event:<id>"): the one all its evidence blocks agree
+        on, else None (mixed, other or unknown); an item citing nothing takes its anchor's."""
+        if not self.story_time:
+            return None
+        b = self.books[bi]
+        if str(it.get("id", "")).startswith("event:"):
+            ev = b.events.get(it["id"][len("event:"):])
+            s = self.event_scope(bi, ev, fin) if ev else None
+            return None if s == OTHER else s
+        seqs = {b.seq_of[a] for a in it.get("evidence", []) if a in b.seq_of}
+        if not seqs:
+            return self.scope_of(bi, it["from"], fin)
+        got = {self._block_scope(bi, s, fin) for s in seqs}
+        s = got.pop() if len(got) == 1 else None
+        return None if s == OTHER else s
+
+    def _presence(self, eid: str, bi: int, fin: frozenset[str] | None = None) -> list[tuple[tuple[int, int], str]]:
+        """((book, ordinal), scope) of every item of the entity and every event naming it whose story time is known, over the
+        books a reader of book bi knows, in reading order."""
+        memo = (eid, bi, fin, self._tl_version)
+        with self.lock:
+            if memo in self._presence_memo:
+                return self._presence_memo[memo]
+        out = []
+        for j in self._tl_books(bi, fin):
+            b = self.books[j]
+            if eid not in b.ents and not any(eid in ev.get("entities", []) for ev in b.doc.get("events", [])):
+                continue
+            for it in self.items(j, eid):
+                if not it["id"].startswith("event:") and (s := self.item_scope(j, it, fin)):
+                    out.append(((j, b.ord_of[it["from"]]), s))
+            for ev in b.doc.get("events", []):
+                if eid in ev.get("entities", []) and ev["from"] in b.ord_of:
+                    s = self.event_scope(j, ev, fin)
+                    if s and s != OTHER:
+                        out.append(((j, b.ord_of[ev["from"]]), s))
+        out.sort()
+        with self.lock:
+            self._presence_memo[memo] = out
+        return out
+
+    def scopes_of(self, eid: str, bi: int, anchor: str | None = None, fin: frozenset[str] | None = None) -> list[str]:
+        """The entity's known story times at or before an anchor of book bi (None: the book's end), in order of first use."""
+        if not self.story_time:
+            return []
+        b = self.books[bi]
+        pos = (bi, b.ord_of[anchor]) if anchor in b.ord_of else (bi, len(b.anchors))
+        return list(dict.fromkeys(s for p, s in self._presence(eid, bi, fin) if p <= pos))
+
+    def multi(self, eid: str, bi: int, anchor: str | None = None, fin: frozenset[str] | None = None) -> bool:
+        """Whether the entity is drawn per story time at an anchor: its items or events span two or more scopes at or before
+        it. Per entity, so one flash-forward prologue changes nothing for the rest of the cast."""
+        return len(self.scopes_of(eid, bi, anchor, fin)) >= 2
+
+    def _second(self, eid: str, bi: int, fin: frozenset[str] | None = None) -> tuple[str | None, tuple[int, int] | None]:
+        """(the entity's first scope, where its second scope begins) over books 0..bi."""
+        first, at = None, None
+        for p, s in self._presence(eid, bi, fin):
+            if first is None:
+                first = s
+            elif s != first:
+                at = p
+                break
+        return first, at
+
+    def figure_scope(self, bi: int, eid: str, anchor: str, scene: str | None, fin: frozenset[str] | None = None) -> str | None:
+        """How a figure is drawn in a picture whose story time is `scene`: None as before (one scope), a scope string (its note
+        and references of that scope only), or PASSAGE (from the passage only: a scene told in no known line, or a figure with
+        several scopes in a scene whose time is unknown)."""
+        if not self.story_time:
+            return None
+        if scene == OTHER:
+            return PASSAGE
+        if not self.multi(eid, bi, anchor, fin):
+            return None
+        return scene or PASSAGE
+
+    def _scene_scope(self, job: Job, fin: frozenset[str] | None = None) -> str | None:
+        """A picture's story time: a portrait's own (the job's), an event's, a plate's main moment's, else the chapter's at its
+        last anchor."""
+        if not self.story_time:
+            return None
+        if job.kind in ENTITY_KINDS:
+            return job.scope
+        if job.event:
+            return self.event_scope(job.bi, job.event, fin)
+        return self.scope_of(job.bi, job.chapter["last"], fin) if job.chapter else None
+
+    def _in_scope(self, bi: int, seqs, scope: str | None, fin: frozenset[str] | None = None) -> list[int]:
+        """The blocks of `seqs` told in `scope` (all of them when scope is None)."""
+        if scope is None:
+            return list(seqs)
+        return [s for s in seqs if self._block_scope(bi, s, fin) == scope]
+
     # ---- screening and choosing
 
     @staticmethod
@@ -1480,12 +2111,14 @@ class Illustrator:
                                            -b.ord_of[b.events[x]["from"]]))
 
     def _have(self, bi: int) -> set[tuple]:
-        """(kind, target, from) of what a book's set already holds or will never draw (a final skip)."""
+        """`_key` of what a book's set already holds or will never draw (a final skip)."""
         return {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")} | \
-            {(x.get("kind"), x["target"], x.get("from")) for x in self.man[bi]["skipped"]}
+            {(x.get("kind"), x["target"], x.get("from"), x.get("scope") if x.get("kind") == "portrait" else None)
+             for x in self.man[bi]["skipped"]}
 
     def _is_new(self, bi: int, j: Job, have: set[tuple]) -> bool:
-        return (j.kind, j.target, self._anchor(bi, j.anchor)) not in have and (j.kind, j.target, j.anchor) not in have
+        sc = j.scope if j.kind == "portrait" else None
+        return (j.kind, j.target, self._anchor(bi, j.anchor), sc) not in have and (j.kind, j.target, j.anchor, sc) not in have
 
     def _budget(self) -> int | None:
         """How many more pictures the picture limit and the cost cap leave room for (None: no bound known). With an unknown
@@ -1509,6 +2142,7 @@ class Illustrator:
         level = b.b.level
         have = self._have(bi)
         ports: list[Job] = []
+        self.timeline(bi)                # the story time of every chapter, before the portraits are planned per scope
         if self.portraits:
             ports = self._portrait_jobs(bi)
             if self.chapter_filter:      # a run limited to some chapters draws portraits only up to the last of them
@@ -1641,6 +2275,8 @@ class Illustrator:
         MIN_GAP blocks; versions are compared on the anchors they show from after the hold to the world note, so two never share
         one (the later stands for both)."""
         b, eid = self.books[bi], e["id"]
+        if self.story_time and self.multi(eid, bi):
+            return self._scoped_versions(bi, e)
         mine = [p for p in self._profiles(bi, eid) if p[0] == bi]
         written = [p for p in mine if ".portrait-" in p[2]["id"]]
         # only a drawn picture counts: one planned in an earlier book and then skipped does not
@@ -1672,6 +2308,57 @@ class Illustrator:
             else:
                 versions.append([a, why, held])
         return [Job("portrait", eid, bi, a, change=why, shape="portrait") for a, why, _ in versions]
+
+    def _scoped_versions(self, bi: int, e: dict) -> list[Job]:
+        """`_versions` for an entity drawn per story time: in each scope of this book a first portrait at its first look item
+        told in that scope (else its first profile told in it, else its second event there: the note decides then, and a
+        scope whose text shows no look is skipped), then one per look change told in that scope; MAX_VERSIONS, MIN_GAP and the
+        merge of two versions on one anchor within a scope only, at most MAX_SCOPE_VERSIONS in all (the earliest). A scope
+        drawn in an earlier book is not drawn again without a change in it."""
+        b, eid = self.books[bi], e["id"]
+        first, second = self._second(eid, bi)
+        idx = self.look_index(bi, eid)
+        lo = b.ord_of.get(e["from"], 0)
+        own = sorted(((b.ord_of[it["from"]], it) for it in self.items(bi, eid) if it["from"] in b.ord_of
+                      and b.ord_of[it["from"]] >= lo), key=lambda t: t[0])
+        scoped = [(o, it, self.item_scope(bi, it)) for o, it in own]
+        profiles = {p[2]["id"] for p in self._profiles(bi, eid) if p[0] == bi}
+        evs = sorted((b.ord_of[ev["from"]], ev["from"], sc) for ev in b.doc.get("events", [])
+                     if eid in ev.get("entities", []) and ev.get("kind") != "minor" and ev["from"] in b.ord_of
+                     and (sc := self.event_scope(bi, ev)) not in (None, OTHER))
+        order = list(dict.fromkeys([sc for _, _, sc in scoped if sc] + [sc for _, _, sc in evs]))
+        order.sort(key=lambda sc: min([o for o, _, x in scoped if x == sc] + [o for o, _, x in evs if x == sc]))
+        out: list[tuple[int, Job]] = []
+        for sc in order:
+            before = any(r["kind"] == "portrait" and r["target"] == eid and not r.get("partial") and (
+                r.get("scope") == sc or ("scope" not in r and sc == first and (second is None or (j, self.books[j].ord_of.get(
+                    r["from"], 1 << 30)) < second))) for j in range(bi) for r in self.man[j]["pictures"])
+            looks = [it for _, it, x in scoped if x == sc and idx.get(it["id"], {}).get("look") and not it["id"].startswith("event:")]
+            profs = [it for _, it, x in scoped if x == sc and it["id"] in profiles]
+            seen = [a for _, a, x in evs if x == sc]
+            changes = [(o, it["from"], it["text"]) for o, it, x in scoped if x == sc and idx.get(it["id"], {}).get("change")]
+            if before:
+                start = None
+            elif looks or profs:
+                start = (looks or profs)[0]["from"]
+            elif len(seen) >= 2:
+                start = seen[1]
+            else:
+                continue
+            versions: list[list] = [[start, "", self._anchor(bi, start)]] if start else []
+            for o, a, why in changes:
+                if start is not None and o <= b.ord_of[start]:
+                    continue
+                held = self._anchor(bi, a)
+                if versions and versions[-1][2] == held:
+                    versions[-1] = [a, why if (len(versions) > 1 or before) else "", held]
+                elif len(versions) >= MAX_VERSIONS or (versions and b.seq_of[held] - b.seq_of[versions[-1][2]] < MIN_GAP):
+                    continue
+                else:
+                    versions.append([a, why, held])
+            out += [(b.ord_of[held], Job("portrait", eid, bi, a, change=why, shape="portrait", scope=sc)) for a, why, held in versions]
+        out.sort(key=lambda t: t[0])
+        return [j for _, j in out[:MAX_SCOPE_VERSIONS]]
 
     # ---- the look index: which of an entity's items describe its look, and which change it
 
@@ -1909,35 +2596,45 @@ class Illustrator:
     def _pos(self, bi: int, anchor: str) -> tuple[int, int]:
         return bi, self.books[bi].ord_of[anchor]
 
-    def latest_note(self, eid: str, pos: tuple[int, int], finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+    def latest_note(self, eid: str, pos: tuple[int, int], finished: frozenset[str] | None = None,
+                    scope: str | None = None) -> tuple[int, dict] | None:
         """(book, note) of the entity's latest appearance note at or before `pos`, among those a reader who finished `finished`
-        may be shown (`_usable`). A note of another version (`v`, NOTE_VERSION) is never used: it is written again."""
+        may be shown (`_usable`). A note of another version (`v`, NOTE_VERSION) is never used: it is written again. With a
+        `scope` (an entity drawn per story time) only a note of that scope counts, and a note with no scope (written while the
+        entity had one) only for its first scope and only if it comes before its second scope begins."""
         best = None
+        first, second = self._second(eid, pos[0], self._finished(pos[0], finished)) if scope else (None, None)
         for j in range(pos[0] + 1):
             for n in self.man[j]["appearance"].get(eid, []):
                 if n.get("v") != NOTE_VERSION:
                     continue
                 k = (j, self.books[j].ord_of.get(n["from"], -1))
+                if scope and n.get("scope") != scope and not (
+                        "scope" not in n and scope == first and (second is None or k < second)):
+                    continue
                 if k[1] >= 0 and k <= pos and (best is None or k >= best[0]) and self._usable(j, pos[0], finished, n):
                     best = (k, j, n)
         return (best[1], best[2]) if best else None
 
     def latest_picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
-                       finished: frozenset[str] | None = None, current: bool = False) -> tuple[int, dict] | None:
+                       finished: frozenset[str] | None = None, current: bool = False, scope: str | None = None,
+                       other: str | None = None) -> tuple[int, dict] | None:
         """(book, record) of the entity's latest picture at or (strict) before `pos`, among those `finished` allows; `current`:
-        only one drawn from a note of this version (a reference for a new picture)."""
+        only one drawn from a note of this version (a reference for a new picture); `scope`: only one of that story time (a
+        record with no scope never); `other`: only one of another story time than this."""
         best = None
         for j in range(pos[0] + 1):
             for r in self.man[j]["pictures"]:
                 k = (j, self.books[j].ord_of.get(r["from"], -1))
                 if r["kind"] in kinds and r["target"] == eid and 0 <= k[1] and (k < pos if strict else k <= pos) \
                         and (not current or r.get("notes") == NOTE_VERSION) \
+                        and (scope is None or r.get("scope") == scope) and (other is None or r.get("scope") != other) \
                         and (best is None or k >= best[0]) and self._usable(j, pos[0], finished, r):
                     best = (k, j, r)
         return (best[1], best[2]) if best else None
 
     def ensure_note(self, bi: int, eid: str, anchor: str, change: str = "",
-                    finished: frozenset[str] | None = None) -> tuple[str | None, str, list[str], list[str]]:
+                    finished: frozenset[str] | None = None, scope: str | None = None) -> tuple[str | None, str, list[str], list[str]]:
         """The entity's appearance note at `anchor`: the latest earlier one; *filled in* (new quoted details added, nothing
         dropped) when the look index has look items of it at or before the anchor that the note was not written from; amended
         ("the same man...", a superseded detail replaced, quoting the change) when `change` says its look changed there; written
@@ -1949,11 +2646,23 @@ class Illustrator:
         A note holds only look details the writer quotes from the entity's own text (`detail_supported`, `quoted`); the others
         are dropped ("dropped: look detail not in the text"), and a note with no detail left is empty: the text shows no look,
         so the entity gets no portrait. An empty note is remembered and not asked again until a look change or a new look
-        item."""
-        got = self._note(bi, eid, anchor, change, finished)
+        item.
+
+        With a `scope` (an entity drawn per story time) the note is that scope's: found among that scope's notes, and written,
+        filled in or amended only from items whose evidence all lies in it and from paragraphs that show the entity at that
+        time (`shows_at`): no profile (the index's profiles blend the times), no item with mixed or other evidence, no other
+        scope's note; a new era starts a fresh note."""
+        got = self._note(bi, eid, anchor, change, finished, scope)
         return (got["text"], "", got["sources"], got["inherits"]) if got.get("text") else (None, got.get("why", "empty"), [], [])
 
-    def _note(self, bi: int, eid: str, anchor: str, change: str = "", finished: frozenset[str] | None = None) -> dict:
+    def _facet_scope(self, bi: int, eid: str, f: dict, fin: frozenset[str] | None = None) -> str | None:
+        """The story time of a facet as the view shows it (it carries its own book's key in a series)."""
+        j = next((x for x in range(bi + 1) if self._bkey(x) == str(f.get("book"))), bi) if f.get("book") is not None else bi
+        own = next((x for x in self.books[j].ents.get(eid, {}).get("facets", []) if x["id"] == f["id"]), None)
+        return self.item_scope(j, own, fin) if own and own["from"] in self.books[j].ord_of else None
+
+    def _note(self, bi: int, eid: str, anchor: str, change: str = "", finished: frozenset[str] | None = None,
+              scope: str | None = None) -> dict:
         """`ensure_note`'s work, returning the stored note itself with "sources" and "inherits" for this book, or {"why": ...}."""
         b = self.books[bi]
         me = self._bkey(bi)
@@ -1962,7 +2671,7 @@ class Illustrator:
         with self.lock:
             lock = self._entity_locks.setdefault(eid, threading.Lock())
         with lock:
-            hit = self.latest_note(eid, pos, finished)
+            hit = self.latest_note(eid, pos, finished, scope)
             cur = hit[1] if hit else None
             cur_books = sorted(set(cur.get("inherits", [])) | ({self._bkey(hit[0])} if hit[0] != bi else set())) if cur else []
             if eid in b.ents:
@@ -1970,7 +2679,19 @@ class Illustrator:
             idx = self.look_index(bi, eid)
             at = b.ord_of[anchor]
             looks = [it for it in self.items(bi, eid) if idx.get(it["id"], {}).get("look") and b.ord_of[it["from"]] <= at
-                     and not it["id"].startswith("event:")]    # a turning point counts only as a change of its own look
+                     and not it["id"].startswith("event:")    # a turning point counts only as a change of its own look
+                     and (scope is None or self.item_scope(bi, it, finished) == scope)]
+            shows: dict[int, str | None] = {}
+            if scope:
+                # no profile: the index writes each one from passages across the book so far and from the profile before it,
+                # so its words blend the times even when the paragraphs it cites are of one
+                profiles = {f["id"] for f in b.ents.get(eid, {}).get("facets", []) if f.get("kind") == "profile"}
+                looks = [it for it in looks if it["id"] not in profiles]
+                # the paragraphs a scope's note may be written from: each checked for the time it shows the entity at
+                upto0 = b.seq_of[anchor]
+                ev = {b.seq_of[a] for it in looks for a in it["evidence"] if a in b.seq_of}
+                shows = self.shows_at(bi, eid, ev, upto0, finished)
+                looks = [it for it in looks if all(shows.get(b.seq_of[a], scope) == scope for a in it["evidence"] if a in b.seq_of)]
             looks.sort(key=lambda it: b.ord_of[it["from"]])
             done = set(cur.get("items", [])) if cur and hit[0] == bi else set()
             new = [it for it in looks if it["id"] not in done]
@@ -1994,13 +2715,25 @@ class Illustrator:
             pick = (new if mode == "fill" else looks)[::-1]
             # the paragraphs before its first name that describe it as it enters come first (a book often describes a newcomer
             # before naming them), then those its look items cite
-            look_seqs: list[int] = [x for x in self._introduction(bi, eid, upto)] if e["type"] in PORTRAIT_TYPES and mode == "write" else []
+            look_seqs: list[int] = self._in_scope(bi, self._introduction(bi, eid, upto), scope, finished) \
+                if e["type"] in PORTRAIT_TYPES and mode == "write" else []
+            facets = [f for f in ([ve["profile"]] if ve["profile"] and scope is None else []) + ve["facets"]
+                      if scope is None or self._facet_scope(bi, eid, f, finished) == scope]
+            if scope:
+                pool = self._mentions(bi, eid, upto, 24, scope, finished)
+                fseqs = {b.seq_of[a] for f in facets for x in self.books[bi].ents.get(eid, {}).get("facets", []) if x["id"] == f["id"]
+                         for a in x.get("evidence", []) if a in b.seq_of}
+                shows.update(self.shows_at(bi, eid, set(look_seqs) | set(pool) | fseqs, upto, finished))
+                look_seqs = [x for x in look_seqs if shows.get(x, scope) == scope]
+                facets = [f for f in facets if all(shows.get(b.seq_of[a], scope) == scope for x in b.ents.get(eid, {}).get("facets", [])
+                                                   if x["id"] == f["id"] for a in x.get("evidence", []) if a in b.seq_of)]
             for it in pick:
                 for a in it["evidence"]:
                     if a in b.seq_of and b.seq_of[a] <= upto and b.seq_of[a] not in look_seqs:
                         look_seqs.append(b.seq_of[a])
             lp, lused = self._passage_first(bi, look_seqs, upto, LOOK_PASSAGE_WORDS)
-            rest = [s for s in self._mentions(bi, eid, upto, 10) if s not in set(lused)]
+            rest = [s for s in (P._sample([x for x in pool if shows.get(x, scope) == scope], 10) if scope else
+                                self._mentions(bi, eid, upto, 10, scope, finished)) if s not in set(lused)]
             left = max(150, NOTE_PASSAGE_WORDS - sum(_words(b.text[s]) for s in lused))
             mp, mused = self.passage(bi, rest, upto, left) if rest else ("", [])
             passages = "\n…\n".join(x for x in (lp, mp) if x)
@@ -2013,7 +2746,7 @@ class Illustrator:
                 shown_items.append(it)
                 size += len(it["text"])
             listed = {it["id"] for it in shown_items}
-            shown = [f for f in ([ve["profile"]] if ve["profile"] else []) + ve["facets"][:8] if f["id"] not in listed]
+            shown = [f for f in facets[:9 if ve["profile"] and scope is None else 8] if f["id"] not in listed]
             own_from = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             srcs = {b.anchor_at(s) for s in used} | {it["from"] for it in shown_items} | {own_from[f["id"]] for f in shown if f["id"] in own_from}
             inherits = sorted((set(cur_books) | {str(f["book"]) for f in shown if f.get("book") not in (None, me)}) - {me})
@@ -2050,6 +2783,8 @@ class Illustrator:
                     "changed": (list(cur.get("changed", [])) if cur else []) + ([[me, anchor]] if mode == "amend" and got else [])}
             if e["type"] == "group":
                 note["home"] = home
+            if scope:
+                note["scope"] = scope
             if finished is not None:
                 note["partial"] = True
             with self.lock:
@@ -2225,13 +2960,16 @@ class Illustrator:
         return got, "", details, homes, role
 
     def figure_note(self, bi: int, eid: str, anchor: str, change: str = "",
-                    finished: frozenset[str] | None = None) -> tuple[str | None, str, list[str], list[str]]:
+                    finished: frozenset[str] | None = None, scope: str | None = None) -> tuple[str | None, str, list[str], list[str]]:
         """The note a picture carries for a figure: its own appearance note, then, for a person or creature, the look of the
         members of up to MAX_GROUPS of its groups at the anchor (`groups_of`, the most specific first). A group takes a slot only
         when its member look adds something the figure's own note and the earlier groups do not already say (only the new
         details are carried), and never when the figure's own look was amended by a change after it joined. No group name. Its own quoted look comes first and wins where the two disagree (the writer and the
-        image model are told so by the order). (text, reason when None, sources, inherits), as `ensure_note`."""
-        own = self._note(bi, eid, anchor, change, finished)
+        image model are told so by the order). (text, reason when None, sources, inherits), as `ensure_note`.
+
+        With a `scope` the figure's own note is that scope's, and a group's look counts only from the same story time: the
+        group's note of that scope when it is drawn per scope too, else only a group whose one known scope is this one."""
+        own = self._note(bi, eid, anchor, change, finished, scope)
         if not own.get("text"):
             return None, own.get("why", "empty"), [], []
         note, srcs, books = own["text"], list(own["sources"]), list(own["inherits"])
@@ -2250,7 +2988,10 @@ class Illustrator:
             since = self._member_since(bi, eid, gid, fin) if changed else None
             if since is not None and any(c > since for c in changed):
                 continue      # its own look changed after it joined (a Red carved into a Gold): its own look wins
-            g = self._note(bi, gid, anchor, "", finished)
+            gs = self._group_scope(bi, gid, anchor, scope, fin)
+            if gs == PASSAGE:
+                continue      # the group's look at another time, or at no known one
+            g = self._note(bi, gid, anchor, "", finished, gs)
             new = [d["text"] for d in g.get("details") or [] if not _within(_content(d["text"]), said)]
             if not new:
                 continue      # no member look, or nothing the figure's note and the earlier groups do not already say
@@ -2262,6 +3003,16 @@ class Illustrator:
             if found >= MAX_GROUPS:
                 break
         return " ".join(p.rstrip(".") + "." for p in parts), "", sorted(set(srcs), key=b.ord_of.get), sorted(set(books))
+
+    def _group_scope(self, bi: int, gid: str, anchor: str, scope: str | None, fin: frozenset[str] | None) -> str | None:
+        """Which of a group's notes a figure drawn in `scope` may carry: None (the group's only note) for a figure with one
+        scope; for one drawn per scope, the group's note of that scope, or its only note when its one known scope is the same;
+        PASSAGE when none fits."""
+        if scope is None:
+            return None
+        if self.multi(gid, bi, anchor, fin):
+            return scope
+        return None if self.scopes_of(gid, bi, anchor, fin) == [scope] else PASSAGE
 
     def _member_since(self, bi: int, eid: str, gid: str, finished: frozenset[str] | None = None) -> tuple[int, int] | None:
         """(book, ordinal) where the entity's membership of a group begins, over books 0..bi (an earlier book only when the
@@ -2277,16 +3028,20 @@ class Illustrator:
             out += [(j, b.ord_of[a]) for a in froms]
         return min(out) if out else None
 
-    def milieu(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None) -> tuple[str, list[str], list[str]]:
+    def milieu(self, bi: int, eid: str, anchor: str, finished: frozenset[str] | None = None,
+               scope: str | None = None) -> tuple[str, list[str], list[str]]:
         """(text, sources, inherits) of the surroundings a figure belongs to at an anchor, from the index's structure only:
         (a) the setting its visible events of this book are most often set in, the latest chapters weighing most (a chapter's
         events count 1, the one before 1/2, then 1/3...), as that place's appearance note when the setting links a place entity
         and it has a note, else as the setting's own words; (b) else where the members of its groups live (a group note's
-        `home` details); (c) else "" (a portrait then gets a plain, neutral background, never the opening's)."""
+        `home` details); (c) else "" (a portrait then gets a plain, neutral background, never the opening's). With a `scope`
+        only events told in it count, and only groups and places whose look is of that time."""
         b = self.books[bi]
         at = b.ord_of[anchor]
+        fin = self._finished(bi, finished)
         evs = [ev for ev in b.doc.get("events", []) if eid in ev.get("entities", []) and ev.get("setting")
-               and ev["from"] in b.ord_of and b.ord_of[ev["from"]] <= at]
+               and ev["from"] in b.ord_of and b.ord_of[ev["from"]] <= at
+               and (scope is None or self.event_scope(bi, ev, fin) == scope)]
         if evs:
             chapters = []
             for ev in evs:
@@ -2310,28 +3065,35 @@ class Illustrator:
                 srcs = [ev["from"] for ev in evs if (ev["setting"].get("place") or " ".join(str(ev["setting"].get("text", "")).lower().split())) == k]
                 place = text_of[k].get("place")
                 vis = {x["id"] for x in self.view(bi, anchor, self._finished(bi, finished))["entities"]}
-                if place and place in vis:
-                    note, _, nsrcs, books = self.ensure_note(bi, place, anchor, "", finished)
+                ps = self._group_scope(bi, place, anchor, scope, fin) if place else None
+                if place and place in vis and ps != PASSAGE:
+                    note, _, nsrcs, books = self.ensure_note(bi, place, anchor, "", finished, ps)
                     if note:
                         return note, sorted(set(srcs) | set(nsrcs), key=b.ord_of.get), books
                 return " ".join(str(text_of[k].get("text", "")).split()).rstrip(".") + ".", sorted(set(srcs), key=b.ord_of.get), []
         e = b.ents.get(eid) or {}
         if e.get("type") in PORTRAIT_TYPES:
             for gid in self.groups_of(bi, eid, anchor, finished)[:GROUPS_TRIED]:
-                g = self._note(bi, gid, anchor, "", finished)
+                gs = self._group_scope(bi, gid, anchor, scope, fin)
+                if gs == PASSAGE:
+                    continue
+                g = self._note(bi, gid, anchor, "", finished, gs)
                 if g.get("home"):
                     return f"Their people's home: {_list([d['text'] for d in g['home']])}", list(g["sources"]), list(g["inherits"])
         return "", [], []
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
-                    finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
+                    finished: frozenset[str] | None = None, scopes: dict | None = None) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES; a picture
-        drawn from a note of an older version is no reference."""
+        drawn from a note of an older version is no reference. `scopes` (entity id: `figure_scope`): a figure drawn per story
+        time takes only a picture of the scene's scope, and one drawn from the passage none."""
         deg = Counter()
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self.latest_picture(eid, pos, finished=finished, current=True))]
+        scopes = scopes or {}
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if scopes.get(eid) != PASSAGE
+                 and (hit := self.latest_picture(eid, pos, finished=finished, current=True, scope=scopes.get(eid)))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return [h for _, h in found[:MAX_REFERENCES]]
@@ -2379,11 +3141,30 @@ class Illustrator:
                     anchor = f["from"]
             job = Job(kind, target, bi, anchor, shape=shape)
         job.finished = fin if bi == at_bi else (None if fin is None else frozenset(fin))
+        if self.story_time and kind in ENTITY_KINDS:
+            job.scope = self._job_scope(job, at if bi == at_bi else None, at_bi, fin)
         if job.finished is not None:
             self.world(bi, job.finished)   # the reader's own world note, written when the set has none for them
         if at is not None and bi == at_bi and b.ord_of[self._anchor(bi, job.anchor, self._finished(bi, job.finished))] > b.ord_of[at]:
             raise NotVisible(target)
         return job
+
+    def _job_scope(self, job: Job, at: str | None, at_bi: int, fin: frozenset[str] | None) -> str | None:
+        """The story time an on-demand picture of an entity is drawn at, for an entity drawn per scope: the reader's own (the
+        scope at `at`) when the entity has been seen in it, else the scope of its latest item or event at or before the job's
+        anchor. None for an entity with one scope."""
+        bi = job.bi
+        self.timeline(at_bi, self.books[at_bi].seq_of.get(at) if at else None, fin)
+        jf = None if fin is None or bi != at_bi else fin
+        if not self.multi(job.target, bi, job.anchor, jf):
+            return None
+        mine = self.scopes_of(job.target, bi, job.anchor, jf)
+        here = self.scope_of(bi, at, jf) if at else None
+        if here in mine:
+            return here
+        pos = self._pos(bi, job.anchor)
+        last = [s for p, s in self._presence(job.target, bi, jf) if p <= pos]
+        return last[-1] if last else None
 
     def _figures(self, job: Job) -> list[str]:
         """The entities a picture shows: the ones its event names (a plate with no event, the chapter's most named), no others."""
@@ -2421,13 +3202,22 @@ class Illustrator:
         if job.event:                      # the moment shown: its text, setting and figures reach the prompt
             sources |= {job.event["from"]} | {a for a in job.event.get("evidence", []) if a in b.ord_of}
         ids = [x for x in self._figures(job) if x in vis]
+        # story time: a figure drawn per scope takes the note and references of the scene's scope, or the passage only
+        if self.story_time:
+            self.timeline(bi, upto, fin)
+        scene_scope = self._scene_scope(job, fin)
+        fscope = {eid: self.figure_scope(bi, eid, anchor, scene_scope, fin) for eid in ids}
         figures: list[tuple[str, str]] = []
         for eid in ids:
             e = b.ents.get(eid) or next((bb.ents[eid] for bb in self.books if eid in bb.ents), None)
             if e is None or e["type"] not in NOTE_TYPES or len(figures) >= 6:
                 continue
+            if fscope[eid] == PASSAGE:
+                if job.kind in ENTITY_KINDS and eid == job.target:
+                    raise ValueError("skipped: story time not known")
+                continue
             note, why, srcs, books = self.figure_note(bi, eid, anchor, job.change if job.kind == "portrait" and eid == job.target else "",
-                                                      fin)
+                                                      fin, fscope[eid])
             if note:
                 figures.append((eid, names.strip(note)))
                 sources |= set(srcs)
@@ -2438,8 +3228,10 @@ class Illustrator:
                 raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         if job.kind in ENTITY_KINDS:
             e = b.ents.get(job.target) or {}
-            seqs = self._mentions(bi, job.target, upto, 8) if job.kind == "portrait" else \
-                [b.seq_of[a] for f in e.get("facets", []) for a in f["evidence"] if a in b.seq_of and b.seq_of[a] <= upto]
+            ts = fscope.get(job.target)
+            seqs = self._mentions(bi, job.target, upto, 8, ts, fin) if job.kind == "portrait" else \
+                self._in_scope(bi, [b.seq_of[a] for f in e.get("facets", []) for a in f["evidence"] if a in b.seq_of
+                                    and b.seq_of[a] <= upto], ts, fin)
             who = vis[job.target]["name"] if job.target in vis else job.target
         else:
             cited = job.event["evidence"] if job.event else [a for e2 in (job.chapter or {}).get("events", [])[:6] for a in e2["evidence"]]
@@ -2466,9 +3258,15 @@ class Illustrator:
             if before:
                 ctx.append("Earlier in the chapter: " + " / ".join(e2["summary"] for e2 in before))
                 sources |= {e2["from"] for e2 in before}
+        notes_of = dict(figures)
         for eid in ids[:6]:
             v = vis[eid]
-            line = v["name"] + (f" (also {', '.join(v['aliases'][:2])})" if v["aliases"] else "") + (": " + v["profile"]["text"] if v["profile"] else "")
+            also = f" (also {', '.join(v['aliases'][:2])})" if v["aliases"] else ""
+            if fscope[eid] is not None:
+                # drawn per story time: its profile blends the times, so the line is its note of this scope, or its kind
+                ctx.append(v["name"] + also + (": " + notes_of[eid] if notes_of.get(eid) else f" ({P.KINDS.get(v.get('type'), v.get('type') or 'figure')})"))
+                continue
+            line = v["name"] + also + (": " + v["profile"]["text"] if v["profile"] else "")
             ctx.append(line)
             own = {f["id"]: f["from"] for f in b.ents.get(eid, {}).get("facets", []) if f["from"] in b.ord_of}
             sources |= {own[f["id"]] for f in ([v["profile"]] if v["profile"] else []) + v["facets"][:4] if f["id"] in own}
@@ -2479,12 +3277,13 @@ class Illustrator:
         # the surroundings: a portrait's are its figure's milieu, a scene's the setting of its moment (its place's note when it has one)
         milieu = ""
         if job.kind == "portrait":
-            milieu, msrcs, mbooks = self.milieu(bi, job.target, anchor, fin)
+            milieu, msrcs, mbooks = self.milieu(bi, job.target, anchor, fin, fscope.get(job.target))
             sources |= set(msrcs)
             inherits |= set(mbooks)
         elif job.event and (st := job.event.get("setting")) and st.get("place") in vis \
-                and (b.ents.get(st["place"]) or {}).get("type") in NOTE_TYPES:
-            note, _, msrcs, mbooks = self.ensure_note(bi, st["place"], anchor, "", fin)
+                and (b.ents.get(st["place"]) or {}).get("type") in NOTE_TYPES \
+                and (ps := self.figure_scope(bi, st["place"], anchor, scene_scope, fin)) != PASSAGE:
+            note, _, msrcs, mbooks = self.ensure_note(bi, st["place"], anchor, "", fin, ps)
             if note:
                 milieu = note
                 sources |= set(msrcs) | {job.event["from"]}
@@ -2512,21 +3311,32 @@ class Illustrator:
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise ValueError("dropped: written from content after its anchor")
         refs: list[tuple[int, dict]] = []
+        likeness = False
+        ts = fscope.get(job.target) if job.kind in ENTITY_KINDS else None
         if job.kind in ("plate", "event"):
-            refs = self._references(ids, pos, view, fin)
+            refs = self._references(ids, pos, view, fin, fscope)
         elif job.kind == "portrait" and job.change:
-            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
+            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True, scope=ts)
             refs = [prev] if prev else []
+        elif job.kind == "portrait" and ts and self.likeness and not self.latest_picture(
+                job.target, pos, ("portrait",), strict=True, finished=fin, scope=ts):
+            # the first portrait of a story time: the figure's portrait at another time keeps the likeness
+            other = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True, other=ts)
+            refs, likeness = ([other], True) if other else ([], False)
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         # the last check, on the whole prompt as the image model gets it (`_assemble` strips what it can; a custom style may
         # name someone too): what is still there drops the prompt
-        text = self._assemble(scene, [n for _, n in figures], world, bi, self._place_line(job.kind, milieu))
+        text = self._assemble(scene, [n for _, n in figures], world, bi, self._place_line(job.kind, milieu), likeness)
         if hit := names.find(text):
             raise Dropped("dropped: name in prompt", f"name in the text: {hit}", self._say(f"name in the text: {hit}", bi, anchor, fin))
+        if job.kind in ENTITY_KINDS:
+            scope = ts if ts not in (None, PASSAGE) else job.scope
+        else:
+            scope = scene_scope if scene_scope != OTHER and any(v not in (None, PASSAGE) for v in fscope.values()) else None
         return Prompt(text, scene, anchor, job.shape or SHAPE_OF[job.kind], figures, refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
-                      sorted(inherits - {me}), fin is not None, world, milieu)
+                      sorted(inherits - {me}), fin is not None, world, milieu, scope=scope, likeness=likeness)
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
         """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
@@ -2571,12 +3381,15 @@ class Illustrator:
             return "Place: " + milieu.rstrip()
         return "Plain, neutral background." if kind == "portrait" else ""
 
-    def _assemble(self, scene: str, notes: list[str], world: str, bi: int = -1, place: str = "") -> str:
-        """What the image model gets: the scene, then the notes, the place, the era note and the style, all added by code. A
-        name any of them still carries (a custom style naming someone) is replaced by a role word, as in the scene."""
+    def _assemble(self, scene: str, notes: list[str], world: str, bi: int = -1, place: str = "", likeness: bool = False) -> str:
+        """What the image model gets: the scene, then the notes (and, for a likeness reference from another story time, the
+        line saying so), the place, the era note and the style, all added by code. A name any of them still carries (a custom
+        style naming someone) is replaced by a role word, as in the scene."""
         parts = [scene.rstrip()]
         if notes:
             parts.append("Figures: " + " ".join(n.rstrip(".") + "." for n in notes))
+        if likeness:
+            parts.append(LIKENESS)
         if place:
             parts.append(place)
         if world:
@@ -2588,7 +3401,7 @@ class Illustrator:
     # ---- cost and the cap
 
     def _skip(self, bi: int, target: str, reason: str, final: bool = False, kind: str = "", anchor: str = "",
-              detail: str = "", refused: bool = False) -> None:
+              detail: str = "", refused: bool = False, scope: str | None = None) -> None:
         """Record a skip with its reason (and the provider's or model's own words in `detail`), all under the lock. A `final`
         one (a refusal, no look described) is kept in the manifest and not tried again on resume. A refusal counts once, as
         refused, never also as a skip."""
@@ -2599,7 +3412,8 @@ class Illustrator:
                 self.report.skipped[reason] += 1
             self.report.reasons.append({"target": target, "reason": f"{reason} ({detail})" if detail else reason})
             if final:
-                self.man[bi]["skipped"].append({"target": target, "reason": reason, "kind": kind, "from": anchor, "final": True})
+                self.man[bi]["skipped"].append({"target": target, "reason": reason, "kind": kind, "from": anchor, "final": True,
+                                                **({"scope": scope} if scope else {})})
                 self._save(bi)
 
     def _spent(self) -> float:
@@ -2642,6 +3456,9 @@ class Illustrator:
                **({"notes": pr.version} if pr.version is not None else {})}
         if pr.partial:
             rec["partial"] = True
+        scope = pr.scope if pr.scope is not None else job.scope
+        if scope:
+            rec["scope"] = scope
         if job.kind in ENTITY_KINDS:
             rec["appearance"] = dict(pr.notes).get(job.target, "")
         rec.update({"provider": self.provider, "model": pic.model or self.model, "quality": self.quality, "shape": pr.shape,
@@ -2668,7 +3485,7 @@ class Illustrator:
             pr = prompt or self.make_prompt(job)
         except ValueError as e:
             self._skip(bi, job.target, str(e), final=str(e) == "skipped: no look described", kind=job.kind, anchor=job.anchor,
-                       detail=getattr(e, "detail", ""))
+                       detail=getattr(e, "detail", ""), scope=job.scope)
             self.log(f"    skipped {job.kind} {job.target}: {e}")
             return None
         if text:
@@ -2701,12 +3518,12 @@ class Illustrator:
                         soft = None
                 if not soft:
                     self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor,
-                               detail=e.reason[:160], refused=True)
+                               detail=e.reason[:160], refused=True, scope=job.scope)
                     return None
-                text_ = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi, self._place_line(job.kind, pr.milieu))
+                text_ = self._assemble(soft, [n for _, n in pr.notes], pr.world, bi, self._place_line(job.kind, pr.milieu), pr.likeness)
                 if hit := self.names[bi].find(text_):     # the same last check as make_prompt's
                     self._skip(bi, job.target, "dropped: name in prompt", final=True, kind=job.kind, anchor=job.anchor,
-                               detail=f"name in the text: {hit}")
+                               detail=f"name in the text: {hit}", scope=job.scope)
                     return None
                 pr.scene, pr.text = soft, text_
                 continue
@@ -2769,27 +3586,32 @@ class Illustrator:
             jobs = jobs[:budget]
         needs: dict[str, list[tuple[int, str, str]]] = {}
         b = self.books[bi]
+        self.timeline(bi)
         for j in jobs:
             a = self._anchor(bi, j.anchor)
             view = self.view(bi, a)
             vis = {x["id"] for x in view["entities"]}
+            scene = self._scene_scope(j)
             for eid in self._figures(j):
                 e = b.ents.get(eid)
                 if eid in vis and e and e["type"] in NOTE_TYPES:
+                    fs = self.figure_scope(bi, eid, a, scene)
+                    if fs == PASSAGE:
+                        continue             # drawn from the passage only: no note
                     needs.setdefault(eid, []).append((b.ord_of[a], a, j.change if j.kind == "portrait" and eid == j.target else "",
-                                                      j.kind == "portrait" and eid == j.target))
+                                                      j.kind == "portrait" and eid == j.target, fs or ""))
 
         def entity(item):
-            for _, a, change, portrait in sorted(set(item[1])):
+            for _, a, change, portrait, fs in sorted(set(item[1])):
                 with self.lock:
                     if not self.stop and self._over_cap():
                         self.stop = f"cost cap ${self.cap:.2f} reached"
                 if self.stop:
                     return
                 try:
-                    self.figure_note(bi, item[0], a, change)     # its groups' notes too, at the same anchor
+                    self.figure_note(bi, item[0], a, change, None, fs or None)     # its groups' notes too, at the same anchor
                     if portrait:
-                        self.milieu(bi, item[0], a)
+                        self.milieu(bi, item[0], a, None, fs or None)
                 except TextFailed as e:     # the picture that needs it tries once more, then is skipped
                     self.log(f"  note for {item[0]}: text model failed ({e.detail})")
         with ThreadPoolExecutor(self.workers) as pool:

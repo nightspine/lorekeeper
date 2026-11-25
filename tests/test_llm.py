@@ -216,6 +216,9 @@ def test_fenced_json_and_refusals(openai_server):
     assert m.complete("s", "p", SCHEMA) == {"a": [{"x": "y"}]}
     FakeOpenAI.script = [ok(None, refusal="no")]
     assert m.complete("s", "p", SCHEMA) == {} and m.usage.refusals == 1
+    # Gemini's safety block names its reason after "content_filter" and sends no content: a refusal, never a JSON error
+    FakeOpenAI.script = [ok(None, finish="content_filter: PROHIBITED_CONTENT")]
+    assert m.complete("s", "p", SCHEMA) == {} and m.usage.refusals == 2
 
 
 def test_rate_limit_is_retried_then_succeeds(openai_server):

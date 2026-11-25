@@ -123,8 +123,8 @@ class Text:
     groups it picks (default none), `check(text, source)` which look phrases it calls unfounded (default none)."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None, look=None, change=None, groups=None,
-                 check=None, amend=None, intro=None):
-        self.amend, self.intro = amend, intro
+                 check=None, amend=None, intro=None, timeline=None, shows_at=None):
+        self.amend, self.intro, self.timeline, self.shows_at = amend, intro, timeline, shows_at
         self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
@@ -134,6 +134,11 @@ class Text:
 
     def complete(self, system, prompt, schema, prefix=None):
         self.prompts.append(prompt)
+        if "say which line of telling it belongs to" in prompt:
+            return (self.timeline or one_line)(tl_parts(prompt))
+        if "Below are paragraphs that mention" in prompt:     # the paragraph check: by default each shows its chapter's time
+            paras = re.findall(r"^(\d+)\. \[(s\d+)\] (.*)$", prompt, re.M)
+            return {"paragraphs": [{"n": int(n), "line": (self.shows_at or (lambda t, m: m))(t, m)} for n, m, t in paras]}
         if "Which of them are a visible moment" in prompt:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
@@ -179,6 +184,26 @@ class Text:
 
     def scenes(self):
         return [p for p in self.prompts if "Write the picture prompt" in p]
+
+
+def tl_parts(prompt):
+    """What the timeline prompt shows, parsed for a scripted answer: the chapter, its numbered paragraphs, its events, the
+    known lines and the previous chapter's line."""
+    chapter = re.search(r"^Chapter: (.*)$", prompt, re.M).group(1)
+    body = prompt.split("Its opening, numbered by paragraph:\n", 1)[1]
+    paras = dict(re.findall(r"^\s*\[(\d+)\] (.*)$", body, re.M))
+    events = re.findall(r"^(\d+)\. (.*)$", body.split("Its events, each with", 1)[1], re.M)
+    known = re.findall(r"^- (s\d+): ([^;]*); era (\d+)", prompt, re.M)
+    prev = re.search(r"The previous chapter was told in (s\d+)\.", prompt)
+    return {"chapter": chapter, "title": chapter.split(" > ")[-1], "paras": {int(k): v for k, v in paras.items()},
+            "events": [(int(n), t) for n, t in events], "known": known, "prev": prev.group(1) if prev else None, "prompt": prompt}
+
+
+def one_line(p):
+    """A linear book: one line of telling from the first chapter on."""
+    first = " ".join(p["paras"][1].split()[:4])
+    return {"strand": p["prev"] or (p["known"][0][0] if p["known"] else "new"), "label": "the story",
+            "cue": {"paragraph": 1, "quote": first}, "skip": False, "events": []}
 
 
 def note_reply(note, prompt):
@@ -1554,8 +1579,8 @@ def test_a_softened_redraw_runs_the_same_last_name_check(monkeypatch):
     quiet = ("A door stands ajar in a stone mill at dusk and a long shadow lies across the worn floor. A lamp burns low on a wooden table "
              "beside a woven basket, and the last grey light comes through one small window. The room is quiet and empty and the air is still.")
     real = art.Illustrator._assemble
-    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1, place="":
-                        real(self, scene, notes, world, bi, place) + (" Oren" if scene.startswith(quiet[:20]) else ""))
+    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1, place="", likeness=False:
+                        real(self, scene, notes, world, bi, place, likeness) + (" Oren" if scene.startswith(quiet[:20]) else ""))
     t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
     im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30])])
     il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
@@ -2307,3 +2332,365 @@ def test_a_role_loses_the_title_and_words_a_stripped_name_leaves_dangling():
     t = Text(notes={"Oren": ("Only son of Mr. and Mrs. Dursley", ["broad"])})
     il, rep, sink, t, im = run(d, bk, text_=t)
     assert sink.m["appearance"]["oren"][0]["text"] == "Only son: broad."
+
+
+# ---- story time: a book that tells more than one time draws each figure as it looks at the time a scene tells
+
+FRAME = ["In the cold cell the old woman Mira sat with her white hair loose.",
+         "Many years on Mira told the young scribe Tomas how it began at the mill.",
+         "The scribe Tomas wrote down every word Mira said by the candle."]
+YOUTH = ["When she was a girl Mira carried baskets to the mill each morning.",
+         "Young Mira had dark braided hair and a brown shawl that summer.",
+         "The miller Oren greeted young Mira at the gate with a smile.",
+         "In the cell old Mira paused and drank before she went on.",
+         "Mira and Oren carried the sacks of flour to the cart outside."]
+FRAME2 = ["Twenty years later the old woman Mira rubbed the scar on her face.",
+          "Tomas asked Mira what became of the miller after the storm.",
+          "Mira said nothing and stared at the stone wall for a long time."]
+MIRA_BOTH = ("a woman", ["white hair", "the scar on her face", "dark braided hair", "a brown shawl"])
+MIXED = "An old woman with white hair, held in a cell, who as a girl had dark braided hair and a brown shawl."
+
+
+def frame_book():
+    return book(("Prologue", FRAME), ("One", YOUTH), ("Epilogue", FRAME2))
+
+
+def frame_doc(bk):
+    fac = lambda i, at, txt, ev=None: {"id": f"bk.mira.f{i}", "from": at, "basis": "stated", "evidence": ev or [at], "text": txt}  # noqa: E731
+    mira = ent("mira", "Mira", facets=[fac(1, "a0", "An old woman with white hair, held in a cell."),
+                                       fac(2, "a4", "A girl with dark braided hair and a brown shawl."),
+                                       fac(3, "a8", "Her face bears a scar from long ago."),
+                                       {**portrait("mira", "a8", MIXED), "evidence": ["a0", "a4", "a8"]}])
+    oren = ent("oren", "Oren", frm="a5", facets=[portrait("oren", "a5", "The miller with flour on his sleeves and a leather apron.")])
+    tomas = ent("tomas", "Tomas", frm="a1", facets=[portrait("tomas", "a2", "A young scribe in a long black cloak who writes by candle.")])
+    evs = [event(1, 1, "Old Mira begins to tell the scribe her story in the cell.", ["mira", "tomas"], "turn"),
+           event(2, 5, "Young Mira meets the miller Oren at the gate of the mill.", ["mira", "oren"], "turn"),
+           event(3, 6, "In the cell, old Mira pauses her tale and drinks.", ["mira"]),
+           event(4, 7, "Mira and Oren load the sacks of flour onto the cart.", ["mira", "oren"]),
+           event(5, 9, "Tomas asks old Mira what became of the miller.", ["mira", "tomas"], "turn")]
+    return doc(bk, entities=[mira, oren, tomas], events=evs,
+               recaps=[recap(1, 2, "Prologue"), recap(2, 7, "One"), recap(3, 10, "Epilogue")])
+
+
+def scripted(table):
+    """A timeline answer per chapter title: (strand, label, cue paragraph, quote, events {summary start: strand}, skip quote)."""
+    def answer(p):
+        strand, label, cue, quote, exc, skip = (table[p["title"]] + ({}, ""))[:6] if len(table[p["title"]]) < 6 else table[p["title"]]
+        evs = [{"n": n, "line": s} for n, t in p["events"] for start, s in exc.items() if t.startswith(start)]
+        return {"strand": strand, "label": label, "cue": {"paragraph": cue, "quote": quote}, "skip": bool(skip),
+                "skip_quote": skip, "events": evs}
+    return answer
+
+
+FRAME_TL = {"Prologue": ("new", "an old woman telling her tale in a cell", 1, "the old woman Mira"),
+            "One": ("new", "her girlhood at the mill", 1, "When she was a girl", {"In the cell": "s1"}),
+            "Epilogue": ("s1", "", 1, "the old woman Mira")}
+
+
+def frame_run(table=FRAME_TL, d=None, bk=None, **kw):
+    bk = bk or frame_book()
+    d = d or frame_doc(bk)
+    t = kw.pop("text_", None) or Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(table))
+    return run(d, bk, text_=t, **kw)
+
+
+def mira_note(prompt):
+    return next((x for x in prompt.split("Figures: ", 1)[-1].split(". ") if "hair" in x or "shawl" in x or "scar" in x), "")
+
+
+def test_a_frame_story_labels_its_lines_and_never_gives_a_scene_another_times_note_or_reference():
+    il, rep, sink, t, im = frame_run(level="all")
+    tl = sink.m["timeline"]
+    assert [s["id"] for s in tl["strands"]] == ["s1", "s2"] and tl["chapters"]["One"]["events"] == {"e3": "s1"}
+    assert [(r["seq"], r["scope"]) for r in tl["runs"]] == [(0, "s1.1"), (3, "s2.1"), (8, "s1.1")]
+    ports = {p["scope"]: p for p in pics(sink, "portrait") if p["target"] == "mira"}
+    assert set(ports) == {"s1.1", "s2.1"}
+    assert "white hair" in ports["s1.1"]["appearance"] and "braided" not in ports["s1.1"]["appearance"]
+    assert "braided" in ports["s2.1"]["appearance"] and "white hair" not in ports["s2.1"]["appearance"]
+    for p in pics(sink):
+        scope = p.get("scope")
+        if p["kind"] == "portrait" or scope is None:
+            continue
+        if scope == "s2.1":
+            assert "white hair" not in p["prompt"] and "scar" not in p["prompt"]
+        if scope == "s1.1":
+            assert "braided" not in p["prompt"] and "shawl" not in p["prompt"]
+        assert all(r != ports[s]["id"] for s in ports if s != scope for r in p["references"])
+    youth = next(p for p in pics(sink, "plate") if p["target"] == "One")
+    assert youth["scope"] == "s2.1" and "dark braided hair" in youth["prompt"].lower() and ports["s2.1"]["id"] in youth["references"]
+    # the frame's moment inside the girlhood chapter is the frame's
+    pause = next(p for p in pics(sink, "event") if p["target"] == "e3")
+    assert pause["scope"] == "s1.1" and "white hair" in pause["prompt"] and "braided" not in pause["prompt"]
+
+
+def test_a_multi_entitys_note_prompt_and_scene_context_hold_no_mixed_profile_text():
+    il, rep, sink, t, im = frame_run()
+    notes = [p for p in t.prompts if "appearance note for Mira" in p]
+    assert notes and not any("who as a girl" in p for p in notes)
+    assert not any("who as a girl" in p for p in t.scenes())
+    # her notes are per scope (one written before her second time began has none: it is her first time's); a single-scope
+    # figure's note has none
+    o = ordinal(il.books[0].doc)
+    assert {n.get("scope") for n in sink.m["appearance"]["mira"]} <= {None, "s1.1", "s2.1"} and "s2.1" in {
+        n.get("scope") for n in sink.m["appearance"]["mira"]}
+    assert all(o[n["from"]] < o["a4"] for n in sink.m["appearance"]["mira"] if "scope" not in n)
+    assert all("scope" not in n for n in sink.m["appearance"]["oren"])
+
+
+def test_a_flash_forward_frame_leaves_the_rest_of_the_cast_as_before():
+    _, _, on, _, _ = frame_run()
+    _, _, off, _, _ = frame_run(story_time=False)
+    for who in ("oren", "tomas"):
+        a = [p["prompt"] for p in pics(on, "portrait") if p["target"] == who]
+        b = [p["prompt"] for p in pics(off, "portrait") if p["target"] == who]
+        assert a == b and len(a) == 1 and all("scope" not in p for p in pics(on, "portrait") if p["target"] == who)
+    assert len([p for p in pics(off, "portrait") if p["target"] == "mira"]) < 3
+
+
+def test_a_linear_book_is_one_scope_and_draws_byte_for_byte_as_before():
+    # the second chapter is the same time from another figure's side: one line of telling, as the prompt asks
+    assert "another narrator, viewpoint, character or place at the same" in " ".join(art.TIMELINE.split())
+    for level in ("main", "all"):
+        il, rep, s_on, t_on, im_on = run(level=level)
+        _, _, s_off, t_off, im_off = run(level=level, story_time=False)
+        assert len(s_on.m["timeline"]["strands"]) == 1 and s_on.m["timeline"]["runs"] == [{"seq": 0, "scope": "s1.1"}]
+        assert [c["prompt"] for c in im_on.calls] == [c["prompt"] for c in im_off.calls]
+        assert [c["references"] for c in im_on.calls] == [c["references"] for c in im_off.calls]
+        assert [p for p in t_on.prompts if "line of telling" not in p] == t_off.prompts
+        assert not any("scope" in p for p in s_on.m["pictures"]) and "timeline" not in s_off.m
+
+
+def test_an_event_before_its_chapters_cue_is_drawn_from_the_passage_only():
+    bk = frame_book()
+    d = frame_doc(bk)
+    d["events"].append(event(6, 8, "Old Mira rubs the scar on her face in the cell.", ["mira"]))
+    table = dict(FRAME_TL, Epilogue=("s1", "", 2, "Tomas asked Mira"))
+    il, rep, sink, t, im = frame_run(table, d, bk, level="all")
+    assert sink.m["timeline"]["chapters"]["Epilogue"]["cue"]["seq"] == 9 and il.scope_of(0, "a8") is None
+    assert (8, None) in [(r["seq"], r["scope"]) for r in sink.m["timeline"]["runs"]]
+    early = next(p for p in pics(sink, "event") if p["target"] == "e6")
+    assert "Figures:" not in early["prompt"] and not early["references"] and "scope" not in early
+
+
+def test_a_new_line_whose_cue_quote_is_not_in_its_paragraph_is_no_new_line():
+    table = dict(FRAME_TL, One=("new", "her girlhood", 1, "words the book never wrote"))
+    il, rep, sink, t, im = frame_run(table)
+    tl = sink.m["timeline"]
+    assert [s["id"] for s in tl["strands"]] == ["s1"] and tl["chapters"]["One"]["strand"] is None
+    assert not il.multi("mira", 0) and all("scope" not in n for n in sink.m["appearance"]["mira"])
+
+
+def test_a_dream_marked_other_is_drawn_from_the_passage_only_for_every_figure():
+    table = dict(FRAME_TL, One=("new", "her girlhood at the mill", 1, "When she was a girl", {"In the cell": "s1", "Mira and Oren": "other"}))
+    il, rep, sink, t, im = frame_run(table, level="all")
+    dream = next(p for p in pics(sink, "event") if p["target"] == "e4")
+    assert "Figures:" not in dream["prompt"] and not dream["references"]
+    assert il.event_scope(0, il.books[0].events["e4"]) == art.OTHER
+
+
+def test_a_line_past_the_cap_is_unknown(monkeypatch):
+    monkeypatch.setattr(art, "MAX_STRANDS", 2)
+    table = dict(FRAME_TL, Epilogue=("new", "a tale told inside the tale", 1, "Twenty years later"))
+    il, rep, sink, t, im = frame_run(table, level="all")
+    assert sink.m["timeline"]["chapters"]["Epilogue"]["strand"] is None and len(sink.m["timeline"]["strands"]) == 2
+    last = next(p for p in pics(sink, "plate") if p["target"] == "Epilogue")
+    assert "white hair" not in last["prompt"] and "braided" not in last["prompt"]       # Mira from the passage only
+    assert "black cloak" in last["prompt"].lower()                                             # Tomas, one scope, as before
+
+
+def test_a_stated_jump_of_years_starts_a_fresh_note_for_the_new_era():
+    table = dict(FRAME_TL, Epilogue=("s1", "", 1, "the old woman Mira", {}, "Twenty years later"))
+    il, rep, sink, t, im = frame_run(table)
+    lab = sink.m["timeline"]["chapters"]["Epilogue"]
+    assert lab["era"] == 2 and lab["skip"] == "Twenty years later"
+    notes = {n.get("scope"): n for n in sink.m["appearance"]["mira"]}
+    assert {"s2.1", "s1.2"} <= set(notes) and set(notes) & {None, "s1.1"}
+    assert "scar" in notes["s1.2"]["text"] and "white hair" not in notes["s1.2"]["text"] and not notes["s1.2"]["text"].startswith("The same")
+    # a skip claimed with words its cue paragraph lacks is no skip
+    table = dict(FRAME_TL, Epilogue=("s1", "", 1, "the old woman Mira", {}, "a century passed"))
+    _, _, sink2, _, _ = frame_run(table)
+    assert sink2.m["timeline"]["chapters"]["Epilogue"]["era"] == 1
+
+
+def test_a_jump_forward_into_a_second_book_keeps_the_first_books_line():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+
+    def tl(p):
+        if p["title"] == "Three":
+            return {"strand": "s1", "cue": {"paragraph": 1, "quote": "years later"}, "skip": True, "skip_quote": "came back to the mill years later"}
+        return one_line(p)
+    t = Text(timeline=tl)
+    art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, Image(), "ink", portraits="all", workers=1,
+                    log=lambda *_: None, pause=0).run()
+    lab = s2.m["timeline"]["chapters"]["Three"]
+    assert lab["strand"] == "s1" and lab["era"] == 2 and s2.m["timeline"]["strands"] == []
+    assert s2.m["timeline"]["runs"] == [{"seq": 0, "scope": "s1.2"}]
+    assert any("- s1: the story; era 1" in p for p in t.prompts if "Chapter: Three" in p)
+
+
+def test_two_portraits_on_one_held_anchor_stay_apart_when_their_times_differ(monkeypatch):
+    monkeypatch.setattr(art, "WORLD_MIN_WORDS", 60)       # the world note spans the prologue and the girlhood chapter
+    il, rep, sink, t, im = frame_run()
+    ms = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
+    assert sorted(p["scope"] for p in ms) == ["s1.1", "s2.1"] and len({p["from"] for p in ms}) == 1
+    _, _, off, _, _ = frame_run(story_time=False)
+    assert len([p for p in pics(off, "portrait") if p["target"] == "mira"]) == 1      # one time: they merge, as before
+
+
+def test_a_times_first_portrait_takes_the_other_times_as_a_likeness_reference_only_when_on():
+    il, rep, sink, t, im = frame_run(likeness=True)
+    ms = {p["scope"]: p for p in pics(sink, "portrait") if p["target"] == "mira"}
+    assert ms["s2.1"]["references"] == [ms["s1.1"]["id"]] and art.LIKENESS in ms["s2.1"]["prompt"]
+    assert art.LIKENESS not in ms["s1.1"]["prompt"] and not ms["s1.1"]["references"]
+    assert art.LIKENESS_REFERENCE is False         # off by default: the bench A/B saw it carry the other time's look
+    _, _, off, _, _ = frame_run()
+    ms = {p["scope"]: p for p in pics(off, "portrait") if p["target"] == "mira"}
+    assert not ms["s2.1"]["references"] and art.LIKENESS not in ms["s2.1"]["prompt"]
+
+
+def test_a_resume_asks_for_no_timeline_and_draws_nothing_again():
+    bk = frame_book()
+    d = frame_doc(bk)
+    il, rep, sink, t, im = frame_run(d=d, bk=bk, level="all")
+    assert sum("line of telling" in p for p in t.prompts) == 3
+    _, rep2, _, t2, im2 = frame_run(d=d, bk=bk, sink=sink, level="all")
+    assert not t2.prompts and not im2.calls and rep2.drawn == 0
+    # a changed chapter is labelled again from there on, the chapters before it are not
+    d["events"][-1]["summary"] = "Tomas asks old Mira, at last, what became of the miller."
+    _, _, _, t3, _ = frame_run(d=d, bk=bk, sink=sink, level="all")
+    assert [re.search(r"^Chapter: (.*)$", p, re.M).group(1) for p in t3.prompts if "line of telling" in p] == ["Epilogue"]
+
+
+def test_counts_make_no_model_call_with_or_without_a_timeline():
+    bk = frame_book()
+    d = frame_doc(bk)
+    t = Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(FRAME_TL))
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert il.counts()["portraits"] == 3 and not t.prompts            # no timeline yet: planned as before
+    il.run()
+    n = len(t.prompts)
+    assert il.counts()["portraits"] == 4 and len(t.prompts) == n       # Mira once per time, from the cached timeline
+
+
+def test_the_cost_cap_stops_the_timeline_and_leaves_the_rest_unknown():
+    class Usage:
+        cost_usd = 0.0
+
+    class Costly(Text):
+        usage = Usage()
+
+        def complete(self, system, prompt, schema, prefix=None):
+            self.usage.cost_usd += 0.3
+            return super().complete(system, prompt, schema, prefix)
+    bk = frame_book()
+    il = art.Illustrator([art.Book(frame_doc(bk), bk, Mem())], Costly(notes={"Mira": MIRA_BOTH}, timeline=scripted(FRAME_TL)),
+                         Image(), "ink", portraits="all", cap=0.5, workers=1, log=lambda *_: None, pause=0)
+    il.timeline(0)
+    assert list(il.man[0]["timeline"]["chapters"]) == ["Prologue", "One"] and "cost cap" in il.stop
+    assert il.scope_of(0, "a9") is None and il.scope_of(0, "a5") == "s2.1"
+
+
+def test_a_note_or_picture_with_no_scope_follows_the_legacy_rules():
+    bk = frame_book()
+    il = art.Illustrator([art.Book(frame_doc(bk), bk, Mem())], Text(timeline=scripted(FRAME_TL)), Image(), "ink", portraits="all",
+                         workers=1, log=lambda *_: None, pause=0)
+    il.timeline(0)
+    o = ordinal(il.books[0].doc)
+    old = {"v": art.NOTE_VERSION, "from": "a2", "text": "A legacy note.", "details": [], "sources": [], "inherits": []}
+    late = {**old, "from": "a8", "text": "A late legacy note."}
+    il.man[0]["appearance"]["mira"] = [old, late]
+    # before her second time begins it counts as her first time's; after it, for no time at all
+    assert il.latest_note("mira", (0, o["a9"]), scope="s1.1")[1]["text"] == "A legacy note."
+    assert il.latest_note("mira", (0, o["a9"]), scope="s2.1") is None
+    assert il.latest_note("mira", (0, o["a9"]))[1]["text"] == "A late legacy note."      # one scope: as before
+    il.man[0]["pictures"].append({"id": "pold", "kind": "portrait", "target": "mira", "from": "a2", "notes": art.NOTE_VERSION,
+                                  "file": "pold.png"})
+    assert il.latest_picture("mira", (0, o["a9"]), current=True, scope="s1.1") is None   # never a reference for a scope
+    assert il.latest_picture("mira", (0, o["a9"]), current=True)[1]["id"] == "pold"
+
+
+def test_an_on_demand_portrait_is_drawn_at_the_readers_time():
+    bk = frame_book()
+    il = art.Illustrator([art.Book(frame_doc(bk), bk, Mem())], Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(FRAME_TL)),
+                         Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert il.job("portrait", "mira", at="a7").scope == "s2.1"
+    assert il.job("portrait", "mira", at="a10").scope == "s1.1"
+    assert il.job("portrait", "oren", at="a7").scope is None
+    pr = il.make_prompt(il.job("portrait", "mira", at="a7"))
+    assert pr.scope == "s2.1" and "braided" in pr.text and "white hair" not in pr.text
+
+
+def test_the_story_time_prompts_name_no_real_book():
+    words = ("Gabriel", "Celene", "Dior", "Astrid", "Dracula", "Harker", "Lucy", "Mina", "Helsing", "Holmes", "Watson", "Sherlock",
+             "Vampire", "Kristoff", "Stoker", "Doyle", "Jean", "historian", "silversaint", "Utah", "Mormon")
+    for text_ in (art.TIMELINE, art.LIKENESS):
+        assert not any(w.lower() in text_.lower() for w in words)
+
+
+def test_a_reader_who_has_not_finished_the_earlier_book_gets_a_timeline_without_its_lines_never_stored():
+    bk1, d1, bk2, d2 = series_docs()
+    s1, s2 = Mem(), Mem()
+    t = Text()
+    il = art.Illustrator([art.Book(d1, bk1, s1), art.Book(d2, bk2, s2)], t, Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    il.timeline(1)
+    assert s2.m["timeline"]["chapters"]["Three"]["strand"] == "s1"          # a run's reader: book one's line goes on
+    n = len(t.prompts)
+    il.timeline(1, finished=set())
+    asked = t.prompts[n:]
+    assert len(asked) == 1 and "the story; era" not in asked[0] and "none yet" in asked[0]
+    assert s2.m["timeline"]["chapters"]["Three"]["strand"] == "s1" and "partial" not in json.dumps(s2.m["timeline"])
+    mine = il._walk(1, frozenset())
+    assert 0 not in mine["books"] and list(mine["strands"]) == ["s2"] and mine["books"][1]["Three"]["scope"] == "s2.1"
+
+
+def test_a_frame_paragraph_inside_a_chapter_of_the_tale_stays_out_of_the_tales_note():
+    youth = ["When she was a girl Mira carried baskets to the mill each morning.",
+             "Young Mira had dark braided hair and a brown shawl that summer.",
+             "In her cell the old woman Mira has white hair and a scarred face now.",
+             "The miller Oren greeted young Mira at the gate with a smile."]
+    bk = book(("Prologue", FRAME), ("One", youth))
+    fac = lambda i, at, txt: {"id": f"bk.mira.f{i}", "from": at, "basis": "stated", "evidence": [at], "text": txt}  # noqa: E731
+    mira = ent("mira", "Mira", facets=[fac(1, "a0", "An old woman with white hair, held in a cell."),
+                                       fac(2, "a4", "A girl with dark braided hair and a brown shawl."),
+                                       fac(3, "a5", "The old woman has white hair and a scarred face.")])
+    oren = ent("oren", "Oren", frm="a6", facets=[portrait("oren", "a6", "The miller with flour on his sleeves and a leather apron.")])
+    d = doc(bk, entities=[mira, oren], events=[event(1, 1, "Old Mira begins to tell the scribe her story.", ["mira"], "turn"),
+                                               event(2, 6, "Young Mira meets the miller Oren at the gate.", ["mira", "oren"], "turn")],
+            recaps=[recap(1, 2, "Prologue"), recap(2, 6, "One")])
+    table = {"Prologue": FRAME_TL["Prologue"], "One": ("new", "her girlhood at the mill", 1, "When she was a girl")}
+
+    def youth_note(shows):
+        t = Text(notes={"Mira": MIRA_BOTH}, timeline=scripted(table), shows_at=shows)
+        _, _, sink, t, _ = run(d, bk, text_=t)
+        return next(n for n in sink.m["appearance"]["mira"] if n.get("scope") == "s2.1"), sink
+    note, _ = youth_note(None)                     # the chapter's time for every paragraph: the old woman's hair comes in
+    assert "white hair" in note["text"]
+    note, sink = youth_note(lambda text, marked: "s1" if "cell" in text else marked)
+    assert "white hair" not in note["text"] and "braided" in note["text"]
+    assert sink.m["shows"]["mira"]["5"]["line"] == "s1"
+    assert "bk.mira.f3" not in note["items"]
+
+
+def test_the_code_keeps_a_new_line_only_a_year_away_and_follows_the_one_line_marked_same_time():
+    def tl(p):
+        if p["title"] == "Prologue":
+            return {"strand": "new", "label": "the cell", "cue": {"paragraph": 1, "quote": "the old woman Mira"}, "lines": []}
+        if p["title"] == "One":        # "new", but less than a year from the chapter before: it goes on in the line before
+            return {"strand": "new", "label": "the mill", "gap": 0.5, "lines": [], "cue": {"paragraph": 1, "quote": "When she was a girl"}}
+        # the reply names s1 but marks only... s1 false and nothing else: its own choice stands
+        return {"strand": "s1", "gap": 0, "lines": [{"id": "s1", "same_time": True}], "cue": {"paragraph": 1, "quote": "x"}}
+    il, rep, sink, t, im = frame_run(text_=Text(notes={"Mira": MIRA_BOTH}, timeline=tl))
+    assert [c["strand"] for c in sink.m["timeline"]["chapters"].values()] == ["s1", "s1", "s1"]
+    assert not il.multi("mira", 0)
+
+    def tl2(p):
+        got = tl(p) if p["title"] != "One" else {"strand": "new", "label": "the girlhood", "gap": 20, "lines": [],
+                                                  "cue": {"paragraph": 1, "quote": "When she was a girl"}}
+        if p["title"] == "Epilogue":   # it says the girlhood, but marks only the cell as the same time: the per-line check wins
+            got = {"strand": "s2", "gap": 20, "lines": [{"id": "s1", "same_time": True}, {"id": "s2", "same_time": False}],
+                   "cue": {"paragraph": 1, "quote": "the old woman Mira"}}
+        return got
+    _, _, sink2, _, _ = frame_run(text_=Text(notes={"Mira": MIRA_BOTH}, timeline=tl2))
+    assert [c["strand"] for c in sink2.m["timeline"]["chapters"].values()] == ["s1", "s2", "s1"]
