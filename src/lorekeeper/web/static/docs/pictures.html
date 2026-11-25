@@ -46,7 +46,7 @@
 <p>The style is not part of what the text model writes. A prompt is the model's description, then the style sentence, then a sentence asking for no text in the picture. So changing the style in the picture sheet is instant: the sheet swaps the style sentence and writes nothing again. If you edited the prompt, the old style sentence is replaced where it still stands at the end. If you took it out, the sheet leaves your text alone and says that the style you chose is not in the prompt. Shape, quality, provider and model are instant too.</p>
 
 <h2 id="prompt">How a prompt is written</h2>
-<p>Each picture's prompt is written by one call to a text model. It reads the index and the book as they stand at the picture's point, each part marked with where it comes from, and writes a description of 60 to 150 words. For a portrait, a place or a thing it reads:</p>
+<p>Each picture's prompt is written by one call to a text model. It reads the index and the book as they stand at the picture's point, each part marked with where it comes from, and writes a description: 60 to 150 words for a scene, 50 to 110 for a portrait. For a portrait, a place or a thing it reads:</p>
 <ul>
 <li><strong>The entry.</strong> What the index says about them at that point: the latest description in full, then the details, up to about 6,000 characters. When a run has already marked which details tell the look, those come first.</li>
 <li><strong>The passages.</strong> Up to 900 words of the book's own paragraphs: first those the latest description and details cite, then the paragraphs where the book first describes them, then other paragraphs that mention them. Where the book and the index disagree about a look, the book wins.</li>
@@ -56,7 +56,13 @@
 <li><strong>Your note on the book's world</strong>, when you wrote one.</li>
 </ul>
 <p>For a chapter picture or a moment it reads the moment and where it happens, what happened in the chapter before it, up to 600 words of the paragraphs that tell it, and the entries of the people it names and of their groups, at most six. The model also says which of those people are in the picture.</p>
-<p>The model is told to describe only what this material says or plainly implies. It never gives a hair or eye colour, a garment or a hairstyle that the material does not state. Where the material is silent it says less, such as "aged" or "formal dress". It says who someone is, their people, rank, age and role, and what that looks like, since the image model knows nothing of the book. A portrait shows the figure alive, as they look at that point. Where the material does not say where the subject is, the background stays simple.</p>
+<p>The model is told to describe only what this material says or plainly implies. It never gives a hair or eye colour, a garment or a hairstyle that the material does not state. Where the material is silent it says less, such as "formal dress" or "a man". It says who someone is, their people, rank, age and role, and what that looks like, since the image model knows nothing of the book. Where the material does not say where the subject is, the background stays simple.</p>
+<p>An age is given only as the book gives it: a number, "a boy of sixteen", "young" or "old". When the book states it in two steps, the model works out a plain one, so "three years back I was thirty-two" becomes about thirty-five. It never ages someone with words the material does not use, such as "weathered", "grizzled" or "in his middle years". With no age in the material it writes "a man" or "a woman" and nothing that makes them look older. Scars and gauntness are described as marks, not as age.</p>
+
+<h3 id="portraits">Portraits</h3>
+<p>A portrait is a likeness, not a scene. Every portrait prompt opens with the same framing, put there by Lorekeeper rather than the model: "Portrait, head and shoulders to half length, the figure turned three-quarters toward the viewer, at rest, looking toward the viewer." The model is told the framing is given and never writes a pose of its own.</p>
+<p>The model then describes only how the figure looks at that point: face, age, build, skin, hair, eyes, scars and wounds they carry, tattoos, and what they wear and carry on them, such as a sword at the hip. Their hands are empty. There is no action, no gesture, no other figure and no event. The expression is one short phrase at most. Their people, caste or role stays, with what that looks like. The background is one short clause, from the places they usually are, or plain when none are known. It is never the room of a particular scene. A portrait shows the figure alive, or undead or transformed when they are at that point.</p>
+<p>A portrait drawn before version 0.18.1 may still hold a pose or an action. Redraw it and choose <strong>Write a new prompt</strong> to get the fixed framing. <strong>Same prompt</strong> would keep the old pose. See <a href="#change">Redraw, delete and undo</a>.</p>
 <p>The prompt never names a person or a creature, since a name invites the image model to draw what it remembers of the book. The names of peoples, houses, castes, places and things may stay, so "a young man of the Gold caste" is fine. A prompt that names someone is written once more. If the second one still does, the name is replaced by a role and the prompt is checked again. The picture is skipped if it still fails.</p>
 <p>The sheet writes its prompt with the strong model of the first cloud provider set up in Settings, in the order Settings lists them, such as Claude Sonnet or Gemini Pro. That takes a few seconds to half a minute and costs about a cent. A run writes with the cheap model of the run's own cloud provider, else of the first one set up, about a tenth of a cent a picture on Gemini Flash.</p>
 
@@ -65,10 +71,11 @@
 
 <h3 id="faces">Keeping one face</h3>
 <p>Each picture is drawn on its own. When a scene shows a character who has a portrait, that portrait is sent with the prompt as a picture to follow. A scene sends at most four, for the characters the model said are in it, most connected first. A new portrait after a change of look is drawn with the earlier one as a reference, so the same face ages rather than a new one appearing.</p>
+<p>The portrait can come from another style. When the style you are drawing in has no portrait of a character yet, the latest portrait of them in another style of the same book is sent instead. A comic-strip scene can then show the face of a digital-art portrait. The image model is told, beside the reference and not in your prompt, to take only the likeness from it: face, hair, build and marks, never the drawing style. Only a portrait you could see at that point counts. It must be drawn by version 0.18.0 or later, at or before the picture's point, and from a book you have finished. Lorekeeper reads the other style's pictures and never changes them. The picture's record names the style each such reference came from.</p>
 <p>This gives a character you can recognise from picture to picture. It does not give the same face every time. A new pose or new light can still drift, and in a crowded scene the image model may follow a reference loosely or not at all.</p>
 
 <h3 id="older">Pictures drawn by an earlier version</h3>
-<p>Pictures drawn before this version stay as they are, and so do their prompts. Nothing is redrawn. Earlier versions wrote notes on each character's look and an automatic world note. Those notes are kept in the set but no longer read, and a picture drawn from them is not sent as a reference for a new one. A world note you wrote yourself becomes your note on the book's world.</p>
+<p>Pictures drawn before version 0.18.0 stay as they are, and so do their prompts. Nothing is redrawn on its own. When you redraw one, <strong>Write a new prompt</strong> is the first choice, so it gets a prompt written the new way. To see which version your server runs, look at the foot of the section list in Settings, or point at the Lorekeeper name at the top of the rail. Earlier versions wrote notes on each character's look and an automatic world note. Those notes are kept in the set but no longer read, and a picture drawn from them is not sent as a reference for a new one. A world note you wrote yourself becomes your note on the book's world.</p>
 
 <h2 id="series">In a series</h2>
 <p>A later book builds on the earlier books' pictures. A character who already has a portrait is not drawn again unless the book records a change of look. Who counts as a main character is decided for each book on its own events, so a character who matters in book one but has a small part in book two gets no new portrait in book two. Scenes in book five use the portrait from book one, or its latest version. A prompt can use what the earlier books' index says about a character, and your note on an earlier book's world when this book has none.</p>
@@ -82,7 +89,7 @@
 <h2 id="sent">What is sent where</h2>
 <ul>
 <li><strong>The text model</strong> writes the prompt. It gets what <a href="#prompt">How a prompt is written</a> lists: the index text visible at the picture's point, up to 900 words of the book's paragraphs, never past that point, the book's title, author and series, and your note on the book's world. If the book was built on the same cloud provider, it already read that text then.</li>
-<li><strong>The image provider</strong> gets only the written prompt and the reference portraits. It never gets the book's text or the EPUB.</li>
+<li><strong>The image provider</strong> gets only the written prompt and the reference portraits, with a short note when a reference is in another style. It never gets the book's text or the EPUB.</li>
 </ul>
 <p>Pictures stay on your server. They are not part of share bundles or the community registry.</p>
 
@@ -101,7 +108,7 @@
 
 <h2 id="refusals">When a provider refuses</h2>
 <p>Image models refuse some scenes, mostly violence, gore and horror. The staking in <em>Dracula</em> and much of a war novel are likely to be refused. During a run, a refused picture is written once more as a quieter composition. If that is refused too, the picture is skipped and the report gives the provider's reason. A skipped picture is not tried again on resume. A skipped chapter picture leaves that chapter with no picture rather than a wrong one, though at "Every moment worth drawing" its other moments can still have theirs.</p>
-<p>A picture you draw from the Reader is drawn from the prompt the sheet shows, and that prompt is never rewritten. If it is refused, the sheet says so in one sentence with the provider's reason and keeps your prompt so you can change it.</p>
+<p>A picture you draw from the Reader is drawn from the prompt the sheet shows, and it is never rewritten without you. If it is refused, the sheet says so in one sentence with the provider's reason and keeps your prompt so you can change it. Under the reason, <strong>Rewrite it so it can be drawn</strong> asks the text model for a quieter picture of the same moment. It keeps who is there, where, the light and the mood. It shows what is hard to look at by implication: a figure covered, a face turned away, the moment before or after, the faces of those watching. It leaves out graphic detail, wounds and bodies shown dead, and it gives no age for anyone young. It never tries to trick the filter with misspellings, code words or another language. The new text goes into the prompt box with your style kept, and nothing is drawn until you read it and choose Draw. If that is refused too, the button is offered again. The rewrite reads the same material as the prompt, so it costs about a cent.</p>
 
 <h2 id="build">Drawing a whole book</h2>
 <p>There are two ways to draw a whole book.</p>
@@ -112,7 +119,7 @@
 <p>The Runs page shows "Drawing pictures" as the run's last phase, with a line such as "Pictures 12 of 52, $0.40 on pictures". A run can be stopped and resumed. A resume draws the rest and never draws a picture twice. If the drawing fails, the index stays as the run wrote it, with every picture drawn so far.</p>
 
 <h2 id="on-demand">Drawing one picture</h2>
-<p>In the Reader, <strong>Draw a picture</strong> is a quiet button under a chapter's recap, at the end of a Timeline row (shown when you point at the row, or tap it on a touch screen), and under an entry's name when it has no picture yet. Any person, creature, group, place or thing can be drawn this way. In a series, the entry button is offered only for an entry that has appeared in the book you are reading, and it is not shown in edit mode. The button appears when an image provider is set up or the book already has pictures, and only when the server has the book file.</p>
+<p>In the Reader, <strong>Draw a picture</strong> is a quiet button under a chapter's recap, at the end of a Timeline row (shown when you point at the row, or tap it on a touch screen), and under an entry's name. Any person, creature, group, place or thing can be drawn this way. In a series, the entry button is offered only for an entry that has appeared in the book you are reading, and it is not shown in edit mode. The button appears when an image provider is set up or the book already has pictures, and only when the server has the book file.</p>
 <p>It opens a sheet. The sheet writes a prompt from what you have read, which takes a few seconds to half a minute and costs about a cent. For a chapter, it lists the moments you can draw. You can then:</p>
 <ul>
 <li>change the prompt, or choose <strong>Write it again</strong>;</li>
@@ -120,11 +127,17 @@
 <li>add or change your note on the book's world;</li>
 <li>see the price, then choose <strong>Draw</strong>.</li>
 </ul>
-<p>Drawing the same moment again in another style uses the same prompt, with no wait.</p>
+<p>Drawing the same moment again in another style uses the same prompt, with no wait. Drawing an entry that already has a picture adds a new picture beside the old one. To swap a picture for a new one, use Redraw instead.</p>
 <p>The picture is filed where it belongs in the book, not at your position, so it shows at the same place for every reader of that index.</p>
 
 <h2 id="change">Redraw, delete and undo</h2>
-<p>Click a picture to open it full size. The arrows step through the other pictures of that chapter or entry that you can see. <strong>How this was drawn</strong> shows the prompt, the style, the model, the quality, the cost and the date. <strong>Redraw</strong> draws it again from the same prompt and references, with an optional note put first, such as "in daylight, closer to the face". The new picture replaces the old one. <strong>Delete</strong> asks first.</p>
+<p>Click a picture to open it full size. The arrows step through the other pictures of that chapter or entry that you can see. <strong>How this was drawn</strong> shows the prompt, the style, the model, the quality, the cost and the date. <strong>Delete</strong> asks first.</p>
+<p><strong>Redraw</strong> offers two choices:</p>
+<ul>
+<li><strong>Write a new prompt</strong> closes the picture and opens the picture sheet, titled "Redraw", for the same chapter, moment or entry. The prompt is written from what you have read so far, as for a new picture, and you can change it, the style and the rest before you choose Draw.</li>
+<li><strong>Same prompt</strong> draws the saved prompt again with the same references, with an optional note put first, such as "in daylight, closer to the face".</li>
+</ul>
+<p>For a picture drawn before version 0.18.0, <strong>Write a new prompt</strong> comes first, since its prompt was written the older way. For a newer picture, <strong>Same prompt</strong> comes first. Either way the new picture takes the old one's place. If you change the style on the sheet, the new picture goes into that style's set instead and the old one stays where it is. Write a new prompt is offered only when an image provider is set up and you can see what the picture shows at your position. Otherwise Redraw goes straight to the same prompt.</p>
 <p>Each change can be undone from the message that confirms it. Undo uses the same history as hand edits and duplicate merges, and it reverts only the pictures that change touched, so pictures drawn since are kept.</p>
 
 <h2 id="reader">Showing and hiding pictures</h2>
@@ -144,7 +157,7 @@
 <p>It writes the file with the extension of the format the provider sent and prints the model, size and cost. <code>--ref FILE</code> adds a picture to follow, up to six.</p>
 
 <h2 id="api">For developers</h2>
-<p>Pictures are not part of the index format or the <a href="protocol.html">/v0 protocol</a>, and the specification does not cover them. In this version they belong to the reference implementation: the web app, <code>lorekeeper illustrate</code> and <code>lorekeeper draw</code>. Each set is a folder per book edition and style, with an <code>art.json</code> manifest that lists each picture with its kind, what it shows, its <code>from</code> anchor, the prompt as sent, the provider, the model and the cost. The Reader compares a picture's <code>from</code> anchor with the reader's position exactly as it compares any other item's.</p>
+<p>Pictures are not part of the index format or the <a href="protocol.html">/v0 protocol</a>, and the specification does not cover them. In this version they belong to the reference implementation: the web app, <code>lorekeeper illustrate</code> and <code>lorekeeper draw</code>. Each set is a folder per book edition and style, with an <code>art.json</code> manifest that lists each picture with its kind, what it shows, its <code>from</code> anchor, the prompt as sent, the provider, the model and the cost. Its <code>references</code> are picture ids of the same set, or <code>{"set": slug, "id": id}</code> for a likeness taken from another style. A picture drawn with <code>replaces</code> took the place of the picture with that id. The Reader compares a picture's <code>from</code> anchor with the reader's position exactly as it compares any other item's.</p>
 
 </main>
 </div>

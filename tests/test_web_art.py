@@ -429,6 +429,235 @@ def test_a_redraw_keeps_the_earlier_books_its_prompt_carries(env):
     assert "inherits" not in stored[legacy["id"]]
 
 
+def test_a_draw_from_the_sheet_can_replace_a_picture_and_undo_brings_it_back(env):
+    """Redraw with a new prompt: the sheet's draw names the picture it takes the place of; the old one leaves the set as a
+    redraw does it, in one `redraw` journal entry."""
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A mill wheel at dusk.", "p": 1.0,
+           "replaces": old["id"]}
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json=ask)
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["replaces"] == old["id"] and new["prompt"] == "A mill wheel at dusk." and new["target"] == old["target"]
+    now = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert old["id"] not in {p["id"] for p in now} and next(p for p in now if p["id"] == new["id"])["replaces"] == old["id"]
+    assert len(now) == len(pics) and env.c.get(old["url"]).status_code == 404
+    entry = json.loads((env.data / "merges" / new["undo"] / "entry.json").read_text())
+    assert entry["kind"] == "art" and entry["art"]["op"] == "redraw" and entry["art"]["added"] == [new["id"]]
+    assert env.c.post(f"/api/library/{KEY}/undo/{new['undo']}").status_code == 200
+    back = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert old["id"] in {p["id"] for p in back} and new["id"] not in {p["id"] for p in back}
+    assert env.c.get(old["url"]).status_code == 200
+
+
+def test_a_draw_without_replaces_adds_a_version_beside_the_old_one(env):
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": old["kind"], "target": old["target"], "style": "ink",
+                                                          "prompt": "A mill wheel at dusk."})
+    assert r.status_code == 200 and "replaces" not in r.json()
+    now = {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert old["id"] in now and r.json()["id"] in now
+
+
+def test_replaces_must_name_a_visible_picture_of_the_same_target_in_the_set(env):
+    env.key()
+    run_set(env, portraits=False)
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    old = pics[0]
+    other = next(p for p in pics if (p["kind"], p["target"]) != (old["kind"], old["target"]))
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A mill wheel at dusk.", "p": 1.0}
+    calls = len(env.image.calls)
+    for bad, code in ((other["id"], "bad-replaces"), ("p00000000", "bad-replaces"), (7, "bad-replaces")):
+        r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "replaces": bad})
+        assert r.status_code == 422 and r.json()["code"] == code, (bad, r.text)
+    # a picture of another style's set is not this set's
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "replaces": old["id"]})
+    assert r.status_code == 422 and r.json()["code"] == "bad-replaces"
+    assert len(env.image.calls) == calls                          # refused before anything is drawn
+    assert {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]} == {p["id"] for p in pics}
+
+
+def test_replaces_never_names_a_picture_past_the_position(env):
+    """A picture whose anchor is past the reader's position is refused like the target, even when the target is reached."""
+    env.key()
+    run_set(env, portraits=False)
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    old = next(p for p in man["pictures"] if p["target"] == "Chapter One")
+    ask = {"kind": old["kind"], "target": old["target"], "style": "ink", "prompt": "A gate.", "p": 0.9, "replaces": old["id"]}
+    old["from"] = env.doc["anchors"][-1]["id"]                     # past the position asked with
+    path.write_text(json.dumps(man))
+    calls = len(env.image.calls)
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json=ask)
+    assert r.status_code == 422 and r.json()["code"] == "not-visible" and "picture" in r.json()["detail"], r.text
+    assert len(env.image.calls) == calls
+
+
+def fake_soften(monkeypatch, seen):
+    """`Illustrator.soften` as the pipeline shapes it (job, text, reason, finished) -> Prompt: here make_prompt with a
+    quieter body, so the route is tested without the pipeline's own rewrite."""
+    import dataclasses
+
+    def soften(self, job, text_, reason, finished=None):
+        seen.append({"job": job, "text": text_, "reason": reason, "finished": finished})
+        pr = self.make_prompt(job)
+        quiet = "A figure carries a covered shape along a muddy road at dusk."
+        return dataclasses.replace(pr, body=quiet, scene=quiet, text=" ".join([quiet, pr.style, pr.no_text]).strip())
+    monkeypatch.setattr(art.Illustrator, "soften", soften, raising=False)
+
+
+def test_soften_rewrites_a_refused_prompt_in_the_prompt_routes_shape(env, monkeypatch):
+    env.key()
+    seen = []
+    fake_soften(monkeypatch, seen)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e6", "style": "ink"}).json()
+    ask = {"kind": "event", "target": "e6", "style": "ink", "text": got["prompt"], "reason": "IMAGE_SAFETY", "p": 1.0}
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json=ask)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert set(got) == set(out) and out["body"].startswith("A figure carries a covered shape")
+    assert out["style"] == got["style"] and out["kind"] == "event" and out["target"] == "e6" and env.image.calls == []
+    assert seen[0]["text"] == " ".join(got["prompt"].split()) and seen[0]["reason"] == "IMAGE_SAFETY"
+    assert seen[0]["finished"] is None and seen[0]["job"].target == "e6"
+    # never cached as the job's prompt: the prompt route's own stays what a draw reuses
+    n = len(env.text.prompts)
+    d = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e6", "style": "ink",
+                                                          "prompt": out["prompt"]})
+    assert d.status_code == 200 and d.json()["prompt"] == " ".join(out["prompt"].split()) and len(env.text.prompts) == n
+
+
+def test_soften_keeps_the_prompt_routes_gates(env, monkeypatch):
+    env.key()
+    seen = []
+    fake_soften(monkeypatch, seen)
+    base = {"kind": "event", "target": "e5", "style": "ink", "text": "A hanging.", "reason": "IMAGE_SAFETY"}
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "p": "a2"})
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "text": ""}).json()["code"] == "bad-prompt"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "reason": "x" * 301}).json()["code"] == "bad-reason"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "finished": ["nope"]}).json()["code"] == "bad-position"
+    assert env.c.post(f"/api/library/{KEY}/art/soften", json={**base, "target": "e99"}).status_code == 404
+    assert seen == []                                              # refused before any writer call
+    r = env.c.post(f"/api/library/{KEY}/art/soften", json=base, headers={"X-Lorekeeper": ""})
+    assert r.status_code == 403
+
+
+def test_the_store_gives_the_other_style_sets_as_read_only_likeness_sinks(tmp_path):
+    s = store_mod.ArtStore(tmp_path)
+    h = "ef" * 32
+    for style, pid in (("ink", "p0000aaaa"), ("watercolour", "p0000bbbb")):
+        s.put(h, style, {"id": pid, "file": f"{pid}.png", "kind": "portrait"}, png(2, 2, b"x"))
+    got = s.likeness(h, "Ink")                       # a style by name: its own set is never a likeness of itself
+    assert list(got) == ["watercolour"] and got["watercolour"].manifest()["style"] == "watercolour"
+    with pytest.raises(PermissionError):
+        got["watercolour"].save({})
+    with pytest.raises(PermissionError):
+        got["watercolour"].put("y.png", b"y")
+    assert s.likeness(h, "comic").keys() == {"ink", "watercolour"} and s.likeness("00" * 32, "ink") == {}
+
+
+@pytest.fixture
+def books_seen(monkeypatch):
+    """Every pipeline `Book` the app builds."""
+    seen = []
+    real = art.Book
+
+    def make(*a, **k):
+        b = real(*a, **k)
+        seen.append(b)
+        return b
+    monkeypatch.setattr(store_mod.art, "Book", make)
+    return seen
+
+
+def test_routes_and_runs_hand_the_pipeline_the_other_sets_as_likeness(env, books_seen):
+    env.key()
+    run_set(env, portraits="all")                                  # ink pictures, portraits among them
+    assert books_seen[-1].likeness == {}                           # the first set: no other style yet
+    books_seen.clear()
+    ask = {"kind": "event", "target": "e6", "style": "Watercolour"}
+    assert env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).status_code == 200
+    assert list(books_seen[-1].likeness) == ["ink"]
+    books_seen.clear()
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": "A gate."}).status_code == 200
+    assert list(books_seen[-1].likeness) == ["ink"]
+    books_seen.clear()
+    run_set(env, style="watercolour", portraits=False)             # the run stage
+    assert set(books_seen[-1].likeness) == {"ink"}
+    books_seen.clear()
+    env.c.post(f"/api/library/{KEY}/art/soften", json={**ask, "text": "A gate.", "reason": "IMAGE_SAFETY"})
+    assert books_seen and set(books_seen[-1].likeness) == {"ink"}
+    ink = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert ink == env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]   # never written through
+
+
+def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env, monkeypatch):
+    """Comic has no portraits, ink has: the comic scene sends the ink portraits of the figures it shows, read from the
+    ink set and recorded as `{set, id}`, with the likeness-only words; the ink set is never written."""
+    env.key()
+    run_set(env, portraits="all")
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    assert portraits
+    real = art.Illustrator.make_prompt
+
+    def with_shows(self, job, finished=None):
+        pr = real(self, job, finished)
+        pr.shows = list(portraits)
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
+    ink_before = (env.data / "art" / env.hash / "ink" / "art.json").read_bytes()
+    env.image.calls.clear()
+    ask = {"kind": "event", "target": "e6", "style": "comic"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    assert got["references"] and all(x["set"] == "ink" and "/ink/" in x["url"] for x in got["references"])
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    rec = r.json()
+    assert rec["references"] and all(x["set"] == "ink" and x["id"] in portraits.values() for x in rec["references"])
+    call = env.image.calls[-1]
+    assert call["references"] and len(call["references"]) == len(rec["references"])
+    assert call["note"] == art.Illustrator.likeness_note([(0, {"set": "ink"})] * len(rec["references"])) != ""
+    assert "likeness" in call["note"] and call["note"] not in call["prompt"]
+    assert (env.data / "art" / env.hash / "ink" / "art.json").read_bytes() == ink_before
+    assert rec["prompt"] == got["prompt"]                          # the likeness words are not in the person's text
+
+
+def test_a_redraw_finds_a_likeness_reference_in_its_own_set(env, monkeypatch):
+    """A record holding a `{set, id}` reference is redrawn with that picture read from the other set (and a plain id from
+    its own), never failing on the dict."""
+    env.key()
+    run_set(env, portraits="all")
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    real = art.Illustrator.make_prompt
+
+    def with_shows(self, job, finished=None):
+        pr = real(self, job, finished)
+        pr.shows = list(portraits)
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
+    ask = {"kind": "event", "target": "e6", "style": "comic"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    first = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
+    assert first["references"] and isinstance(first["references"][0], dict)
+    # a mixed record: a likeness, a gone one and a malformed one are all read without failing
+    path = env.data / "art" / env.hash / "comic" / "art.json"
+    man = json.loads(path.read_text())
+    rec = next(p for p in man["pictures"] if p["id"] == first["id"])
+    rec["references"] = rec["references"] + [{"set": "ink", "id": "p00000000"}, {"set": 3}, 7]
+    path.write_text(json.dumps(man))
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={"note": "Closer"})
+    assert r.status_code == 200, r.text
+    assert r.json()["references"] == first["references"]
+    assert len(env.image.calls[-1]["references"]) == len(first["references"])
+
+
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
     env.key()
     run_set(env, portraits=False)
@@ -939,9 +1168,12 @@ def test_a_prompt_drawn_into_another_set_takes_its_references_from_that_set(env)
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
     assert got["references"]
     env.image.calls.clear()
+    ink_before = pictures(env)
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "prompt": got["prompt"]}).json()
-    assert rec["references"] == [] and env.image.calls[0]["references"] == []
-    # and back in ink, the ink portraits again
+    # watercolour has no portraits of its own: the ink ones go as likenesses, named by their set, never as watercolour's
+    assert rec["references"] == [{"set": "ink", "id": x["id"]} for x in got["references"]]
+    assert len(env.image.calls[0]["references"]) == len(got["references"]) and pictures(env) == ink_before
+    # and back in ink, the ink portraits again, as this set's own
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
     assert rec["references"] == [x["id"] for x in got["references"]]
 
@@ -959,11 +1191,13 @@ def test_a_prompt_made_in_an_empty_set_takes_the_shown_figures_references_in_ano
     monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
     ask = {"kind": "event", "target": "e6", "style": "watercolour"}
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
-    assert got["references"] == []                         # watercolour has no pictures to send
+    # watercolour has no pictures: the shown figures' ink portraits are its likenesses, each served from the ink set
+    assert got["references"] and all(x["set"] == "ink" and f"/ink/{x['id']}" in x["url"] for x in got["references"])
+    assert all(env.c.get(x["url"]).status_code == 200 for x in got["references"])
     n = len(env.text.prompts)
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "ink", "prompt": got["prompt"]}).json()
     assert len(env.text.prompts) == n and rec["references"]
-    assert set(rec["references"]) <= set(portraits.values())
+    assert set(rec["references"]) <= set(portraits.values())        # in ink they are its own: plain ids
 
 
 def test_the_background_note_is_the_books_in_every_style(env):

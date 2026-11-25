@@ -46,8 +46,11 @@ class ImageRefused(Exception):
 
 
 class ImageModel(Protocol):
+    """`note`: words about the reference pictures (which are only a likeness), sent with them and never part of the prompt
+    a person reads; "" sends none."""
+
     def draw(self, prompt: str, *, shape: str = "landscape", quality: str = "standard",
-             references: Sequence[tuple[bytes, str]] = ()) -> Drawn: ...
+             references: Sequence[tuple[bytes, str]] = (), note: str = "") -> Drawn: ...
 
 
 def _check(provider: str, model: str, shape: str, quality: str, references: Sequence) -> None:
@@ -136,10 +139,12 @@ class Gemini(_Base):
     """`POST {base_url}/models/{model}:generateContent` with image output."""
 
     def draw(self, prompt: str, *, shape: str = "landscape", quality: str = "standard",
-             references: Sequence[tuple[bytes, str]] = ()) -> Drawn:
+             references: Sequence[tuple[bytes, str]] = (), note: str = "") -> Drawn:
         _check(self.provider or "gemini", self.name, shape, quality, references)
         spec = llm.IMAGE_PROVIDERS["gemini"]
         parts = [{"inlineData": {"mimeType": mime, "data": base64.b64encode(data).decode()}} for data, mime in references]
+        if note and references:       # about the pictures, as its own part between them and the prompt
+            parts.append({"text": note})
         parts.append({"text": prompt})
         body = {"contents": [{"parts": parts}],
                 "generationConfig": {"responseModalities": ["IMAGE"],
@@ -189,7 +194,7 @@ class OpenAIImages(_Base):
     """`POST {base_url}/images/generations` (JSON), or `/images/edits` (multipart) when references are given."""
 
     def draw(self, prompt: str, *, shape: str = "landscape", quality: str = "standard",
-             references: Sequence[tuple[bytes, str]] = ()) -> Drawn:
+             references: Sequence[tuple[bytes, str]] = (), note: str = "") -> Drawn:
         _check(self.provider or "openai", self.name, shape, quality, references)
         spec = llm.IMAGE_PROVIDERS["openai"]
         size, level = spec["shapes"][shape], spec["quality"][quality]
@@ -198,7 +203,8 @@ class OpenAIImages(_Base):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         if references:
-            fields = [("model", self.name), ("prompt", prompt), ("quality", level), ("size", size),
+            # the edits call has one text field: the note about the references goes before the prompt in it
+            fields = [("model", self.name), ("prompt", f"{note}\n\n{prompt}" if note else prompt), ("quality", level), ("size", size),
                       ("output_format", "webp"), ("n", "1")]
             files = [("image[]", f"reference{i}{_ext(mime)}", mime, data) for i, (data, mime) in enumerate(references, 1)]
             body, headers["Content-Type"] = multipart(fields, files)

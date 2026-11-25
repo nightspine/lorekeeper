@@ -57,6 +57,9 @@ TYPE_WORDS = {"person": "person", "creature": "creature", "place": "place", "obj
               "organization": "group", "concept": "idea", "event": "event"}
 
 MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
+# sent with the reference pictures (never in the prompt a person reads) when some are drawn in another style
+LIKENESS = ("{which} drawn in another style. Take from {them} only the likeness of the figure (face, hair, build, marks), "
+            "never the drawing style, medium, line or colour treatment: draw everything in the style the prompt asks for.")
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
 MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
@@ -140,10 +143,11 @@ The material comes in tagged blocks. Each tag says where its text comes from and
 
 Rules:
 - Describe only what the material says or plainly implies: appearance, clothing, setting, light, mood. Add no events, people or facts from your own knowledge of the book.
-- Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("aged", "formal dress") rather than invent.
-- Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("an aged woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
+- Never give a specific look the material does not state: no hair, eye or skin colour, no garment or its colour, no hairstyle that is not in it. Where the material is silent, say less ("formal dress", "a man") rather than invent.
+- Describe people by how they look and who they are, never by name. Whenever the material says who they are, say it: their people, nation, caste or house, their rank, age and role ("a woman who rules the empire, of the ruling caste", "a young miner", "Benedictine monks"), and what that looks like as the material gives it. Clothes alone can make a person look like someone else. A name means nothing to the image model: write "a young man", never "a young man named X", "X, a young man" or "X's sister": describe each figure on their own. Use no name at all except the names of peoples, nations, castes, houses, orders, places and things that the material itself uses; never the name or title of a person or creature. Do not ask for the likeness of a real person.
 - When you say who someone is by their people, caste, house or nation, also say what that looks like as the material gives it (their group's <entry>, the passages): the image model knows nothing of that people, so "of the ruling caste" alone draws nothing.
 - Every sentence is something an illustrator can draw: bodies, faces, colouring, clothing, gear, poses, the setting, the light. A feeling only as an expression, a posture or the light. No relations to others ("the sister of a rival"), no backstory, no inner states ("hides a deep emptiness"), no "reflecting a ruler who demands obedience".
+- Age: state it as the material gives it (a number, "a boy of sixteen", "young", "old"), and work out a plain one when the material states it in two steps ("three years back I was thirty-two" means about thirty-five). Never age a figure with words the material does not use ("weathered", "aged", "in his middle years", "grizzled"); when the material gives no age, say "a man" or "a woman" and nothing that ages them. Hard living (scars, gauntness) is described as marks on them, not as age.
 - A portrait shows the figure as a living presence, as they look at this point: never their death, corpse or burial, even when the material tells of it. A figure that is undead or transformed is drawn as it looks at this point, undead or transformed.
 - Where the material does not say where the subject is, keep the background simple instead of inventing rooms, furniture or objects. A place is its own setting.
 - No text, letters, titles, captions or signatures in the picture.
@@ -153,8 +157,26 @@ Rules:
 - The reader has not finished the book. Show nothing from later in the story than the material, and describe things as a careful reader understands them at this point: no hindsight, no hints of what comes later.
 Return "text": the prompt."""
 
+# A portrait is a likeness, not a scene: code puts the framing first (PORTRAIT_FRAME) and the writer describes only the look.
+PORTRAIT_FRAME = ("Portrait, head and shoulders to half length, the figure turned three-quarters toward the viewer, at rest, "
+                  "looking toward the viewer.")
+PORTRAIT_WORDS = (30, 130)      # what the checks accept; the writer is asked for 50 to 110
+_SCENE_FORM = ("60 to 150 words, plain sentences in the present tense: the subject first, then the setting as far as the material "
+               "gives it, then light and mood.")
+assert _SCENE_FORM in WRITER
+PORTRAIT_WRITER = WRITER.replace(_SCENE_FORM, (
+    "50 to 110 words, plain sentences in the present tense: the figure first, then at most one short clause of background "
+    "and one of light.")).replace('Return "text": the prompt.', """This prompt is for a portrait, a likeness of the figure at this point, not a scene:
+- The framing and the pose are fixed and put before your text by code: never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
+- Describe only how the figure looks at this moment: face, age, build, skin, hair, eyes, marks, scars and wounds they carry, tattoos, and what they wear and carry on them, stowed (a sword at the hip, a pipe in a pocket). Their hands and mouth are empty: no action or gesture, nothing held up or in use, no events, no smoke or breath, no other figures.
+- Expression: one short phrase at most, and only as the material shows their usual or current bearing.
+- Their people, caste or role stays ("a silversaint", "of the Gold caste"), with what that looks like as the material gives it.
+- Background: one short clause at most: from <surroundings> when it is given, else plain ("a plain dark background"); never a room or place the passages tell a scene in, nor its objects. Light: one short clause.
+Return "text": the prompt.""")
+assert PORTRAIT_WRITER.count("This prompt is for a portrait") == 1
+
 TASKS = {
-    "portrait": "Write the prompt for a portrait of the entry to draw as they are at this point: head and shoulders or half length.",
+    "portrait": "Write the prompt for a portrait of the entry to draw: how they look at this point. The framing and pose are given; do not state them.",
     "place": "Write the prompt for a picture of the place to draw as it looks at this point; people only where the material puts them there.",
     "thing": "Write the prompt for a picture of the thing to draw as it looks at this point, in a plain setting or the place the material puts it.",
     "event": "Write the prompt for one picture of the moment: one scene, what is in frame, the composition and the light.",
@@ -163,8 +185,23 @@ TASKS = {
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
-SOFTEN = """\n\nThe image model refused to draw this: "{text}". Write a quieter composition of the same subject: nothing graphic,
-nothing violent or frightening in view (a doorway, a shadow, a face turned away, the room afterwards). Keep who and where."""
+# A refused prompt, written again from the same material: by a run once on its own, on the Reader's sheet when the person asks
+# (`Illustrator.soften`). A quieter picture of the same moment, never a trick to slip past the image model's filter.
+SOFTEN = """\n\nThe image model refused to draw this prompt: "{text}"{reason}. Write a quieter composition of the same subject, one an
+image model will draw: keep who is in it, where it is, the light and the mood. Show what is hard to look at by implication (a figure
+wrapped or covered, a face turned away, the moment just before or after, the onlookers' faces, a doorway, a shadow), and leave out
+graphic detail, wounds and injuries, blood, and bodies shown limp or dead; nothing violent or frightening in view. Give no age for
+anyone young: say "young". No tricks to get past a filter (misspellings, code words, euphemisms, other languages): a quieter picture
+of the same moment, in plain English."""
+SOFTEN_TEXT_CHARS = 900
+SOFTEN_REASON_CHARS = 200
+
+
+def soften_request(text: str, reason: str = "") -> str:
+    """The SOFTEN request for a refused prompt and the provider's reason (both trimmed; the reason may be empty)."""
+    text = " ".join(str(text or "").split())[:SOFTEN_TEXT_CHARS]
+    reason = " ".join(str(reason or "").split())[:SOFTEN_REASON_CHARS].replace('"', "'")
+    return SOFTEN.format(text=text.replace('"', "'"), reason=f' (the reason it gave: "{reason}")' if reason else "")
 
 
 class Sink(Protocol):
@@ -324,6 +361,9 @@ class Book:
     sink: Sink
     level: str | None = "main"
     draw: bool = True
+    # the edition's other style sets by slug, read only: a figure with no current picture in this set takes its likeness
+    # from one of them (`Illustrator.references`), never their drawing style
+    likeness: dict[str, Sink] = field(default_factory=dict)
 
 
 @dataclass
@@ -775,6 +815,16 @@ class Illustrator:
                 m.pop("worldOwn", None)
             self.man.append(m)
             self.styles.append(m["style"] or style)
+        # each book's other style sets (slug, sink, manifest), read once: only this edition's, never this set's own slug
+        self.like: list[list[tuple[str, Sink, dict]]] = []
+        for b, m in zip(self.books, self.man):
+            own = style_slug(m["style"] or style)
+            sets = []
+            for slug, sink in (b.b.likeness or {}).items():
+                lm = sink.manifest() if slug != own else None
+                if lm and (not lm.get("textHash") or lm["textHash"] == m["textHash"]) and style_slug(str(lm.get("style", ""))) != own:
+                    sets.append((slug, sink, lm))
+            self.like.append(sets)
         self.names = self._banned_names()
 
     # ---- small helpers
@@ -864,14 +914,15 @@ class Illustrator:
         return got, ""
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-                    schema: dict = SCHEMA, finished: frozenset[str] | None = None) -> tuple[str | None, str, dict]:
+                    schema: dict = SCHEMA, finished: frozenset[str] | None = None,
+                    system: str = WRITER) -> tuple[str | None, str, dict]:
         """One writer call, one rewrite naming what a check caught, then, when only a name is wrong, code replaces it by a
         role (`_Names.strip`) and checks the text again. (text, "", the reply) or (None, reason, the reply)."""
-        out = self._complete(prompt, schema, WRITER)
+        out = self._complete(prompt, schema, system)
         got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
         if got is None and why != "empty":
             tries = [(str(out.get("text") or ""), why, out)]
-            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, WRITER)
+            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, system)
             got, why = self._vet(out.get("text"), bi, anchor, source, words, finished)
             if got is None:
                 for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
@@ -896,9 +947,19 @@ class Illustrator:
         return None
 
     def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
-               finished: frozenset[str] | None = None) -> tuple[str | None, str]:
-        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished)
+               finished: frozenset[str] | None = None, system: str = WRITER) -> tuple[str | None, str]:
+        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system)
         return got, why
+
+    @staticmethod
+    def _form(kind: str) -> tuple[str, tuple[int, int]]:
+        """The writer's system text and the word range its text is checked against, for a kind of picture."""
+        return (PORTRAIT_WRITER, PORTRAIT_WORDS) if kind == "portrait" else (WRITER, SCENE_WORDS)
+
+    @staticmethod
+    def _framed(kind: str, text: str) -> str:
+        """The body of a prompt: a portrait's checked text after its fixed framing (PORTRAIT_FRAME), anything else as written."""
+        return f"{PORTRAIT_FRAME} {text}" if kind == "portrait" else text
 
     def view(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> dict:
         """The gated view of books 0..bi at an anchor of book bi: what a reader there may know (`finished`: the earlier books
@@ -1373,6 +1434,53 @@ class Illustrator:
                     best = (k, j, r)
         return (best[1], best[2]) if best else None
 
+    def likeness_picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
+                         finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, record) of the entity's latest current picture in the edition's other style sets (`Book.likeness`), for a
+        figure with none in this set: drawn from NOTE_VERSION material, at or (strict) before `pos`, of a book `finished`
+        allows, never one drawn for a reader with fewer books; the latest anchor wins, then the most recently drawn. The
+        record is a copy carrying `set`, the slug its file is read from."""
+        best = None
+        for j in range(pos[0] + 1):
+            for slug, _, lm in self.like[j]:
+                for r in lm.get("pictures", []):
+                    k = (j, self.books[j].ord_of.get(r.get("from"), -1))
+                    if r.get("kind") in kinds and r.get("target") == eid and 0 <= k[1] and (k < pos if strict else k <= pos) \
+                            and r.get("notes") == NOTE_VERSION and not r.get("partial") and r.get("file") \
+                            and self._usable(j, pos[0], finished, r):
+                        rank = (k, str(r.get("created") or ""))
+                        if best is None or rank > best[0]:
+                            best = (rank, j, {**r, "set": slug})
+        return (best[1], best[2]) if best else None
+
+    def _picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
+                 finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """A reference of the entity: its current picture in this set, else its likeness from another style's set."""
+        return (self.latest_picture(eid, pos, kinds, strict, finished, current=True)
+                or self.likeness_picture(eid, pos, kinds, strict, finished))
+
+    def reference_bytes(self, j: int, rec: dict) -> bytes | None:
+        """A reference picture's file, from the set it belongs to (this book's, or the other style's set it came from)."""
+        if rec.get("set"):
+            sink = next((sk for slug, sk, _ in self.like[j] if slug == rec["set"]), None)
+            return sink.read(rec["file"]) if sink is not None else None
+        return self.books[j].b.sink.read(rec["file"])
+
+    @staticmethod
+    def likeness_note(refs: list[tuple[int, dict]]) -> str:
+        """The words sent with the references when some are in another style (LIKENESS), "" when none is."""
+        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
+        if not other:
+            return ""
+        if len(refs) == 1:
+            which, them = "The reference picture is", "it"
+        elif len(other) == 1:
+            which, them = f"Reference picture {other[0]} is", "it"
+        else:
+            nums = ", ".join(map(str, other[:-1])) + f" and {other[-1]}"
+            which, them = f"Reference pictures {nums} are", "them"
+        return LIKENESS.format(which=which, them=them)
+
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
         paragraph of context when there is room, printed in book order."""
@@ -1392,7 +1500,8 @@ class Illustrator:
         the current pictures of the entities it shows (`shows`, entity ids, e.g. `Prompt.shows`) and no others, most tied in
         the view first, at most MAX_REFERENCES; for a look-change version of a portrait, the previous portrait; else none (a
         first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
-        pictures. `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
+        pictures; a figure with none there takes its likeness from the edition's other style sets (`likeness_picture`, the
+        record carrying `set`). `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
         drawn for fewer books, is never attached."""
         bi = job.bi
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1400,7 +1509,7 @@ class Illustrator:
         if job.kind in ("plate", "event"):
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
         if job.kind == "portrait" and job.change:
-            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
+            prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             return [prev] if prev else []
         return []
 
@@ -1412,7 +1521,7 @@ class Illustrator:
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self.latest_picture(eid, pos, finished=finished, current=True))]
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._picture(eid, pos, finished=finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return [h for _, h in found[:MAX_REFERENCES]]
@@ -1584,6 +1693,23 @@ class Illustrator:
         earlier book outside it never reaches the material: not its entries, details or profiles (the view leaves them out),
         its background note or its pictures as references. `Prompt.inherits` lists the earlier books whose content the prompt
         does use, and `partial` says it was written for a reader with fewer books."""
+        return self._make_prompt(job, finished)
+
+    def soften(self, job: Job, text: str, reason: str = "", finished: set[str] | frozenset[str] | None = None) -> Prompt:
+        """A refused prompt written again so an image model will draw it: one writer call (two with the rewrite) on the same
+        material as `make_prompt` for this job, with the refused `text` and the provider's `reason`, asking for a quieter
+        picture of the same moment (SOFTEN). The same checks, gates and `finished` as `make_prompt`; raises the same errors.
+        The person asks for it on the Reader's sheet and reads the result before anything is drawn."""
+        style = self._style(job.bi)
+        refused = " ".join(str(text or "").split())
+        for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
+            if tail and refused.endswith(tail):
+                refused = refused[:-len(tail)].rstrip()
+        if refused.startswith(PORTRAIT_FRAME):
+            refused = refused[len(PORTRAIT_FRAME):].lstrip()
+        return self._make_prompt(job, finished, soften_request(refused, reason))
+
+    def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "") -> Prompt:
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1708,13 +1834,17 @@ class Illustrator:
             material.append(f"<background>{_esc(world)}</background>")
             plain.append(world)
             inherits |= set(bg[1])
-        writer = TASKS[job.kind] + "\n\n" + "\n".join(material) + ("\n\n" + SHOWS if scene else "")
+        task = TASKS[job.kind] + (" No usual surroundings are known: the background is plain." if job.kind == "portrait"
+                                  and not milieu else "")
+        writer = task + "\n\n" + "\n".join(material) + ("\n\n" + SHOWS if scene else "")
         check = "\n".join(plain)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
-        body, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
+        system, words = self._form(job.kind)
+        body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
+        body = self._framed(job.kind, body)
         if scene:                          # an entity's own picture always shows it
             ids = self._shown(out, ids, vis)
         refs = self.references(job, ids, fin)
@@ -1823,7 +1953,7 @@ class Illustrator:
         rec = {"id": fid, "kind": job.kind, "target": job.target,
                "chapter": (job.chapter or b.chapter_of(pr.anchor) or {}).get("title"), "from": pr.anchor,
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
-               "references": [r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
+               "references": [{"set": r["set"], "id": r["id"]} if r.get("set") else r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
                **({"notes": pr.version} if pr.version is not None else {})}
         if pr.partial:
             rec["partial"] = True
@@ -1859,14 +1989,17 @@ class Illustrator:
         price = llm.image_price(self.provider, self.model, self.quality, pr.shape) or 0.0
         softened = retried = False
         while True:
-            refs = [(d, r["mime"]) for j, r in pr.references if (d := self.books[j].b.sink.read(r["file"]))][:images.MAX_REFERENCES]
+            got = [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES]
+            refs = [(d, r["mime"]) for _, r, d in got]
+            note = self.likeness_note([(j, r) for j, r, _ in got])
             why, amount = self._reserve(price)
             if why:
                 with self.lock:
                     self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
-                pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs)
+                pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs,
+                                      **({"note": note} if note else {}))
             except images.ImageRefused as e:
                 self._release(amount)
                 if not soften:
@@ -1878,8 +2011,11 @@ class Illustrator:
                 if not softened:
                     softened = True
                     try:
-                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS,
-                                              self._finished(bi, job.finished))
+                        system, words = self._form(job.kind)
+                        refused = pr.scene[len(PORTRAIT_FRAME):].lstrip() if pr.scene.startswith(PORTRAIT_FRAME) else pr.scene
+                        soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
+                                              self._finished(bi, job.finished), system)
+                        soft = self._framed(job.kind, soft) if soft else soft
                     except TextFailed:
                         soft = None
                 if not soft:

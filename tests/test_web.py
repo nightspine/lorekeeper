@@ -54,6 +54,19 @@ def upload(client, tmp_path):
     return r.json()
 
 
+def test_about_names_the_version(client, monkeypatch):
+    import importlib.metadata
+    import tomllib
+    assert client.get("/api/about").json() == {"version": importlib.metadata.version("lorekeeper")}
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+    monkeypatch.setattr(importlib.metadata, "version", missing)   # not installed: pyproject.toml's
+    pyproject = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+    assert web_app.lorekeeper_version() == pyproject["project"]["version"]
+    monkeypatch.setattr(tomllib, "load", lambda f: {})          # neither: still an answer
+    assert client.get("/api/about").json() == {"version": "unknown"}
+
+
 def test_upload_rejects_non_epub(client):
     r = client.post("/api/books", files={"file": ("x.epub", b"not a zip", "application/epub+zip")})
     assert r.status_code == 400

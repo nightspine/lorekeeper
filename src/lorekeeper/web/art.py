@@ -48,6 +48,16 @@ class SeededSink(art.FileSink):
         return self._seed(super().manifest())
 
 
+class ReadOnlySink(art.FileSink):
+    """Another style's set of the same edition, read for a likeness only: a run or a route never writes through it."""
+
+    def save(self, manifest: dict) -> None:
+        raise PermissionError("a likeness set is read only")
+
+    def put(self, file: str, data: bytes) -> None:
+        raise PermissionError("a likeness set is read only")
+
+
 class ArtStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "art"
@@ -77,6 +87,18 @@ class ArtStore:
             m["world"] = world_of(bg)
             return m
         return SeededSink(folder, seed)
+
+    def likeness(self, text_hash: str, style: str) -> dict[str, art.FileSink]:
+        """slug -> read-only sink of every other style's set of the edition: where a picture in `style` may take a figure's
+        likeness from when its own set has no picture of them (the pipeline gates each picture it takes)."""
+        own = art.style_slug(style) if style else ""
+        return {st["slug"]: ReadOnlySink(self.root / text_hash / st["slug"])
+                for st in self.styles(text_hash) if st["slug"] != own}
+
+    def book(self, doc: dict, book, text_hash: str, style: str, level: str | None = None, draw: bool = True) -> art.Book:
+        """The pipeline's `Book` for one edition and style: its set's sink (style text, as `resolve` gives it) and the
+        edition's other sets as likeness sinks."""
+        return art.Book(doc, book, self.sink(text_hash, style), level, draw=draw, likeness=self.likeness(text_hash, style))
 
     def lock(self, text_hash: str, style: str) -> threading.Lock:
         """One writer at a time per art set (a route's draw and another route's delete would each save a manifest)."""
