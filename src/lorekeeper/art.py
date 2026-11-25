@@ -57,6 +57,9 @@ TYPE_WORDS = {"person": "person", "creature": "creature", "place": "place", "obj
               "organization": "group", "concept": "idea", "event": "event"}
 
 MAX_REFERENCES = 4     # pictures attached to a scene, most tied first
+# sent with the reference pictures (never in the prompt a person reads) when some are drawn in another style
+LIKENESS = ("{which} drawn in another style. Take from {them} only the likeness of the figure (face, hair, build, marks), "
+            "never the drawing style, medium, line or colour treatment: draw everything in the style the prompt asks for.")
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
 MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
@@ -163,8 +166,23 @@ TASKS = {
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
-SOFTEN = """\n\nThe image model refused to draw this: "{text}". Write a quieter composition of the same subject: nothing graphic,
-nothing violent or frightening in view (a doorway, a shadow, a face turned away, the room afterwards). Keep who and where."""
+# A refused prompt, written again from the same material: by a run once on its own, on the Reader's sheet when the person asks
+# (`Illustrator.soften`). A quieter picture of the same moment, never a trick to slip past the image model's filter.
+SOFTEN = """\n\nThe image model refused to draw this prompt: "{text}"{reason}. Write a quieter composition of the same subject, one an
+image model will draw: keep who is in it, where it is, the light and the mood. Show what is hard to look at by implication (a figure
+wrapped or covered, a face turned away, the moment just before or after, the onlookers' faces, a doorway, a shadow), and leave out
+graphic detail, wounds and injuries, blood, and bodies shown limp or dead; nothing violent or frightening in view. Give no age for
+anyone young: say "young". No tricks to get past a filter (misspellings, code words, euphemisms, other languages): a quieter picture
+of the same moment, in plain English."""
+SOFTEN_TEXT_CHARS = 900
+SOFTEN_REASON_CHARS = 200
+
+
+def soften_request(text: str, reason: str = "") -> str:
+    """The SOFTEN request for a refused prompt and the provider's reason (both trimmed; the reason may be empty)."""
+    text = " ".join(str(text or "").split())[:SOFTEN_TEXT_CHARS]
+    reason = " ".join(str(reason or "").split())[:SOFTEN_REASON_CHARS].replace('"', "'")
+    return SOFTEN.format(text=text.replace('"', "'"), reason=f' (the reason it gave: "{reason}")' if reason else "")
 
 
 class Sink(Protocol):
@@ -324,6 +342,9 @@ class Book:
     sink: Sink
     level: str | None = "main"
     draw: bool = True
+    # the edition's other style sets by slug, read only: a figure with no current picture in this set takes its likeness
+    # from one of them (`Illustrator.references`), never their drawing style
+    likeness: dict[str, Sink] = field(default_factory=dict)
 
 
 @dataclass
@@ -775,6 +796,16 @@ class Illustrator:
                 m.pop("worldOwn", None)
             self.man.append(m)
             self.styles.append(m["style"] or style)
+        # each book's other style sets (slug, sink, manifest), read once: only this edition's, never this set's own slug
+        self.like: list[list[tuple[str, Sink, dict]]] = []
+        for b, m in zip(self.books, self.man):
+            own = style_slug(m["style"] or style)
+            sets = []
+            for slug, sink in (b.b.likeness or {}).items():
+                lm = sink.manifest() if slug != own else None
+                if lm and (not lm.get("textHash") or lm["textHash"] == m["textHash"]) and style_slug(str(lm.get("style", ""))) != own:
+                    sets.append((slug, sink, lm))
+            self.like.append(sets)
         self.names = self._banned_names()
 
     # ---- small helpers
@@ -1373,6 +1404,53 @@ class Illustrator:
                     best = (k, j, r)
         return (best[1], best[2]) if best else None
 
+    def likeness_picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
+                         finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, record) of the entity's latest current picture in the edition's other style sets (`Book.likeness`), for a
+        figure with none in this set: drawn from NOTE_VERSION material, at or (strict) before `pos`, of a book `finished`
+        allows, never one drawn for a reader with fewer books; the latest anchor wins, then the most recently drawn. The
+        record is a copy carrying `set`, the slug its file is read from."""
+        best = None
+        for j in range(pos[0] + 1):
+            for slug, _, lm in self.like[j]:
+                for r in lm.get("pictures", []):
+                    k = (j, self.books[j].ord_of.get(r.get("from"), -1))
+                    if r.get("kind") in kinds and r.get("target") == eid and 0 <= k[1] and (k < pos if strict else k <= pos) \
+                            and r.get("notes") == NOTE_VERSION and not r.get("partial") and r.get("file") \
+                            and self._usable(j, pos[0], finished, r):
+                        rank = (k, str(r.get("created") or ""))
+                        if best is None or rank > best[0]:
+                            best = (rank, j, {**r, "set": slug})
+        return (best[1], best[2]) if best else None
+
+    def _picture(self, eid: str, pos: tuple[int, int], kinds=ENTITY_KINDS, strict: bool = False,
+                 finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """A reference of the entity: its current picture in this set, else its likeness from another style's set."""
+        return (self.latest_picture(eid, pos, kinds, strict, finished, current=True)
+                or self.likeness_picture(eid, pos, kinds, strict, finished))
+
+    def reference_bytes(self, j: int, rec: dict) -> bytes | None:
+        """A reference picture's file, from the set it belongs to (this book's, or the other style's set it came from)."""
+        if rec.get("set"):
+            sink = next((sk for slug, sk, _ in self.like[j] if slug == rec["set"]), None)
+            return sink.read(rec["file"]) if sink is not None else None
+        return self.books[j].b.sink.read(rec["file"])
+
+    @staticmethod
+    def likeness_note(refs: list[tuple[int, dict]]) -> str:
+        """The words sent with the references when some are in another style (LIKENESS), "" when none is."""
+        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
+        if not other:
+            return ""
+        if len(refs) == 1:
+            which, them = "The reference picture is", "it"
+        elif len(other) == 1:
+            which, them = f"Reference picture {other[0]} is", "it"
+        else:
+            nums = ", ".join(map(str, other[:-1])) + f" and {other[-1]}"
+            which, them = f"Reference pictures {nums} are", "them"
+        return LIKENESS.format(which=which, them=them)
+
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
         paragraph of context when there is room, printed in book order."""
@@ -1392,7 +1470,8 @@ class Illustrator:
         the current pictures of the entities it shows (`shows`, entity ids, e.g. `Prompt.shows`) and no others, most tied in
         the view first, at most MAX_REFERENCES; for a look-change version of a portrait, the previous portrait; else none (a
         first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
-        pictures. `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
+        pictures; a figure with none there takes its likeness from the edition's other style sets (`likeness_picture`, the
+        record carrying `set`). `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
         drawn for fewer books, is never attached."""
         bi = job.bi
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1400,7 +1479,7 @@ class Illustrator:
         if job.kind in ("plate", "event"):
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
         if job.kind == "portrait" and job.change:
-            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
+            prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             return [prev] if prev else []
         return []
 
@@ -1412,7 +1491,7 @@ class Illustrator:
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self.latest_picture(eid, pos, finished=finished, current=True))]
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._picture(eid, pos, finished=finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return [h for _, h in found[:MAX_REFERENCES]]
@@ -1584,6 +1663,21 @@ class Illustrator:
         earlier book outside it never reaches the material: not its entries, details or profiles (the view leaves them out),
         its background note or its pictures as references. `Prompt.inherits` lists the earlier books whose content the prompt
         does use, and `partial` says it was written for a reader with fewer books."""
+        return self._make_prompt(job, finished)
+
+    def soften(self, job: Job, text: str, reason: str = "", finished: set[str] | frozenset[str] | None = None) -> Prompt:
+        """A refused prompt written again so an image model will draw it: one writer call (two with the rewrite) on the same
+        material as `make_prompt` for this job, with the refused `text` and the provider's `reason`, asking for a quieter
+        picture of the same moment (SOFTEN). The same checks, gates and `finished` as `make_prompt`; raises the same errors.
+        The person asks for it on the Reader's sheet and reads the result before anything is drawn."""
+        style = self._style(job.bi)
+        refused = " ".join(str(text or "").split())
+        for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
+            if tail and refused.endswith(tail):
+                refused = refused[:-len(tail)].rstrip()
+        return self._make_prompt(job, finished, soften_request(refused, reason))
+
+    def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "") -> Prompt:
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -1712,7 +1806,7 @@ class Illustrator:
         check = "\n".join(plain)
         if any(a in b.ord_of and b.ord_of[a] > b.ord_of[anchor] for a in sources):
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
-        body, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
+        body, why, out = self._write_full(writer + extra, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         if scene:                          # an entity's own picture always shows it
@@ -1823,7 +1917,7 @@ class Illustrator:
         rec = {"id": fid, "kind": job.kind, "target": job.target,
                "chapter": (job.chapter or b.chapter_of(pr.anchor) or {}).get("title"), "from": pr.anchor,
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
-               "references": [r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
+               "references": [{"set": r["set"], "id": r["id"]} if r.get("set") else r["id"] for _, r in pr.references], "sources": pr.sources, "inherits": list(pr.inherits),
                **({"notes": pr.version} if pr.version is not None else {})}
         if pr.partial:
             rec["partial"] = True
@@ -1859,14 +1953,17 @@ class Illustrator:
         price = llm.image_price(self.provider, self.model, self.quality, pr.shape) or 0.0
         softened = retried = False
         while True:
-            refs = [(d, r["mime"]) for j, r in pr.references if (d := self.books[j].b.sink.read(r["file"]))][:images.MAX_REFERENCES]
+            got = [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES]
+            refs = [(d, r["mime"]) for _, r, d in got]
+            note = self.likeness_note([(j, r) for j, r, _ in got])
             why, amount = self._reserve(price)
             if why:
                 with self.lock:
                     self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
-                pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs)
+                pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs,
+                                      **({"note": note} if note else {}))
             except images.ImageRefused as e:
                 self._release(amount)
                 if not soften:
@@ -1878,7 +1975,7 @@ class Illustrator:
                 if not softened:
                     softened = True
                     try:
-                        soft, _ = self._write(pr.writer + SOFTEN.format(text=pr.scene), bi, pr.anchor, pr.check, SCENE_WORDS,
+                        soft, _ = self._write(pr.writer + soften_request(pr.scene, e.reason), bi, pr.anchor, pr.check, SCENE_WORDS,
                                               self._finished(bi, job.finished))
                     except TextFailed:
                         soft = None

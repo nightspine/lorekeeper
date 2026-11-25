@@ -169,8 +169,9 @@ class Image:
     def __init__(self, cost=0.05, refuse=()):
         self.calls, self.cost, self.refuse = [], cost, list(refuse)
 
-    def draw(self, prompt, *, shape="landscape", quality="standard", references=()):
-        self.calls.append({"prompt": prompt, "shape": shape, "quality": quality, "references": [r[0] for r in references]})
+    def draw(self, prompt, *, shape="landscape", quality="standard", references=(), **kw):
+        self.calls.append({"prompt": prompt, "shape": shape, "quality": quality, "references": [r[0] for r in references],
+                           "note": kw.get("note", "")})
         if self.refuse and self.refuse[0](prompt, len(self.calls)):
             raise images.ImageRefused("safety: violence")
         return images.Drawn(png(1024, 576, str(len(self.calls)).encode() + prompt[:20].encode()), "image/png", "fake-image", self.cost)
@@ -1615,3 +1616,154 @@ def test_references_is_public_and_what_make_prompt_attaches():
     assert [r["id"] for _, r in il.references(change, ["mira"])] == [by["mira"][0]["id"]]     # the previous portrait
     assert il.references(art.Job("portrait", "mira", 0, "a10", shape="portrait"), ["mira"]) == []   # a first version: none
     assert il.references(il.job("place", "mill", at="a11"), ["mill", "mira"]) == []           # a place: none
+
+
+QUIET = ("A small crowd stands in the yard of a grey stone mill at dusk, faces turned toward a covered shape carried between two "
+         "figures. A woman in a brown shawl holds a basket to her chest and looks away. A lamp burns in a doorway and the last thin "
+         "light falls across the mud of the yard.")
+
+
+def test_soften_writes_the_refused_prompt_again_from_the_same_material():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    t = Text(scene=lambda p: QUIET if "image model refused" in p else SCENE)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    job = il.job("event", "e2", at="a3")
+    first = il.make_prompt(job)
+    assert "image model refused" not in writer_calls(t)[-1]
+    pr = il.soften(job, first.text, "IMAGE_SAFETY")
+    w = writer_calls(t)[-1]
+    # the same material, then the refused text (without the style and no-text lines code appended) and the provider's reason
+    assert w.startswith(writer_calls(t)[0]) and f'"{SCENE}"' in w and '"IMAGE_SAFETY"' in w
+    assert art.NO_TEXT not in w and first.style not in w and "say \"young\"" in w and "misspellings" in w
+    assert pr.body == QUIET and pr.text == f"{QUIET} {first.style} {art.NO_TEXT}" and pr.anchor == first.anchor
+    assert pr.sources == first.sources and pr.writer == first.writer and pr.shape == first.shape
+    # no reason given: the request still reads well
+    il.soften(job, first.text)
+    assert "the reason it gave" not in writer_calls(t)[-1]
+
+
+def test_soften_runs_the_same_checks_with_one_rewrite():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    bad = QUIET.replace("A woman in a brown shawl", "Mira")
+    t = Text(scene=lambda p: QUIET if "It was rejected" in p else bad)
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    job = il.job("event", "e2", at="a3")
+    pr = il.soften(job, SCENE, "safety")
+    assert pr.body == QUIET and "image model refused" in writer_calls(t)[-1] and "It was rejected: name in the text" in writer_calls(t)[-1]
+    # a writer that keeps naming an unknown person gives up with the reason, like make_prompt
+    t2 = Text(scene=lambda p: QUIET.replace("A small crowd", "Valdemar and a small crowd"))
+    il2 = art.Illustrator([art.Book(d, bk, Mem())], t2, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    with pytest.raises(art.Dropped, match="unknown name"):
+        il2.soften(il2.job("event", "e2", at="a3"), SCENE, "safety")
+
+
+def test_soften_keeps_the_readers_gate():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"][0]["facets"].append({"id": "b1.mira.f9", "from": "a6", "basis": "stated", "evidence": ["a6"],
+                                        "text": "Wears a red ribbon in her dark braided hair."})
+    t = Text(scene=lambda p: QUIET)
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], t, Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    pr = il.soften(il.job("portrait", "mira", at="b2.a5", finished=set()), SCENE, "safety")
+    assert "red ribbon" not in writer_calls(t)[-1] and pr.partial and pr.inherits == []
+    pr = il.soften(il.job("portrait", "mira", at="b2.a5"), SCENE, "safety", finished={"b1"})
+    assert "red ribbon" in writer_calls(t)[-1] and pr.inherits == ["b1"]
+
+
+def likeness_set(d, *pics_, style="digital-art"):
+    """Another style's set of the same edition holding the given picture records (each with its file)."""
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], style), "pictures": list(pics_)}
+    for r in pics_:
+        sink.files[r["file"]] = b"bytes of " + r["id"].encode()
+    return sink
+
+
+def pic(pid, target, at, notes=art.NOTE_VERSION, kind="portrait", created="2026-11-20T10:00:00Z", **kw):
+    return {"id": pid, "kind": kind, "target": target, "from": at, "file": f"{pid}.png", "mime": "image/png", "prompt": "a figure",
+            "references": [], "sources": [at], "inherits": [], "cost": 0.05, **({"notes": notes} if notes is not None else {}),
+            "created": created, **kw}
+
+
+def comic(d, bk, likeness, sink=None, t=None, im=None):
+    return art.Illustrator([art.Book(d, bk, sink or Mem(), likeness=likeness)], t or Text(), im or Image(), "comic-strip",
+                           portraits="all", workers=1, log=lambda *_: None, pause=0)
+
+
+def test_a_figure_with_no_picture_in_this_set_takes_its_likeness_from_another_style():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    digital = likeness_set(d, pic("pdig0001", "mira", "a4"))
+    im = Image()
+    il = comic(d, bk, {"digital-art": digital}, im=im)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [(j, r["id"], r["set"]) for j, r in pr.references] == [(0, "pdig0001", "digital-art")]
+    rec = il.draw(job, pr)
+    call = im.calls[-1]
+    assert call["references"] == [b"bytes of pdig0001"]
+    assert "likeness" in call["note"] and "never the drawing style" in call["note"] and call["note"] not in call["prompt"]
+    assert rec["references"] == [{"set": "digital-art", "id": "pdig0001"}] and "likeness" not in rec["prompt"]
+    assert digital.m["pictures"] == [pic("pdig0001", "mira", "a4")]         # the other set is only read
+    # once this set has its own current picture of her, that one is the reference and no note is sent
+    own = Mem()
+    own.m = {**art.blank(d["editions"][0]["textHash"], "comic-strip"), "pictures": [pic("pcom0001", "mira", "a4")]}
+    own.files["pcom0001.png"] = b"comic mira"
+    im2 = Image()
+    il2 = comic(d, bk, {"digital-art": digital}, sink=own, im=im2)
+    job = il2.job("event", "e6", at="a11")
+    pr = il2.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pcom0001"] and not pr.references[0][1].get("set")
+    il2.draw(job, pr)
+    assert im2.calls[-1]["references"] == [b"comic mira"] and im2.calls[-1]["note"] == ""
+
+
+def test_a_likeness_is_never_past_the_anchor_older_partial_or_another_edition():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    later = [pic("plate001", "mira", "a10"), pic("pold0001", "mira", "a8", notes=2), pic("pnone001", "mira", "a8", notes=None),
+             pic("ppart001", "mira", "a8", partial=True)]
+    sets = {"digital-art": likeness_set(d, pic("pok00001", "mira", "a3"), *later),
+            "anime": likeness_set({"editions": [{"textHash": "sha256:other"}]}, pic("pothr001", "mira", "a7"), style="anime"),
+            "comic-strip": likeness_set(d, pic("pself001", "mira", "a7"), style="comic-strip")}   # this set's own slug: never
+    il = comic(d, bk, sets)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))    # e6 shows from a9: the a10 portrait is after it
+    assert [r["id"] for _, r in pr.references] == ["pok00001"]
+    il = comic(d, bk, {"digital-art": likeness_set(d, *later)})
+    assert il.make_prompt(il.job("event", "e6", at="a11")).references == []
+
+
+def test_the_latest_likeness_wins_then_the_most_recently_drawn():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    sets = {"digital-art": likeness_set(d, pic("pa000001", "mira", "a4", created="2026-11-21T00:00:00Z"),
+                                         pic("pb000001", "mira", "a6", created="2026-11-01T00:00:00Z")),
+            "anime": likeness_set(d, pic("pc000001", "mira", "a6", created="2026-11-22T00:00:00Z"), style="anime")}
+    il = comic(d, bk, sets)
+    refs = il.make_prompt(il.job("event", "e6", at="a11")).references
+    assert [(r["id"], r["set"]) for _, r in refs] == [("pc000001", "anime")]
+
+
+def test_a_look_change_portrait_takes_the_previous_likeness_from_another_style():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append(portrait("mira", "a10", "A scarred young woman, older than she was, who keeps a stranger's coin.", 2))
+    digital = likeness_set(d, pic("pdig0001", "mira", "a4"))
+    il = comic(d, bk, {"digital-art": digital})
+    job = art.Job("portrait", "mira", 0, "a10", change="scarred")
+    assert [(r["id"], r["set"]) for _, r in il.references(job, ["mira"])] == [("pdig0001", "digital-art")]
+
+
+def test_a_likeness_from_an_earlier_book_needs_that_book_finished():
+    bk1, d1, bk2, d2 = series_docs()
+    digital = likeness_set(d1, pic("pdig0001", "mira", "a4"))
+    t = Text()
+    il = art.Illustrator([art.Book(d1, bk1, Mem(), None, draw=False, likeness={"digital-art": digital}),
+                          art.Book(d2, bk2, Mem(), likeness={"digital-art": likeness_set(d2)})], t, Image(), "comic-strip",
+                         portraits="all", workers=1, log=lambda *_: None, pause=0)
+    job = il.job("plate", "Three", at="b2.a5", finished=set())
+    assert il.make_prompt(job).references == []
+    pr = il.make_prompt(il.job("plate", "Three", at="b2.a5", finished={"b1"}))
+    assert [(j, r["id"], r["set"]) for j, r in pr.references] == [(0, "pdig0001", "digital-art")] and "b1" in pr.inherits
