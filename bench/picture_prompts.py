@@ -94,6 +94,8 @@ def main(argv=None) -> int:
         else:
             target = entity(doc, what, kind) or what
         label = f"{kind} {what}" + (f" at {frac}" if frac else "")
+        u = getattr(model, "usage", None)
+        tok0 = (getattr(u, "prompt_tokens", 0), getattr(u, "output_tokens", 0))
         c0, t0 = il.text_spent(), time.monotonic()
         try:
             if hasattr(il, "_world_inputs"):        # before: the prompt route wrote the world note first
@@ -106,8 +108,10 @@ def main(argv=None) -> int:
                   f"{secs:.1f} s, {text.calls} calls, ${il.text_spent() - c0:.4f}\n")
             continue
         secs, cost = time.monotonic() - t0, il.text_spent() - c0
+        toks = (getattr(u, "prompt_tokens", 0) - tok0[0], getattr(u, "output_tokens", 0) - tok0[1])
         total_s, total_calls, total_cost = total_s + secs, total_calls + text.calls, total_cost + cost
-        print(f"## {label} (from {pr.anchor}): {secs:.1f} s, {text.calls} calls, ${cost:.4f}")
+        print(f"## {label} (from {pr.anchor}): {secs:.1f} s, {text.calls} calls, ${cost:.4f} "
+              f"({toks[0]} tokens in, {toks[1]} out)")
         print(f"{pr.text}\n")
     print(f"total {total_s:.1f} s, {total_calls} calls, text ${total_cost:.4f}")
     return 0
