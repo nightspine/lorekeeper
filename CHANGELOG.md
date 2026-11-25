@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/nightspine/lorekeeper/compare/v0.15.0...v0.16.0) (2026-11-25)
+
+
+### Features
+
+* portraits of the main characters only by default, with everyone or none as choices ([#101](https://github.com/nightspine/lorekeeper/issues/101)) ([b41e0e4](https://github.com/nightspine/lorekeeper/commit/b41e0e482a97f8437b1b77e9302d4f1f0da1749c))
+
 ## [0.15.0](https://github.com/nightspine/lorekeeper/compare/v0.14.0...v0.15.0) (2026-11-25)
 
 
