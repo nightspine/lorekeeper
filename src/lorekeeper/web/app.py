@@ -1716,7 +1716,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    [(rec["target"], rec["appearance"])] if rec.get("appearance") else [], refs,
                                    list(rec.get("sources") or [rec["from"]]),
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
-                                   partial=bool(rec.get("partial")))
+                                   partial=bool(rec.get("partial")), version=rec.get("notes"))
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)

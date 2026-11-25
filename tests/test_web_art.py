@@ -369,6 +369,23 @@ def test_redraw_replaces_the_picture_and_undo_brings_it_back(env):
     assert env.c.get(old["url"]).status_code == 200 and not (folder / new["file"]).exists()
 
 
+def test_a_redraw_of_a_picture_from_an_older_note_stays_no_reference(env):
+    # its prompt carries the old note, so the new record must not claim the current note version
+    import json
+    env.key()
+    run_set(env, portraits=False)
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    m = json.loads(path.read_text())
+    assert all(p.get("notes") for p in m["pictures"])
+    m["pictures"][0].pop("notes")
+    path.write_text(json.dumps(m))
+    old = m["pictures"][0]
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/redraw", json={})
+    assert r.status_code == 200, r.text
+    new = next(p for p in json.loads(path.read_text())["pictures"] if p["id"] == r.json()["id"])
+    assert "notes" not in new
+
+
 def test_a_redraw_keeps_the_earlier_books_its_prompt_carries(env):
     """The redrawn picture is drawn from the old prompt, so it carries the same earlier-book content: its `inherits` (and
     `partial`) go to the new record, else the Reader would show a prompt it hides until those books are finished. A record
