@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/nightspine/lorekeeper/compare/v0.17.0...v0.18.0) (2026-11-25)
+
+
+### Features
+
+* picture prompts in one call from the whole entry, the way KOAssistant does it; style changes are instant ([#110](https://github.com/nightspine/lorekeeper/issues/110)) ([35f218f](https://github.com/nightspine/lorekeeper/commit/35f218fc0c766e644ba38d41fb3f13d66b437bfc))
+
 ## [0.17.0](https://github.com/nightspine/lorekeeper/compare/v0.16.0...v0.17.0) (2026-11-25)
 
 
