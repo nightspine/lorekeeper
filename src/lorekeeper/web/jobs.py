@@ -183,8 +183,12 @@ class Job:
 
 
 def art_config(raw) -> dict:
-    """The pictures part of a job config, checked: {style, level, portraits, quality, provider, model, cap};
-    portraits is "main", "all" or False. Raises ValueError with a sentence for the person."""
+    """The pictures part of a job config, checked: {style, level, chapters, portraits, quality, provider, model, cap}.
+    level is "main" (missing), "all" or "none" (no chapter pictures); chapters is None (missing: every chapter) or the
+    sorted plan chapter numbers `n` whose scenes are drawn (an empty list: none; portraits are never limited by it; that
+    each `n` is one of the book's chapters is checked where the index is known, `chapter_choice`); portraits is "main",
+    "all" or False. A config that draws nothing (no scenes and no portraits) is refused. Raises ValueError with a sentence
+    for the person."""
     if not isinstance(raw, dict):
         raise ValueError("art must be an object")
     style = " ".join(str(raw.get("style") or "").split())
@@ -192,7 +196,13 @@ def art_config(raw) -> dict:
         raise ValueError("Choose a style, or write one of at most 200 characters.")
     level = raw.get("level", "main")
     if level not in artmod.LEVELS:
-        raise ValueError("level must be \"main\" or \"all\".")
+        raise ValueError("level must be \"main\", \"all\" or \"none\".")
+    chapters = raw.get("chapters")
+    if chapters is not None:
+        if not isinstance(chapters, list) or len(chapters) > 10000 or \
+                any(isinstance(n, bool) or not isinstance(n, int) or n < 1 for n in chapters):
+            raise ValueError("chapters must be a list of chapter numbers.")
+        chapters = sorted(set(chapters))
     provider = raw.get("provider")
     if provider is not None and provider not in llm.IMAGE_PROVIDERS:
         raise ValueError(f"No image provider {provider!r}.")
@@ -208,8 +218,19 @@ def art_config(raw) -> dict:
     portraits = raw.get("portraits", "main")   # "main" (missing), "all" (or true, from an older page), or false for none
     if portraits is not False and portraits is not True and portraits not in artmod.CASTS:
         raise ValueError("portraits must be \"main\", \"all\" or false.")
-    return {"style": style, "level": level, "portraits": artmod.portrait_cast(portraits) or False, "quality": quality,
+    cast = artmod.portrait_cast(portraits) or False
+    if (level == "none" or chapters == []) and not cast:
+        raise ValueError("Choose chapters or portraits.")
+    return {"style": style, "level": level, "chapters": chapters, "portraits": cast, "quality": quality,
             "provider": provider, "model": model, "cap": cap}
+
+
+def chapter_choice(cfg: dict, plan: list[dict]) -> None:
+    """Check a checked art config's `chapters` against the book's plan (`art.Book.chapters`): every `n` must be one of
+    them. Raises ValueError with a sentence for the person."""
+    known = {c["n"] for c in plan}
+    if cfg.get("chapters") and any(n not in known for n in cfg["chapters"]):
+        raise ValueError("Some of the chosen chapters are not chapters of this book.")
 
 
 class JobManager:
@@ -564,7 +585,8 @@ class JobManager:
                 had = {r.get("id") for r in (store.manifest(h, slug) or {}).get("pictures", [])}
                 try:
                     il = box["il"] = artmod.Illustrator(books, text_model, image, style, portraits=cfg["portraits"],
-                                                        quality=cfg["quality"], cap=cfg["cap"], log=log, progress=progress)
+                                                        scene_chapters=cfg["chapters"], quality=cfg["quality"],
+                                                        cap=cfg["cap"], log=log, progress=progress)
                     rep = il.run()
                 finally:
                     added = [r["id"] for r in (store.manifest(h, slug) or {}).get("pictures", []) if r.get("id") not in had]
