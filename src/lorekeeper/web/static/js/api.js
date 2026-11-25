@@ -182,6 +182,9 @@ export const api = {
   /** Write the prompt for one picture (one text call, nothing drawn). `p` is the reader's frontier anchor. */
   artPrompt: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/prompt`, body, { signal }),
   /** Draw a picture from the given (possibly edited) prompt and file it; a refusal is a 422 with code "refused". */
+  /** Rewrite a prompt the image provider refused, so the same moment can be drawn: the prompt route's body plus the refused
+   *  `text` and the provider's `reason`; answers the prompt route's shape. */
+  artSoften: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/soften`, body, { signal }),
   artDraw: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body, { signal }),
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
   artRedraw: (key, id, note) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`, { note }),

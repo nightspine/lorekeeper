@@ -118,6 +118,8 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .art-world-edit .btns, .art-done .btns { display: flex; gap: 8px; justify-content: flex-end; }
 .art-error:empty { display: none; }
 .art-error p { margin: 0; color: var(--rose); font-size: var(--text-sm); }
+.art-error p.art-ok { color: var(--text-2); }
+.art-error > .btn { margin-top: 8px; }
 .art-drawn { margin: 0; font-size: var(--text-sm); }
 .art-foot { flex: 1; display: flex; align-items: center; gap: 12px; justify-content: flex-end; }
 .art-price { margin-right: auto; font-size: var(--text-sm); color: var(--text-2); }
@@ -138,7 +140,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .drawer .profile.has-face { grid-template-columns: 96px minmax(0, 1fr); column-gap: 12px; }
   .drawer .profile.has-face.face-only { grid-template-columns: 96px; }
   .drawer .profile .art-face-btn { width: 96px; }
-  .art-draw { min-height: 44px; }
+  .art-draw, .art-error > .btn, .lb-choice .btn { min-height: 44px; }
   .tl-thumb { width: 56px; height: 56px; }
   .tl-draw { position: relative; }
   .tl-draw::after { content: ""; position: absolute; inset: -8px; }

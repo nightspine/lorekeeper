@@ -353,6 +353,8 @@ export function modalToasts() {
  *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
  *   replaces     a picture id of the art set: Redraw with a new prompt. The sheet is titled "Redraw", Draw sends it and the
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
+ *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
+ *                the old one stays (no `replaces` is sent)
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
@@ -473,6 +475,47 @@ export async function openPictureSheet(opts) {
       }
       clear(body, h("div.art-error", { role: "alert" }, h("p", why)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
+      paintFoot();
+    }
+  }
+  /** Rewrite a refused prompt: one writer call for the same moment at the position now, told so it can be drawn. The new text
+   *  replaces the prompt in the box, in the style chosen now; nothing is drawn until the person presses Draw. */
+  async function soften(text, reason) {
+    abort();
+    const mine = ++gen;
+    ctrl = new AbortController();
+    st.busy = true;
+    clear(err, loading("Rewriting the prompt so it can be drawn…"));
+    paintFoot();
+    const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
+    try {
+      const r = await api.artSoften(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
+        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), text, reason, ...here() }, ctrl.signal);
+      if (mine !== gen || st.closed) return;
+      const parts = promptParts(r);
+      if (parts) {
+        st.parts = parts;
+        st.sentence = sentenceFor(parts, st.style, st.custom) ?? squash(parts.style);
+        st.prompt = st.written = composePrompt(parts.body, st.sentence, parts.noText);
+      } else if (typeof r.prompt === "string" && r.prompt) {
+        st.parts = null; st.sentence = null;
+        st.prompt = st.written = r.prompt;
+      } else throw new Error("No prompt came back");
+      st.missing = false;
+      if (typeof r.price === "number") st.price = r.price;
+      if (typeof r.anchor === "string") st.anchor = r.anchor;
+      st.asked = asked; st.promptStyle = asked.style;
+      st.busy = false; ctrl = null;
+      textarea.value = st.prompt;
+      paintStyleNote();
+      clear(err, h("p.art-ok", "Rewritten so it can be drawn. Read it, change anything, then Draw."));
+      paintFoot();
+      textarea.focus();
+    } catch (e2) {
+      if (mine !== gen || st.closed) return;
+      st.busy = false; ctrl = null;
+      clear(err, h("p", promptError(e2).replace(/^Couldn't write a prompt/, "Couldn't rewrite it")),
+        e2.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: () => soften(text, reason) } }, "Try again"));
       paintFoot();
     }
   }
@@ -626,12 +669,15 @@ export async function openPictureSheet(opts) {
     const mine = ++gen;
     ctrl = new AbortController();
     st.busy = true; drawBtn.disabled = true;
+    // The old picture is replaced only within its own set: another style files a new picture there and keeps the old one.
+    const replacing = Boolean(replaces) && (!opts.replacesStyle || folder() === opts.replacesStyle);
+    const sent = st.prompt;   // the text as the provider saw it (a rewrite after a refusal starts from this)
     const keep = [...body.childNodes];
     clear(body, loading("Drawing the picture. This takes a few seconds…"));
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replaces ? { replaces } : {}), ...here() }, ctrl.signal);
+        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() }, ctrl.signal);
       const rec = r?.record || r;
       const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);
@@ -642,14 +688,14 @@ export async function openPictureSheet(opts) {
       // The new picture shows here only if it may show at the position (its anchor is the item's own, which is visible,
       // but the server decides the anchor; the Reader checks it as it checks every picture).
       const src = slug && opts.srcFor && (!opts.canShow || opts.canShow(rec)) ? opts.srcFor(rec, slug) : null;
-      const added = replaces ? "Drawn. It takes the old picture's place in the art set." : "Drawn and added to the art set.";
+      const added = replacing ? "Drawn. It takes the old picture's place in the art set." : "Drawn and added to the art set.";
       clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
         h("p", src ? added : `${added} It shows where it belongs in the book.`),
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
       // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).
       // The toast is offered again where the sheet was opened from once it closes, until it is used.
-      const undoId = replaces ? (r?.undo ?? r?.journal ?? null) : null;
+      const undoId = replacing ? (r?.undo ?? r?.journal ?? null) : null;
       if (undoId) {
         undoRedraw = async () => {
           undoRedraw = null;
@@ -667,7 +713,12 @@ export async function openPictureSheet(opts) {
       if (mine !== gen || st.closed) return;
       st.busy = false; ctrl = null;
       clear(body, keep);
-      clear(err, h("p", e.code === "refused" ? `The provider would not draw this: ${e.message}. Change the prompt and try again.` : `Couldn't draw it: ${e.message}`));
+      if (e.code === "refused") {
+        // The person stays in control: a rewrite of the same moment, told so it can be drawn, goes into the prompt box to be
+        // read before Draw. A second refusal offers it again.
+        const fix = h("button.btn", { type: "button", on: { click: () => soften(sent, e.message || "") } }, icon("sparkle"), "Rewrite it so it can be drawn");
+        clear(err, h("p", `The provider would not draw this: ${e.message}. Change the prompt and try again, or have it rewritten.`), fix);
+      } else clear(err, h("p", `Couldn't draw it: ${e.message}`));
       paintFoot();
       textarea.focus();
     }

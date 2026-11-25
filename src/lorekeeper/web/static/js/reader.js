@@ -1816,7 +1816,7 @@ export function mountReader(root) {
       const canEdit = s.art.canDraw && p.set.key === s.key;
       return { rec: p.rec, src: picSrc(p), srcFor: (rec) => picSrc({ ...p, rec }), caption: caption(p), key: p.set.key,
         style: p.set.slug, styleText: p.set.manifest.style, canEdit, canRedraw: Boolean(s.art.hasProvider),
-        newPrompt: canEdit && s.art.hasProvider && canRewrite(p.rec) ? (rec) => redrawPicture(rec, caption(p)) : null,
+        newPrompt: canEdit && s.art.hasProvider && canRewrite(p.rec) ? (rec) => redrawPicture(rec, caption(p), p.set.slug) : null,
         promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book) };
     });
   }
@@ -1827,9 +1827,9 @@ export function mountReader(root) {
     return sheetItemVisible({ kind: rec.kind, target: rec.target });
   }
   /** Redraw with a new prompt: the picture sheet for the same kind and target at the position, replacing `rec`. */
-  function redrawPicture(rec, title) {
+  function redrawPicture(rec, title, slug) {
     if (!canRewrite(rec)) return;
-    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : title, replaces: rec.id });
+    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : title, replaces: rec.id, replacesStyle: slug });
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {
@@ -1894,11 +1894,11 @@ export function mountReader(root) {
     return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
-  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null }) {
+  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       style: s.art.slug || null, styles: s.art.styles, world, canEditWorld,
       // The art set's text hash only (never the server's guess for another edition), the style by the server's slug.
