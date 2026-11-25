@@ -1368,3 +1368,110 @@ def test_the_estimate_counts_portraits_of_the_main_cast_by_default(env):
     assert ports() == ports(portraits="main") < every and ports(portraits="true") == every
     assert ports(portraits="none") == ports(portraits="false") == 0
     assert env.c.get("/api/art/estimate", params={"key": KEY, "portraits": "some"}).json()["code"] == "bad-config"
+
+
+# ---- a scene's labelled figures (figure A, figure B...) and their references
+
+
+def scene_asked(env, style="ink"):
+    env.key()
+    run_set(env, portraits="all")
+    return {"kind": "event", "target": "e6", "style": style}
+
+
+def test_the_prompt_route_lists_each_labelled_figure_with_its_reference(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    assert got["figures"], got
+    assert [f["label"] for f in got["figures"]] == sorted(f["label"] for f in got["figures"])
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    for f in got["figures"]:
+        assert f"igure {f['label']}" in got["prompt"] and f["entity"] in portraits
+        assert f["ref"] == f"/api/art/{env.hash}/ink/{portraits[f['entity']]}" and env.c.get(f["ref"]).status_code == 200
+    # the references are those, in the same order
+    assert [x["url"] for x in got["references"]] == [f["ref"] for f in got["figures"]]
+    # a portrait has no labels at all
+    p = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "portrait", "target": next(iter(portraits)), "style": "ink"}).json()
+    assert p["figures"] is None
+
+
+def test_a_draw_into_another_style_keeps_the_labels_and_takes_their_pictures_from_that_set(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    env.image.calls.clear()
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "prompt": got["prompt"]}).json()
+    assert [(f["label"], f["entity"]) for f in rec["figures"]] == [(f["label"], f["entity"]) for f in got["figures"]]
+    # watercolour has no portraits: the ink ones are its likenesses, named by their set, each URL served from that set
+    assert all(isinstance(f["ref"], str) and "/ink/" in f["ref"] for f in rec["figures"])
+    call = env.image.calls[0]
+    assert len(call["references"]) == len(got["figures"])
+    for n, f in enumerate(got["figures"], 1):
+        assert f"Reference picture {n} is figure {f['label']}." in call["note"]
+    assert "figure" not in call["note"].split("Reference picture 1")[0]
+
+
+def test_a_label_the_person_takes_out_sends_no_reference(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    if len(got["figures"]) < 2:
+        pytest.skip("the scripted scene shows one figure")
+    gone = got["figures"][-1]["label"]
+    edited = re.sub(rf"\b[Ff]igure {gone}\b", "the stranger", got["prompt"])
+    env.image.calls.clear()
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": edited}).json()
+    call = env.image.calls[0]
+    assert gone not in [f["label"] for f in rec["figures"] if f["ref"]]
+    assert f"figure {gone}" not in call["note"] and len(call["references"]) == len(got["figures"]) - 1
+
+
+def test_a_same_prompt_redraw_rebuilds_the_figure_note_from_the_record(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    first = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
+    assert first["figures"]
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={})
+    assert r.status_code == 200, r.text
+    new, call = r.json(), env.image.calls[-1]
+    assert [(f["label"], f["entity"], f["ref"]) for f in new["figures"]] == [(f["label"], f["entity"], f["ref"]) for f in first["figures"]]
+    assert new["references"] == first["references"]
+    for n, f in enumerate(first["figures"], 1):
+        assert f"Reference picture {n} is figure {f['label']}." in call["note"]
+    assert call["note"] not in call["prompt"]
+    # a note put first leaves the labels in place
+    r = env.c.post(f"/api/library/{KEY}/art/{new['id']}/redraw", json={"note": "Closer"})
+    assert r.status_code == 200 and [f["label"] for f in r.json()["figures"]] == [f["label"] for f in first["figures"]]
+
+
+def test_the_art_route_serves_each_pictures_figures_with_urls(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    first = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
+    m = env.c.get(f"/api/library/{KEY}/art?style=ink").json()
+    rec = next(p for p in m["pictures"] if p["id"] == first["id"])
+    assert rec["figures"] == first["figures"] and all(f["ref"] is None or env.c.get(f["ref"]).status_code == 200 for f in rec["figures"])
+    # nothing but checked ids ever becomes a URL
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    next(p for p in man["pictures"] if p["id"] == first["id"])["figures"] = [
+        {"label": "A", "entity": "x", "ref": "../../etc"}, {"label": "B", "entity": "y", "ref": {"set": "../x", "id": "p00000000"}}, "junk"]
+    path.write_text(json.dumps(man))
+    rec = next(p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"] if p["id"] == first["id"])
+    assert [f["ref"] for f in rec["figures"]] == [None, None]
+
+
+def test_an_older_record_without_figures_is_served_and_redrawn_as_before(env):
+    ask = scene_asked(env)
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    first = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    man = json.loads(path.read_text())
+    next(p for p in man["pictures"] if p["id"] == first["id"]).pop("figures")
+    path.write_text(json.dumps(man))
+    rec = next(p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"] if p["id"] == first["id"])
+    assert "figures" not in rec
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={})
+    assert r.status_code == 200 and "figures" not in r.json()
+    assert len(env.image.calls[-1]["references"]) == len(first["references"])
+    assert "Reference picture 1 is figure" not in env.image.calls[-1]["note"]
