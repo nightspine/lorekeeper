@@ -4,8 +4,8 @@
     uv run python bench/picture_prompts.py INDEX [--epub EPUB] --pick portrait:Darrow@0.17 --pick plate:3 \
         [--provider gemini] [--tier cheap|strong] [--style realism]
 
-`--pick KIND:WHAT[@FRACTION]`: KIND is portrait, place, thing, plate or event; WHAT an entity name (portrait, place,
-thing), a chapter number in the index's chapter list (plate, 1 for the first) or an event id (event); FRACTION the position
+`--pick KIND:WHAT[@FRACTION]`: KIND is portrait, place, thing, plate or event; WHAT an entity name or `id:ENTITY_ID`
+(portrait, place, thing), a chapter number in the index's chapter list (plate, 1 for the first) or an event id (event); FRACTION the position
 as a fraction of the index's anchors (default the end). Each pick is written on a fresh, empty art set, as the prompt route
 does for a style it has never drawn in, so the seconds, the text calls and the text cost printed per prompt are what a
 reader waits for. The same command runs on an `art.py` from before the simplification (it calls `world` first, as that
@@ -50,6 +50,8 @@ class Counting:
 def entity(doc: dict, want: str, kind: str) -> str | None:
     """The entity named `want` (an exact name first, then a part of one), of a type the kind draws first ("Dracula" for a
     portrait is Count Dracula, not Castle Dracula)."""
+    if want.startswith("id:"):
+        return want[3:] if any(e["id"] == want[3:] for e in doc["entities"]) else None
     w = want.lower()
     types = {"portrait": ("person", "creature"), "place": ("place",), "thing": ("object",)}.get(kind, ())
     for test in (lambda v: v.lower() == w, lambda v: w in v.lower()):

@@ -1494,3 +1494,123 @@ def test_details_a_fresh_look_index_flags_go_first_in_the_entry_and_none_is_clas
     il2.make_prompt(il2.job("portrait", "mira", at="a11"))
     e = entry(il2.text.scenes()[0])
     assert e.index("Keeps the mill's books") < e.index("freckled face")
+
+
+# ---- review round 1 and lead decisions 3
+
+
+def test_a_person_joins_a_group_only_by_a_name_the_group_has_at_the_anchor():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"].append({"id": "bk.oren.f1", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                       "text": "He keeps the Dawn watch at the mill."})
+    guild = ent("guild", "the Guild", "group", frm="a1", facets=[portrait("guild", "a1", "Millers in white aprons.")])
+    guild["names"].append({"value": "the Dawn", "kind": "alias", "from": "a10"})     # a name it takes later
+    d["entities"].append(guild)
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "oren", at="a5"))
+    assert 'name="the Guild"' not in writer_calls(t)[-1]
+    il.make_prompt(il.job("portrait", "oren", at="a11"))       # Oren's anchor is a3 still: the alias is not reached there
+    assert 'name="the Guild"' not in writer_calls(t)[-1]
+    d["entities"][1]["facets"][-1]["from"] = d["entities"][1]["facets"][-1]["evidence"][0] = "a10"
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "oren", at="a11"))       # at a10 the Guild is "the Dawn" too
+    assert 'name="the Guild"' in writer_calls(t)[-1]
+
+
+def test_a_group_only_an_unfinished_earlier_book_has_never_joins_a_person():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"].append(ent("guild", "the Guild", "group", frm="a1", facets=[portrait("guild", "a1", "Millers in white aprons.")]))
+    d2["entities"][1]["facets"].append({"id": "b2.oren.f1", "from": "b2.a2", "basis": "stated", "evidence": ["b2.a2"],
+                                        "text": "Still grinds for the Guild."})
+    t = Text()
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], t, Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished=set()))
+    assert 'name="the Guild"' not in writer_calls(t)[-1] and pr.inherits == []
+    pr = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished={"b1"}))
+    assert 'name="the Guild"' in writer_calls(t)[-1] and "b1" in pr.inherits
+
+
+def test_an_unfinished_earlier_books_words_are_unknown_names():
+    bk1, d1, bk2, d2 = series_docs()          # "Zephyr" is in book one's text only
+    scene = SCENE + " A storm the farmers call Zephyr gathers far off."
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], Text(scene=lambda p: scene), Image(), "ink",
+                         portraits=False, workers=1, log=lambda *_: None, pause=0)
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("plate", "Three", at="b2.a5", finished=set()))
+    assert e.value.say == "a name the book has not used by this point"
+    assert "Zephyr" in il.make_prompt(il.job("plate", "Three", at="b2.a5", finished={"b1"})).text
+    assert "Zephyr" in il.make_prompt(il.job("plate", "Three", at="b2.a5")).text      # a run: every earlier book read
+
+
+def test_a_word_the_book_has_not_used_is_caught_when_it_opens_a_sentence():
+    early = "Zephyr gathers over the mill. " + SCENE
+    il, t = fresh(text_=Text(scene=lambda p: early))
+    with pytest.raises(art.Dropped, match="unknown name"):
+        il.make_prompt(il.job("event", "e2", at="a5"))       # the book names Zephyr at a8
+    assert len(writer_calls(t)) == 2 and "It was rejected: unknown name: Zephyr" in writer_calls(t)[1]
+    il, t = fresh(text_=Text(scene=lambda p: early))
+    assert il.make_prompt(il.job("event", "e5", at="a11")).body.startswith("Zephyr gathers")    # reached by then
+    flour = "Sacks of flour lie in the cart. " + SCENE      # an ordinary word the book uses, capitalised only by the sentence
+    il, t = fresh(text_=Text(scene=lambda p: flour))
+    assert il.make_prompt(il.job("event", "e2", at="a5")).body.startswith("Sacks of flour") and len(writer_calls(t)) == 1
+
+
+def test_an_old_final_skip_for_no_look_described_is_tried_again():
+    sink = Mem()
+    sink.m = {**art.blank("sha256:tbk", "ink"), "skipped": [
+        {"target": "oren", "reason": "skipped: no look described", "kind": "portrait", "from": "a3", "final": True},
+        {"target": "mira", "reason": "refused: provider declined", "kind": "portrait", "from": "a4", "final": True}]}
+    il, rep, sink, t, im = run(sink=sink)
+    drawn = {p["target"] for p in pics(sink, "portrait")}
+    assert "oren" in drawn and "mira" not in drawn                   # a refusal stays final
+    assert [s["reason"] for s in sink.m["skipped"]] == ["refused: provider declined"]
+
+
+def test_an_entitys_passages_put_what_its_latest_items_cite_first_then_how_the_book_first_describes_it(monkeypatch):
+    # Lucy at her staking: the paragraphs her latest profile cites (the churchyard, undead) come before her first description
+    monkeypatch.setattr(art, "ENTITY_WORDS", 40)        # half of it for the latest items' paragraphs, room for one more
+    il, t = fresh()
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    passage = writer_calls(t)[0].split("<passage>")[1].split("</passage>")[0]
+    assert CH1[4] in passage                               # what her profile (a4) cites
+    assert CH1[0] in passage                               # her first naming paragraph
+    assert CH1[2] not in passage and not any(p in passage for p in CH2)   # no room for the other mentions
+    monkeypatch.setattr(art, "ENTITY_WORDS", 20)           # room for one: the latest item's paragraph wins
+    il, t = fresh()
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    passage = writer_calls(t)[0].split("<passage>")[1].split("</passage>")[0]
+    assert passage == CH1[4]
+
+
+def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():
+    for rule in ("also say what that looks like as the material gives it", "Every sentence is something an illustrator can draw",
+                 "the passages win", "Use no name at all except the names of peoples",
+                 "A portrait shows the figure as a living presence", "never their death, corpse or burial",
+                 "undead or transformed is drawn as it looks at this point"):
+        assert rule in art.WRITER
+
+
+def test_references_is_public_and_what_make_prompt_attaches():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append(portrait("mira", "a10", "A scarred young woman, older than she was, who keeps a coin.", 2))
+    d["entities"][2]["facets"].append({"id": "bk.mill.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
+                                       "text": "A grey stone mill with a wooden gate."})
+    il, rep, sink, t, im = run(d, bk, level="all")
+    by = {}
+    for p in sorted(pics(sink, "portrait"), key=lambda p: ordinal(d)[p["from"]]):
+        by.setdefault(p["target"], []).append(p)
+    e6 = il.job("event", "e6", at="a11")                         # names mira and the stranger
+    pr = il.make_prompt(e6)
+    assert il.references(e6, pr.shows) == pr.references and {r["id"] for _, r in pr.references} == {
+        by["mira"][0]["id"], by["stranger"][0]["id"]}      # e6 shows from a9: Mira's second portrait (a10) is later
+    assert [r["id"] for _, r in il.references(e6, ["oren"])] == [by["oren"][0]["id"]]    # only what is shown
+    assert il.references(e6, []) == []
+    many = il.references(il.job("event", "e4", at="a11"), ["mira", "oren", "stranger", "gabriel", "mill"])
+    assert len(many) <= art.MAX_REFERENCES
+    change = art.Job("portrait", "mira", 0, "a10", change="scarred", shape="portrait")
+    assert [r["id"] for _, r in il.references(change, ["mira"])] == [by["mira"][0]["id"]]     # the previous portrait
+    assert il.references(art.Job("portrait", "mira", 0, "a10", shape="portrait"), ["mira"]) == []   # a first version: none
+    assert il.references(il.job("place", "mill", at="a11"), ["mill", "mira"]) == []           # a place: none
