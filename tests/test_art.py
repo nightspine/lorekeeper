@@ -1494,3 +1494,89 @@ def test_details_a_fresh_look_index_flags_go_first_in_the_entry_and_none_is_clas
     il2.make_prompt(il2.job("portrait", "mira", at="a11"))
     e = entry(il2.text.scenes()[0])
     assert e.index("Keeps the mill's books") < e.index("freckled face")
+
+
+# ---- review round 1 and lead decisions 3
+
+
+def test_a_person_joins_a_group_only_by_a_name_the_group_has_at_the_anchor():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"].append({"id": "bk.oren.f1", "from": "a3", "basis": "stated", "evidence": ["a3"],
+                                       "text": "He keeps the Dawn watch at the mill."})
+    guild = ent("guild", "the Guild", "group", frm="a1", facets=[portrait("guild", "a1", "Millers in white aprons.")])
+    guild["names"].append({"value": "the Dawn", "kind": "alias", "from": "a10"})     # a name it takes later
+    d["entities"].append(guild)
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "oren", at="a5"))
+    assert 'name="the Guild"' not in writer_calls(t)[-1]
+    il.make_prompt(il.job("portrait", "oren", at="a11"))       # Oren's anchor is a3 still: the alias is not reached there
+    assert 'name="the Guild"' not in writer_calls(t)[-1]
+    d["entities"][1]["facets"][-1]["from"] = d["entities"][1]["facets"][-1]["evidence"][0] = "a10"
+    il, t = fresh(d, bk)
+    il.make_prompt(il.job("portrait", "oren", at="a11"))       # at a10 the Guild is "the Dawn" too
+    assert 'name="the Guild"' in writer_calls(t)[-1]
+
+
+def test_a_group_only_an_unfinished_earlier_book_has_never_joins_a_person():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"].append(ent("guild", "the Guild", "group", frm="a1", facets=[portrait("guild", "a1", "Millers in white aprons.")]))
+    d2["entities"][1]["facets"].append({"id": "b2.oren.f1", "from": "b2.a2", "basis": "stated", "evidence": ["b2.a2"],
+                                        "text": "Still grinds for the Guild."})
+    t = Text()
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], t, Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished=set()))
+    assert 'name="the Guild"' not in writer_calls(t)[-1] and pr.inherits == []
+    pr = il.make_prompt(il.job("portrait", "oren", at="b2.a5", finished={"b1"}))
+    assert 'name="the Guild"' in writer_calls(t)[-1] and "b1" in pr.inherits
+
+
+def test_an_unfinished_earlier_books_words_are_unknown_names():
+    bk1, d1, bk2, d2 = series_docs()          # "Zephyr" is in book one's text only
+    scene = SCENE + " A storm the farmers call Zephyr gathers far off."
+    il = art.Illustrator([art.Book(d1, bk1, Mem()), art.Book(d2, bk2, Mem())], Text(scene=lambda p: scene), Image(), "ink",
+                         portraits=False, workers=1, log=lambda *_: None, pause=0)
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("plate", "Three", at="b2.a5", finished=set()))
+    assert e.value.say == "a name the book has not used by this point"
+    assert "Zephyr" in il.make_prompt(il.job("plate", "Three", at="b2.a5", finished={"b1"})).text
+    assert "Zephyr" in il.make_prompt(il.job("plate", "Three", at="b2.a5")).text      # a run: every earlier book read
+
+
+def test_a_word_the_book_has_not_used_is_caught_when_it_opens_a_sentence():
+    early = "Zephyr gathers over the mill. " + SCENE
+    il, t = fresh(text_=Text(scene=lambda p: early))
+    with pytest.raises(art.Dropped, match="unknown name"):
+        il.make_prompt(il.job("event", "e2", at="a5"))       # the book names Zephyr at a8
+    assert len(writer_calls(t)) == 2 and "It was rejected: unknown name: Zephyr" in writer_calls(t)[1]
+    il, t = fresh(text_=Text(scene=lambda p: early))
+    assert il.make_prompt(il.job("event", "e5", at="a11")).body.startswith("Zephyr gathers")    # reached by then
+    flour = "Sacks of flour lie in the cart. " + SCENE      # an ordinary word the book uses, capitalised only by the sentence
+    il, t = fresh(text_=Text(scene=lambda p: flour))
+    assert il.make_prompt(il.job("event", "e2", at="a5")).body.startswith("Sacks of flour") and len(writer_calls(t)) == 1
+
+
+def test_an_old_final_skip_for_no_look_described_is_tried_again():
+    sink = Mem()
+    sink.m = {**art.blank("sha256:tbk", "ink"), "skipped": [
+        {"target": "oren", "reason": "skipped: no look described", "kind": "portrait", "from": "a3", "final": True},
+        {"target": "mira", "reason": "refused: provider declined", "kind": "portrait", "from": "a4", "final": True}]}
+    il, rep, sink, t, im = run(sink=sink)
+    drawn = {p["target"] for p in pics(sink, "portrait")}
+    assert "oren" in drawn and "mira" not in drawn                   # a refusal stays final
+    assert [s["reason"] for s in sink.m["skipped"]] == ["refused: provider declined"]
+
+
+def test_an_entitys_passages_begin_with_how_the_book_first_describes_it(monkeypatch):
+    monkeypatch.setattr(art, "ENTITY_WORDS", 30)       # room for two paragraphs
+    il, t = fresh()
+    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    passage = writer_calls(t)[0].split("<passage>")[1].split("</passage>")[0]
+    assert passage.startswith(CH1[0]) and CH2[5] not in passage          # her first naming paragraph, not the latest
+
+
+def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():
+    for rule in ("also say what that looks like as the material gives it", "Every sentence is something an illustrator can draw",
+                 "the passages win", "Use no name at all except the names of peoples"):
+        assert rule in art.WRITER
