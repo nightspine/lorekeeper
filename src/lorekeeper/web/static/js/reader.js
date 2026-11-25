@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
+import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -950,7 +950,7 @@ export function mountReader(root) {
     else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
       // The moments are still revealed but the prompt or the World line was written from further on: drop both and write
       // the prompt again at the position now (the server refuses it if the picture itself is held past here).
-      s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))).world);
+      s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
     }
     const repaint = () => {
       frame = 0;
@@ -1862,26 +1862,14 @@ export function mountReader(root) {
     return h("button.linkish.art-draw", { type: "button", on: { click: (ev) => drawPicture({ ...choices[0], title: tidyTitle(r.title), moments: choices, drawnLine: line, from: ev.currentTarget }) } },
       icon("sparkle"), "Draw a picture");
   }
-  /** The world note as the reader may see it at the position (null when its anchor is ahead or it comes from a book not finished). */
   /** The books of the reading order before `book` (the ones a later book's text may carry content from). */
   const booksBefore = (book) => { if (!s.series) return []; const o = s.series.orders[s.order] || []; const i = o.indexOf(book); return i > 0 ? o.slice(0, i) : []; };
-  /** The world note as the reader may see it at the position, or null (artgate.visibleWorld: its anchor in this book is
-   *  reached and every earlier book it carries is finished; an inherited note is never compared with this book's anchors). */
-  function visibleWorld(set) {
+  /** The background note the picture sheet shows and whether it may be written (artgate.sheetWorld), at the position now. */
+  function sheetWorld(set) {
     const ords = ordsOf(s.doc);
     const front = s.map.frontier(s.p);
-    return worldGate(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
+    return worldForSheet(set?.manifest?.world, { ords, position: front == null ? -1 : ords.get(front) ?? -1,
       book: s.series ? s.book : null, finished: finishedSet() || [], earlier: booksBefore(s.book) });
-  }
-  /** The background note the picture sheet shows: only the person's own (`edited: true`), as the reader may see it at the
-   *  position. One may be added when the set has none of the person's own (an automatic note is no longer used); never
-   *  over one that is the person's but hidden here, nor in this book over one inherited from an earlier book. */
-  function sheetWorld(set) {
-    const raw = set?.manifest?.world;
-    const seen = visibleWorld(set);
-    const world = seen && raw?.edited === true ? seen : null;
-    const canEditWorld = world ? world.own : raw?.edited !== true;
-    return { world, canEditWorld };
   }
   /** The title of the first earlier book a picture's prompt carries content from and the reader has not finished, or null. */
   function promptHiddenUntil(rec, book) {
