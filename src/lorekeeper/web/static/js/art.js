@@ -59,7 +59,7 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-export { unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+export { faceIndex, scopeAt, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
 

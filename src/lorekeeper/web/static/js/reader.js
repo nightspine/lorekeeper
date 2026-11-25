@@ -11,7 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
-import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
+import { artImg, artOn, artStyle, artUrl, ENTITY_KINDS, faceIndex, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, scopeAt, setArtOn, setArtStyle, styleLabel, unfinishedSources, visibleArt, visibleWorld as worldGate } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -1644,7 +1644,7 @@ export function mountReader(root) {
       revealed, hereLabel: here ? shortChapter(here) : "this chapter",
       openEntity: (id, from) => openDrawer(id, { from }),
       repaint: () => paintTabs(),
-      portrait: (id) => { const pics = entityPictures(id); return pics.length ? h("div.g-face", pictureButton(pics, pics.length - 1, () => nameOf(id)?.name || "", "art-face-btn", { thumb: false })) : null; },
+      portrait: (id) => { const { pics, i } = faceOf(id); return pics.length ? h("div.g-face", pictureButton(pics, i, () => nameOf(id)?.name || "", "art-face-btn", { thumb: false })) : null; },
     });
     // Beside the list (1101px and up) the map's details take the entry's place on the right; narrower they stay under the map.
     const side = el.panel.querySelector(".g-panel");
@@ -1763,7 +1763,20 @@ export function mountReader(root) {
     return visiblePictures().filter((p) => ENTITY_KINDS.has(p.rec.kind) && p.rec.target === id)
       .sort((a, b) => bookRank(a.book) - bookRank(b.book) || a.ord - b.ord);
   }
-  const latestPicture = (id) => entityPictures(id).at(-1) || null;
+  /** The scope ("s2.1": the line of telling and its era) of the block being read, from the book's art set timeline;
+   *  null without one, without the book file, or before the current chapter's cue (the face then stays the latest). */
+  function readerScope() {
+    const set = s.art.sets.get(bkKey(s.series ? s.book : null));
+    if (!set?.manifest?.timeline || !s.map?.exact) return null;
+    return scopeAt(set.manifest.timeline, s.map.seqAt(s.p));
+  }
+  /** An entry's face: its visible pictures (oldest first) and the index of the one to show, the latest drawn for the time
+   *  the reader's current block tells (a frame story and its flashbacks draw one figure at two ages), else the latest. */
+  function faceOf(id) {
+    const pics = entityPictures(id);
+    return { pics, i: faceIndex(pics, pics.length ? readerScope() : null) };
+  }
+  const latestPicture = (id) => { const { pics, i } = faceOf(id); return i < 0 ? null : pics[i]; };
   /** An event's latest visible picture. */
   const eventPicture = (ev) => visiblePictures().filter((p) => p.rec.kind === "event" && p.rec.target === ev.id && (!s.series || !ev.book || p.book === ev.book)).at(-1) || null;
   /** The plates of a book's chapter rows: Map(row → [picture]) (rows from currentRows or earlierRows). */
@@ -1949,15 +1962,15 @@ export function mountReader(root) {
   }
   /** The entry's portrait beside "Who they are": 140px in the pane, 96px on a phone; a click opens every visible version. */
   function entryFace(e) {
-    const pics = entityPictures(e.id);
+    const { pics, i } = faceOf(e.id);
     if (!pics.length) return null;
     const cap = () => e.name;
-    return pictureButton(pics, pics.length - 1, cap, "art-face-btn", { thumb: false });
+    return pictureButton(pics, i, cap, "art-face-btn", { thumb: false });
   }
   /** Earlier versions of the portrait as small thumbnails (each opens the lightbox on it). */
   function earlierFaces(e, book = undefined) {
-    const pics = entityPictures(e.id);
-    const older = pics.slice(0, -1).filter((p) => book === undefined || p.book === book);
+    const { pics, i } = faceOf(e.id);
+    const older = pics.filter((p, j) => j !== i).filter((p) => book === undefined || p.book === book);
     if (!older.length) return null;
     return h("div.art-earlier", { role: "group", "aria-label": "Earlier pictures" }, older.map((p) => pictureButton(pics, pics.indexOf(p), () => e.name, "art-thumb.small")));
   }
@@ -2220,8 +2233,8 @@ export function mountReader(root) {
     const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
     // That book's pictures of the entry, every version, oldest first, except the one shown at the top of the entry.
-    const pics = entityPictures(e.id);
-    const mine = pics.filter((p) => p.book === b && p !== pics.at(-1));
+    const { pics, i: shown } = faceOf(e.id);
+    const mine = pics.filter((p, j) => p.book === b && j !== shown);
     const face = mine.length ? h("div.art-earlier.card-faces", { role: "group", "aria-label": `Pictures from ${full}` },
       mine.map((p) => pictureButton(pics, pics.indexOf(p), () => `${e.name}, ${full}`, "art-thumb.card-face"))) : null;
     if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length && !face) return null;
