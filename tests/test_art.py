@@ -2226,7 +2226,7 @@ def test_a_detail_loses_a_capital_it_has_only_from_opening_a_sentence_and_the_fa
     assert art._plain("Gryffindor robes", "the Gryffindor robes") == "Gryffindor robes"
     bk = book(("One", CH1), ("Two", CH2))
     d = base_doc(bk)
-    d["entities"][1]["facets"][0]["text"] = "You are wearing our colours, said the old miller, broad and white haired."
+    d["entities"][1]["facets"][0]["text"] = "“You are wearing our colours,” said the old miller, broad and white haired."
 
     class T(Text):
         def complete(self, system, prompt, schema, prefix=None):
@@ -2257,3 +2257,53 @@ def test_a_one_word_look_padded_with_a_kind_word_stands_as_the_book_words_it():
     t.complete = complete
     il, rep, sink, t, im = run(text_=t)
     assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad, old."
+
+
+# ---- round 4
+
+
+def test_two_words_match_only_through_an_inflection_ending():
+    for a, b in (("face", "faced"), ("scar", "scarred"), ("hair", "haired"), ("pale", "paler"), ("old", "older"),
+                 ("freckled", "freckles"), ("eye", "eyes"), ("thin", "thinner"), ("curl", "curly"), ("bushy", "bushier"),
+                 ("dress", "dresses"), ("moustache", "moustaches"), ("grow", "grown")):
+        assert art._same(a, b) and art._same(b, a), (a, b)
+    for a, b in (("cap", "cape"), ("man", "mane"), ("robe", "rob"), ("scar", "scarlet"), ("man", "many"), ("bear", "beard")):
+        assert not art._same(a, b) and not art._same(b, a), (a, b)
+    assert art.detail_supported("a red cape", "her red cape") and not art.detail_supported("a red cap", "her red cape")
+    assert not art.detail_supported("a flowing mane", "a tall man") and not art.detail_supported("a robe", "they rob him")
+    assert art.detail_supported("purple face", "purple-faced") and art.detail_supported("a scar", "a scarred face")
+
+
+def test_a_spoken_line_never_stands_as_a_detail():
+    said = "“I'll stay big and beefy,” he said to the miller, laughing."
+    assert art.spoken("I'll stay big and beefy", said) and not art.spoken("big and beefy", "He was big and beefy.")
+    assert art.spoken("big and beefy", "'I am big and beefy,' he said.") and not art.spoken("Mira's coat", "Mira's coat was red.")
+    assert not art.spoken("big and beefy", "He was big and beefy. “I am big and beefy,” he said.")   # the narrator says it too
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"][0]["text"] = said + " The old miller is broad."
+
+    class T(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "appearance note for Oren" in prompt:
+                self.prompts.append(prompt)
+                return {"role": "a miller", "role_look": [], "details": [
+                    {"text": "big and beefy build", "quote": "I'll stay big and beefy", "seen": True},
+                    {"text": "broad", "quote": "is broad", "seen": True}]}
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(d, bk, text_=T())
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad."
+
+
+def test_a_role_loses_the_title_and_words_a_stripped_name_leaves_dangling():
+    n = art._Names([("Mr. Dursley", False), ("Mrs. Dursley", False), ("Dursley", False)])
+    bare = n.strip("Only son of Mr. and Mrs. Dursley", attributive=True)
+    assert art._tidy(bare, titles=True) == "Only son"
+    assert art._tidy("the police chief", titles=True) == "the police chief"      # a title word as a role's head stays
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"].append(ent("dursley", "Mrs. Dursley", frm="a2"))
+    d["entities"][1]["facets"][0]["text"] = "The only son of Mr. and Mrs. Dursley, broad, who runs the mill."
+    t = Text(notes={"Oren": ("Only son of Mr. and Mrs. Dursley", ["broad"])})
+    il, rep, sink, t, im = run(d, bk, text_=t)
+    assert sink.m["appearance"]["oren"][0]["text"] == "Only son: broad."

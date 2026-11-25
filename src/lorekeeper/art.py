@@ -29,6 +29,7 @@ from bisect import bisect_left, bisect_right
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Protocol
 
@@ -366,19 +367,46 @@ def _words(text: str) -> int:
     return len(text.split())
 
 
-def _base(w: str) -> str:
-    """A word without its plural or inflection ending, so that "scar" and "scarred", "old" and "older", "hair" and "haired",
-    "moustache" and "moustaches" are one word, while "scar" and "scarlet", "man" and "many" stay two (whole words only)."""
-    for suf, rep in (("iest", "y"), ("ier", "y"), ("ies", "y"), ("ied", "y"), ("ing", ""), ("est", ""), ("er", ""), ("ed", ""),
-                     ("es", ""), ("s", "")):
-        if w.endswith(suf) and len(w) - len(suf) >= 3 and not (suf == "s" and w.endswith("ss")):
-            w = w[:-len(suf)] + rep
-            break
-    if len(w) >= 4 and w[-1] == w[-2] and w[-1] not in "aeiouls":
-        w = w[:-1]                     # "scarr", "thinn"
-    if len(w) >= 4 and w.endswith("e"):
-        w = w[:-1]                     # "pale" and "paler", "freckle" and "freckled", "face" and "faced"
-    return w
+# Inflection endings, longest first: (ending, what it replaces). One word matches another only through these (`_same`).
+_ENDINGS = (("iest", "y"), ("ier", "y"), ("ies", "y"), ("ied", "y"), ("ing", ""), ("est", ""), ("ed", ""), ("er", ""),
+            ("es", ""), ("ly", ""), ("en", ""), ("s", ""), ("d", ""), ("y", ""), ("n", ""))
+
+
+@lru_cache(maxsize=65536)
+def _forms(w: str) -> frozenset[str]:
+    """A word and the words it is an inflection of: the word less one ending, that stem with a final "e" put back, and with a
+    doubled consonant made single ("scarred": scar; "faced": face; "haired": hair; "paler": pale; "freckles": freckle). A stem
+    keeps 3 letters at least ("eyes": eye), 4 before "y" or "ly" ("many" is no form of "man"); "d" follows only an "e"
+    ("faced", never "beard" for "bear") and "n" only an "e" or a "w" ("grown")."""
+    out = {w}
+    for end, rep in _ENDINGS:
+        if not w.endswith(end) or (end == "s" and w.endswith("ss")):
+            continue
+        stem = w[:-len(end)]
+        if len(stem) < (4 if end in ("y", "ly") else 3) or (end == "d" and not stem.endswith("e")) \
+                or (end == "n" and not stem.endswith(("e", "w"))):
+            continue
+        stem += rep
+        out |= {stem, stem + "e"} if not rep else {stem}
+        if len(stem) >= 4 and stem[-1] == stem[-2] and stem[-1] not in "aeiouls":
+            out.add(stem[:-1])
+    return frozenset(out)
+
+
+def _same(a: str, b: str) -> bool:
+    """Whether two words are one word with its endings: equal, or one an inflection of the other, or both of one stem ("face"
+    and "faced", "scar" and "scarred", "hair" and "haired", "freckled" and "freckles"); never "cap" and "cape", "man" and
+    "mane", "robe" and "rob", "scar" and "scarlet"."""
+    return a == b or b in _forms(a) or a in _forms(b) or bool((_forms(a) - {a}) & (_forms(b) - {b}))
+
+
+def _has(words, w: str) -> bool:
+    """Whether a word is among `words`, endings allowed (`_same`)."""
+    return w in words or any(_same(w, x) for x in words)
+
+
+def _within(small, big) -> bool:
+    return all(_has(big, w) for w in small)
 
 
 def _drop_phrase(text: str, phrase: str) -> str:
@@ -434,13 +462,20 @@ def quoted(quote: str, source: str, one: bool = False) -> bool:
 def detail_supported(detail: str, quote: str) -> bool:
     """Whether every content word of a look detail is in its own quote ("long white moustache" in "a long white moustache";
     "dark hair" not in "her hair"; "pale skin" not in "the pale light"), words matched whole with their endings (`_base`)."""
-    have = {_base(w) for w in _toks(quote)}
+    have = set(_toks(quote))
     words = [w for w in _toks(detail) if w not in _STOP and len(w) > 2]
-    return bool(words) and all(_base(w) in have for w in words)
+    return bool(words) and _within(words, have)
 
 
-# Words of a line someone speaks or writes about themselves or to another ("You're wearing our colors"): English function words.
-_SPEAKER = frozenset("i me my mine we us our ours you your yours youre im ive weve".split())
+# What a character says: a stretch inside quotation marks, double or single, straight or curly. A single mark counts as a
+# quotation mark only where no letter touches it from outside, so the apostrophes of "don't" and "Mira's" never open one.
+_SPOKEN = re.compile(r"“[^”]*”|\"[^\"\n]*\"|(?<![^\W_])‘.*?’(?![^\W_])|(?<![^\W_])'.*?'(?![^\W_])")
+
+
+def spoken(quote: str, source: str) -> bool:
+    """Whether a quote is only ever a line a character says in `source` (every place it occurs is inside quotation marks),
+    not the narrator's description: "“I'll stay big and beefy,” he said" is spoken; the same words in narration are not."""
+    return quoted(quote, source, one=True) and not quoted(quote, _SPOKEN.sub(" … ", source), one=True)
 
 
 def _plain(detail: str, own: str = "") -> str:
@@ -461,11 +496,11 @@ def _beyond(detail: str, quote: str) -> bool:
     """Whether a detail says its quote plus at most one word: every word of the quote is in it ("tall build" on "tall"), or
     they share two words or more ("big, beefy build" on "A big, beefy man"). Never "pale skin" on "the pale light"."""
     d, q = _content(detail), _content(quote)
-    return bool(q) and len(d - q) <= 1 and (q <= d or len(d & q) >= 2)
+    return bool(q) and sum(not _has(q, w) for w in d) <= 1 and (_within(q, d) or sum(_has(q, w) for w in d) >= 2)
 
 
 def _content(text: str) -> set[str]:
-    return {_base(w) for w in _toks(text) if w not in _STOP and len(w) > 2}
+    return {w for w in _toks(text) if w not in _STOP and len(w) > 2}
 
 
 def compose_note(role: str, details: list[str], same: bool = False, capital: bool = True) -> str:
@@ -481,7 +516,8 @@ def compose_note(role: str, details: list[str], same: bool = False, capital: boo
     for n, d in enumerate(ds):
         words = sets[n]
         # a detail another one holds whole goes ("a common room" beside "a round, cozy common room"; of two equal, the first)
-        if words and (words <= said or any(m != n and (words < sets[m] or (words == sets[m] and m < n)) for m in range(len(ds)))):
+        if words and (_within(words, said) or any(m != n and _within(words, sets[m]) and (not _within(sets[m], words) or m < n)
+                                                   for m in range(len(ds)))):
             continue
         kept.append(d)
         said |= words
@@ -494,13 +530,22 @@ def compose_note(role: str, details: list[str], same: bool = False, capital: boo
     return f"{head}: {body}." if head else (body[:1].upper() if capital else body[:1]) + body[1:] + "."
 
 
-def _tidy(text: str) -> str:
-    """A text with words taken out made whole again: spaces, a doubled article, an article or preposition left dangling at the
-    end, a stray hyphen, and "a"/"an" before what now follows."""
+# A title as it stands before a name ("Mr.", "Mrs", "Uncle"): capitalised, so "the police chief" keeps its head.
+_TITLE_END = re.compile(r"(?:\s+|^)(?:" + "|".join(sorted((re.escape(t.capitalize()) + r"\.?" for t in P.TITLES), key=len,
+                                                           reverse=True)) + r")[\s,;:]*$")
+
+
+def _tidy(text: str, titles: bool = False) -> str:
+    """A text with words taken out made whole again: spaces, a doubled article, an article, preposition or conjunction left
+    dangling at the end (with `titles`, after names were taken out, a title left without its name too), a stray hyphen, and
+    "a"/"an" before what now follows."""
     text = re.sub(r"(?<![\w])-(?=\w)|(?<=\w)-(?![\w])", "", text)
     text = " ".join(text.split())
-    for _ in range(3):
-        text = re.sub(r"(?:\s+|^)(?:of|from|in|for|to|with|at|among|and|the|a|an)[\s,;:]*$", "", text, flags=re.IGNORECASE).strip(" ,;:")
+    for _ in range(6):        # "Only son of Mr. and" (Mrs. Dursley taken out): "and", "Mr.", "of" go in turn (`titles`)
+        text = re.sub(r"(?:\s+|^)(?:of|from|in|for|to|with|at|among|and|or|the|a|an)[\s,;:]*$", "", text,
+                      flags=re.IGNORECASE).strip(" ,;:")
+        if titles:
+            text = _TITLE_END.sub("", text).strip(" ,;:")
     text = re.sub(r"\b(the|a|an)\s+(?=(?:the|a|an)\b)", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+([,;:])", r"\1", text)
     return re.sub(r"\b([Aa])n?\s+(?=(\w))", lambda m: m.group(1) + ("n " if m.group(2).lower() in "aeiou" else " "), text)
@@ -2088,8 +2133,7 @@ class Illustrator:
                         continue
                     if quoted(q, own, one=True) and detail_supported(t, q):
                         into.append({"text": _plain(t, own), "quote": q})
-                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and _beyond(t, q) \
-                            and not set(_toks(q)) & _SPEAKER:
+                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and _beyond(t, q) and not spoken(q, own):
                         # the writer's words go one word beyond its quote ("big, beefy build" on "A big, beefy man", "tall build"
                         # on "tall"): the quote is the book's own short phrase about it, so it becomes the detail (never a line
                         # someone speaks)
@@ -2143,8 +2187,8 @@ class Illustrator:
                     role = _drop_phrase(role, w)
                     with self.lock:
                         self.report.dropped["dropped: look word in the role"] += 1
-        mine = {_base(w) for w in _toks(own)}
-        role = " ".join(w for w in role.split() if not _toks(w) or all(x in _STOP or _base(x) in mine for x in _toks(w)))
+        mine = set(_toks(own))
+        role = " ".join(w for w in role.split() if not _toks(w) or all(x in _STOP or _has(mine, x) for x in _toks(w)))
         names = self.names[bi]
         # a group's name goes from the role with nothing put in ("A first-year Gryffindor": "A first-year"); in a detail one
         # that is an ordinary word stays as that word ("Red Sigils": "red sigils"), another goes ("a huge Slytherin serpent":
@@ -2152,7 +2196,10 @@ class Illustrator:
         role = names.drop_groups(role)
         details = [{**d, "text": t} for d in details if _content(t := names.drop_groups(d["text"], words=True))]
         homes = [{**d, "text": t} for d in homes if _content(t := names.drop_groups(d["text"], words=True))]
-        text = compose_note(names.strip(role, attributive=True), [names.strip(d["text"]) for d in details], mode == "amend" and bool(good))
+        # a title, "and" or "of" a stripped name leaves at the end of the role goes too ("Only son of Mr. and": "Only son")
+        bare = names.strip(role, attributive=True)
+        text = compose_note(_tidy(bare, titles=True) if bare != role else bare, [names.strip(d["text"]) for d in details],
+                            mode == "amend" and bool(good))
         if not text:
             return "", "empty", [], homes, role
         got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
@@ -2204,7 +2251,7 @@ class Illustrator:
             if since is not None and any(c > since for c in changed):
                 continue      # its own look changed after it joined (a Red carved into a Gold): its own look wins
             g = self._note(bi, gid, anchor, "", finished)
-            new = [d["text"] for d in g.get("details") or [] if not _content(d["text"]) <= said]
+            new = [d["text"] for d in g.get("details") or [] if not _within(_content(d["text"]), said)]
             if not new:
                 continue      # no member look, or nothing the figure's note and the earlier groups do not already say
             parts.append(group_look(new))
