@@ -52,6 +52,7 @@ volumes:
 <p>Only the port, the volume and the environment matter. <code>LOREKEEPER_ADMIN_PASSWORD</code> is the initial password for the web app (empty means one is generated and printed in the logs; see <a href="#sign-in">Sign in</a>), <code>LOREKEEPER_API_TOKEN</code> protects the <code>/v0</code> protocol, a provider key is optional if you build with a cloud model, and <code>LOREKEEPER_OLLAMA_URL</code> points at your Ollama.</p>
 <h3 id="docker-tags">Image tags</h3>
 <p><code>latest</code> is the newest stable release, <code>1.2.3</code> and <code>1.2</code> pin a release, and <code>edge</code> is the latest build of the main branch, which may contain unreleased changes. Pin a version for anything you rely on.</p>
+<p>To see which version a server runs, look at the foot of the section list in Settings ("Lorekeeper 0.18.1"), or point at the Lorekeeper name at the top of the rail. A signed-in session can also ask <code>GET /api/about</code>, which answers <code>{"version": "0.18.1"}</code>.</p>
 <p>Environment variables fill in the defaults of the matching command-line flags, and a flag you pass always wins.</p>
 <div class="table-wrap"><table><thead><tr><th>Variable</th><th>Meaning</th><th>Default in the image</th></tr></thead><tbody>
 <tr><td><code>LOREKEEPER_DATA</code></td><td>Where uploads, jobs, secrets and generated indexes live (<code>--data</code>).</td><td><code>/data</code></td></tr>
