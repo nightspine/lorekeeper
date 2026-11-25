@@ -150,18 +150,23 @@ export function mountBook(root) {
   }
   function openPictures(d) {
     const m = modal("Add pictures", { width: 640 });
-    const form = picturesForm({ always: true, idPrefix: "bk-art", estimate: (q) => api.artEstimate({ key: d.key, ...q }) });
+    // Start is off while nothing would be drawn; the form's estimate line says why ("Choose at least one chapter, or portraits.").
+    let start = null, sending = false;
     const err = h("p.hint.field-error", { role: "alert" });
-    const start = h("button.btn.primary", { type: "button", on: { click: async () => {
+    const form = picturesForm({ always: true, idPrefix: "bk-art", chapters: true, estimate: (q) => api.artEstimate({ key: d.key, ...q }),
+      onChange: () => { if (start && !sending) { start.disabled = Boolean(form.reason()); err.textContent = ""; } } });
+    start = h("button.btn.primary", { type: "button", disabled: Boolean(form.reason()), on: { click: async () => {
       const art = form.config();
       if (!art) { err.textContent = "Choose a style first."; return; }
+      if (form.reason()) { err.textContent = form.reason(); return; }
+      sending = true;
       start.disabled = true; err.textContent = "";
       try {
         const job = await api.artRun(d.key, art);
         m.close();
         toast("Drawing pictures");
         if (job?.id) location.hash = `#/studio/job/${encodeURIComponent(job.id)}`;
-      } catch (e) { err.textContent = e.message; start.disabled = false; }
+      } catch (e) { err.textContent = e.message; sending = false; start.disabled = Boolean(form.reason()); }
     } } }, icon("sparkle"), "Start drawing");
     m.body.append(h("p.muted", { style: { margin: 0 } }, "Pictures for the index as it is now, drawn one chapter at a time. The image provider sees only the written prompts."),
       form.el, err, h("div.confirm-actions", h("button.btn", { type: "button", on: { click: () => m.close() } }, "Cancel"), start));

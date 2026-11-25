@@ -51,7 +51,7 @@ STYLES: dict[str, str] = {
 NO_TEXT = "No text, captions, lettering, titles or signatures anywhere in the picture."
 SHAPE_OF = {"plate": "landscape", "event": "landscape", "portrait": "portrait", "place": "landscape", "thing": "landscape"}
 ENTITY_KINDS = ("portrait", "place", "thing")
-LEVELS = ("main", "all")
+LEVELS = ("main", "all", "none")   # chapter pictures: the main moment of each chapter, every drawable moment, none
 PORTRAIT_TYPES = ("person", "creature")
 TYPE_WORDS = {"person": "person", "creature": "creature", "place": "place", "object": "thing", "group": "group",
               "organization": "group", "concept": "idea", "event": "event"}
@@ -416,7 +416,8 @@ def _opening_unknown(text: str, known: Known, source: str = "") -> str:
 @dataclass
 class Book:
     """One book of the run: its index, its EPUB (None for an earlier book that is only read), where its art set lives
-    and what is drawn for it: `level` "main" or "all" chapter pictures or None for none; `draw` False reads the set only."""
+    and what is drawn for it: `level` "main" or "all" chapter pictures, "none" or None for none (portraits only); `draw` False
+    reads the set only."""
     doc: dict
     epub: epub.Book | None
     sink: Sink
@@ -809,6 +810,15 @@ def explain(why: str) -> str:
     return {"too short": "a text too short to draw from", "too long": "a text too long", "empty": "no text at all"}.get(why, why)
 
 
+def scene_level(value) -> str | None:
+    """Which chapter pictures a book gets, normalized: "main", "all", or None for none ("none" and None alike)."""
+    if value in (None, "none"):
+        return None
+    if value in LEVELS:
+        return value
+    raise ValueError(f"level must be one of {', '.join(LEVELS)}, not {value!r}")
+
+
 def portrait_cast(value) -> str | None:
     """Whose portraits a run draws, normalized: "main", "all", or None for no portraits. True (an older config) means "all"."""
     if value is True:
@@ -826,7 +836,7 @@ class Illustrator:
 
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
-                 series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
+                 scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
                  pause: float = 1.0, cheap_text=None) -> None:
         """`text` writes the prompts; `cheap_text` (else `text`) makes the look sentences, the one choosing call the prompt
         path may make (the Reader's sheet writes with a strong model and should pick with the cheap one)."""
@@ -841,7 +851,13 @@ class Illustrator:
         self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
         self.portraits = portrait_cast(portraits)      # "main", "all" or None
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
+        # `chapters` (the CLI's --chapters) limits scenes to those chapters and portraits to anchors up to the last of them;
+        # `scene_chapters` (the web's chapter choice) limits scenes only, by the plan's chapter numbers `n` (the numbers
+        # `counts` lists): None is every chapter, an empty set none. Both apply to every book of the run that draws scenes.
         self.chapter_filter, self.series, self.workers = chapters, series, workers
+        self.scene_chapters = None if scene_chapters is None else {int(n) for n in scene_chapters}
+        for b in books:
+            scene_level(b.level)       # an unknown level fails here, before any call
         self.log, self.progress, self.pause = log, progress, pause
         self.provider = getattr(image, "provider", "") or ""
         self.model = getattr(image, "name", "") or ""
@@ -1229,7 +1245,7 @@ class Illustrator:
         Portraits are drawn first, so when the picture limit or the cost cap leaves room for only some pictures, chapters past
         that room are not screened (no text call for what will not be drawn)."""
         b, jobs = self.books[bi], []
-        level = b.b.level
+        level = scene_level(b.b.level)
         have = self._have(bi)
         ports: list[Job] = []
         if self.portraits:
@@ -1241,7 +1257,7 @@ class Illustrator:
         room = None if budget is None else max(0, budget - sum(self._is_new(bi, j, have) for j in ports))
         new = 0
         for ch in b.chapters if level else ():
-            if self.chapter_filter and ch["n"] not in self.chapter_filter:
+            if not self._chosen(ch):
                 continue
             if not ch["events"]:
                 if record:
@@ -1272,6 +1288,27 @@ class Illustrator:
             self.pick_looks(bi, [x for j in jobs for x in self._figures(j) if b.ents.get(x, {}).get("type") in PORTRAIT_TYPES])
         return jobs + ports
 
+    def _chosen(self, ch: dict) -> bool:
+        """Whether a chapter's scenes are drawn in this run: in the CLI's --chapters (when given) and the web's choice."""
+        return (not self.chapter_filter or ch["n"] in self.chapter_filter) and \
+            (self.scene_chapters is None or ch["n"] in self.scene_chapters)
+
+    def _scenes(self, bi: int, ch: dict, level: str | None) -> tuple[list[tuple], list[tuple] | None]:
+        """The (kind, target, from) of the pictures a chapter would get at a level, with no model call: (sure, extra), where
+        `extra` is None at level "all" before the chapter is screened (then it may get up to one picture per non-minor event
+        beyond the plate, which `counts` reports as an upper bound)."""
+        if not level or not ch["events"]:
+            return [], []
+        b = self.books[bi]
+        ids = self.screened(bi, ch)
+        if ids is None:
+            plate = [("plate", ch["title"], ch["last"])]
+            return plate, (None if level == "all" else [])
+        main = self._main_moment(bi, ch, ids)
+        plate = [("plate", ch["title"], ch["last"])] if main or ch["recaps"] else []
+        more = [("event", x, b.events[x]["from"]) for x in ids if x != main] if level == "all" else []
+        return plate, more
+
     def screened(self, bi: int, chapter: dict) -> list[str] | None:
         """The chapter's drawable event ids from a fresh screening in the manifest, or None when it has not been screened (or
         the index changed since). The manifest holds `screened[<chapter title>] = {"key": <hash of the chapter's non-minor
@@ -1282,27 +1319,46 @@ class Illustrator:
             return list(got["events"])
         return None
 
-    def counts(self, bi: int = -1) -> dict:
-        """What a run on book bi would draw, with no model call (for an estimate): `plates` (chapters with events that get a
-        plate: all of them unless a fresh screening found nothing drawable and there is no recap), `portraits` (the
-        portrait jobs, versions included), and `chapters`: [{"title", "drawable"}], `drawable` the fresh screening's count of
-        visible moments or None when not screened yet (at level "all" a chapter has up to that many pictures)."""
+    def counts(self, bi: int = -1, level: str | None = "main") -> dict:
+        """What a run on book bi would draw, with no model call (for an estimate), at `level` ("main", "all", "none"/None;
+        the estimate's choice, not the book's: the web's estimate builds its Book with no level). `plates`: the chapter pictures of the chosen chapters (plates, and at level "all" the other
+        drawable moments too, an upper bound for a chapter not screened yet), new or already drawn; `portraits`: the portrait
+        jobs, versions included (not limited by `scene_chapters`); `chapters`: every chapter of the plan, in order, as
+        {"n", "title", "drawable", "events", "pictures", "drawn", "chosen"}: `n` the plan number (what `scene_chapters` and
+        the CLI's --chapters take), `drawable` the fresh screening's count of visible moments or None when not screened yet,
+        `events` the non-minor events, `pictures` what the chapter would get at the level whether chosen or not (0 for a
+        chapter with no events: it can never get one), `drawn` how many of those the set already holds, `chosen` whether
+        this run draws its scenes; `new_portraits`: how many of the portrait jobs a run would still draw (not in the set
+        and not a final skip)."""
         bi = len(self.books) - 1 if bi < 0 else bi
         b = self.books[bi]
+        level = scene_level(level)
+        held = {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")}
         chapters, plates = [], 0
         for ch in b.chapters:
-            if self.chapter_filter and ch["n"] not in self.chapter_filter:
-                continue
-            if not ch["events"]:
-                continue
-            ids = self.screened(bi, ch)
-            chapters.append({"title": ch["title"], "drawable": None if ids is None else len(ids)})
-            plates += 1 if ids is None or ids or ch["recaps"] else 0
+            ids = self.screened(bi, ch) if ch["events"] else []
+            major = [e for e in ch["events"] if e.get("kind") != "minor"]
+            sure, extra = self._scenes(bi, ch, level)
+            if extra is None:            # level "all", not screened: up to one more picture per other non-minor event
+                pictures = max(1, len(major))
+                # the plate on its own key, and event pictures (on-demand ones too) never filling the plate's slot: a
+                # chapter whose plate a run would still draw is never counted as all drawn
+                events_held = sum(("event", e["id"], e["from"]) in held for e in major)
+                drawn = sum(k in held for k in sure) + min(events_held, pictures - 1)
+            else:
+                pictures = len(sure) + len(extra)
+                drawn = sum(k in held for k in sure + extra)
+            chosen = bool(level) and self._chosen(ch)
+            chapters.append({"n": ch["n"], "title": ch["title"], "drawable": None if ids is None else len(ids),
+                             "events": len(major), "pictures": pictures, "drawn": drawn, "chosen": chosen})
+            plates += pictures if chosen else 0
         ports = self._portrait_jobs(bi, classify=False) if self.portraits else []
         if self.chapter_filter:
             end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
             ports = [j for j in ports if b.seq_of[j.anchor] <= end]
-        return {"plates": plates, "portraits": len(ports), "chapters": chapters}
+        have = self._have(bi)
+        return {"plates": plates, "portraits": len(ports), "new_portraits": sum(self._is_new(bi, j, have) for j in ports),
+                "chapters": chapters}
 
     def _profiles(self, bi: int, eid: str) -> list[tuple[int, int, dict]]:
         """(book, ordinal, facet) of the entity's profiles in books 0..bi, in reading order."""

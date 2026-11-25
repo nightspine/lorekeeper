@@ -39,7 +39,7 @@ from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import BookStore, JobManager, art_config, describe
+from .jobs import BookStore, JobManager, art_config, chapter_choice, describe, is_story
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -1634,50 +1634,57 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
-    def chapter_events(ctx: dict, il) -> dict[str, int]:
-        """Non-minor events per chapter title of the plan (the EPUB's chapters, a repeated title as "Title (2)")."""
-        book, seen, out = art_epub(ctx), {}, {}
-        ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
-        seq_of = {a["id"]: a.get("seq") for a in ctx["doc"]["anchors"]}
-        for c, end in zip(book.chapters, ends):
-            n = sum(1 for e in ctx["doc"].get("events", []) if e.get("kind") != "minor"
-                    and seq_of.get(e["from"]) is not None and c.start <= seq_of[e["from"]] < end)
-            seen[c.title] = seen.get(c.title, 0) + 1
-            out[c.title if seen[c.title] == 1 else f"{c.title} ({seen[c.title]})"] = n
-        return out
+    def story_rows(il, rows: list[dict]) -> list[dict]:
+        """The estimate's chapter rows a person can choose from: every chapter that can get a picture, and every story
+        chapter (`is_story`) even with nothing to draw; front and back matter with no events ("Contents") is left out."""
+        words = {c["n"]: c["words"] for c in il.books[-1].chapters}
+        return [r for r in rows if r["events"] or r["pictures"] or is_story(r["title"], words.get(r["n"], 0))]
 
     @app.get("/api/art/estimate")
     @art_route
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: str = "main",
-                     provider: str | None = None, model: str | None = None, quality: str = "standard"):
+                     provider: str | None = None, model: str | None = None, quality: str = "standard",
+                     chapters: str | None = None):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
-        when the set has them, else the chapters' turning points (main) or non-minor events (all)."""
+        when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
+        none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
+        what it would get at the level whether chosen or not (`pictures`) and how many of those are drawn (`drawn`). The
+        totals (`pictures`, `plates`, `portraits`, `price`) count what a run would still draw: the chosen chapters'
+        pictures not drawn yet, plus the new portraits, which the chapter choice never limits; `planned` has the same
+        three counts with what is already drawn included."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
-            raise ArtRefusal(422, "bad-config", "level must be main or all.")
+            raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
         # main, all or none; true and false from an older page mean all and none
         cast = {"true": "all", "false": None, "none": None, "main": "main", "all": "all"}.get(portraits.lower(), "?")
         if cast == "?":
             raise ArtRefusal(422, "bad-config", "portraits must be main, all or none.")
+        chosen = None
+        if chapters is not None:
+            parts = [x.strip() for x in chapters.split(",") if x.strip()]
+            if len(parts) > 10000 or not all(re.fullmatch(r"[0-9]{1,9}", x) for x in parts):   # ASCII only
+                raise ArtRefusal(422, "bad-config", "chapters must be chapter numbers separated by commas.")
+            chosen = {int(x) for x in parts}
         il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=cast)
-        got = il.counts()
-        # `drawable` is the screening's count, None before a chapter is screened; then a level "all" run draws up to the
-        # chapter's non-minor events (read from the index, not from the pipeline's internals).
-        events = chapter_events(ctx, il)
-        chapters, plates = [], got["plates"]
-        if level == "all":
-            plates = sum(max(1, c["drawable"] if c["drawable"] is not None else events.get(c["title"], 0))
-                         for c in got["chapters"])
-        chapters = [{"title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
-                     "events": events.get(c["title"], 0)} for c in got["chapters"]]
-        ports = got["portraits"]
+        if chosen and any(n not in {c["n"] for c in il.books[-1].chapters} for n in chosen):
+            raise ArtRefusal(422, "bad-config", "Some of the chosen chapters are not chapters of this book.")
+        il.scene_chapters = chosen     # the chapter choice limits scenes only (art.Illustrator's `scene_chapters`)
+        got = il.counts(level=level)
+        rows = story_rows(il, got["chapters"])
+        # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
+        plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
+        chapters_ = [{"n": c["n"], "title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
+                      "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"]}
+                     for c in rows]
+        ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
         each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
         price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
-                "model": name, "chapters": chapters}
+                "model": name, "level": level, "chapters": chapters_,
+                "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
     def art_file(text_hash: str, style: str, pid: str):
@@ -1701,7 +1708,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             art_epub(ctx)
             owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
             try:
-                job = jobs.submit_art(key, body.get("art", body), index_path=str(ctx["item"]["path"]),
+                cfg = art_config(body.get("art", body))
+                if cfg["chapters"]:     # each chosen chapter must be one of this book's (plan numbers, as the estimate lists)
+                    il = illustrator(ctx, cfg["style"], cfg["quality"], cfg["provider"], cfg["model"], text_needed=False,
+                                     portraits=cfg["portraits"])[0]
+                    chapter_choice(cfg, il.books[-1].chapters)
+                job = jobs.submit_art(key, cfg, index_path=str(ctx["item"]["path"]),
                                       book_id=(owner or {}).get("localId") or "", text_hash=ctx["hash"],
                                       title=ctx["doc"].get("work", {}).get("title") or key)
             except ValueError as e:

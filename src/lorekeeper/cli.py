@@ -915,8 +915,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--prior", action="append", help="an earlier series book's index, read only: its art set (if any) is inherited (repeatable, reading order)")
     s.add_argument("--style", default="digital-art", help="one of: " + ", ".join(__import__("lorekeeper.art", fromlist=["STYLES"]).STYLES)
                    + "; or your own sentence describing the look (never an artist's name)")
-    s.add_argument("--level", choices=["main", "all"], default=None,
-                   help="main: one picture per chapter; all: every drawable moment (default: main for the last INDEX; earlier INDEX books get portraits only unless this is given)")
+    s.add_argument("--level", choices=["main", "all", "none"], default=None,
+                   help="main: one picture per chapter; all: every drawable moment; none: no chapter pictures, portraits only (default: main for the last INDEX; earlier INDEX books get portraits only unless this is given)")
     s.add_argument("--portraits", choices=["main", "all", "none"], default="main",
                    help="whose portraits to draw: main, the characters the story is most about (up to 12 a book); all, everyone "
                         "with a part; none (default: main)")
