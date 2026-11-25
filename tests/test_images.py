@@ -380,3 +380,18 @@ def test_cli_file_errors_are_messages(monkeypatch, tmp_path):
         cli.main(["draw", "x", "-o", str(tmp_path / "p.png"), "--ref", str(tmp_path / "missing.png")])
     with pytest.raises(SystemExit, match="error:"):
         cli.main(["draw", "x", "-o", str(tmp_path / "p.png"), "--api-key-file", str(tmp_path / "nokey")])
+
+
+def test_a_note_about_the_references_is_sent_with_them_and_never_without_them(monkeypatch):
+    m, http = gemini(monkeypatch, gemini_ok(), gemini_ok())
+    m.draw("an apple", references=[REF1], note="Likeness only.")
+    parts = json.loads(http.calls[0]["body"])["contents"][0]["parts"]
+    assert [list(p) for p in parts] == [["inlineData"], ["text"], ["text"]]
+    assert parts[1]["text"] == "Likeness only." and parts[2]["text"] == "an apple"
+    m.draw("an apple", note="Likeness only.")                      # no pictures: nothing to say about them
+    assert json.loads(http.calls[1]["body"])["contents"][0]["parts"] == [{"text": "an apple"}]
+    m, http = openai(monkeypatch, openai_ok(), openai_ok())
+    m.draw("the same man", references=[REF1], note="Likeness only.")
+    assert b'name="prompt"\r\n\r\nLikeness only.\n\nthe same man\r\n' in http.calls[0]["body"]
+    m.draw("the same man", note="Likeness only.")
+    assert json.loads(http.calls[1]["body"])["prompt"] == "the same man"

@@ -648,12 +648,23 @@ def cmd_illustrate(args) -> int:
     if tp != args.provider:
         targs.api_key_file = None
     model = _make_model(targs, args.text_model or (llm.PROVIDERS[tp]["cheap"] if tp in llm.PROVIDERS else None), tp)
-    books = [art.Book(d, None, art.FileSink(art.default_dir(p, d, args.style)), None, draw=False) for p, d in prior]
+    def likeness(folder: Path) -> dict:
+        """The other style folders beside a set (same edition): a figure with no picture in this style takes its likeness
+        from one of them."""
+        parent = folder.parent
+        return {x.name: art.FileSink(x) for x in sorted(parent.iterdir()) if x.is_dir() and x != folder
+                and (x / "art.json").is_file()} if parent.is_dir() else {}
+
+    books = []
+    for p, d in prior:
+        f = art.default_dir(p, d, args.style)
+        books.append(art.Book(d, None, art.FileSink(f), None, draw=False, likeness=likeness(f)))
     for i, (p, d) in enumerate(zip(paths, docs)):
         last = i == len(paths) - 1
         out = Path(args.out) if args.out and last else art.default_dir(p, d, args.style)
         # an earlier book of the run gets its portraits (so later books inherit them) and chapter pictures only when asked
-        books.append(art.Book(d, epubs[i], art.FileSink(out), (args.level or "main") if last else args.level))
+        books.append(art.Book(d, epubs[i], art.FileSink(out), (args.level or "main") if last else args.level,
+                              likeness=likeness(art.default_dir(p, d, args.style))))
     chapters = set(_parse_ranges(args.chapters)) if args.chapters else None
     try:
         il = art.Illustrator(books, model, image, args.style, portraits=None if args.portraits == "none" else args.portraits, quality=args.quality, cap=args.cap,
