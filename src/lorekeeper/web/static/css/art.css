@@ -105,6 +105,8 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .art-prompt { width: 100%; min-height: 9em; resize: vertical; font: 400 var(--text-base)/1.5 var(--font-ui); padding: 8px 10px; }
 .art-chips { display: flex; flex-wrap: wrap; gap: 2px 14px; }
 .art-custom { width: 100%; }
+.art-models .chip-price { color: var(--text-3); font-weight: 400; }
+.art-model-sel { width: auto; max-width: 100%; justify-self: start; }
 .art-row { display: flex; flex-wrap: wrap; gap: 12px 28px; }
 .art-moments { display: grid; border-top: 1px solid var(--line); }
 .art-moment { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px; align-items: start; padding: 9px 8px; border-bottom: 1px solid var(--line); font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); cursor: pointer; }
@@ -153,6 +155,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .art-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px 14px; }
   .art-chips::-webkit-scrollbar { display: none; }
   .art-chips .filter-chip { flex: none; min-height: 44px; }
+  .art-chips.art-models { flex-wrap: wrap; overflow-x: visible; }   /* three models with their prices: every one in sight */
   .art-sheet .seg button { min-height: 44px; }
   .art-ctl { display: none; }
 }
