@@ -51,9 +51,9 @@ def truth_eotv1(toc: int) -> str | None:
     return None
 
 
-# Bench data for the prompts measure: words of the frame's look of the narrator that his youth does not have (the inkwork
-# and the aged face of the man in the cell). Only for scoring.
-FRAME_LOOK = re.compile(r"\b(inkwork|ink-work|tattoo\w*|aegis|beard\w*|grey|gray|aged|weathered|lined|scar\w*|older)\b", re.I)
+# Bench data for the prompts measure: words of the narrator's look as the man in the cell (and in the later past) has it and
+# the boy of book one's first part (toc6-16, before his first inking) does not. Only for scoring.
+FRAME_LOOK = re.compile(r"\b(inkwork|inked|ink|tattoo\w*|PATIENCE|skulls?|roses|beard\w*|scar\w*|grizzled|weathered|middle-aged)\b", re.I)
 
 
 class NoImage:
@@ -153,32 +153,39 @@ def agreement(a: list, b: list) -> float:
     return sum(1 for x, y in zip(a, b) if best[y] == x) / max(1, len(a))
 
 
+def one_run(name: str, spec, a) -> dict:
+    text = text_model(a.provider, a.model)            # a model per run: its usage is that run's cost
+    il, cost, secs = label(spec, text)
+    row = {"cost": round(cost, 4), "seconds": round(secs), "strands": strand_count(il),
+           "per_book": [len({lab.get("strand") for _, lab, _ in chapters_of(il, j) if lab and lab.get("strand")})
+                        for j in range(len(il.books))],
+           "unknown": sum(1 for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j) if not (lab and lab.get("strand"))),
+           "chapters": sum(len(il.books[j].chapters) for j in range(len(il.books))),
+           "partitions": [partition(il, j) for j in range(len(il.books))],
+           "labels": [{s["id"]: s["label"] for s in (il.man[j].get("timeline") or {}).get("strands", [])} for j in range(len(il.books))],
+           "eras": [Counter((lab or {}).get("era") for _, lab, _ in chapters_of(il, j)) for j in range(len(il.books))],
+           "other": sum(1 for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j) for v in (lab or {}).get("events", {}).values() if v == "other"),
+           "exceptions": sum(len((lab or {}).get("events", {})) for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j)),
+           "model": text.name}
+    if name == "eotv":
+        row["book1"] = score_eotv1(il)
+    print(f"{name}: {row['strands']} strand(s) {row['per_book']}, {row['unknown']} unknown of {row['chapters']}, "
+          f"${row['cost']:.4f}, {row['seconds']}s" + (f", book 1 {row['book1']['accuracy']:.1%}" if name == "eotv" else ""), flush=True)
+    return row
+
+
 def cmd_label(a) -> dict:
-    text = text_model(a.provider, a.model)
-    out: dict = {"provider": a.provider, "model": text.name, "runs": a.runs}
+    out: dict = {"provider": a.provider, "model": a.model or llm.PROVIDERS[a.provider]["cheap"], "runs": a.runs}
     sets = {"eotv": EOTV, **CONTROLS}
     if a.only == "eotv":
         sets = {"eotv": EOTV}
     elif a.only == "controls":
         sets = dict(CONTROLS)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(len(sets) * a.runs) as pool:
+        futs = {(name, r): pool.submit(one_run, name, spec, a) for name, spec in sets.items() for r in range(a.runs)}
     for name, spec in sets.items():
-        runs = []
-        for r in range(a.runs):
-            il, cost, secs = label(spec, text)
-            row = {"cost": round(cost, 4), "seconds": round(secs), "strands": strand_count(il),
-                   "per_book": [len({lab.get("strand") for _, lab, _ in chapters_of(il, j) if lab and lab.get("strand")})
-                                for j in range(len(il.books))],
-                   "unknown": sum(1 for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j) if not (lab and lab.get("strand"))),
-                   "chapters": sum(len(il.books[j].chapters) for j in range(len(il.books))),
-                   "partitions": [partition(il, j) for j in range(len(il.books))],
-                   "labels": [{s["id"]: s["label"] for s in (il.man[j].get("timeline") or {}).get("strands", [])} for j in range(len(il.books))],
-                   "other": sum(1 for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j) for v in (lab or {}).get("events", {}).values() if v == "other"),
-                   "exceptions": sum(len((lab or {}).get("events", {})) for j in range(len(il.books)) for _, lab, _ in chapters_of(il, j))}
-            if name == "eotv":
-                row["book1"] = score_eotv1(il)
-            runs.append(row)
-            print(f"{name} run {r + 1}: {row['strands']} strand(s) {row['per_book']}, {row['unknown']} unknown of {row['chapters']}, "
-                  f"${row['cost']:.4f}, {row['seconds']}s" + (f", book 1 {row['book1']['accuracy']:.1%}" if name == "eotv" else ""))
+        runs = [futs[(name, r)].result() for r in range(a.runs)]
         agree = [[round(agreement(x["partitions"][j], y["partitions"][j]), 3) for x, y in combinations(runs, 2)]
                  for j in range(len(spec))]
         out[name] = {"runs": [{k: v for k, v in r.items() if k != "partitions"} for r in runs], "agreement": agree,
@@ -198,9 +205,12 @@ def cmd_prompts(a) -> dict:
         il = art.Illustrator(bs, text, NoImage(), "realism", portraits=None, workers=1, story_time=mode == "on",
                              log=lambda m: print(m, file=sys.stderr))
         il.world(0)
+        if mode == "on" and a.timeline:
+            il.man[0]["timeline"] = json.loads(Path(a.timeline).read_text())    # labels of an earlier run (same index)
+            il._tl_version += 1
         il.timeline(0)
         b = il.books[0]
-        lead = next(e["id"] for e in b.doc["entities"] if any(n["value"].lower().startswith("gabriel") for n in e["names"]))
+        lead = "gabriel-de-leon"
         youth = [c for c in b.chapters if truth_eotv1(toc_of(b, c) or 0) == "youth" and any(lead in e.get("entities", []) for e in c["events"])]
         step = max(1, len(youth) // a.chapters)
         picked = youth[::step][:a.chapters]
@@ -217,12 +227,14 @@ def cmd_prompts(a) -> dict:
                 rows.append({"chapter": ch["title"], "dropped": str(e)[:120]})
                 continue
             note = dict(pr.notes).get(lead, "")
-            rows.append({"chapter": ch["title"], "scope": pr.scope, "event_scope": il.event_scope(0, ev),
+            rows.append({"chapter": ch["title"], "toc": toc_of(b, ch), "scope": pr.scope, "event_scope": il.event_scope(0, ev),
                          "lead_note": note, "frame_look": bool(FRAME_LOOK.search(note)), "figures": len(pr.notes),
                          "refs": len(pr.references)})
         notes = [n for v in il.man[0]["appearance"].values() for n in v]
         out[mode] = {"prompts": len([r for r in rows if "dropped" not in r]), "dropped": len([r for r in rows if "dropped" in r]),
                      "frame_look": sum(1 for r in rows if r.get("frame_look")),
+                     "early": sum(1 for r in rows if (r.get("toc") or 99) <= 16 and "dropped" not in r),
+                     "early_frame_look": sum(1 for r in rows if (r.get("toc") or 99) <= 16 and r.get("frame_look")),
                      "lead_empty": sum(1 for r in rows if "dropped" not in r and not r["lead_note"]),
                      "notes": len(notes), "empty_notes": sum(1 for n in notes if not n.get("text")),
                      "text_cost": round(il.text_spent(), 4), "prompt_cost": round(il.text_spent() - t0, 4), "rows": rows}
@@ -238,13 +250,16 @@ def cmd_ab(a) -> dict:
     text = text_model(a.provider, a.model)
     image = llm.make_image(a.image_provider, None, llm.env_key(a.image_provider))
     out: dict = {"provider": a.provider, "image": getattr(image, "name", ""), "quality": a.quality, "pairs": []}
-    keep = OUT / "art_timeline_ab"
+    keep = Path(a.keep) if a.keep else Path(tempfile.mkdtemp(prefix="lk-tlab-keep-"))
     keep.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(prefix="lk-tlab-"))
     bs = books(EOTV[:1], tmp, level=None)
     il = art.Illustrator(bs, text, image, "realism", portraits="main", quality=a.quality, workers=1, cap=a.cap,
                          log=lambda m: print(m, file=sys.stderr))
     il.world(0)
+    if a.timeline:
+        il.man[0]["timeline"] = json.loads(Path(a.timeline).read_text())
+        il._tl_version += 1
     jobs = il.plan(0)
     by: dict = {}
     for j in jobs:
@@ -289,14 +304,16 @@ def main(argv=None) -> int:
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--only", choices=("eotv", "controls"))
     ap.add_argument("--chapters", type=int, default=12)
+    ap.add_argument("--timeline", help="prompts: seed the labels from a stored timeline (art.json's `timeline`) of the same index")
     ap.add_argument("--n", type=int, default=10)
     ap.add_argument("--image-provider", default="gemini")
     ap.add_argument("--quality", default="draft")
     ap.add_argument("--cap", type=float, default=1.0)
+    ap.add_argument("--keep", help="ab: the folder the drawn pictures are copied to (default a temporary one)")
     a = ap.parse_args(argv)
     got = {"label": cmd_label, "prompts": cmd_prompts, "ab": cmd_ab}[a.what](a)
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / f"art_timeline-{a.what}{'-' + a.only if a.only else ''}.json"
+    path = OUT / f"art_timeline-{a.what}-{a.provider}{'-' + a.only if a.only else ''}.json"
     path.write_text(json.dumps(got, indent=1, ensure_ascii=False) + "\n")
     print(f"written {path}")
     return 0

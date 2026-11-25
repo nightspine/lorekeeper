@@ -2446,7 +2446,7 @@ def test_a_flash_forward_frame_leaves_the_rest_of_the_cast_as_before():
 
 def test_a_linear_book_is_one_scope_and_draws_byte_for_byte_as_before():
     # the second chapter is the same time from another figure's side: one line of telling, as the prompt asks
-    assert "another narrator, viewpoint or place at the same time" in art.TIMELINE
+    assert "another narrator, viewpoint, character or place at the same" in " ".join(art.TIMELINE.split())
     for level in ("main", "all"):
         il, rep, s_on, t_on, im_on = run(level=level)
         _, _, s_off, t_off, im_off = run(level=level, story_time=False)

@@ -289,10 +289,12 @@ years apart, that the book moves between (the same people as children in some ch
   of the telling (the teller and the listener themselves); what the tale shows happens at the tale's time, even when it is told
   aloud, in quotation marks or in the first person. A chapter that opens in the frame and then tells the past at length is in
   the line of that past; its frame scenes are exceptions (see "events").
-- Times years apart are separate lines, even inside one tale and one frame: a teller's boyhood and his life as a grown man are
-  two lines. A chapter set years away from the line before it goes to the known line set at that time, or opens a new line.
-- Not a new line: the story moving on by hours, days or months; another narrator, viewpoint or place at the same time; letters,
-  diaries and reports written in the story's own time; a dream, a vision or a memory of a few lines inside a scene (mark its
+- Times years apart that the book moves between are separate lines, even inside one tale and one frame: a teller's boyhood
+  and his life as a grown man are two lines. A chapter set years before or after the line it follows goes to the known line
+  set at that time, or opens a new line.
+- Not a new line: the story moving on by hours, days or months; another narrator, viewpoint, character or place at the same
+  time or within months; a marriage, an illness or any other change in people's lives; letters, diaries and reports written in
+  the story's own time; a dream, a vision or a memory of a few lines inside a scene (mark its
   events "other").
 - A chapter goes on in the line of the chapter before when its opening shows no other time. At a new part or section, decide
   afresh from the opening: its time (an age, a date, years passed), its people and their situation.
@@ -303,8 +305,9 @@ Lines known so far (its era is 1 at first and one more after each stated jump of
 Return, in this order:
 - "when": in a few words, when this chapter's events happen as the text states or shows it: the age or stage of life of its
   main people, a year, or how far before or after the line before it.
-- "lines": for EVERY known line, {{"id": its id, "same_time": true when this chapter's events happen at that line's time (the
-  same people at the same stage of their lives, as its label, its people and where it left off show), else false}}.
+- "lines": for EVERY known line, {{"id": its id, "same_time": true when this chapter's events happen in that line's years
+  (where it left off, or soon after), whoever the chapter follows; false when they are set years before or after it, or in the
+  frame when the line is the tale (or the reverse)}}.
 - "events": for EVERY numbered event, {{"n": its number, "line": the id of the known line it happens in, "new" for a line this
   chapter opens, or "other" only for a dream, a vision or a memory of a few lines inside a scene}}.
 - "strand": the line most of the chapter's events happen in: a known line you marked "same_time", or "new" when none is, with "label": the time of that line in a few
@@ -324,7 +327,7 @@ Its opening, numbered by paragraph:
 Its events, each with the start of the paragraph it is told in:
 {events}"""
 # The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
-TIMELINE_SCHEMA = {"type": "object", "required": ["when", "events", "strand", "cue"], "properties": {
+TIMELINE_SCHEMA = {"type": "object", "required": ["when", "lines", "events", "strand", "cue"], "properties": {
     "when": {"type": "string"},
     "lines": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"},
                                                                           "same_time": {"type": "boolean"}}}},
@@ -1758,7 +1761,7 @@ class Illustrator:
 
         def found(q: str) -> bool:
             t = _toks(q)
-            return bool(t) and cue_seq is not None and f" {' '.join(t)} " in f" {' '.join(_toks(b.text[cue_seq]))} "
+            return bool(t) and cue_seq in b.text and f" {' '.join(t)} " in f" {' '.join(_toks(b.text[cue_seq]))} "
         if said == "new" or (not strands and said not in strands):
             if strands:
                 if len(strands) >= MAX_STRANDS:
