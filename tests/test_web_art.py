@@ -788,6 +788,45 @@ SCENE_WITH_NAME = ("At a wooden gate beside a grey stone mill, Valdemar waits wi
                    "off toward low green hills in the distance under a pale sky.")
 
 
+# ---- choosing the image model
+
+
+def test_the_providers_list_carries_each_image_table(env):
+    got = {p["id"]: p for p in env.c.get("/api/providers").json()["providers"]}
+    assert got["claude"]["images"] is None and got["mistral"]["images"] is None
+    gem = got["gemini"]["images"]
+    assert gem["default"] == llm.IMAGE_PROVIDERS["gemini"]["default"]
+    models = {m["id"]: m for m in gem["models"]}
+    assert set(models) == {m["id"] for m in llm.IMAGE_PROVIDERS["gemini"]["models"]}
+    assert models["gemini-3-pro-image"]["label"] == "Nano Banana Pro"
+    assert models["gemini-3-pro-image"]["price"]["standard"] == llm.image_price("gemini", "gemini-3-pro-image", "standard")
+    assert models["gemini-3.1-flash-lite-image"]["levels"] == ["draft", "standard"]
+    assert models[GEMINI]["levels"] == ["draft", "standard", "best"]
+    assert got["openai"]["images"]["models"]
+
+
+def test_the_chosen_image_model_reaches_the_provider_and_the_price(env, monkeypatch):
+    env.key()
+    asked = []
+
+    def make(provider, model=None, api_key=None, base_url=None):
+        asked.append((provider, model))
+        return env.image
+    monkeypatch.setattr(llm, "make_image", make)
+    pro = "gemini-3-pro-image"
+    q = {"kind": "event", "target": "e5", "style": "ink", "provider": "gemini", "model": pro}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=q).json()
+    assert got["model"] == pro and got["price"] == llm.image_price("gemini", pro, "standard", "landscape")
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**q, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    assert asked and all(a == ("gemini", pro) for a in asked)
+    est = env.c.get("/api/art/estimate", params={"key": KEY, "provider": "gemini", "model": pro}).json()
+    assert est["model"] == pro
+
+
+# ---- which portraits a run draws
+
+
 def test_the_art_config_takes_main_all_or_false_for_portraits():
     from lorekeeper.web.jobs import art_config
     base = {"style": "ink", "cap": 10}
