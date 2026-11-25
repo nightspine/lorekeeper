@@ -1157,13 +1157,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     # ---- pictures: art sets in the art store, never in the index (art.py, web/art.py, CLAUDE.md §8f) ----------------
 
-    def art_error(status: int, code: str, detail: str) -> JSONResponse:
-        return JSONResponse({"detail": detail, "code": code}, status_code=status)
+    def art_error(status: int, code: str, detail: str, why: str = "") -> JSONResponse:
+        return JSONResponse({"detail": detail, "code": code, **({"why": why} if why else {})}, status_code=status)
 
     class ArtRefusal(Exception):
-        def __init__(self, status: int, code: str, detail: str) -> None:
+        def __init__(self, status: int, code: str, detail: str, why: str = "") -> None:
             super().__init__(detail)
-            self.status, self.code, self.detail = status, code, detail
+            self.status, self.code, self.detail, self.why = status, code, detail, why
 
     QUALITIES = ("draft", "standard", "best")
 
@@ -1376,6 +1376,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
             except artmod.TextFailed as e:
                 raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+            except artmod.Dropped as e:   # the check and the word it caught, for the person to act on
+                raise ArtRefusal(422, "dropped", str(e), e.say) from e
             except ValueError as e:
                 raise ArtRefusal(422, "dropped", str(e)) from e
         except ArtRefusal:
@@ -1425,7 +1427,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 try:
                     return fn(*args, **kwargs)
                 except ArtRefusal as e:
-                    return art_error(e.status, e.code, e.detail)
+                    return art_error(e.status, e.code, e.detail, e.why)
                 except llm.ProviderError as e:
                     return art_error(502, "model-failed", str(e)[:200])
             return await asyncio.get_running_loop().run_in_executor(None, work)

@@ -30,8 +30,8 @@ async function request(method, url, body, opts = {}) {
     signal: opts.signal,
   });
   if (!res.ok) {
-    let detail = res.statusText, code = "";
-    try { const j = await res.json(); detail = j.detail || detail; code = j.code || ""; } catch {}
+    let detail = res.statusText, code = "", why = "";
+    try { const j = await res.json(); detail = j.detail || detail; code = j.code || ""; why = typeof j.why === "string" ? j.why : ""; } catch {}
     if (!opts.auth) {
       if (res.status === 401) redirectToLogin();
       else if (res.status === 403 && code === "password-change-required") redirectTo("#/password");
@@ -39,6 +39,7 @@ async function request(method, url, body, opts = {}) {
     const err = new Error(detail);
     err.status = res.status;
     err.code = code;
+    if (why) err.why = why;
     throw err;
   }
   return res.json();
