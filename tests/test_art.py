@@ -898,6 +898,22 @@ def test_counts_list_every_chapter_with_its_pictures_at_the_level_and_what_is_dr
     assert rows(il2.counts(level="main"), "drawn") == [1, 1, 0]
 
 
+def test_an_event_picture_never_counts_as_the_plate_of_an_unscreened_chapter():
+    # chapter One with one non-minor event (e2), an on-demand picture of it and no plate: a run would still draw the plate
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["events"][0]["kind"] = "minor"
+    _, _, sink, _, _ = run(d, bk, level="main", portraits=None)
+    plate = next(p for p in pics(sink, "plate") if p["target"] == "One")
+    plate.update({"kind": "event", "target": "e2", "from": "a1"})
+    sink.m["screened"] = {}
+    il = art.Illustrator([art.Book(d, bk, sink, None)], Text(), Image(), "ink", portraits=None, workers=1, log=lambda *_: None, pause=0)
+    one = il.counts(level="all")["chapters"][0]
+    assert one["title"] == "One" and one["drawable"] is None and one["pictures"] == 1 and one["drawn"] == 0
+    two = il.counts(level="all")["chapters"][1]
+    assert two["pictures"] == 3 and two["drawn"] == 1                  # its plate, held; no event picture yet
+
+
 def test_illustrate_command_level_none_draws_portraits_only(tmp_path, monkeypatch):
     from lorekeeper import cli
     bk = book(("One", CH1), ("Two", CH2))
