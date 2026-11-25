@@ -370,19 +370,25 @@ class _Names:
     _BEFORE = re.compile(r"(?i)(?:(?<![\w'’-])(?:(?:the|a|an)\s+)?(?:(?:" + "|".join(
         sorted((re.escape(t) for t in P.TITLES), key=len, reverse=True)) + r")\.?\s+)*)?$")   # an article and titles go too
 
-    def __init__(self, names: list[tuple[str, bool]]) -> None:
-        """`names`: (a name as the index has it, the entity is a group). An article and notes in brackets are taken off."""
+    def __init__(self, names: list[tuple[str, bool]], allowed: list[str] = ()) -> None:
+        """`names`: (a name as the index has it, the entity is a group). An article and notes in brackets are taken off.
+        `allowed`: names a prompt may use (the book's groups and places): a word of one of them counts only inside a fuller
+        name of `names` ("Bellona" of House Bellona is allowed, "Cassius au Bellona" is not; "Mars", the planet and House
+        Mars, also a person's alias)."""
         self.tokens: dict[str, tuple[str, bool]] = {}    # folded -> (as written, group): name words that count anywhere
         self.alone: dict[str, tuple[str, bool]] = {}     # one-word names that are ordinary words: "Stranger", "Grace"
         self.phrases: dict[str, list[tuple[tuple[str, ...], bool]]] = {}   # first run folded -> (runs, group), longest first
+        free = {self._apos(self._base(m.group(0))).lower() for v in allowed for m in self._RUN.finditer(v)}
+        free_names = {" ".join(self._apos(self._base(m.group(0))).lower() for m in self._RUN.finditer(
+            re.sub(r"^(?:the|a|an)\s+", "", " ".join(re.sub(r"\(.*?\)", " ", v).split()), flags=re.IGNORECASE))) for v in allowed}
         for value, group in names:
             value = " ".join(re.sub(r"\(.*?\)", " ", value).split())
             value = re.sub(r"^(?:the|a|an)\s+", "", value, flags=re.IGNORECASE)
             runs = [self._apos(self._base(m.group(0))) for m in self._RUN.finditer(value)]
-            if not runs:
+            if not runs or " ".join(runs).lower() in free_names:
                 continue
             words = [r for r in runs if r[:1].isupper() and len(r) >= 3 and r.lower() not in P.TITLES
-                     and r.lower() not in ("the", "and", "van", "von")]
+                     and r.lower() not in ("the", "and", "van", "von") and r.lower() not in free]
             if len(runs) > 1:
                 self.phrases.setdefault(runs[0].lower(), []).append((tuple(runs), group))
             elif words and words[0].lower() in SENTENCE_FIRST:
@@ -767,12 +773,15 @@ class Illustrator:
 
     def _banned_names(self) -> dict[int, "_Names"]:
         """Per book, the names of every person and creature of it and the earlier books: a prompt names none. The names of
-        groups (peoples, castes, houses, orders) are allowed: "a woman of the Gold caste" says who she is."""
+        groups (peoples, castes, houses, orders) and places are allowed ("a woman of the Gold caste", "a knight of House
+        Bellona" say who they are), so a word a person's name shares with one counts only inside that person's fuller name."""
         out: dict[int, _Names] = {}
         names: list[tuple[str, bool]] = []
+        allowed: list[str] = []
         for b in self.books:
             names += [(n["value"], False) for e in b.doc["entities"] if e["type"] in PORTRAIT_TYPES for n in e["names"]]
-            out[b.i] = _Names(list(names))
+            allowed += [n["value"] for e in b.doc["entities"] if e["type"] in ("group", "place") for n in e["names"]]
+            out[b.i] = _Names(list(names), list(allowed))
         return out
 
     def _vet(self, text, bi: int, anchor: str, source: str, words: tuple[int, int]) -> tuple[str | None, str]:

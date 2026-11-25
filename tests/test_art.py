@@ -929,13 +929,25 @@ def bellona_run(scene):
     return il, il.make_prompt(il.job("portrait", "cassius", at="a11"))
 
 
-@pytest.mark.parametrize("opening", ["Cassius au Bellona stands, ", "The Bellona heir stands, ", "A Bellona knight stands, ",
-                                     "The Bellonas' heir of House Bellona stands, ", "CASSIUS AU BELLONA stands, ",
-                                     "Cassius au Bellona’s half-Bellona sneer, "])
-def test_a_particle_name_and_a_house_name_in_a_portrait_scene_are_removed(opening):
+@pytest.mark.parametrize("opening, kept", [
+    ("Cassius au Bellona stands, ", None), ("CASSIUS AU BELLONA stands, ", None),
+    ("The Bellona heir stands, ", "The Bellona heir"), ("A Bellona knight stands, ", "A Bellona knight"),
+    ("The Bellonas' heir of House Bellona stands, ", "of House Bellona"),
+    ("Cassius au Bellona’s half-Bellona sneer, ", "half-Bellona")])
+def test_a_persons_full_name_is_removed_and_the_house_it_shares_a_word_with_stays(opening, kept):
+    # Red Rising: "a Gold of House Bellona" says who Cassius is, while "Cassius au Bellona" names him; Fitchner's alias "Mars"
+    # is also House Mars and the planet
     il, pr = bellona_run(opening + PORTRAIT_SCENE[2:])
-    assert not re.search(r"(?i)bellona|cassius", pr.text), pr.text
+    assert not re.search(r"(?i)cassius", pr.text), pr.text
     assert not il.names[0].find(pr.text)
+    if kept:
+        assert kept in pr.text
+
+
+def test_a_word_a_person_shares_with_a_place_or_group_is_no_name_alone():
+    names = art._Names([("Fitchner", False), ("Mars", False), ("Cassius au Bellona", False)], ["Mars", "House Mars", "House Bellona"])
+    assert names.find("The red plains of Mars.") == "" and names.find("A knight of House Bellona.") == ""
+    assert names.find("Cassius au Bellona waits.") == "Cassius au Bellona" and names.find("Fitchner grins.") == "Fitchner"
 
 
 # Review round 1: find and strip share one boundary and possessive rule, so whatever find reports strip takes out, in every
