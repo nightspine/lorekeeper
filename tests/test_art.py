@@ -2195,7 +2195,7 @@ def test_a_detail_worded_beyond_its_short_quote_becomes_the_quote():
                 return reply(prompt)
             return super().complete(system, prompt, schema, prefix)
     il, rep, sink, t, im = run(d, bk, text_=T())
-    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: A big, beefy man."
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: a big, beefy man."
     assert rep.dropped["fixed: look detail in the book's own words"] == 1
     assert rep.dropped["dropped: look detail not in the text"] == 1      # a long quote that does not hold "thick red" goes
 
@@ -2217,3 +2217,24 @@ def test_a_one_word_look_quoted_from_the_figures_own_paragraphs_holds():
     t.complete = complete
     il, rep, sink, t, im = run(text_=t)
     assert sink.m["appearance"]["oren"][0]["text"] == "A miller: old, broad."
+
+
+
+def test_a_detail_loses_a_capital_it_has_only_from_opening_a_sentence_and_the_fallback_takes_no_spoken_line():
+    assert art._plain("Flamboyant robes", "he wore flamboyant robes") == "flamboyant robes"
+    assert art._plain("Watch with planets") == "watch with planets" and art._plain("A big man") == "a big man"
+    assert art._plain("Gryffindor robes", "the Gryffindor robes") == "Gryffindor robes"
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"][0]["text"] = "You are wearing our colours, said the old miller, broad and white haired."
+
+    class T(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "appearance note for Oren" in prompt:
+                self.prompts.append(prompt)
+                return {"role": "a miller", "role_look": [], "details": [
+                    {"text": "wears the valley colours", "quote": "You are wearing our colours", "seen": True},
+                    {"text": "broad", "quote": "broad", "seen": True}]}
+            return super().complete(system, prompt, schema, prefix)
+    il, rep, sink, t, im = run(d, bk, text_=T())
+    assert sink.m["appearance"]["oren"][0]["text"] == "A miller: broad."

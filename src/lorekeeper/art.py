@@ -439,6 +439,24 @@ def detail_supported(detail: str, quote: str) -> bool:
     return bool(words) and all(_base(w) in have for w in words)
 
 
+# Words of a line someone speaks or writes about themselves or to another ("You're wearing our colors"): English function words.
+_SPEAKER = frozenset("i me my mine we us our ours you your yours youre im ive weve".split())
+
+
+def _plain(detail: str, own: str = "") -> str:
+    """A detail without the capital its first word has only because it opened a sentence of the book ("Flamboyant robes" is
+    "flamboyant robes", "A big, beefy man" is "a big, beefy man"; "Gryffindor robes" keeps its capital), so it is never taken
+    for a name in the middle of a note: lowered when the word is an ordinary sentence word or `own` (the entity's own text)
+    also writes it in lowercase."""
+    m = re.match(r"([A-Z][a-z]*)\b", detail)
+    if not m:
+        return detail
+    w = m.group(1)
+    if w.lower() in SENTENCE_FIRST or w.lower() in _STOP or re.search(r"(?<![\w-])" + re.escape(w.lower()) + r"(?![\w-])", own):
+        return detail[:1].lower() + detail[1:]
+    return detail
+
+
 def _content(text: str) -> set[str]:
     return {_base(w) for w in _toks(text) if w not in _STOP and len(w) > 2}
 
@@ -2062,11 +2080,12 @@ class Illustrator:
                         not_look.append(t)
                         continue
                     if quoted(q, own, one=True) and detail_supported(t, q):
-                        into.append({"text": t, "quote": q})
-                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and _content(t) & _content(q):
-                        # the writer's words go beyond its quote ("big, beefy build" on "A big, beefy man"): the quote is
-                        # the book's own short phrase about it, so it becomes the detail
-                        into.append({"text": q.strip(" ,.;:"), "quote": q})
+                        into.append({"text": _plain(t, own), "quote": q})
+                    elif quoted(q, own, one=True) and len(_toks(q)) <= OWN_WORDS and len(_content(t) & _content(q)) >= 2 \
+                            and len(_content(t) - _content(q)) <= 1 and not set(_toks(q)) & _SPEAKER:
+                        # the writer's words go one word beyond its quote ("big, beefy build" on "A big, beefy man"): the quote
+                        # is the book's own short phrase about it, so it becomes the detail (never a line someone speaks)
+                        into.append({"text": _plain(q.strip(" ,.;:"), own), "quote": q})
                         reworded.append(t)
                     else:
                         bad.append(t)
@@ -2129,7 +2148,7 @@ class Illustrator:
         if not text:
             return "", "empty", [], homes, role
         got, why = self._vet(text, bi, anchor, source, NOTE_WORDS)
-        for _ in range(4):
+        for _ in range(8):
             # a word the book has not used by this point (the index's own spelling, a later name): the details and role words
             # carrying it go, not the whole note; a note left with no detail is empty
             if got is not None or not why.startswith("unknown name: "):
