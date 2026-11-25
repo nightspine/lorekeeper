@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.20.0](https://github.com/nightspine/lorekeeper/compare/v0.19.0...v0.20.0) (2026-11-25)
+
+
+### Features
+
+* choose which chapters get pictures, and draw portraits only ([#119](https://github.com/nightspine/lorekeeper/issues/119)) ([d2ac828](https://github.com/nightspine/lorekeeper/commit/d2ac828f50974881c97c8b3a61f0738c93dfdc51))
+* scene figures are labelled to their portraits, looks carry forward through a book, and settings are drawn in the book's own world ([#117](https://github.com/nightspine/lorekeeper/issues/117)) ([c8752ed](https://github.com/nightspine/lorekeeper/commit/c8752ed273e2c60a98647122c4b32460d1571a0e))
+
 ## [0.19.0](https://github.com/nightspine/lorekeeper/compare/v0.18.0...v0.19.0) (2026-11-25)
 
 
