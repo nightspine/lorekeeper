@@ -1477,8 +1477,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {**rec, "url": f"/api/art/{h}/{slug_}/{rec['id']}"}
 
     def ref_json(il, refs, slug_: str) -> list[dict]:
-        return [{"id": r["id"], "kind": r["kind"], "target": r["target"],
-                 "url": f"/api/art/{artstore.text_hash(il.books[j].doc)}/{slug_}/{r['id']}"} for j, r in refs]
+        """The references as the sheet lists them, each served from its own set: a likeness from another style's set
+        carries that set's slug (`set`)."""
+        return [{"id": r["id"], "kind": r["kind"], "target": r["target"], **({"set": r["set"]} if r.get("set") else {}),
+                 "url": f"/api/art/{artstore.text_hash(il.books[j].doc)}/{r.get('set') or slug_}/{r['id']}"}
+                for j, r in refs]
 
     def art_busy(h: str) -> None:
         if jobs.drawing(h):
@@ -1861,6 +1864,24 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return art_error(e.status, e.code, e.detail)
         return {"removed": pid, "undo": entry["id"]}
 
+    def redraw_references(il, rec: dict, pid: str) -> list[tuple[int, dict]]:
+        """The references a record was drawn with, found again: a plain id in this set (any book of the run), a `{set, id}`
+        likeness in that other style's set of the same book's edition (read through it by `Illustrator.reference_bytes`).
+        One that is gone, or malformed, is left out."""
+        out = []
+        for ref in rec.get("references") or []:
+            if isinstance(ref, str):
+                if ref != pid:
+                    out += [(j, r) for j in range(len(il.books)) for r in il.man[j]["pictures"] if r["id"] == ref][:1]
+            elif isinstance(ref, dict) and isinstance(ref.get("set"), str) and isinstance(ref.get("id"), str):
+                for j in range(len(il.books)):
+                    hit = next((r for slug, _, lm in il.like[j] if slug == ref["set"]
+                                for r in lm.get("pictures", []) if r.get("id") == ref["id"]), None)
+                    if hit is not None:
+                        out.append((j, {**hit, "set": ref["set"]}))
+                        break
+        return out
+
     @app.post("/api/library/{key}/art/{pid}/redraw")
     async def art_redraw(key: str, pid: str, request: Request):
         """Draw a picture again, with the person's note put first in its prompt; the new record `replaces` the old,
@@ -1885,8 +1906,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in il.books[-1].ord_of:
                     raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
                 job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
-                refs = [(j, r) for j in range(len(il.books)) for r in il.man[j]["pictures"]
-                        if r["id"] in set(rec.get("references") or []) and r["id"] != pid]
+                refs = redraw_references(il, rec, pid)
                 text_ = (note.rstrip(".") + ". " if note else "") + rec["prompt"]
                 # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
                 # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from

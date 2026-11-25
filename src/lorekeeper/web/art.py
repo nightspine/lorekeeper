@@ -58,11 +58,6 @@ class ReadOnlySink(art.FileSink):
         raise PermissionError("a likeness set is read only")
 
 
-def likeness_supported() -> bool:
-    import dataclasses
-    return any(f.name == "likeness" for f in dataclasses.fields(art.Book))
-
-
 class ArtStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "art"
@@ -101,10 +96,9 @@ class ArtStore:
                 for st in self.styles(text_hash) if st["slug"] != own}
 
     def book(self, doc: dict, book, text_hash: str, style: str, level: str | None = None, draw: bool = True) -> art.Book:
-        """The pipeline's `Book` for one edition and style: its set's sink (style text, as `resolve` gives it) and, where the
-        pipeline takes them, the edition's other sets as likeness sinks."""
-        extra = {"likeness": self.likeness(text_hash, style)} if likeness_supported() else {}
-        return art.Book(doc, book, self.sink(text_hash, style), level, draw=draw, **extra)
+        """The pipeline's `Book` for one edition and style: its set's sink (style text, as `resolve` gives it) and the
+        edition's other sets as likeness sinks."""
+        return art.Book(doc, book, self.sink(text_hash, style), level, draw=draw, likeness=self.likeness(text_hash, style))
 
     def lock(self, text_hash: str, style: str) -> threading.Lock:
         """One writer at a time per art set (a route's draw and another route's delete would each save a manifest)."""

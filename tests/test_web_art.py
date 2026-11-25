@@ -564,22 +564,14 @@ def test_the_store_gives_the_other_style_sets_as_read_only_likeness_sinks(tmp_pa
 
 @pytest.fixture
 def books_seen(monkeypatch):
-    """Every pipeline `Book` the app builds, with a `likeness` field as the pipeline takes it (until it lands here)."""
-    import dataclasses
+    """Every pipeline `Book` the app builds."""
     seen = []
-    if store_mod.likeness_supported():
-        real = art.Book
-    else:
-        @dataclasses.dataclass
-        class real(art.Book):
-            likeness: dict = dataclasses.field(default_factory=dict)
-        monkeypatch.setattr(art, "Book", real)
+    real = art.Book
 
     def make(*a, **k):
         b = real(*a, **k)
         seen.append(b)
         return b
-    monkeypatch.setattr(store_mod, "likeness_supported", lambda: True)
     monkeypatch.setattr(store_mod.art, "Book", make)
     return seen
 
@@ -605,18 +597,65 @@ def test_routes_and_runs_hand_the_pipeline_the_other_sets_as_likeness(env, books
     assert ink == env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]   # never written through
 
 
-@pytest.mark.skipif(not store_mod.likeness_supported(), reason="the pipeline's likeness sinks have not landed yet")
-def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env):
+def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env, monkeypatch):
+    """Comic has no portraits, ink has: the comic scene sends the ink portraits of the figures it shows, read from the
+    ink set and recorded as `{set, id}`, with the likeness-only words; the ink set is never written."""
     env.key()
     run_set(env, portraits="all")
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    assert portraits
+    real = art.Illustrator.make_prompt
+
+    def with_shows(self, job, finished=None):
+        pr = real(self, job, finished)
+        pr.shows = list(portraits)
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
+    ink_before = (env.data / "art" / env.hash / "ink" / "art.json").read_bytes()
     env.image.calls.clear()
     ask = {"kind": "event", "target": "e6", "style": "comic"}
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
-    if not got["references"]:
-        pytest.skip("e6 shows no figure with an ink portrait in this fixture")
+    assert got["references"] and all(x["set"] == "ink" and "/ink/" in x["url"] for x in got["references"])
     r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
     assert r.status_code == 200, r.text
-    assert env.image.calls[-1]["references"]
+    rec = r.json()
+    assert rec["references"] and all(x["set"] == "ink" and x["id"] in portraits.values() for x in rec["references"])
+    call = env.image.calls[-1]
+    assert call["references"] and len(call["references"]) == len(rec["references"])
+    assert call["note"] == art.Illustrator.likeness_note([(0, {"set": "ink"})] * len(rec["references"])) != ""
+    assert "likeness" in call["note"] and call["note"] not in call["prompt"]
+    assert (env.data / "art" / env.hash / "ink" / "art.json").read_bytes() == ink_before
+    assert rec["prompt"] == got["prompt"]                          # the likeness words are not in the person's text
+
+
+def test_a_redraw_finds_a_likeness_reference_in_its_own_set(env, monkeypatch):
+    """A record holding a `{set, id}` reference is redrawn with that picture read from the other set (and a plain id from
+    its own), never failing on the dict."""
+    env.key()
+    run_set(env, portraits="all")
+    portraits = {p["target"]: p["id"] for p in pictures(env) if p["kind"] == "portrait"}
+    real = art.Illustrator.make_prompt
+
+    def with_shows(self, job, finished=None):
+        pr = real(self, job, finished)
+        pr.shows = list(portraits)
+        return pr
+    monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
+    ask = {"kind": "event", "target": "e6", "style": "comic"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    first = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
+    assert first["references"] and isinstance(first["references"][0], dict)
+    # a mixed record: a likeness, a gone one and a malformed one are all read without failing
+    path = env.data / "art" / env.hash / "comic" / "art.json"
+    man = json.loads(path.read_text())
+    rec = next(p for p in man["pictures"] if p["id"] == first["id"])
+    rec["references"] = rec["references"] + [{"set": "ink", "id": "p00000000"}, {"set": 3}, 7]
+    path.write_text(json.dumps(man))
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{first['id']}/redraw", json={"note": "Closer"})
+    assert r.status_code == 200, r.text
+    assert r.json()["references"] == first["references"]
+    assert len(env.image.calls[-1]["references"]) == len(first["references"])
 
 
 def test_a_refused_redraw_leaves_the_set_as_it_was(env):
@@ -1129,9 +1168,12 @@ def test_a_prompt_drawn_into_another_set_takes_its_references_from_that_set(env)
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
     assert got["references"]
     env.image.calls.clear()
+    ink_before = pictures(env)
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "watercolour", "prompt": got["prompt"]}).json()
-    assert rec["references"] == [] and env.image.calls[0]["references"] == []
-    # and back in ink, the ink portraits again
+    # watercolour has no portraits of its own: the ink ones go as likenesses, named by their set, never as watercolour's
+    assert rec["references"] == [{"set": "ink", "id": x["id"]} for x in got["references"]]
+    assert len(env.image.calls[0]["references"]) == len(got["references"]) and pictures(env) == ink_before
+    # and back in ink, the ink portraits again, as this set's own
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]}).json()
     assert rec["references"] == [x["id"] for x in got["references"]]
 
@@ -1149,11 +1191,13 @@ def test_a_prompt_made_in_an_empty_set_takes_the_shown_figures_references_in_ano
     monkeypatch.setattr(art.Illustrator, "make_prompt", with_shows)
     ask = {"kind": "event", "target": "e6", "style": "watercolour"}
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
-    assert got["references"] == []                         # watercolour has no pictures to send
+    # watercolour has no pictures: the shown figures' ink portraits are its likenesses, each served from the ink set
+    assert got["references"] and all(x["set"] == "ink" and f"/ink/{x['id']}" in x["url"] for x in got["references"])
+    assert all(env.c.get(x["url"]).status_code == 200 for x in got["references"])
     n = len(env.text.prompts)
     rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "ink", "prompt": got["prompt"]}).json()
     assert len(env.text.prompts) == n and rec["references"]
-    assert set(rec["references"]) <= set(portraits.values())
+    assert set(rec["references"]) <= set(portraits.values())        # in ink they are its own: plain ids
 
 
 def test_the_background_note_is_the_books_in_every_style(env):
