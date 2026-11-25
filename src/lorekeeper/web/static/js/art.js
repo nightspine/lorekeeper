@@ -281,13 +281,16 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     clear(how, h("details.lb-details", h("summary", icon("chevron"), "How this was drawn"),
       hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
-        figureLines(r.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(r, f) : null) }),
+        h("div.lb-figs", lbFigures(it)),
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : "dd", v)])))));
     clear(acts, it.canEdit ? [
       it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
     ] : null);
   }
+  const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
+  /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
+  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
     // While the lightbox is open its own stack; after it closed, the modal it was opened from (the entry drawer, a sheet),
@@ -361,7 +364,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const r = items[i]?.rec;
     if (dd && r) dd.textContent = modelFact(r);
   });
-  return { close };
+  return { close, refresh };
 }
 
 /** A toast stack inside the topmost open modal (the entry drawer or a sheet), or null for the page's own. */
@@ -458,6 +461,7 @@ export async function openPictureSheet(opts) {
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
   sh.current = () => ({ kind: st.kind, target: st.target });
+  sh.refreshFigures = () => paintFigures();
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
   /** The anchors the text on screen was written up to: the prompt's (the picture's own, any world-note hold included) and
    *  the world note's own anchor. The Reader checks them against the position as it checks the moments. */

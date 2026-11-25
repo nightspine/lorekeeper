@@ -952,6 +952,9 @@ export function mountReader(root) {
       // the prompt again at the position now (the server refuses it if the picture itself is held past here).
       s.art.sheet.sh.reposition(sheetWorld(s.art.sets.get(bkKey(s.series ? s.book : null))));
     }
+    // Names and thumbnails on an open lightbox or sheet follow the view now, not the one they were painted from.
+    s.art.lightbox?.refresh?.();
+    s.art.sheet?.sh?.refreshFigures?.();
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1847,7 +1850,7 @@ export function mountReader(root) {
     s.art.lightbox?.close();
     const items = lightboxItems(pics, caption);
     const box = openLightbox(items, index, { onChanged: () => refreshPictures({ forget: s.key }) });
-    s.art.lightbox = box && { close: box.close, ids: new Set(items.map((x) => x.rec.id)) };
+    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: new Set(items.map((x) => x.rec.id)) };
   }
   /** A picture as a button that opens the lightbox on it. */
   function pictureButton(pics, i, caption, cls, { thumb = true } = {}) {
