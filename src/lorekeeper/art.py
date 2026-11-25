@@ -87,14 +87,19 @@ MAX_ENTRIES = 6
 ENTITY_WORDS = 900
 PASSAGE_WORDS = 600
 FIRST_PARAS = 3        # the first paragraphs naming an entity, put first in its passages: how the book first describes it
-# A look stated once and not repeated by later profiles must not be lost: the entity's earlier visible profiles (history), and
-# with a fresh look index every earlier item it flags as a look, are sent as <earlier_look>, oldest first, each sentence only
-# when it adds words the current entry and the sentences kept do not have (EARLIER_NEW of them), up to EARLIER_CHARS for the
-# entry to draw and a third of OTHER_CHARS for a scene's figure; the paragraphs those items cite get EARLIER_WORDS of the
-# entity's passages, before how the book first describes it. Measured on Empire of the Vampire at its end: Gabriel's 58
-# earlier profiles hold 11,400 characters of new sentences, so without a look index the block holds the oldest of them only.
-EARLIER_CHARS = 4000
+# A look stated once and not repeated by later profiles must not be lost. The look sentences (`look_sentences`: one cheap call
+# per entity and book that only picks which sentences of its notes tell how it looks, cached in the set) of the entity's
+# earlier visible items (the view's history) are sent as <earlier_look>, oldest first, each only when it adds words
+# (EARLIER_NEW_PICKED of them: one let in a run of near-repeats, "tall and pale with grey eyes, scarred") the current entry and the sentences kept do not have, up to EARLIER_CHARS for the entry to draw and a
+# third of OTHER_CHARS for a scene's figure. Without picks (the call failed, or a run's prompt for an entity it did not plan),
+# the fallback: the earlier items a fresh look index flags as a look, then the earlier profiles, a sentence kept when it adds
+# EARLIER_NEW words, up to EARLIER_FALLBACK_CHARS (Gabriel's 58 earlier profiles in Empire of the Vampire hold 11,400
+# characters of new sentences, mostly not about his look). The paragraphs those items cite get EARLIER_WORDS of the entity's
+# passages, before how the book first describes it.
+EARLIER_CHARS = 1000
+EARLIER_FALLBACK_CHARS = 4000
 EARLIER_NEW = 2
+EARLIER_NEW_PICKED = 2
 EARLIER_WORDS = ENTITY_WORDS // 4
 SETTINGS = 3           # settings a portrait's <surroundings> lists, the most usual first
 # The version of the material a picture's prompt was written from, stored as the record's `notes`: 2 was the quoted
@@ -138,6 +143,23 @@ Return "items": one object {{"n", "look", "change"}} for each note that is a loo
 LOOK_INDEX_SCHEMA = {"type": "object", "required": ["items"], "properties": {"items": {"type": "array", "items": {
     "type": "object", "required": ["n"], "properties": {"n": {"type": "integer"}, "look": {"type": "boolean"},
                                                         "change": {"type": "string"}}}}}}
+# The look sentences: which sentences of an entity's notes tell how it looks. It only picks numbers; nothing it writes reaches
+# a prompt, and the picks are filtered at use like the look index (a sentence counts only through its own item, visible at
+# the anchor for this reader).
+LOOK_SENTENCES = """Below are the notes a reader's companion keeps on one entry of a novel, {name} ({kind}), split into numbered
+sentences. Which sentences tell how {name} looks to the eye: body, face, colouring, hair, eyes, size, age as it shows, what
+it wears or carries on it, the marks, scars and tattoos on it; for a group, how its members look and dress? A sentence that
+tells some of its look among other things counts. Leave out sentences only about what it does, thinks, says or owns, its rank,
+history, ties or character, and sentences about how someone or something else looks.
+Return "sentences": the numbers of those sentences, in order.
+
+{sentences}"""
+LOOK_SENTENCES_SCHEMA = {"type": "object", "required": ["sentences"],
+                         "properties": {"sentences": {"type": "array", "items": {"type": "integer"}}}}
+LOOK_SENTENCE_CHARS = 300
+# sentences in one call: a main character's notes run to 500 distinct sentences, and in one call of that size Haiku picked a
+# tenth of the look sentences and missed the plainest one (Empire of the Vampire, Gabriel); batches cost the same tokens
+LOOK_SENTENCE_BATCH = 80
 LOOK_BATCH_ITEMS = 40      # items classified in one call (small entities share one, a large one takes several)
 LOOK_ITEM_CHARS = 300
 
@@ -291,7 +313,7 @@ def default_dir(index_path: str | Path, doc: dict, style: str) -> Path:
 
 def blank(text_hash: str, style: str) -> dict:
     return {"lorekeeperArt": VERSION, "textHash": text_hash, "style": style, "world": None, "pictures": [],
-            "screened": {}, "looks": {}, "skipped": [], "cost": 0.0}
+            "screened": {}, "looks": {}, "lookSentences": {}, "skipped": [], "cost": 0.0}
 
 
 def size_of(data: bytes) -> tuple[int | None, int | None]:
@@ -804,7 +826,9 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0) -> None:
+                 pause: float = 1.0, cheap_text=None) -> None:
+        """`text` writes the prompts; `cheap_text` (else `text`) makes the look sentences, the one choosing call the prompt
+        path may make (the Reader's sheet writes with a strong model and should pick with the cheap one)."""
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -812,6 +836,8 @@ class Illustrator:
                 raise ValueError("several indexes are drawn together only as books of one series (each with the same "
                                  "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
+        self.cheap = cheap_text if cheap_text is not None else text
+        self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
         self.portraits = portrait_cast(portraits)      # "main", "all" or None
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
         self.chapter_filter, self.series, self.workers = chapters, series, workers
@@ -884,11 +910,11 @@ class Illustrator:
         if self.books[bi].b.draw or bi in self._dirty:
             self.books[bi].b.sink.save(self.man[bi])
 
-    def _complete(self, prompt: str, schema: dict = SCHEMA, system: str = SYSTEM) -> dict:
+    def _complete(self, prompt: str, schema: dict = SCHEMA, system: str = SYSTEM, model=None) -> dict:
         """One text call; a failure (provider error, timeout, a reply that is not JSON) is retried once, then TextFailed."""
         for attempt in (0, 1):
             try:
-                out = self.text.complete(system, prompt, schema)
+                out = (model or self.text).complete(system, prompt, schema)
                 return out if isinstance(out, dict) else {}
             except llm.Cancelled:
                 raise
@@ -899,7 +925,8 @@ class Illustrator:
         return {}
 
     def _usage(self) -> float:
-        return float(getattr(getattr(self.text, "usage", None), "cost_usd", 0.0) or 0.0)
+        models = [self.text] + ([self.cheap] if self.cheap is not self.text else [])
+        return sum(float(getattr(getattr(m, "usage", None), "cost_usd", 0.0) or 0.0) for m in models)
 
     def text_spent(self) -> float:
         return self._usage() - self._usage0
@@ -1239,6 +1266,8 @@ class Illustrator:
                         got.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
             new += sum(self._is_new(bi, j, have) for j in got)
             jobs += got
+        if record and jobs:          # the figures of the scenes: their look sentences now, so no prompt waits on one
+            self.pick_looks(bi, [x for j in jobs for x in self._figures(j) if b.ents.get(x, {}).get("type") in PORTRAIT_TYPES])
         return jobs + ports
 
     def screened(self, bi: int, chapter: dict) -> list[str] | None:
@@ -1324,6 +1353,7 @@ class Illustrator:
         cast = self._portrait_cast(bi)
         if classify:
             self.classify(bi, [e["id"] for e in cast])
+            self.pick_looks(bi, [e["id"] for e in cast])
         jobs = []
         for e in cast:
             jobs += self._versions(bi, e)
@@ -1460,6 +1490,79 @@ class Illustrator:
                 self._dirty.add(bi)
                 self._save(bi)
 
+
+    # ---- the look sentences: which sentences of an entity's notes tell how it looks
+
+    @staticmethod
+    def _sentences(text: str) -> list[str]:
+        return [x for x in re.split(r"(?<=[.!?])\s+", " ".join(str(text or "").split())) if x]
+
+    def _look_items(self, bi: int, eid: str) -> list[dict]:
+        """The entity's facets and profiles in book bi (never an arc or a turning point), in reading order."""
+        return [it for it in self.items(bi, eid) if not it["id"].startswith("event:")]
+
+    def look_sentences(self, bi: int, eid: str, make: bool = False) -> dict[str, list[int]] | None:
+        """{item id: [the numbers, from 0, of its sentences (`_sentences`) that tell how the entity looks]} for its facets and
+        profiles in book bi, from the set's cache (`lookSentences[eid] = {"key", "picks"}`, keyed by a hash of the items' ids
+        and texts, so a rebuilt index picks again); {} when it has no items. On a miss, with `make`, one cheap call over all
+        its items (`LOOK_SENTENCES`, a call per LOOK_SENTENCE_BATCH distinct sentences) that only returns numbers, cached; else None, and
+        None when that call fails (the caller falls back). The cache is the whole book's, like the look index: a pick counts
+        only through its own item, which the caller takes from the view at the anchor (its `from` reached, its book read)."""
+        items = self._look_items(bi, eid)
+        if not items:
+            return {}
+        key = self._items_key(items)
+        ids = {i["id"] for i in items}
+
+        def fresh() -> dict | None:
+            got = self.man[bi].setdefault("lookSentences", {}).get(eid)
+            if isinstance(got, dict) and got.get("key") == key:
+                return {k: [int(n) for n in v] for k, v in (got.get("picks") or {}).items() if k in ids}
+            return None
+        if (got := fresh()) is not None or not make:
+            return got
+        with self._class_lock:
+            if (got := fresh()) is not None:
+                return got
+            where: dict[str, list[tuple[str, int]]] = {}       # a distinct sentence -> every (item, number) it occurs as
+            for it in items:
+                for n, sent in enumerate(self._sentences(it["text"])):
+                    where.setdefault(sent, []).append((it["id"], n))
+            order = list(where)
+            e = self.books[bi].ents[eid]
+            name = e["names"][0]["value"]
+            picks: dict[str, list[int]] = {}
+            for at in range(0, len(order), LOOK_SENTENCE_BATCH):      # numbered from 1 in each call
+                batch = order[at:at + LOOK_SENTENCE_BATCH]
+                lines = "\n".join(f"{n}. {sent[:LOOK_SENTENCE_CHARS]}" for n, sent in enumerate(batch, 1))
+                try:
+                    out = self._complete(LOOK_SENTENCES.format(name=name, kind=P.KINDS.get(e["type"], e["type"]),
+                                                               sentences=lines), LOOK_SENTENCES_SCHEMA, model=self.cheap)
+                except TextFailed as err:      # all or nothing: a partial pick would look like a full one
+                    self.log(f"  look sentences of {eid}: text model failed ({err.detail})")
+                    return None
+                for x in out.get("sentences") or [] if isinstance(out.get("sentences"), list) else []:
+                    try:
+                        n = int(x)
+                    except (TypeError, ValueError):
+                        continue
+                    if 1 <= n <= len(batch):
+                        for iid, k in where[batch[n - 1]]:
+                            if k not in picks.setdefault(iid, []):
+                                picks[iid].append(k)
+            picks = {k: sorted(v) for k, v in picks.items()}
+            with self.lock:
+                self.man[bi].setdefault("lookSentences", {})[eid] = {"key": key, "picks": picks}
+                self._dirty.add(bi)
+                self._save(bi)
+            return picks
+
+    def pick_looks(self, bi: int, eids) -> None:
+        """Make the look sentences of these entities of book bi ahead of their prompts (a run, while it plans); an entity with
+        one item has no earlier one to pick from and gets no call."""
+        for eid in dict.fromkeys(eids):
+            if eid in self.books[bi].ents and len(self._look_items(bi, eid)) > 1:
+                self.look_sentences(bi, eid, make=True)
 
     # ---- groups, by name
 
@@ -1685,37 +1788,71 @@ class Illustrator:
         """The words of a text that say something (three letters or more, lowercased), without the entry's own name words."""
         return {w for w in (m.group(0).lower() for m in self._WORD.finditer(text)) if w not in skip}
 
-    def _earlier_look(self, bi: int, eid: str, v: dict, current: str, budget: int) -> tuple[str, list[tuple[int, dict, set[str]]]]:
-        """What earlier descriptions of a visible entry say that its current one does not: (text, [(book, facet, its new
-        words)]). The candidates are the entry's history in the view (so each one is visible at the anchor, of this book or of
-        a finished earlier one, never past its own `from`; arcs never): with a fresh look index of its book, the items it flags
-        as a look first, then the earlier profiles; without one, the earlier profiles. Each is taken oldest first, a sentence
-        at a time, and a sentence is kept only when it adds EARLIER_NEW words that the current description and the sentences
-        kept do not have, up to `budget` characters. The text is in reading order."""
+    def _earlier_look(self, bi: int, eid: str, v: dict, current: str, budget: int,
+                      fallback: int | None = None) -> tuple[str, list[tuple[int, dict, set[str]]]]:
+        """What earlier descriptions of a visible entry say of its look that its current one does not: (text, [(book, facet,
+        its new words)]). The candidates are the entry's history in the view (so each one is visible at the anchor, of this
+        book or of a finished earlier one, never past its own `from`; arcs never). With the look sentences of every book they
+        come from (`look_sentences`, made here on a miss when `pick_on_demand`: the one choosing call the prompt path may
+        make, one per LOOK_SENTENCE_BATCH sentences), only the picked sentences: the one adding the most words the current
+        description and the sentences kept do not have first (at least EARLIER_NEW_PICKED), up to `budget` characters.
+        Without them (the call failed): with a fresh look index, the items it flags as a look first, then the earlier
+        profiles; without one, the earlier profiles; oldest first, a sentence kept when it adds EARLIER_NEW words, up to
+        `fallback` characters (else `budget`). Printed in reading order."""
         hist = v.get("history") or []
         if not hist or budget <= 0:
             return "", []
         keys = {self._bkey(j): j for j in range(bi + 1)}
         skip = {w.lower() for n in self._visible_names(v) for w in self._WORD.findall(n)}
         seen = self._content(current, skip)
-        flagged, profiles = [], []
+        found: list[tuple[int, dict]] = []
         for h in hist:
             j = keys.get(str(h["book"])) if h.get("book") is not None else bi
             if j is None:
                 continue
             f = next((x for x in self.books[j].ents.get(eid, {}).get("facets", []) if x["id"] == h["id"]), None)
-            if f is None or f.get("kind") == "arc":
-                continue
-            if (self.look_index(j, eid).get(f["id"]) or {}).get("look"):
-                flagged.append((j, f))
-            elif f.get("kind") == "profile":
-                profiles.append((j, f))
+            if f is not None and f.get("kind") != "arc":
+                found.append((j, f))
+        picks: dict[int, dict] = {}
+        for j in dict.fromkeys(j for j, _ in found):
+            got = self.look_sentences(j, eid, make=self.pick_on_demand)
+            if got is None:
+                picks = {}
+                break
+            picks[j] = got
+        if picks:                       # the picked sentences of every earlier item, oldest first
+            cands = [(j, f, [self._sentences(f["text"])[n] for n in picks[j].get(f["id"], [])
+                             if n < len(self._sentences(f["text"]))]) for j, f in found]
+            need = EARLIER_NEW_PICKED
+        else:                           # the fallback: look-flagged items, then earlier profiles, whole
+            flagged = [(j, f) for j, f in found if (self.look_index(j, eid).get(f["id"]) or {}).get("look")]
+            profiles = [(j, f) for j, f in found if f.get("kind") == "profile" and (j, f) not in flagged]
+            cands = [(j, f, self._sentences(f["text"])) for j, f in flagged + profiles]
+            need, budget = EARLIER_NEW, fallback or budget
         parts, used, size = [], [], 0
-        for j, f in flagged + profiles:
+        if picks:
+            # the sentence that adds the most words not said yet goes first (the oldest on a tie), so a run of near-repeats
+            # ("tall and pale with grey eyes", forty times over a long book) gives way to a look told once
+            pool = [(j, f, n, sent, self._content(sent, skip)) for n, (j, f, sents) in enumerate(cands) for sent in sents]
+            added: dict[tuple[int, str], tuple[int, dict, set[str]]] = {}
+            while pool:
+                best = max(range(len(pool)), key=lambda i: (len(pool[i][4] - seen), -i))
+                j, f, n, sent, w = pool.pop(best)
+                if len(w - seen) < need:
+                    break
+                if size + len(sent) + 1 > budget:
+                    continue
+                parts.append((j, self.books[j].ord_of.get(f["from"], -1), n, sent))
+                added.setdefault((j, f["id"]), (j, f, set()))[2].update(w - seen)
+                seen |= w
+                size += len(sent) + 1
+            parts.sort(key=lambda t: t[:3])
+            return " ".join(t[3] for t in parts), list(added.values())
+        for j, f, sents in cands:
             new_words: set[str] = set()
-            for sent in re.split(r"(?<=[.!?])\s+", " ".join(f["text"].split())):
+            for sent in sents:
                 w = self._content(sent, skip)
-                if len(w - seen) < EARLIER_NEW:
+                if len(w - seen) < need:
                     continue
                 if size + len(sent) + 1 > budget:
                     break
@@ -1924,7 +2061,7 @@ class Illustrator:
             material.append(self._tag("entry_to_draw", v, desc))
             plain.append(desc)
             # a look told earlier and not repeated since: the earlier descriptions, from the view's history at the anchor
-            earlier, said = self._earlier_look(bi, job.target, v, desc, EARLIER_CHARS)
+            earlier, said = self._earlier_look(bi, job.target, v, desc, EARLIER_CHARS, EARLIER_FALLBACK_CHARS)
             if earlier:
                 material.append(f"<earlier_look>{_esc(earlier)}</earlier_look>")
                 plain.append(earlier)
@@ -2334,6 +2471,7 @@ class Illustrator:
         return self.report
 
     def _run(self) -> None:
+        self.pick_on_demand = False        # the look sentences are made while planning; a prompt that misses one falls back
         drawn = [bi for bi, b in enumerate(self.books) if b.b.draw and b.epub is not None]
         first: dict[int, int] = {}
         for bi in drawn:                   # a first count for the progress total
