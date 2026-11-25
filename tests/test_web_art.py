@@ -1366,3 +1366,135 @@ def test_the_estimate_counts_portraits_of_the_main_cast_by_default(env):
     assert ports() == ports(portraits="main") < every and ports(portraits="true") == every
     assert ports(portraits="none") == ports(portraits="false") == 0
     assert env.c.get("/api/art/estimate", params={"key": KEY, "portraits": "some"}).json()["code"] == "bad-config"
+
+
+# ---- which chapters get pictures, and portraits only
+
+
+def test_the_art_config_takes_level_none_and_a_chapter_choice():
+    from lorekeeper.web.jobs import art_config
+    base = {"style": "ink", "cap": 10}
+    got = art_config(base)
+    assert got["level"] == "main" and got["chapters"] is None              # an older config: every chapter at main
+    assert art_config({**base, "level": "none"})["level"] == "none"          # portraits only (main cast by default)
+    assert art_config({**base, "chapters": [5, 2, 2]})["chapters"] == [2, 5]
+    assert art_config({**base, "chapters": []})["chapters"] == []
+    for bad in ("1,2", [True], ["1"], [0], [-1], [1.5], {"n": 1}):
+        with pytest.raises(ValueError, match="chapters"):
+            art_config({**base, "chapters": bad})
+    for nothing in ({"level": "none", "portraits": False}, {"chapters": [], "portraits": False}):
+        with pytest.raises(ValueError, match="Choose chapters or portraits"):
+            art_config({**base, **nothing})
+    stored = art_config({**base, "level": "all", "chapters": [3]})
+    assert art_config(stored) == stored                                        # a resume reads it back
+
+
+def chapter_ns(env) -> dict[str, int]:
+    got = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink"}).json()
+    return {c["title"]: c["n"] for c in got["chapters"]}
+
+
+def test_level_none_draws_only_portraits_and_never_screens(env):
+    env.key()
+    done = run_set(env, level="none", portraits="main")
+    assert done["status"] == "done", done["error"]
+    got = env.c.get(f"/api/library/{KEY}/art?style=ink").json()
+    assert got["pictures"] and {p["kind"] for p in got["pictures"]} == {"portrait"}
+    assert not got["screened"] and not any("Which of them are a visible moment" in p for p in env.text.prompts)
+    assert done["config"]["art"]["level"] == "none"
+
+
+def test_a_chapter_choice_limits_scenes_but_never_portraits(env):
+    env.key()
+    ns = chapter_ns(env)
+    done = run_set(env, chapters=[ns["Chapter Two"]])
+    assert done["status"] == "done", done["error"]
+    pics = env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]
+    assert [p["target"] for p in pics if p["kind"] == "plate"] == ["Chapter Two"]
+    est = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink", "portraits": "all"}).json()
+    assert len([p for p in pics if p["kind"] == "portrait"]) == est["portraits"] > 0    # every portrait, not cut at a chapter
+
+
+def test_a_run_refuses_an_unknown_chapter_or_nothing_to_draw(env):
+    env.key()
+    for cfg in ({"chapters": [999]}, {"level": "none", "portraits": False}, {"chapters": [], "portraits": False},
+                {"chapters": "all"}):
+        r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "cap": 10, **cfg}})
+        assert r.status_code == 422 and r.json()["code"] == "bad-config", cfg
+    assert env.jobs.jobs == {}
+    r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "cap": 10, "chapters": [], "portraits": "main"}})
+    assert r.status_code == 200                                                # portraits only, by an empty choice
+    wait_for(env.c, r.json()["id"])
+
+
+def test_the_estimate_follows_the_level_and_the_chapter_choice(env):
+    env.key()
+    q = {"key": KEY, "style": "ink", "portraits": "false"}
+    est = lambda **kw: env.c.get("/api/art/estimate", params={**q, **kw})     # noqa: E731
+    full = est().json()
+    assert full["level"] == "main" and full["plates"] == 2 and env.text.prompts == []
+    rows = full["chapters"]
+    assert [r["title"] for r in rows] == ["Chapter One", "Chapter Two"]
+    assert all({"n", "title", "drawable", "screened", "events", "pictures", "drawn", "chosen"} <= r.keys() for r in rows)
+    assert all(r["pictures"] == 1 and r["drawn"] == 0 and r["chosen"] for r in rows)
+    one = est(chapters=str(rows[0]["n"])).json()
+    assert one["plates"] == one["pictures"] == 1 and one["price"] < full["price"]
+    assert [r["chosen"] for r in one["chapters"]] == [True, False] and one["chapters"][1]["pictures"] == 1
+    none = est(chapters="").json()
+    assert none["plates"] == 0 and none["price"] == 0 and [r["pictures"] for r in none["chapters"]] == [1, 1]
+    lvl = est(level="none", portraits="main").json()
+    assert lvl["plates"] == 0 and lvl["portraits"] == lvl["pictures"] > 0
+    assert all(r["pictures"] == 0 and not r["chosen"] for r in lvl["chapters"])
+    every = est(level="all", chapters=f"{rows[0]['n']},{rows[1]['n']}").json()
+    assert every["plates"] == sum(r["pictures"] for r in every["chapters"]) >= 2
+    for bad in ("x", "1;2", "999", "-1"):
+        r = est(chapters=bad)
+        assert r.status_code == 422 and r.json()["code"] == "bad-config", bad
+    assert est(level="some").json()["code"] == "bad-config"
+    run_set(env, portraits=False)
+    after = est().json()
+    assert all(r["drawn"] == r["pictures"] == 1 for r in after["chapters"])   # "already drawn"
+
+
+def test_the_estimate_leaves_out_front_matter_with_nothing_to_draw(env, monkeypatch):
+    real = art.Illustrator.counts
+
+    def with_contents(self, bi=-1, level="main"):
+        got = real(self, bi, level)
+        got["chapters"].insert(0, {"n": 99, "title": "Contents", "drawable": None, "events": 0, "pictures": 0, "drawn": 0,
+                                   "chosen": False})
+        return got
+    monkeypatch.setattr(art.Illustrator, "counts", with_contents)
+    rows = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink"}).json()["chapters"]
+    assert [r["title"] for r in rows] == ["Chapter One", "Chapter Two"]
+
+
+def test_a_builds_pictures_stage_honours_level_none(tmp_path, monkeypatch):
+    from .test_web import SlowFake, upload
+    monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
+    t, im = Text(), GeminiFake()
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
+    monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    seen = []
+    real = art.Illustrator.__init__
+
+    def spy(self, *a, **kw):
+        seen.append(kw.get("scene_chapters"))
+        real(self, *a, **kw)
+    monkeypatch.setattr(art.Illustrator, "__init__", spy)
+    app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",), auth=False)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        meta = upload(c, tmp_path)
+        bad = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {
+            "style": "ink", "cap": 10, "level": "none", "portraits": False}}})
+        assert bad.status_code == 422
+        job = c.post("/api/jobs", json={"book_id": meta["id"], "config": {"chunk_words": 5000, "art": {
+            "style": "ink", "cap": 10, "level": "none", "chapters": [1]}}}).json()
+        done = wait_for(c, job["id"])
+        key = "generated--" + Path(done["output"]).with_suffix("").name
+        got = c.get(f"/api/library/{key}/art?style=ink").json()
+    assert done["status"] == "done", done["error"]
+    assert "drawn" in done["report"]["art"] and seen[-1] == [1]
+    assert all(p["kind"] == "portrait" for p in got["pictures"]) and not got["screened"]
