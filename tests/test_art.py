@@ -1578,7 +1578,9 @@ def test_an_entitys_passages_begin_with_how_the_book_first_describes_it(monkeypa
 
 def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():
     for rule in ("also say what that looks like as the material gives it", "Every sentence is something an illustrator can draw",
-                 "the passages win", "Use no name at all except the names of peoples"):
+                 "the passages win", "Use no name at all except the names of peoples",
+                 "A portrait shows the figure as a living presence", "never their death, corpse or burial",
+                 "undead or transformed is drawn as it looks at this point"):
         assert rule in art.WRITER
 
 
