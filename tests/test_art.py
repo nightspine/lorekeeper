@@ -1580,3 +1580,27 @@ def test_the_writer_is_told_to_draw_what_it_says_and_trust_the_passages():
     for rule in ("also say what that looks like as the material gives it", "Every sentence is something an illustrator can draw",
                  "the passages win", "Use no name at all except the names of peoples"):
         assert rule in art.WRITER
+
+
+def test_references_is_public_and_what_make_prompt_attaches():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].append(portrait("mira", "a10", "A scarred young woman, older than she was, who keeps a coin.", 2))
+    d["entities"][2]["facets"].append({"id": "bk.mill.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
+                                       "text": "A grey stone mill with a wooden gate."})
+    il, rep, sink, t, im = run(d, bk, level="all")
+    by = {}
+    for p in sorted(pics(sink, "portrait"), key=lambda p: ordinal(d)[p["from"]]):
+        by.setdefault(p["target"], []).append(p)
+    e6 = il.job("event", "e6", at="a11")                         # names mira and the stranger
+    pr = il.make_prompt(e6)
+    assert il.references(e6, pr.shows) == pr.references and {r["id"] for _, r in pr.references} == {
+        by["mira"][0]["id"], by["stranger"][0]["id"]}      # e6 shows from a9: Mira's second portrait (a10) is later
+    assert [r["id"] for _, r in il.references(e6, ["oren"])] == [by["oren"][0]["id"]]    # only what is shown
+    assert il.references(e6, []) == []
+    many = il.references(il.job("event", "e4", at="a11"), ["mira", "oren", "stranger", "gabriel", "mill"])
+    assert len(many) <= art.MAX_REFERENCES
+    change = art.Job("portrait", "mira", 0, "a10", change="scarred", shape="portrait")
+    assert [r["id"] for _, r in il.references(change, ["mira"])] == [by["mira"][0]["id"]]     # the previous portrait
+    assert il.references(art.Job("portrait", "mira", 0, "a10", shape="portrait"), ["mira"]) == []   # a first version: none
+    assert il.references(il.job("place", "mill", at="a11"), ["mill", "mira"]) == []           # a place: none

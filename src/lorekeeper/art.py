@@ -1385,6 +1385,23 @@ class Illustrator:
             return "", []
         return self.passage(bi, keep, upto, words)
 
+    def references(self, job: Job, shows: list[str], finished: set[str] | frozenset[str] | None = None) -> list[tuple[int, dict]]:
+        """The pictures attached to a picture as (book index, record), as `make_prompt` attaches them: for a plate or an event,
+        the current pictures of the entities it shows (`shows`, entity ids, e.g. `Prompt.shows`) and no others, most tied in
+        the view first, at most MAX_REFERENCES; for a look-change version of a portrait, the previous portrait; else none (a
+        first portrait, a place or a thing). Read from this Illustrator's sets, so another style's set gives that style's
+        pictures. `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
+        drawn for fewer books, is never attached."""
+        bi = job.bi
+        fin = self._finished(bi, finished if finished is not None else job.finished)
+        pos = self._pos(bi, job.anchor)
+        if job.kind in ("plate", "event"):
+            return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
+        if job.kind == "portrait" and job.change:
+            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
+            return [prev] if prev else []
+        return []
+
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
                     finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES; a picture
@@ -1688,13 +1705,9 @@ class Illustrator:
         body, why, out = self._write_full(writer, bi, anchor, check, SCENE_WORDS, SCENE_SCHEMA if scene else SCHEMA, fin)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
-        refs: list[tuple[int, dict]] = []
         if scene:                          # an entity's own picture always shows it
             ids = self._shown(out, ids, vis)
-            refs = self._references(ids, pos, view, fin)
-        elif job.kind == "portrait" and job.change:
-            prev = self.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
-            refs = [prev] if prev else []
+        refs = self.references(job, ids, fin)
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         style = self._style(bi)
