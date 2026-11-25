@@ -656,7 +656,7 @@ def cmd_illustrate(args) -> int:
         books.append(art.Book(d, epubs[i], art.FileSink(out), (args.level or "main") if last else args.level))
     chapters = set(_parse_ranges(args.chapters)) if args.chapters else None
     try:
-        il = art.Illustrator(books, model, image, args.style, portraits=args.portraits, quality=args.quality, cap=args.cap,
+        il = art.Illustrator(books, model, image, args.style, portraits=None if args.portraits == "none" else args.portraits, quality=args.quality, cap=args.cap,
                              max_pictures=args.limit, chapters=chapters, series=series, log=lambda m: print(m, file=sys.stderr))
     except ValueError as e:
         raise SystemExit(f"error: {e}") from e
@@ -906,7 +906,10 @@ def main(argv: list[str] | None = None) -> int:
                    + "; or your own sentence describing the look (never an artist's name)")
     s.add_argument("--level", choices=["main", "all"], default=None,
                    help="main: one picture per chapter; all: every drawable moment (default: main for the last INDEX; earlier INDEX books get portraits only unless this is given)")
-    s.add_argument("--portraits", action=argparse.BooleanOptionalAction, default=True, help="draw a portrait per character (default: yes)")
+    s.add_argument("--portraits", choices=["main", "all", "none"], default="main",
+                   help="whose portraits to draw: main, the characters the story is most about (up to 12 a book); all, everyone "
+                        "with a part; none (default: main)")
+    s.add_argument("--no-portraits", dest="portraits", action="store_const", const="none", help="the same as --portraits none")
     s.add_argument("--provider", choices=list(_llm_images()), default="gemini", help="image provider (Claude cannot draw)")
     s.add_argument("--model", default=None, help="image model (default: the provider's own default)")
     s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
