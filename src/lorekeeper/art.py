@@ -305,6 +305,8 @@ Lines known so far (its era is 1 at first and one more after each stated jump of
 Return, in this order:
 - "when": in a few words, when this chapter's events happen as the text states or shows it: the age or stage of life of its
   main people, a year, or how far before or after the line before it.
+- "gap": how many years lie between this chapter's events and the previous chapter's events, before or after (0 when it is
+  less than a year).
 - "lines": for EVERY known line, {{"id": its id, "same_time": true when this chapter's events happen in that line's years
   (where it left off, or soon after), whoever the chapter follows; false when they are set years before or after it, or in the
   frame when the line is the tale (or the reverse)}}.
@@ -341,8 +343,8 @@ SHOWS_SCHEMA = {"type": "object", "required": ["paragraphs"], "properties": {"pa
 SHOWS_BATCH = 30           # paragraphs per call of the paragraph check
 SHOWS_WORDS = 90           # of each paragraph sent to it
 # The timeline call only chooses: its labels are internal, and what it says never reaches a picture's prompt.
-TIMELINE_SCHEMA = {"type": "object", "required": ["when", "lines", "events", "strand", "cue"], "properties": {
-    "when": {"type": "string"},
+TIMELINE_SCHEMA = {"type": "object", "required": ["when", "gap", "lines", "events", "strand", "cue"], "properties": {
+    "when": {"type": "string"}, "gap": {"type": "number"},
     "lines": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"},
                                                                           "same_time": {"type": "boolean"}}}},
     "events": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"},
@@ -1766,6 +1768,13 @@ class Illustrator:
         same = [x for x in dict.fromkeys(same) if x in strands]
         if len(same) == 1 and said != same[0]:
             said = same[0]
+        # looks change over years: a chapter the reply puts less than a year from the chapter before opens no new line
+        try:
+            gap = abs(float(out.get("gap")))
+        except (TypeError, ValueError):
+            gap = None
+        if said == "new" and prev and gap is not None and gap < 1:
+            said = prev
         cue = out.get("cue") if isinstance(out.get("cue"), dict) else {}
         try:
             cn = int(cue.get("paragraph"))
@@ -2637,8 +2646,9 @@ class Illustrator:
         item.
 
         With a `scope` (an entity drawn per story time) the note is that scope's: found among that scope's notes, and written,
-        filled in or amended only from items whose evidence all lies in it and from paragraphs told in it (no profile or item
-        with mixed or other evidence, no other scope's note); a new era starts a fresh note."""
+        filled in or amended only from items whose evidence all lies in it and from paragraphs that show the entity at that
+        time (`shows_at`): no profile (the index's profiles blend the times), no item with mixed or other evidence, no other
+        scope's note; a new era starts a fresh note."""
         got = self._note(bi, eid, anchor, change, finished, scope)
         return (got["text"], "", got["sources"], got["inherits"]) if got.get("text") else (None, got.get("why", "empty"), [], [])
 
@@ -2670,6 +2680,10 @@ class Illustrator:
                      and (scope is None or self.item_scope(bi, it, finished) == scope)]
             shows: dict[int, str | None] = {}
             if scope:
+                # no profile: the index writes each one from passages across the book so far and from the profile before it,
+                # so its words blend the times even when the paragraphs it cites are of one
+                profiles = {f["id"] for f in b.ents.get(eid, {}).get("facets", []) if f.get("kind") == "profile"}
+                looks = [it for it in looks if it["id"] not in profiles]
                 # the paragraphs a scope's note may be written from: each checked for the time it shows the entity at
                 upto0 = b.seq_of[anchor]
                 ev = {b.seq_of[a] for it in looks for a in it["evidence"] if a in b.seq_of}
@@ -2700,7 +2714,7 @@ class Illustrator:
             # before naming them), then those its look items cite
             look_seqs: list[int] = self._in_scope(bi, self._introduction(bi, eid, upto), scope, finished) \
                 if e["type"] in PORTRAIT_TYPES and mode == "write" else []
-            facets = [f for f in ([ve["profile"]] if ve["profile"] else []) + ve["facets"]
+            facets = [f for f in ([ve["profile"]] if ve["profile"] and scope is None else []) + ve["facets"]
                       if scope is None or self._facet_scope(bi, eid, f, finished) == scope]
             if scope:
                 pool = self._mentions(bi, eid, upto, 24, scope, finished)
