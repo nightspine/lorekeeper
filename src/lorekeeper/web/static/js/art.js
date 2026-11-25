@@ -187,8 +187,10 @@ const when = (iso) => { const t = Date.parse(iso || ""); return Number.isFinite(
 
 /**
  * One picture at full size, with its caption and a closed "How this was drawn". `items` are
- * [{ rec, src, caption, key, canEdit }] in the order the arrows step through (only visible pictures are ever passed).
- * `onChanged()` runs after a redraw, a delete or an undo; `onRedraw(item)` is "Draw again" for an item without a picture.
+ * [{ rec, src, caption, key, canEdit, canRedraw, newPrompt }] in the order the arrows step through (only visible pictures
+ * are ever passed). `newPrompt(rec)` opens the picture sheet to write a new prompt for the same kind and target, whose
+ * picture replaces this one; without it Redraw only draws the saved prompt again. `onChanged()` runs after a redraw, a
+ * delete or an undo.
  */
 export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   if (!items.length) return null;
@@ -256,7 +258,24 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       try { await api.undo(it.key, id); forgetArt(it.key); toast("Undone", "ok", { host: modalToasts() }); onChanged?.(); } catch (e) { toast(e.message, "error", { host: modalToasts() }); }
     } } : null });
   }
+  /** Redraw: write a new prompt (the picture sheet, at the reader's position) or draw the saved one again. The default,
+   *  first and focused, is a new prompt for a picture drawn before 0.18.0 (no `notes`, or under 3: an older kind of prompt). */
   function redraw(it) {
+    if (!it.newPrompt) { sameNote(it); return; }
+    const older = !(typeof it.rec.notes === "number" && it.rec.notes >= 3);
+    const fresh = () => h(`button.btn${older ? ".primary" : ""}`, { type: "button", on: { click: () => { const rec = it.rec; close(); it.newPrompt(rec); } } },
+      icon("sparkle"), "Write a new prompt");
+    const same = () => h(`button.btn${older ? "" : ".primary"}`, { type: "button", on: { click: () => sameNote(it) } }, icon("refresh"), "Same prompt");
+    const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paint() } }, "Cancel");
+    const choices = older ? [fresh(), same()] : [same(), fresh()];
+    clear(acts, h("div.lb-redraw.lb-choice", { role: "group", "aria-label": "Redraw" },
+      h("p.hint", older
+        ? "This picture was drawn from an older kind of prompt. A new prompt is written from what you have read so far."
+        : "A new prompt is written from what you have read so far. The same prompt draws the saved text again, with a note if you like."),
+      h("div.btns", choices, cancel)));
+    choices[0].focus();
+  }
+  function sameNote(it) {
     const note = h("textarea.input.lb-note", { rows: "2", placeholder: "What to change, for example: in daylight, closer to the face", "aria-label": "What to change" });
     const go_ = h("button.btn.primary", { type: "button" }, "Redraw");
     const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paint() } }, "Cancel");
@@ -332,6 +351,10 @@ export function modalToasts() {
  *   drawnLine    for a chapter: "4 moments in this chapter, 1 drawn" (counted from visible content only)
  *   srcFor(rec, slug), canShow(rec)   the URL of a filed picture, and whether it may show at the position
  *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
+ *   replaces     a picture id of the art set: Redraw with a new prompt. The sheet is titled "Redraw", Draw sends it and the
+ *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
+ *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
+ *                the old one stays (no `replaces` is sent)
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
@@ -373,7 +396,8 @@ export async function openPictureSheet(opts) {
   const body = h("div.art-sheet-body");
   const drawBtn = h("button.btn.primary", { type: "button", disabled: true }, icon("sparkle"), "Draw");
   const footNote = h("span.art-price.num", { role: "status" });
-  const sh = sheet({ title: `Draw a picture${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
+  const replaces = typeof opts.replaces === "string" && ID_RE.test(opts.replaces) ? opts.replaces : null;
+  const sh = sheet({ title: `${replaces ? "Redraw" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
     footer: h("div.art-foot", footNote, drawBtn),
     // Always closable: a prompt or a drawing in flight is abandoned (a drawing already sent may still be filed and show
     // later); an edited prompt is asked about first.
@@ -384,7 +408,11 @@ export async function openPictureSheet(opts) {
         .then((ok) => { if (ok) { st.prompt = st.written; sh.close(true); } });
       return false;
     },
-    onClose: () => { st.closed = true; abort(); } });
+    onClose: () => {
+      st.closed = true; abort();
+      if (undoRedraw) toast("Picture redrawn", "ok", { host: modalToasts(), action: { label: "Undo", run: () => undoRedraw?.() } });
+    } });
+  let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
   sh.current = () => ({ kind: st.kind, target: st.target });
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
   /** The anchors the text on screen was written up to: the prompt's (the picture's own, any world-note hold included) and
@@ -447,6 +475,47 @@ export async function openPictureSheet(opts) {
       }
       clear(body, h("div.art-error", { role: "alert" }, h("p", why)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
+      paintFoot();
+    }
+  }
+  /** Rewrite a refused prompt: one writer call for the same moment at the position now, told so it can be drawn. The new text
+   *  replaces the prompt in the box, in the style chosen now; nothing is drawn until the person presses Draw. */
+  async function soften(text, reason) {
+    abort();
+    const mine = ++gen;
+    ctrl = new AbortController();
+    st.busy = true;
+    clear(err, loading("Rewriting the prompt so it can be drawn…"));
+    paintFoot();
+    const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
+    try {
+      const r = await api.artSoften(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
+        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), text, reason, ...here() }, ctrl.signal);
+      if (mine !== gen || st.closed) return;
+      const parts = promptParts(r);
+      if (parts) {
+        st.parts = parts;
+        st.sentence = sentenceFor(parts, st.style, st.custom) ?? squash(parts.style);
+        st.prompt = st.written = composePrompt(parts.body, st.sentence, parts.noText);
+      } else if (typeof r.prompt === "string" && r.prompt) {
+        st.parts = null; st.sentence = null;
+        st.prompt = st.written = r.prompt;
+      } else throw new Error("No prompt came back");
+      st.missing = false;
+      if (typeof r.price === "number") st.price = r.price;
+      if (typeof r.anchor === "string") st.anchor = r.anchor;
+      st.asked = asked; st.promptStyle = asked.style;
+      st.busy = false; ctrl = null;
+      textarea.value = st.prompt;
+      paintStyleNote();
+      clear(err, h("p.art-ok", "Rewritten so it can be drawn. Read it, change anything, then Draw."));
+      paintFoot();
+      textarea.focus();
+    } catch (e2) {
+      if (mine !== gen || st.closed) return;
+      st.busy = false; ctrl = null;
+      clear(err, h("p", promptError(e2).replace(/^Couldn't write a prompt/, "Couldn't rewrite it")),
+        e2.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: () => soften(text, reason) } }, "Try again"));
       paintFoot();
     }
   }
@@ -600,12 +669,15 @@ export async function openPictureSheet(opts) {
     const mine = ++gen;
     ctrl = new AbortController();
     st.busy = true; drawBtn.disabled = true;
+    // The old picture is replaced only within its own set: another style files a new picture there and keeps the old one.
+    const replacing = Boolean(replaces) && (!opts.replacesStyle || folder() === opts.replacesStyle);
+    const sent = st.prompt;   // the text as the provider saw it (a rewrite after a refusal starts from this)
     const keep = [...body.childNodes];
     clear(body, loading("Drawing the picture. This takes a few seconds…"));
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...here() }, ctrl.signal);
+        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() }, ctrl.signal);
       const rec = r?.record || r;
       const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);
@@ -616,15 +688,37 @@ export async function openPictureSheet(opts) {
       // The new picture shows here only if it may show at the position (its anchor is the item's own, which is visible,
       // but the server decides the anchor; the Reader checks it as it checks every picture).
       const src = slug && opts.srcFor && (!opts.canShow || opts.canShow(rec)) ? opts.srcFor(rec, slug) : null;
+      const added = replacing ? "Drawn. It takes the old picture's place in the art set." : "Drawn and added to the art set.";
       clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
-        h("p", src ? "Drawn and added to the art set." : "Drawn and added to the art set. It shows where it belongs in the book."),
+        h("p", src ? added : `${added} It shows where it belongs in the book.`),
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
+      // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).
+      // The toast is offered again where the sheet was opened from once it closes, until it is used.
+      const undoId = replacing ? (r?.undo ?? r?.journal ?? null) : null;
+      if (undoId) {
+        undoRedraw = async () => {
+          undoRedraw = null;
+          try {
+            await api.undo(opts.key, undoId);
+            forgetArt(opts.key);
+            if (!st.closed) sh.close(true);
+            toast("Undone", "ok", { host: modalToasts() });
+            opts.onUndone?.();
+          } catch (e) { toast(e.message, "error", { host: st.closed ? modalToasts() : sh.toasts }); }
+        };
+        toast("Picture redrawn", "ok", { host: sh.toasts, action: { label: "Undo", run: () => undoRedraw?.() } });
+      }
     } catch (e) {
       if (mine !== gen || st.closed) return;
       st.busy = false; ctrl = null;
       clear(body, keep);
-      clear(err, h("p", e.code === "refused" ? `The provider would not draw this: ${e.message}. Change the prompt and try again.` : `Couldn't draw it: ${e.message}`));
+      if (e.code === "refused") {
+        // The person stays in control: a rewrite of the same moment, told so it can be drawn, goes into the prompt box to be
+        // read before Draw. A second refusal offers it again.
+        const fix = h("button.btn", { type: "button", on: { click: () => soften(sent, e.message || "") } }, icon("sparkle"), "Rewrite it so it can be drawn");
+        clear(err, h("p", `The provider would not draw this: ${e.message}. Change the prompt and try again, or have it rewritten.`), fix);
+      } else clear(err, h("p", `Couldn't draw it: ${e.message}`));
       paintFoot();
       textarea.focus();
     }

@@ -65,7 +65,18 @@ function redirectToLogin() {
 }
 
 let catalogCache = null;
+let aboutCache = null;
 export const api = {
+  /** The server's version ({version}), asked once per page load. Plain fetch, never redirects: signed out, a failed
+   *  request or an older server without the route answer null (and a later call asks again). */
+  about: () => {
+    if (!aboutCache) {
+      aboutCache = fetch("/api/about").then((res) => (res.ok ? res.json() : null)).catch(() => null)
+        .then((d) => (d && typeof d.version === "string" && /^[\w.+-]{1,40}$/.test(d.version) ? d : null));
+      aboutCache.then((d) => { if (!d) aboutCache = null; });
+    }
+    return aboutCache;
+  },
   /** Who is signed in. Plain fetch, never redirects; a 404 or a failed request means an older server with no sign-in. */
   session: async () => {
     try {
@@ -171,6 +182,9 @@ export const api = {
   /** Write the prompt for one picture (one text call, nothing drawn). `p` is the reader's frontier anchor. */
   artPrompt: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/prompt`, body, { signal }),
   /** Draw a picture from the given (possibly edited) prompt and file it; a refusal is a 422 with code "refused". */
+  /** Rewrite a prompt the image provider refused, so the same moment can be drawn: the prompt route's body plus the refused
+   *  `text` and the provider's `reason`; answers the prompt route's shape. */
+  artSoften: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/soften`, body, { signal }),
   artDraw: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body, { signal }),
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
   artRedraw: (key, id, note) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`, { note }),

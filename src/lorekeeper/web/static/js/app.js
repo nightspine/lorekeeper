@@ -178,6 +178,14 @@ function applySession(session) {
   document.body.dataset.mustChangePassword = mustChange() ? "true" : "false";
   if (signedIn() && !mustChange()) startPolling(); else stopPolling();
   paintWho();
+  if (signedIn() && !mustChange()) paintVersion();
+}
+
+/** The brand's tooltip names the server's version ("Library. Lorekeeper 0.18.1"); nothing changes when it can't be read. */
+async function paintVersion() {
+  const d = await api.about();
+  const brand = document.querySelector(".app-rail .rail-brand");
+  if (d && brand) brand.title = `Library. Lorekeeper ${d.version}`;
 }
 
 hooks.unauthorized = () => { if (state.session.auth && state.session.user) applySession({ auth: true, user: null, setup: false }); };
