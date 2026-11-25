@@ -47,12 +47,16 @@ class Counting:
         return getattr(self.model, name)
 
 
-def entity(doc: dict, want: str) -> str | None:
+def entity(doc: dict, want: str, kind: str) -> str | None:
+    """The entity named `want` (an exact name first, then a part of one), of a type the kind draws first ("Dracula" for a
+    portrait is Count Dracula, not Castle Dracula)."""
     w = want.lower()
+    types = {"portrait": ("person", "creature"), "place": ("place",), "thing": ("object",)}.get(kind, ())
     for test in (lambda v: v.lower() == w, lambda v: w in v.lower()):
-        hit = next((e["id"] for e in doc["entities"] if any(test(x["value"]) for x in e["names"])), None)
-        if hit:
-            return hit
+        for fits in (lambda e: e["type"] in types, lambda e: True):
+            hit = next((e["id"] for e in doc["entities"] if fits(e) and any(test(x["value"]) for x in e["names"])), None)
+            if hit:
+                return hit
     return None
 
 
@@ -88,7 +92,7 @@ def main(argv=None) -> int:
         elif kind == "event":
             target = what
         else:
-            target = entity(doc, what) or what
+            target = entity(doc, what, kind) or what
         label = f"{kind} {what}" + (f" at {frac}" if frac else "")
         c0, t0 = il.text_spent(), time.monotonic()
         try:
