@@ -116,7 +116,7 @@ def classify(il, ents: list[str], at: str) -> None:
         for item in il.items(0, eid):
             got = idx.get(item["id"])
             if got and (got["look"] or got["change"]):
-                flag = ("look" if got["look"] else "") + (f" CHANGE: {got['change']}" if got["change"] else "")
+                flag = ("look" if got["look"] else "") + (" CHANGE" if got["change"] else "")
                 print(f"   {item['from']:>16} {flag:<40} {item['text'][:110]}")
         if e["type"] in art.PORTRAIT_TYPES:
             picks = il.group_picks(0, eid)

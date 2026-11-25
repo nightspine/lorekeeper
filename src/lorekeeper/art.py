@@ -1569,12 +1569,13 @@ class Illustrator:
         return hashlib.sha256(json.dumps([[i["id"], i["text"]] for i in items], ensure_ascii=False).encode()).hexdigest()[:16]
 
     def look_index(self, bi: int, eid: str) -> dict[str, dict]:
-        """{item id: {"look": bool, "change": str}} for the entity's items in book bi (`items`), from a fresh classification in
+        """{item id: {"look": bool, "change": bool}} for the entity's items in book bi (`items`), from a fresh classification in
         the manifest (`looks[eid] = {"key", "items"}`), else {} (not classified yet, or the index changed since).
 
         Gating: the classification call sees all the entity's items up to the end of the book, but it only chooses. Every use
         is filtered by anchor (a look item or a change counts only at or after its own `from`), and nothing it writes reaches a
-        prompt: a change's phrase is quoted into a note only after the note call quotes it from the change item's own text."""
+        prompt (a change is stored as true or false, never its phrase; an amended note quotes the change item's own text).
+        The manifest holds item ids and flags only, so it says nothing the index the Reader holds does not."""
         items = self.items(bi, eid)
         got = self.man[bi]["looks"].get(eid)
         if not items or not isinstance(got, dict) or got.get("key") != self._items_key(items):
@@ -1630,7 +1631,9 @@ class Illustrator:
                     if not 1 <= n <= len(batch):
                         continue
                     eid, it = batch[n - 1]
-                    change = " ".join(str(x.get("change") or "").split())[:120]
+                    # only whether it changes: the phrase is not kept (the manifest is served whole, and the phrase may tell
+                    # what happens late in the book; the amended note quotes the item's own text at its anchor)
+                    change = bool(" ".join(str(x.get("change") or "").split()))
                     look = x.get("look") is True
                     if look or change:
                         found[eid][it["id"]] = {"look": look, "change": change}

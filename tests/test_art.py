@@ -1,6 +1,7 @@
 """Art sets (art.py) with a scripted text model and a scripted image model: what is drawn, from which anchor, with which
 references; the checks, refusals, the cost cap, resume and series inheritance."""
 
+import json
 import re
 import struct
 
@@ -434,7 +435,7 @@ def test_a_look_change_is_the_classifiers_call_on_the_entitys_own_item():
     oren["facets"].append({"id": "bk.oren.f1", "from": "a10", "basis": "stated", "evidence": ["a10"], "text": "Oren lost an eye in the storm."})
     il, rep, sink, t, im = run(d, bk)
     assert [p["from"] for p in pics(sink, "portrait") if p["target"] == "oren"] == ["a5", "a10"]
-    assert sink.m["looks"]["oren"]["items"]["bk.oren.f1"]["change"] == "lost an eye"
+    assert sink.m["looks"]["oren"]["items"]["bk.oren.f1"]["change"] is True
     oren["facets"][-1]["text"] = "Oren is found dead on the mill floor."
     _, _, sink2, _, _ = run(d, bk)
     assert [p["from"] for p in pics(sink2, "portrait") if p["target"] == "oren"] == ["a5"]
@@ -1895,3 +1896,28 @@ def test_a_full_note_takes_no_new_detail_and_drops_none(monkeypatch):
     first = sink.m["appearance"]["mira"][0]["text"]
     assert first == "A young woman: slight, dark braided hair."               # the third did not fit
     assert il.ensure_note(0, "mira", "a11")[0] == first                       # the fill keeps both, adds nothing
+
+
+def test_the_look_index_and_the_group_pick_only_choose_and_write_nothing_a_prompt_uses():
+    bk, d = guild_doc()
+    d["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Her hair was cut short and dyed golden by the stranger."})
+
+    class Chatty(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            out = super().complete(system, prompt, schema, prefix)
+            if "notes a reader's companion keeps on some entries" in prompt:
+                for x in out["items"]:
+                    x["change"] = "Zephyr the storm-king's crown" if x["change"] else ""
+                    x["frame"] = "Zephyr rides in"
+            if "Which of the groups is" in prompt:
+                for x in out["groups"]:
+                    x["why"] = "Zephyr says so"
+            return out
+    t = Chatty(notes={"Guild": GUILD_PARTS}, groups=pick_guild, change=lambda txt: "x" if "dyed golden" in txt else "")
+    il, rep, sink, t, im = run(d, bk, text_=t, level="all")
+    assert len([p for p in pics(sink, "portrait") if p["target"] == "mira"]) == 2      # the change still chose a version
+    assert not any("Zephyr the storm-king" in p for p in t.prompts if "notes a reader's companion keeps" not in p)
+    assert "Zephyr" not in json.dumps(sink.m)                # nothing the choosers said is stored, so nothing is served
+    assert not any("Zephyr says so" in p or "Zephyr rides in" in p for p in t.prompts)
+    assert all("Zephyr the storm-king" not in p["prompt"] for p in pics(sink))
