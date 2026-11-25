@@ -123,8 +123,8 @@ class Text:
     groups it picks (default none), `check(text, source)` which look phrases it calls unfounded (default none)."""
 
     def __init__(self, scene=SCENE, world=WORLD, screen=None, notes=None, shows=None, look=None, change=None, groups=None,
-                 check=None, amend=None, intro=None):
-        self.amend, self.intro = amend, intro
+                 check=None, amend=None, intro=None, timeline=None):
+        self.amend, self.intro, self.timeline = amend, intro, timeline
         self.scene, self.world, self.notes, self.shows = scene, world, dict(NOTE_PARTS, **(notes or {})), shows
         self.screen = screen
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
@@ -134,6 +134,8 @@ class Text:
 
     def complete(self, system, prompt, schema, prefix=None):
         self.prompts.append(prompt)
+        if "say which line of telling it is told in" in prompt:
+            return (self.timeline or one_line)(tl_parts(prompt))
         if "Which of them are a visible moment" in prompt:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
@@ -179,6 +181,26 @@ class Text:
 
     def scenes(self):
         return [p for p in self.prompts if "Write the picture prompt" in p]
+
+
+def tl_parts(prompt):
+    """What the timeline prompt shows, parsed for a scripted answer: the chapter, its numbered paragraphs, its events, the
+    known lines and the previous chapter's line."""
+    chapter = re.search(r"^Chapter: (.*)$", prompt, re.M).group(1)
+    body = prompt.split("Its opening, numbered by paragraph:\n", 1)[1]
+    paras = dict(re.findall(r"^\s*\[(\d+)\] (.*)$", body, re.M))
+    events = re.findall(r"^(\d+)\. (.*)$", body.split("Its events, each with", 1)[1], re.M)
+    known = re.findall(r"^- (s\d+): ([^;]*); era (\d+)", prompt, re.M)
+    prev = re.search(r"The previous chapter was told in (s\d+)\.", prompt)
+    return {"chapter": chapter, "title": chapter.split(" > ")[-1], "paras": {int(k): v for k, v in paras.items()},
+            "events": [(int(n), t) for n, t in events], "known": known, "prev": prev.group(1) if prev else None, "prompt": prompt}
+
+
+def one_line(p):
+    """A linear book: one line of telling from the first chapter on."""
+    first = " ".join(p["paras"][1].split()[:4])
+    return {"strand": p["prev"] or (p["known"][0][0] if p["known"] else "new"), "label": "the story",
+            "cue": {"paragraph": 1, "quote": first}, "skip": False, "events": []}
 
 
 def note_reply(note, prompt):
@@ -1554,8 +1576,8 @@ def test_a_softened_redraw_runs_the_same_last_name_check(monkeypatch):
     quiet = ("A door stands ajar in a stone mill at dusk and a long shadow lies across the worn floor. A lamp burns low on a wooden table "
              "beside a woven basket, and the last grey light comes through one small window. The room is quiet and empty and the air is still.")
     real = art.Illustrator._assemble
-    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1, place="":
-                        real(self, scene, notes, world, bi, place) + (" Oren" if scene.startswith(quiet[:20]) else ""))
+    monkeypatch.setattr(art.Illustrator, "_assemble", lambda self, scene, notes, world, bi=-1, place="", likeness=False:
+                        real(self, scene, notes, world, bi, place, likeness) + (" Oren" if scene.startswith(quiet[:20]) else ""))
     t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
     im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30])])
     il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
