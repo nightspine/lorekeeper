@@ -93,7 +93,10 @@ LOOK_ITEM_CHARS = 300
 # "s2.1": a strand is a line of telling, an era a stretch of it between stated jumps of years. A book with one scope draws as
 # before; an entity whose items span two or more scopes gets a note, references and portraits per scope.
 STORY_TIME = True          # label the chapters' lines of telling (one cheap call per chapter); False draws as before
-LIKENESS_REFERENCE = True  # a scope's first portrait takes the figure's portrait from another scope as a likeness reference
+# a scope's first portrait takes the figure's portrait from another scope as a likeness reference. Off: on Empire of the Vampire
+# (Nano Banana 2.1, draft) the reference carried the other time's age, stubble, dress and gear into the portrait, whatever the
+# note said (bench/art_timeline.py ab, 2026-11-24); only the note decides.
+LIKENESS_REFERENCE = False
 MAX_STRANDS = 4            # lines of telling per series; a chapter opening a fifth is unknown
 MAX_ERAS = 4               # eras per strand; a chapter past the fourth is unknown
 MAX_SCOPE_VERSIONS = 5     # portraits per entity per book over all its scopes (MAX_VERSIONS within one)

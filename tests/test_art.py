@@ -2538,12 +2538,13 @@ def test_two_portraits_on_one_held_anchor_stay_apart_when_their_times_differ(mon
     assert len([p for p in pics(off, "portrait") if p["target"] == "mira"]) == 1      # one time: they merge, as before
 
 
-def test_a_times_first_portrait_takes_the_other_times_as_a_likeness_reference_when_on():
-    il, rep, sink, t, im = frame_run()
+def test_a_times_first_portrait_takes_the_other_times_as_a_likeness_reference_only_when_on():
+    il, rep, sink, t, im = frame_run(likeness=True)
     ms = {p["scope"]: p for p in pics(sink, "portrait") if p["target"] == "mira"}
     assert ms["s2.1"]["references"] == [ms["s1.1"]["id"]] and art.LIKENESS in ms["s2.1"]["prompt"]
     assert art.LIKENESS not in ms["s1.1"]["prompt"] and not ms["s1.1"]["references"]
-    _, _, off, _, _ = frame_run(likeness=False)
+    assert art.LIKENESS_REFERENCE is False         # off by default: the bench A/B saw it carry the other time's look
+    _, _, off, _, _ = frame_run()
     ms = {p["scope"]: p for p in pics(off, "portrait") if p["target"] == "mira"}
     assert not ms["s2.1"]["references"] and art.LIKENESS not in ms["s2.1"]["prompt"]
 
