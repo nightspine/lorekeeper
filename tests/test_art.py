@@ -2018,7 +2018,7 @@ def test_only_figures_with_a_picture_get_a_label_most_tied_first():
     assert [r["id"] for _, r in pr.references] == ["pmira001", "poren001"]
     il.make_prompt(il.job("event", "e2", at="a11"))      # e2 shows from a1: neither portrait is reached, no label
     assert "figure=" not in writer_calls(t)[-1]
-    for rule in ('call them by the label the first time', '"figure A, a silversaint in a dark travelling coat"',
+    for rule in ('call them by the label the first time', '"figure A, a tidewarden in a dark travelling coat"',
                  "Do not describe their face, hair, eyes, skin or build", "Never write the label of a figure you do not draw"):
         assert rule in art.SCENE_WRITER and rule not in art.WRITER and rule not in art.PORTRAIT_WRITER
 
@@ -2333,6 +2333,6 @@ def test_the_writer_states_the_worlds_period_and_technology_wherever_it_draws_a_
         assert "Never give a specific look the material does not state" in system      # the figures' rule is unchanged
     # a general rule: no book of the bench (or any of its places, castes or people) is named in what the writer is told
     told = " ".join([art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER, art.SOFTEN, art.LOOK_SENTENCES, *art.TASKS.values()])
-    for word in ("Red Rising", "Mars", "Dracula", "Transylvania", "Carpathian", "Sherlock", "Holmes", "London",
+    for word in ("Red Rising", "Mars", "Gold", "silversaint", "Dracula", "Transylvania", "Carpathian", "Sherlock", "Holmes", "London",
                  "Empire of the Vampire", "Victorian", "far-future"):
         assert word not in told, word

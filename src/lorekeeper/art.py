@@ -209,7 +209,7 @@ PORTRAIT_WRITER = WRITER.replace(_SCENE_FORM, (
 - The framing and the pose are fixed and put before your text by code: never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
 - Describe only how the figure looks at this moment: face, age, build, skin, hair, eyes, marks, scars and wounds they carry, tattoos, and what they wear and carry on them, stowed (a sword at the hip, a pipe in a pocket). Their hands and mouth are empty: no action or gesture, nothing held up or in use, no events, no smoke or breath, no other figures.
 - Expression: one short phrase at most, and only as the material shows their usual or current bearing.
-- Their people, caste or role stays ("a silversaint", "of the Gold caste"), with what that looks like as the material gives it.
+- Their people, caste or role stays ("a tidewarden", "of the Ashen caste"), with what that looks like as the material gives it.
 - Background: one short clause at most: from <surroundings> when it is given, else plain ("a plain dark background"); never a room or place the passages tell a scene in, nor its objects. Light: one short clause.
 Return "text": the prompt.""")
 assert PORTRAIT_WRITER.count("This prompt is for a portrait") == 1
@@ -226,7 +226,7 @@ _NO_TEXT_RULE = "- No text, letters, titles, captions or signatures in the pictu
 assert _NO_TEXT_RULE in WRITER
 # The writer of a plate or an event: WRITER with the figure labels (portraits, places and things keep WRITER or PORTRAIT_WRITER).
 SCENE_WRITER = WRITER.replace(_ENTRY_LINE, _ENTRY_LINE + ' An <entry> with a figure label (figure="A") is a figure the image model is given a reference picture of.').replace(
-    _NO_TEXT_RULE, """- A figure whose <entry> has a figure label: when you draw them, call them by the label the first time, followed by who they are in a few words (their people, rank or role, and the dress that marks them: "figure A, a silversaint in a dark travelling coat"), and by the label or a pronoun after that. Do not describe their face, hair, eyes, skin or build: their reference picture gives those. Never write the label of a figure you do not draw (one only heard, unseen or out of frame), never give a label to anyone else, and describe a figure without a label as the other rules say.
+    _NO_TEXT_RULE, """- A figure whose <entry> has a figure label: when you draw them, call them by the label the first time, followed by who they are in a few words (their people, rank or role, and the dress that marks them: "figure A, a tidewarden in a dark travelling coat"), and by the label or a pronoun after that. Do not describe their face, hair, eyes, skin or build: their reference picture gives those. Never write the label of a figure you do not draw (one only heard, unseen or out of frame), never give a label to anyone else, and describe a figure without a label as the other rules say.
 """ + _NO_TEXT_RULE)
 
 
