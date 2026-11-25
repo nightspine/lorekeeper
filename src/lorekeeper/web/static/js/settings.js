@@ -54,6 +54,10 @@ export function mountSettings(root) {
       h("span.set-name", sec.name), lines[sec.id]);
     return links[sec.id];
   }));
+  // The server's version as one quiet line at the foot of the list; nothing when it can't be read (an older server).
+  const version = h("p.set-version", { hidden: true });
+  nav.append(version);
+  api.about().then((d) => { if (d && !disposed) { version.textContent = `Lorekeeper ${d.version}`; version.hidden = false; } });
   // Arrow keys move between sections (and show them), Home and End jump to the ends.
   nav.addEventListener("keydown", (e) => {
     const i = ids.indexOf(e.target.dataset?.sec);

@@ -65,7 +65,18 @@ function redirectToLogin() {
 }
 
 let catalogCache = null;
+let aboutCache = null;
 export const api = {
+  /** The server's version ({version}), asked once per page load. Plain fetch, never redirects: signed out, a failed
+   *  request or an older server without the route answer null (and a later call asks again). */
+  about: () => {
+    if (!aboutCache) {
+      aboutCache = fetch("/api/about").then((res) => (res.ok ? res.json() : null)).catch(() => null)
+        .then((d) => (d && typeof d.version === "string" && /^[\w.+-]{1,40}$/.test(d.version) ? d : null));
+      aboutCache.then((d) => { if (!d) aboutCache = null; });
+    }
+    return aboutCache;
+  },
   /** Who is signed in. Plain fetch, never redirects; a 404 or a failed request means an older server with no sign-in. */
   session: async () => {
     try {
