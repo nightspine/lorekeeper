@@ -169,7 +169,7 @@ Return "details": {looks}, as the passages and notes show it, each a short phras
 passages or notes that show it about {who} (copied word for word, 2 to 25 words), and "seen": true when it is something an
 illustrator can draw (a body, a face, a colour, a garment, a mark, gear), false when it is character, mood or situation
 ("curious", "a prisoner"). Use no name. A detail you cannot quote about {who} is not shown: leave it out, never guess it and never
-take it from another figure. If nothing of its look is shown (a name only mentioned, an author, a person only written about),
+take it from another figure. Give each detail once, never again in other words. If nothing of its look is shown (a name only mentioned, an author, a person only written about),
 return an EMPTY details list.{home}{more}
 {prev}
 What the companion has noted:
@@ -190,7 +190,7 @@ NOTE_SCHEMA = {"type": "object", "required": ["role", "details"],
 LOOKS = {"person": "its look (body, face, hair, colouring, dress, marks, what it wears or carries)",
          "creature": "its look (form, size, colouring, marks)",
          "place": "its look (form, materials, state, surroundings)", "object": "its look (form, materials, size, state)",
-         "group": "how its members look (their bodies, colouring, dress, marks, insignia)"}
+         "group": "what its members share in how they look (colouring, dress, marks, insignia; never one member's own look)"}
 FILL = """Its fixed note until now was:
 "{prev}"
 The companion has since noted more about how it looks (the first notes below). Return in "details" only what the note does not
@@ -424,17 +424,20 @@ def _content(text: str) -> set[str]:
     return {_base(w) for w in _toks(text) if w not in _STOP and len(w) > 2}
 
 
-def compose_note(role: str, details: list[str], same: bool = False) -> str:
+def compose_note(role: str, details: list[str], same: bool = False, capital: bool = True) -> str:
     """The appearance note as pasted into prompts: "A miller: white hair, a leather apron." ("The same miller: ..." for an
-    amended one); "" when no detail is left. A detail whose words the role or an earlier detail already says goes ("A small,
-    filthy boy: small" is "A small, filthy boy" plus the rest)."""
+    amended one); "" when no detail is left. A detail whose words the role, an earlier detail or a fuller detail already says
+    goes ("A small, filthy boy: small" is "A small, filthy boy" plus the rest)."""
     role = " ".join(role.split()).rstrip(".;:,")
     if re.fullmatch(r"(?i)(?:the|a|an)?", role):
         role = ""                      # every word of it was taken out
+    ds = [d.strip().rstrip(".;,") for d in details if d and d.strip()]
+    sets = [_content(d) for d in ds]
     said, kept = _content(role), []
-    for d in (d.strip().rstrip(".;,") for d in details if d and d.strip()):
-        words = _content(d)
-        if words and words <= said:
+    for n, d in enumerate(ds):
+        words = sets[n]
+        # a detail another one holds whole goes ("a common room" beside "a round, cozy common room"; of two equal, the first)
+        if words and (words <= said or any(m != n and (words < sets[m] or (words == sets[m] and m < n)) for m in range(len(ds)))):
             continue
         kept.append(d)
         said |= words
@@ -444,14 +447,19 @@ def compose_note(role: str, details: list[str], same: bool = False) -> str:
         role = "the same " + re.sub(r"^(?:the\s+same|the|a|an)\s+", "", role, flags=re.IGNORECASE)
     head = (role[:1].upper() + role[1:]) if role else ""
     body = ", ".join(kept)
-    return f"{head}: {body}." if head else body[:1].upper() + body[1:] + "."
+    return f"{head}: {body}." if head else (body[:1].upper() if capital else body[:1]) + body[1:] + "."
 
 
 def group_look(details: list[str]) -> str:
     """A group's members' look as a figure's note carries it, with no name: "Like others of its people: golden eyes, a winged
     sigil on the back of each hand."."""
-    text = compose_note("", details)
-    return f"Like others of its people: {text[:1].lower() + text[1:]}" if text else ""
+    return f"Like others of its people: {_list(details)}" if _list(details) else ""
+
+
+def _list(details: list[str]) -> str:
+    """Details as one list after a colon: compose_note's choice and order, the first one's own case kept ("a winged sigil",
+    never "angelina" for "Angelina")."""
+    return compose_note("", details, capital=False)
 
 
 class Known:
@@ -2071,8 +2079,7 @@ class Illustrator:
             for gid in self.groups_of(bi, eid, anchor, finished)[:GROUPS_TRIED]:
                 g = self._note(bi, gid, anchor, "", finished)
                 if g.get("home"):
-                    text = compose_note("", [d["text"] for d in g["home"]])
-                    return f"Where its people live: {text[:1].lower() + text[1:]}", list(g["sources"]), list(g["inherits"])
+                    return f"Where its people live: {_list([d['text'] for d in g['home']])}", list(g["sources"]), list(g["inherits"])
         return "", [], []
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
