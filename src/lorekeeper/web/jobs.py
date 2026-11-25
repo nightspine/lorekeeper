@@ -576,7 +576,7 @@ class JobManager:
             self._emit(job, {"type": "log", "line": f"pictures: failed ({type(e).__name__}: {e}); the pictures drawn so far are kept"})
             return {"failed": str(e), "drawn": len(added)}
         out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
-               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, **({"held": rep.held} if getattr(rep, "held", 0) else {}),
+               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, 
                "reasons": rep.reasons[:200], "style": slug, "textHash": h}
         self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
         for line in rep.lines()[:40]:
