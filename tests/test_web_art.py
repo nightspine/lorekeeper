@@ -1692,6 +1692,8 @@ class Named(Text):
     def __init__(self, label):
         super().__init__()
         self.label = label
+        if ":" in label:                 # named like a real backend, so its records and log lines name it
+            self.provider, self.name = label.split(":", 1)
 
 
 def models_env(env, monkeypatch, live=()):
@@ -1853,3 +1855,20 @@ def test_the_run_report_splits_the_text_cost_by_responsibility(env, monkeypatch)
     models_env(env, monkeypatch)
     job = run_set(env)
     assert isinstance(job["report"]["art"]["text_costs"], dict)
+
+
+def test_a_chosen_model_that_lost_its_key_is_replaced_with_a_log_line(env, monkeypatch):
+    made, images_made, seen = models_env(env, monkeypatch)
+    # accepted when it was asked for, then the Claude and OpenAI keys were removed before the pictures stage
+    monkeypatch.setattr(jobs_mod.JobManager, "check_art_models", lambda self, cfg: None)
+    job = run_set(env, writer={"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+                  portraitWriter={"provider": "claude", "model": "claude-sonnet-5-5"},
+                  picker={"provider": "claude", "model": "claude-haiku-5-5"},
+                  portraitProvider="openai", portraitModel="gpt-image-2")
+    assert job["status"] == "done", job
+    assert seen["portrait_text"] is seen["text"] is seen["cheap_text"] and seen["portrait_image"] is seen["image"]
+    lines = [x for x in (ev.get("line", "") for ev in env.jobs.events[job["id"]]) if "no longer set up" in x]
+    assert len(lines) == 3
+    assert any("Claude claude-sonnet-5-5 for the portrait prompts" in x and "Gemini gemini-2.5-flash-lite" in x for x in lines)
+    assert any("Claude claude-haiku-5-5 for the choosing calls" in x for x in lines)
+    assert any("OpenAI gpt-image-2 for the portraits" in x for x in lines)
