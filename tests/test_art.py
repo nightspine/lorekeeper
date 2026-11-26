@@ -1741,6 +1741,7 @@ def test_a_caught_word_that_is_not_a_name_is_let_through_after_one_choosing_call
     assert il.report.dropped["kept: a flagged word was not a name"] == 7
     # the chooser is told that any name in a story counts, and to call it a name when unsure
     assert "real or invented" in art.NAMES and "When you are unsure, answer that it is a name." in art.NAMES
+    assert "The name of a place itself" in art.NAMES and "made\nup for the story's own world is a name" in art.NAMES
 
 
 def test_a_caught_word_used_as_a_name_is_dropped_as_before():
