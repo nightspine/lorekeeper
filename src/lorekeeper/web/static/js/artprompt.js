@@ -33,6 +33,17 @@ export function sentenceFor(parts, style, custom = "") {
   return typeof s === "string" && s.trim() ? squash(s) : null;
 }
 
+/** The style sentence of a choice made by slug or by words. `slug` null means the style is the loose `words` (squashed;
+ *  "" when empty). A slug is looked up as a slug, never as the word "custom": the reply's table first, then
+ *  `saved(slug)` (a saved style's own words), else null. */
+export function choiceSentence(parts, slug, words = "", saved = () => null) {
+  if (slug == null) return squash(words);
+  const s = parts?.styles?.[slug];
+  if (typeof s === "string" && s.trim()) return squash(s);
+  const w = saved(slug);
+  return typeof w === "string" && w.trim() ? squash(w) : null;
+}
+
 /**
  * Swap the style sentence. `prompt` is what is on screen, `written` what the sheet last put there itself (the two differ
  * when the person edited the prompt), `old` the sentence in it now. Returns { prompt, written, sentence, missing }.

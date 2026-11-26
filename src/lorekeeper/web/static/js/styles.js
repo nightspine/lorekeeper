@@ -31,19 +31,24 @@ function clean(x) {
 const fallback = () => STYLES.map(([slug, name]) => ({ slug, name, text: "", builtin: true, preview: `/static/styles/${slug}.webp`, stale: false }));
 
 let cache = null;   // { at, promise } of the list
+let lastGood = null;   // the last list the server answered: what a failed refresh keeps showing
 const known = new Map();   // slug → style, from the last list: names and sentences for code that cannot wait
 /** Every style, built-in ones first. Never fails: an older server or a failed request gives the built-in ones. */
 export function loadStyles({ fresh = false } = {}) {
   if (fresh || !cache || Date.now() - cache.at > 60000) {
+    // A failed request (or an empty answer) gives the built-in styles for now and is not kept: the next open asks again.
+    let ok = true;
     const promise = api.styles().then((r) => {
       const list = (Array.isArray(r?.styles) ? r.styles : []).map(clean).filter(Boolean);
-      return list.length ? list : fallback();
-    }).catch(() => fallback()).then((list) => {
+      if (!list.length) ok = false;
+      return list.length ? list : lastGood || fallback();
+    }).catch(() => { ok = false; return lastGood || fallback(); }).then((list) => {
       // Built-ins first whatever order arrived, each slug once.
       const seen = new Set(), out = [];
       for (const s of [...list.filter((x) => x.builtin), ...list.filter((x) => !x.builtin)]) if (!seen.has(s.slug)) { seen.add(s.slug); out.push(s); }
-      known.clear();
+      if (ok) { known.clear(); lastGood = out; }
       for (const s of out) known.set(s.slug, s);
+      if (!ok && cache?.promise === promise) cache = null;
       return out;
     });
     cache = { at: Date.now(), promise };
@@ -113,7 +118,7 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
     .map((x) => ({ slug: x.slug, name: x.name || x.slug.replace(/-/g, " "), text: squash(x.text), builtin: false, preview: null, stale: false, legacy: true }));
   function card(s) {
     const on = s.slug === chosen;
-    const pick = h("button.style-pick", { type: "button", "aria-pressed": String(on), on: { click: () => { chosen = s.slug; paint(); onPick?.(s); } } },
+    const pick = h("button.style-pick", { type: "button", "aria-pressed": String(on), on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); chosen = s.slug; paint(); onPick?.(s); } } },
       previewOf(s), h("span.style-name", s.name));
     const expand = s.preview ? h("button.icon-btn.style-expand", { type: "button", "aria-label": `Show ${s.name} larger`, title: "Show larger",
       // Focused first: Safari does not focus a button on click, and the viewer gives focus back to it.
