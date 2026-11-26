@@ -304,11 +304,16 @@ def style_sentence(style: str) -> str:
     return STYLES.get(style) or SAVED_STYLES.get(style) or " ".join(style.split())
 
 
-# The one scene every style preview shows, so styles compare like for like. Generic and from no book: a writer's body as
-# a real prompt has one (subject, then setting, then light and mood, no style words), drawn with `preview_prompt`.
-PREVIEW_SCENE = ("A lone traveller in a long coat walks away from the viewer along a muddy road at dusk, toward a ruined "
-                 "castle on a hilltop. Weathered gravestones lean by the roadside. Above, a stormy sky of heavy clouds with "
-                 "a pale sun low behind them; cold light, a quiet and uneasy mood.")
+# The one scene every style preview shows, so styles compare like for like: the Mad Tea-Party of Alice's Adventures in
+# Wonderland (1865, public domain), told in our own words and never after any illustrator, written as a real prompt's body
+# (subject, then setting, then light and mood, no style words) and with no names, as a real prompt has none and a name
+# would pull the image model toward copies of famous illustrations. Faces turned to the viewer, so each style shows on
+# faces. Drawn with `preview_prompt`.
+PREVIEW_SCENE = ("A long table laid for many guests under a large tree in front of a country house, crowded with mismatched "
+                 "teacups, teapots, plates and cakes. At one end a girl of about seven with long hair, in a simple dress, sits "
+                 "in a large armchair and looks on, her face turned toward the viewer. A hare and a man in a very tall hat sit "
+                 "across the table from each other, talking, their faces in three-quarter view. Between them a dormouse is "
+                 "asleep, half inside a teapot. Warm afternoon light through the leaves; a cheerful, slightly absurd mood.")
 PREVIEW_SHAPE = "square"   # the picker's cards are square: a landscape preview would lose its sides in one
 
 
