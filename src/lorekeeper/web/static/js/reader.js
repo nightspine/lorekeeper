@@ -11,6 +11,7 @@ import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
+import { createReading } from "./read.js";
 import { artImg, artOn, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
@@ -85,7 +86,7 @@ export function mountReader(root) {
     // No position in the address (Read in the Library, the book page, Switch book, the Runs monitor): the position
     // the person last set for this index, from the rail's Reading list. A Book Orbit sync still wins after load.
     p: params.has("p") ? Math.min(1, Math.max(0, +params.get("p") / 1000)) : (readingList().find((e) => e.key === params.get("i"))?.p ?? 0),
-    tab: !preview && params.get("tab") === "ask" ? "ask" : "overview", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null, bkAll: new Set(), bkOpen: new Set(),
+    tab: !preview && ["ask", "read"].includes(params.get("tab")) ? params.get("tab") : "overview", types: new Set(), q: "", sort: "first", newestFirst: true, chaptersNewest: true, prevIds: null, prevP: null, view: null, drawer: null, bkAll: new Set(), bkOpen: new Set(),
     sync: { on: false, override: false }, graph: { sel: null, mode: "map", hops: 1, together: false, things: false, hideMinor: false, history: false, list: false, q: "" }, reveals: null,
     edit: params.get("edit") === "1", hash: null,
     earlier: (() => { try { return localStorage.getItem("lk-earlier") === "1"; } catch { return false; } })(),
@@ -111,6 +112,21 @@ export function mountReader(root) {
     onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
   });
   if (!preview) ask.refreshStatus();
+
+  // Read: the book's own text, the position following the scroll (read.js). It is handed the Reader's state and moves.
+  const canRead = () => !preview && Boolean(s.map?.exact && s.hash);
+  const reading = createReading({
+    key: () => s.key, map: () => s.map, view: () => s.view, p: () => s.p, moveTo: (p) => moveTo(p), settle: (p) => setP(p, { quiet: true }),
+    doc: () => s.doc, series: () => Boolean(s.series),
+    priorDocs: () => (s.series ? (finishedSet() || []).map((b) => s.seriesDocs.get(b)).filter(Boolean) : []),
+    entity: (id) => nameOf(id) || null,
+    portrait: (id) => { const p = latestPicture(id); return p ? picSrc(p, true) : null; },
+    plates: () => visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)),
+    platesNode: (pics, title) => platesNode(pics, title),
+    openEntry: (id, from) => openDrawer(id, { from }),
+    canAsk: () => !preview && Boolean(ask.available?.available), ask: (text) => showAsk({ text }),
+    jump: () => openJump(),
+  });
 
   // The first load: a spinner after a moment, and a page that says what failed with a way to try again.
   const openingText = preview ? "Downloading the index and checking it against your copy…" : "Opening the book…";
@@ -214,6 +230,7 @@ export function mountReader(root) {
     clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
+    reading.reset();   // and nothing of the last one's text
     render();
     if (!preview) loadPictures(stale);   // pictures are an extra: they arrive after the page and repaint what shows them
     if (!preview) loadToc(key, stale);
@@ -449,12 +466,12 @@ export function mountReader(root) {
       const q = { i: s.key, p: String(Math.round(s.p * 1000)) };
       if (s.series) { q.book = s.book; q.order = s.order; if (s.finished != null) q.fin = s.finished; }
       if (s.edit) q.edit = "1";
-      if (s.tab === "ask") q.tab = "ask";
+      if (s.tab === "ask" || s.tab === "read") q.tab = s.tab;
       setParams(q);
       // The rail's "Reading" list: the title and the position the person set, nothing from the index.
       const back = { ...q };
       delete back.edit;   // reopening from the rail reads; it does not reopen edit mode
-      delete back.tab;
+      if (back.tab !== "read") delete back.tab;   // reopening from the rail goes back to the text when it was being read
       rememberReading({ key: s.key, title: s.doc.work.title, p: s.p, chapter: s.map.chapterAt(s.p) ? tidyTitle(s.map.chapterAt(s.p).title) : null,
         hash: `#/reader?${new URLSearchParams(back)}` });
     }, 250);
@@ -1099,8 +1116,11 @@ export function mountReader(root) {
     wrap.classList.toggle("wide", s.tab === "links");
     wrap.classList.toggle("asking-tab", s.tab === "ask");
     wrap.classList.toggle("on-overview", s.tab === "overview");   // the Overview's card carries the steps   // the map alone gets the full width
+    if (s.tab === "read" && !canRead()) s.tab = "overview";
+    wrap.classList.toggle("reading-tab", s.tab === "read");
+    if (s.tab !== "read") reading.leave();
     // The short names are for a phone, where all four tabs share one row without scrolling sideways.
-    const tabs = [["overview", "Overview", null, "Home"], ["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
+    const tabs = [["overview", "Overview", null, "Home"], ...(canRead() ? [["read", "Read", null, "Read"]] : []), ["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
       ["timeline", "Timeline", v.events.length, "Timeline"], ["links", "Connections", v.relations.length, "Map"]];
     // Ask needs a library key (not a community preview) and a model; opened by address it explains instead of hiding.
     const askInfo = ask.available;
@@ -1110,7 +1130,7 @@ export function mountReader(root) {
     const select = (k, focus) => {
       const was = s.tab;
       s.tab = k; paintTabs();
-      if (k === "ask" || was === "ask") saveUrl();
+      if (k === "ask" || was === "ask" || k === "read" || was === "read") saveUrl();
       if (focus) document.getElementById(`tab-${k}`)?.focus();
     };
     clear(el.tabs, tabs.map(([k, label, n, short]) => h("button", { type: "button", role: "tab", id: `tab-${k}`, "aria-controls": "panel-view",
@@ -1122,7 +1142,7 @@ export function mountReader(root) {
       } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), n == null ? null : h("span.count", String(n)))));
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
     if (s.tab !== "links") { clear(el.mapSide); el.split.classList.remove("has-side"); }
-    ({ overview: paintOverview, chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks, ask: () => ask.mount(el.panel) })[s.tab]();
+    ({ overview: paintOverview, chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks, ask: () => ask.mount(el.panel), read: () => reading.mount(el.panel) })[s.tab]();
     el.panel.prepend(h("h2.sr-only", tabs.find((x) => x[0] === s.tab)[1]));
   }
 
@@ -2944,7 +2964,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); reading.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
