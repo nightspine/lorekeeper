@@ -43,6 +43,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
+import { autoFixed, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -64,7 +65,9 @@ export function artDefaults() {
     // model (null: the same as scenes). A choice whose provider or model is no longer offered is ignored where it is used.
     writer: textPick(d.writer), portraitWriter: textPick(d.portraitWriter), picker: textPick(d.picker),
     portraitProvider: typeof d.portraitProvider === "string" && d.portraitProvider ? d.portraitProvider : null,
-    portraitModel: typeof d.portraitModel === "string" && d.portraitModel ? d.portraitModel : null };
+    portraitModel: typeof d.portraitModel === "string" && d.portraitModel ? d.portraitModel : null,
+    // Check every new picture for drawing faults and fix it once when one is found (off unless chosen).
+    check: d.check === true };
 }
 const textPick = (v) => (v && typeof v === "object" && typeof v.provider === "string" && v.provider && typeof v.model === "string" && v.model
   ? { provider: v.provider, model: v.model } : null);
@@ -397,15 +400,118 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     ].filter(([, v]) => v);
     // The prompt may carry an earlier book's world note or looks: it shows only once those books are finished.
     const hiddenUntil = it.promptHiddenUntil ? it.promptHiddenUntil(r) : null;
+    const fixed = fixLines(r);
     clear(how, h("details.lb-details", h("summary", icon("chevron"), "How this was drawn"),
       hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
+        fixed.length ? h("ul.lb-fixes", { "aria-label": "Fixes" }, fixed.map((x) => h("li", h("span", x.line), x.created && when(x.created) ? h("span.subtle", ` ${when(x.created)}`) : null))) : null,
         h("div.lb-figs", lbFigures(it)),
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
+    paintActs();
+  }
+  /** The actions under the picture: Fix, Redraw and Delete. Fix needs the image provider that drew this picture set up
+   *  here (the list arrives after the lightbox opens: `drawers`), since the fix is drawn by that same model. */
+  let drawers = null;   // the image provider rows that can draw now, once known
+  const fixable = (it) => Boolean(it.canEdit && it.canRedraw !== false && drawers && typeof it.rec.provider === "string" && drawers.some((p) => p.id === it.rec.provider));
+  function paintActs() {
+    const it = items[i];
     clear(acts, it.canEdit ? [
+      fixable(it) ? h("button.btn.quiet.lb-fix-btn", { type: "button", on: { click: () => fix(it) } }, icon("sparkle"), "Fix") : null,
       it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
     ] : null);
+  }
+  /** Where the reader is, for the check and the fix: { p, finished } (p only for a picture of the book being read). */
+  const atNow = (it) => {
+    const p = it.position ? it.position() : null;
+    const fin = it.finished ? it.finished() : null;
+    return { ...(typeof p === "string" && p ? { p } : {}), ...(Array.isArray(fin) ? { finished: fin } : {}) };
+  };
+  /** Fix: a model looks at the picture for drawing faults, the person reads, changes or adds to the list, and the model
+   *  that drew it edits the picture to put them right. The picture takes the old one's place, with Undo. */
+  async function fix(it) {
+    const rec = it.rec;
+    const ctl = new AbortController();
+    let gone = false;
+    const cancel = h("button.btn.quiet", { type: "button", on: { click: () => { gone = true; ctl.abort(); paintActs(); } } }, "Cancel");
+    clear(acts, h("div.lb-fix", loading("Looking for drawing faults…"), h("div.btns", cancel)));
+    cancel.focus();
+    let found = [], said = "";
+    try {
+      const provs = await textProviders();
+      const picker = textChoice(provs, artDefaults().picker);
+      const r = await api.artCheck(it.key, rec.id, atNow(it), picker, ctl.signal);
+      found = cleanFaults(r?.faults);
+      said = found.length ? (found.length === 1 ? "Found one drawing fault. Change it, remove it or add your own." : `Found ${found.length} drawing faults. Change or remove any, or add your own.`)
+        : "No drawing faults found. If something is wrong, say what and it is fixed.";
+    } catch (e) {
+      if (gone || e.name === "AbortError") return;
+      said = e.code === "no-vision" ? "No model set up here can look at pictures. Say what is wrong and it is fixed."
+        : `Couldn't look at the picture: ${e.message}. Say what is wrong and it is fixed.`;
+    }
+    if (gone || !dlg.open || items[i] !== it || it.rec !== rec) return;
+    fixForm(it, found, said);
+  }
+  function fixForm(it, faults, said, { note: noteText = "", error = "" } = {}) {
+    const rows = faults.length ? faults.map((f) => ({ ...f })) : [{ what: "", where: "" }];
+    const list = h("ul.lb-faults", { "aria-label": "Drawing faults to fix" });
+    const add = h("button.btn.quiet.lb-add", { type: "button" }, icon("plus"), "Add something to fix");
+    const note = h("textarea.input.lb-note#lb-fix-note", { rows: "2", maxlength: String(NOTE_CHARS), placeholder: "For example: keep the candle lit" });
+    note.value = noteText;
+    const err = h("p.hint.field-error", { role: "alert" }, error);
+    const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paintActs() } }, "Cancel");
+    const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
+    const price = h("p.hint.lb-fix-price");
+    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where }));
+    const ready = () => { go_.disabled = !fixBody(read(), note.value); };
+    function row(r, n) {
+      r.input = h("textarea.input.lb-fault", { rows: "2", maxlength: String(WHAT_CHARS), "aria-label": `What to fix, ${n + 1}`,
+        placeholder: "What is wrong, for example: the left hand has six fingers", on: { input: ready } });
+      r.input.value = r.what;
+      const del = h("button.icon-btn.lb-fault-del", { type: "button", "aria-label": `Remove ${n + 1}`, title: "Remove", on: { click: () => {
+        const k = rows.indexOf(r);
+        rows.splice(k, 1);
+        paintRows();
+        (rows[Math.min(k, rows.length - 1)]?.input || add).focus();
+        ready();
+      } } }, icon("x"));
+      return h("li.lb-fault-row", h("div.lb-fault-text", r.input, r.where ? h("span.subtle.lb-where", r.where) : null), del);
+    }
+    function paintRows() {
+      // the typed text survives a repaint: it is read back into the rows first
+      for (const r of rows) if (r.input) r.what = r.input.value;
+      clear(list, rows.map(row));
+      add.hidden = rows.length >= MAX_FAULTS;
+    }
+    add.addEventListener("click", () => { const r = { what: "", where: "" }; rows.push(r); paintRows(); r.input.focus(); ready(); });
+    note.addEventListener("input", ready);
+    paintRows();
+    const p = drawers?.find((x) => x.id === it.rec.provider);
+    const one = p ? imagePrice(p, it.rec.quality || "standard", it.rec.shape || "landscape", it.rec.model || null) : undefined;
+    price.textContent = `${one != null ? `${money(one)[0].toUpperCase()}${money(one).slice(1)}` : "Price unknown"} for one picture with ${modelLabel(it.rec.provider, it.rec.model) || "the model that drew it"}.`;
+    go_.addEventListener("click", async () => {
+      const body = fixBody(read(), note.value);
+      if (!body) return;
+      const keep = { faults: read().filter((f) => f.what.trim() || f.where), note: note.value };
+      clear(acts, h("div.lb-fix", loading("Fixing the picture…")));
+      try {
+        const r = await api.artFix(it.key, it.rec.id, { ...body, ...atNow(it) });
+        forgetArt(it.key);
+        const rec = r?.record || r;
+        if (rec && ID_RE.test(rec.id || "")) { it.rec = rec; it.src = it.srcFor ? it.srcFor(rec) : it.src; }
+        if (!dlg.open) return;
+        paint();
+        undoable(it, r, "Picture fixed");
+        onChanged?.();
+      } catch (e) {
+        if (!dlg.open || items[i] !== it) return;
+        fixForm(it, keep.faults, said, { note: keep.note, error: e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message });
+      }
+    });
+    clear(acts, h("div.lb-fix", h("p.hint", said), list, add,
+      h("label.label", { for: "lb-fix-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
+    ready();
+    (error ? go_ : rows[0].input).focus();
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
@@ -479,7 +585,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   closeBtn.focus({ preventScroll: true });
   // The model's name comes with the providers list; until it has arrived the id stands, then the line is put right in
   // place (a repaint would close "How this was drawn" under the person's eyes).
-  imageProviders().then(() => {
+  imageProviders().then((list) => {
+    drawers = list;
+    // Fix appears once the providers are known, unless a flow is already on screen there.
+    if (dlg.isConnected && !acts.querySelector(".lb-redraw, .lb-fix")) paintActs();
     const r = dlg.isConnected ? items[i]?.rec : null;
     if (!r) return;
     const dd = how.querySelector(".lb-model"), wd = how.querySelector(".lb-writer");
@@ -1011,7 +1120,7 @@ export async function openPictureSheet(opts) {
       // The writer chosen in the sheet writes these portraits' prompts (the run's portrait writer); none chosen: the
       // server's default for portrait prompts, the strong tier.
       const writer = textChoice(writers, st.writer);
-      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap,
+      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap, ...(artDefaults().check ? { check: true } : {}),
         ...(writer ? { portraitWriter: writer } : {}) });
       st.starting = false;
       st.written = st.prompt;   // nothing to ask about on close
@@ -1041,7 +1150,8 @@ export async function openPictureSheet(opts) {
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
-        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() });
+        prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}),
+        ...(artDefaults().check ? { check: true } : {}), ...here() });
       st.drawing = false;
       const rec = r?.record || r;
       const slug = !STYLE_LABEL[st.style] ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
@@ -1076,6 +1186,7 @@ export async function openPictureSheet(opts) {
       const added = replacing ? "Drawn. It takes the old picture's place in the art set." : "Drawn and added to the art set.";
       clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
         h("p", src ? added : `${added} It shows where it belongs in the book.`),
+        autoFixed(rec) ? h("p.hint.art-fixed", "Redrawn: the first try had a drawing fault.") : null,
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
       // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).
@@ -1364,7 +1475,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       const pc = portraitImageChoice(provs || [], st.pProvider, st.pModel);
       r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model,
         ...(pc ? { portraitProvider: pc.provider, ...(pc.model ? { portraitModel: pc.model } : {}) } : {}),
-        ...(listChapters ? { chapters: asked } : {}) });
+        ...(listChapters ? { chapters: asked } : {}), ...(artDefaults().check ? { check: "1" } : {}) });
     } catch { r = null; }
     if (mine !== seq) return;
     // A level "none" answer has no chapter counts worth keeping; the list is hidden then and asked again on the way back.
@@ -1408,7 +1519,8 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     el,
     runProviderChanged,
     config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
-      provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}), ...models() } : null),
+      provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}), ...models(),
+      ...(artDefaults().check ? { check: true } : {}) } : null),
     refresh,
     reason,
     ready: () => Boolean(st.provider && slug()),

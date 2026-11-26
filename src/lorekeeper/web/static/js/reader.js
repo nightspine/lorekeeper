@@ -2098,6 +2098,8 @@ export function mountReader(root) {
         promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book),
         // the reader's frontier for a same-prompt redraw (a picture of the book being read; an earlier book's is whole)
         position: p.set.key === s.key ? () => s.map.frontier(s.p) : null,
+        // the finished earlier books, sent with a check and a fix (the same gate as a redraw)
+        finished: () => (s.series ? finishedSet() || [] : []),
         figureName: figureName, figureThumb: (rec, f) => figureThumb(p, f) };
     });
   }

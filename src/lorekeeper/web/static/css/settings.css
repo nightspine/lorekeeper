@@ -154,6 +154,8 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
 /* Pictures: the defaults and the art sets on this server. */
 .pic-style { display: grid; gap: 8px; max-width: 320px; }
 .pic-cap { display: inline-flex; align-items: center; gap: 6px; }
+.pic-check { display: grid; gap: 6px; min-width: 0; }
+.pic-check .hint { margin: 0; max-width: 60ch; }
 .pic-sets-h { margin: 28px 0 8px; font-size: var(--text-md); }
 .pic-table { max-width: 760px; }
 /* The Styles grid keeps to the width of the label / value rows above it (.set-rows). */
