@@ -12,7 +12,7 @@ from lorekeeper import art, llm  # noqa: E402
 from lorekeeper.web import jobs as jobs_mod  # noqa: E402
 
 from .test_art import HEAD, Seeing  # noqa: E402
-from .test_web_art import GEMINI, KEY, env, pictures, run_set, short_world, undo  # noqa: E402,F401
+from .test_web_art import GEMINI, KEY, env, pictures, run_set, series_env, short_world, undo  # noqa: E402,F401
 
 
 @pytest.fixture
@@ -219,16 +219,79 @@ def test_the_estimate_adds_the_check_when_asked(env, monkeypatch):
     q = {"key": KEY, "style": "ink", "level": "main"}
     plain = env.c.get("/api/art/estimate", params=q).json()
     assert "check" not in plain
-    monkeypatch.setattr(jobs_mod.JobManager, "vision_model", lambda self, choice=None: None)
+    monkeypatch.setattr(jobs_mod.JobManager, "text_choice", lambda self, tier="cheap", jp=None: ("claude", "claude-haiku-5-5"))
     got = env.c.get("/api/art/estimate", params={**q, "check": "true"}).json()
+    one = art.check_price("claude", "claude-haiku-5-5")
     n = plain["plates"] + plain["portraits"]
     scene = llm.image_price("gemini", GEMINI, "standard", "landscape")
     port = llm.image_price("gemini", GEMINI, "standard", "portrait")
-    extra = n * art.CHECK_FALLBACK + art.FIX_RATE * (plain["plates"] * scene + plain["portraits"] * port)
-    assert got["check"]["each"] == art.CHECK_FALLBACK and got["check"]["fixRate"] == art.FIX_RATE
+    extra = n * one + art.FIX_RATE * (plain["plates"] * scene + plain["portraits"] * port)
+    assert got["check"]["each"] == pytest.approx(one) and got["check"]["fixRate"] == art.FIX_RATE
+    assert got["check"]["provider"] == "claude" and got["check"]["model"] == "claude-haiku-5-5"
     assert got["price"] == pytest.approx(plain["price"] + extra, abs=1e-4)
     assert got["check"]["price"] == pytest.approx(extra, abs=1e-4)
     assert got["pictures"] == plain["pictures"]
+
+
+def test_the_estimate_adds_no_check_the_run_would_not_make(env, monkeypatch):
+    env.key()
+    q = {"key": KEY, "style": "ink", "level": "main", "check": "true"}
+    plain = env.c.get("/api/art/estimate", params={**q, "check": "false"}).json()
+    groq = llm.PROVIDERS["groq"]["cheap"]
+    monkeypatch.setattr(jobs_mod.JobManager, "text_choice", lambda self, tier="cheap", jp=None: ("groq", groq))
+    got = env.c.get("/api/art/estimate", params=q).json()
+    assert "check" not in got and got["price"] == plain["price"]          # a picker that cannot see: the run is unchecked
+    monkeypatch.setattr(jobs_mod.JobManager, "text_choice", lambda self, tier="cheap", jp=None: None)
+    got = env.c.get("/api/art/estimate", params=q).json()
+    assert "check" not in got and got["price"] == plain["price"]          # no picker at all
+    monkeypatch.setattr(jobs_mod.JobManager, "configured", lambda self: ["groq"])
+    env.jobs.text_models = lambda p: [groq] if p == "groq" else []
+    got = env.c.get("/api/art/estimate", params={**q, "pickerProvider": "groq", "pickerModel": groq}).json()
+    assert "check" not in got                                             # the chosen picker, as the run would use it
+    r = env.c.get("/api/art/estimate", params={**q, "pickerProvider": "groq"})
+    assert r.status_code == 422 and r.json()["code"] == "bad-picker"
+
+
+def test_the_sheets_check_uses_the_seeing_model_for_the_check_only(env, eye, monkeypatch):
+    env.key()
+    made = []
+    real = art.Illustrator.__init__
+
+    def spy(self, *a, **kw):
+        made.append(kw)
+        real(self, *a, **kw)
+    monkeypatch.setattr(art.Illustrator, "__init__", spy)
+    body = {"kind": "event", "target": "e5", "style": "ink", "prompt": "A woman waits at a mill gate at dusk.", "check": True}
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json=body).status_code == 200
+    assert made[-1]["checker"] is eye and made[-1]["cheap_text"] is env.text and made[-1]["check"] is True
+    assert len(eye.looked) == 1 and eye.prompts == []                    # the seeing model made the check, nothing else
+
+
+def test_a_picture_with_no_inherits_in_a_later_book_waits_for_every_earlier_one(series_env, monkeypatch):
+    c, _ = series_env
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    monkeypatch.setattr(jobs_mod.JobManager, "vision_model", lambda self, choice=None: Seeing())
+    r = c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e6", "style": "ink", "prompt": "A gate."})
+    assert r.status_code == 200, r.text
+    pid, h = r.json()["id"], r.json()["url"].split("/")[3]
+    path = c.data_dir / "art" / h / "ink" / "art.json"
+
+    def set_inherits(value):
+        m = json.loads(path.read_text())
+        for p in m["pictures"]:
+            if p["id"] == pid:
+                p.pop("inherits", None)
+                if value is not None:
+                    p["inherits"] = value
+        path.write_text(json.dumps(m))
+    set_inherits(None)                                  # drawn before `inherits` existed
+    for route, body in (("check", {}), ("fix", {"faults": [HEAD]})):
+        r = c.post(f"/api/library/{KEY}/art/{pid}/{route}", json={**body, "finished": []})
+        assert r.status_code == 422 and r.json()["code"] == "not-visible", route
+    assert c.post(f"/api/library/{KEY}/art/{pid}/check", json={"finished": ["one"]}).status_code == 200
+    assert c.post(f"/api/library/{KEY}/art/{pid}/check", json={}).status_code == 200      # no `finished`: every book read
+    set_inherits([])                                    # carries nothing from book one: open to every reader
+    assert c.post(f"/api/library/{KEY}/art/{pid}/check", json={"finished": []}).status_code == 200
 
 
 def test_the_new_routes_need_the_csrf_header(env):
