@@ -6,7 +6,7 @@ import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./ap
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
-import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, imageProviders, levelsOf, modelFor, QUALITIES, setArtDefaults, STYLES, styleLabel } from "./art.js";
+import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, levelsOf, modelFor, modelProviders, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, writerSelect } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 // A 100,000-word novel at standard depth, measured on a fact-checked run: 1.2 input and 0.58 output tokens per word.
@@ -377,7 +377,7 @@ export function mountSettings(root) {
   // The defaults new pictures start from (kept in this browser), and the art sets on this server with their size.
   async function paintPictures(focusId = null) {
     const d = artDefaults();
-    const provs = await imageProviders({ fresh: true });
+    const { image: provs, text: writers } = await modelProviders({ fresh: true });
     if (disposed) return;
     lines.pictures.textContent = provs.length ? `${styleLabel(d.style)}, ${d.quality}` : "Needs a Gemini or OpenAI key";
     const save = (patch, what) => { setArtDefaults(patch); toast(`${what} saved`); paintPictures(document.activeElement?.id || null); };
@@ -414,11 +414,27 @@ export function mountSettings(root) {
         row(h("label", { for: "pic-quality" }, "Quality"), quality),
         row(h("label", { for: "pic-cap" }, "Stop a run at"), h("span.pic-cap", "$", cap)),
         prov ? row(h("label", { for: "pic-prov" }, "Draw with"), prov) : provs.length === 1 ? row("Draws with", modelSel ? provs[0].label : `${provs[0].label}, ${imageLine(provs[0], d.quality)}`) : null,
-        modelSel ? row(h("label", { for: "pic-model" }, "Image model"), modelSel) : null),
+        modelSel ? row(h("label", { for: "pic-model" }, "Image model"), modelSel) : null,
+        provs.length ? row(h("label", { for: "pic-pimage" }, "Portraits drawn with"), portraitImageSelect({ id: "pic-pimage", provs,
+          provider: d.portraitProvider, model: d.portraitModel, quality: d.quality,
+          onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null),
+      writers.length && provs.length ? [
+        h("h3.pic-sets-h", "Who writes the prompts"),
+        h("p.set-note", "Scene prompts are for chapter pictures and moments, portrait prompts for people, places and things, and choosing calls pick what gets drawn."),
+        h("div.set-rows",
+          row(h("label", { for: "pic-writer" }, "Scene prompts written by"), writerSelect({ id: "pic-writer", provs: writers, value: d.writer, tier: "cheap",
+            onChange: (c) => save({ writer: c }, "Scene prompt model") })),
+          row(h("label", { for: "pic-pwriter" }, "Portrait prompts written by"), writerSelect({ id: "pic-pwriter", provs: writers, value: d.portraitWriter, tier: "strong",
+            onChange: (c) => save({ portraitWriter: c }, "Portrait prompt model") })),
+          row(h("label", { for: "pic-picker" }, "Choosing calls by"), writerSelect({ id: "pic-picker", provs: writers, value: d.picker, tier: "cheap",
+            onChange: (c) => save({ picker: c }, "Choosing model") }))),
+      ] : null,
       h("h3.pic-sets-h", "Pictures on this server"), sets,
       howItWorks(
         "These choices are kept in this browser and fill in the Pictures choices on the build form, on a book's page and in the Reader's Draw a picture sheet.",
         "A text model writes each picture's prompt from the passage and the index, as far as that picture's place in the book; the image provider sees only that prompt, never the book text. Pictures stay on this server, beside the index, and are never part of a shared index.",
+        "Scene prompts describe a chapter's main moment or another moment worth drawing; by default the cheaper model of your first provider writes them. Portrait prompts describe a person, creature, group, place or thing as the book has shown it so far; they are few, and every scene uses the portraits as references, so by default the stronger model writes them, about a cent more each. Choosing calls are the small calls a run makes before drawing: which moments of a chapter are worth a picture, and which details say how someone looks. A prompt rewritten after a refusal is written by the model of its kind. In the Reader's Draw a picture sheet the stronger model writes by default, and you can choose another there.",
+        "Portraits drawn with is the image model for portraits, places and things; Same as scenes uses the image model above. Each model's price is per million tokens of text, or per picture.",
         "A run stops drawing at the limit you set and keeps what it drew. Removing a book's pictures deletes its whole art folder, every style."));
     if (focusId) document.getElementById(focusId)?.focus();
     let r;
