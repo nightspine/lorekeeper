@@ -65,8 +65,13 @@ LIKENESS = ("{which} drawn in another style. Take from {them} only the likeness 
             "never the drawing style, medium, line or colour treatment: draw everything in the style the prompt asks for.")
 # sent with a portrait's reference, its own earlier portrait, so a later portrait keeps the face (never in the prompt)
 SAME_FIGURE = ("Reference picture 1 is this same figure earlier in the story: keep their face, hair, colouring and build, except "
-               "where the prompt describes a change.")
+               "where the prompt describes a change. Take the framing from the prompt, not from the reference picture.")
 # sent with a scene's references when its figures are labelled ("figure A" in the prompt): after one line per reference
+# sent with a scene's references whenever one is a portrait: portraits are cropped at mid-chest, and a scene must not shrink the
+# figure to the portrait's crop nor leave out what its text gives the hands
+CHEST_UP = ("A reference picture that is a portrait may show only the head and upper chest: take the face, hair, colouring and "
+            "marks from it, and draw the rest of the figure (body, arms, hands, dress below the chest, what they carry) as the "
+            "prompt describes, at natural proportions for the whole body.")
 FIGURE_NOTE = "Draw each labelled figure with the face, hair, colouring and build of their reference picture."
 # a scene's spare reference slots after its labelled figures (`Illustrator(place_refs=True)`, off by default until measured):
 # the picture of the place it happens at, then of the things it shows, each with what to take from it (never in the prompt)
@@ -213,17 +218,28 @@ Rules:
 Return "text": the prompt."""
 
 # A portrait is a likeness, not a scene: code puts the framing first (PORTRAIT_FRAME) and the writer describes only the look.
-PORTRAIT_FRAME = ("Portrait, head and shoulders to half length, the figure turned three-quarters toward the viewer, at rest, "
-                  "looking toward the viewer.")
-PORTRAIT_WORDS = (30, 130)      # what the checks accept; the writer is asked for 50 to 110
+# The crop is at mid-chest, so the arms, hands, waist, legs and feet are never in a portrait: a longer crop let the image model
+# draw the whole figure to fit the gear the text described, small in a tall frame. Scenes still draw the rest from their text
+# (CHEST_UP goes with a portrait used as a scene's reference).
+PORTRAIT_FRAME = ("Close portrait cropped at mid-chest: the head, neck, shoulders and upper chest fill the picture (for a "
+                  "creature, its head and the top of its body), and the arms below the shoulders, the hands, the waist, the "
+                  "legs and the feet are out of frame. The figure is turned three-quarters toward the viewer, at rest, looking "
+                  "toward the viewer.")
+# ...and repeated at the end of the body, since a frame stated only at the start drifts once the text describes the figure
+PORTRAIT_CROP = "Nothing below mid-chest is shown."
+# the frame of portraits drawn before the crop was fixed at mid-chest: a "same prompt" redraw swaps it (`reframed`)
+PORTRAIT_FRAME_OLD = ("Portrait, head and shoulders to half length, the figure turned three-quarters toward the viewer, at rest, "
+                      "looking toward the viewer.")
+PORTRAIT_WORDS = (25, 110)      # what the checks accept; the writer is asked for 40 to 90
 _SCENE_FORM = ("60 to 150 words, plain sentences in the present tense: the subject first, then the setting as far as the material "
                "gives it, then light and mood.")
 assert _SCENE_FORM in WRITER
 PORTRAIT_WRITER = WRITER.replace(_SCENE_FORM, (
-    "50 to 110 words, plain sentences in the present tense: the figure first, then at most one short clause of background "
+    "40 to 90 words, plain sentences in the present tense: the figure first, then at most one short clause of background "
     "and one of light.")).replace('Return "text": the prompt.', """This prompt is for a portrait, a likeness of the figure at this point, not a scene:
-- The framing and the pose are fixed and put before your text by code: never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
-- Describe only how the figure looks at this moment: face, age, build, skin, hair, eyes, marks, scars and wounds they carry, tattoos, and what they wear and carry on them, stowed (a sword at the hip, a pipe in a pocket). Their hands and mouth are empty: no action or gesture, nothing held up or in use, no events, no smoke or breath, no other figures.
+- The framing and the pose are fixed and put around your text by code: the picture is cropped at mid-chest. Never state framing, pose, where they look or how they stand or sit ("half length", "turned toward", "standing at a window", "seated").
+- Describe only what shows from mid-chest up, as the figure looks at this moment: face, age, skin, hair, eyes, the marks, scars, wounds and tattoos on the face, neck and shoulders, their build as it shows in the neck and shoulders, and what they wear on the head, neck, shoulders and upper chest (a hood, a collar, a cloak at the shoulders, a badge on the breast).
+- Never the hands or the arms below the shoulder, anything held or carried, a belt or anything at the waist or hip, the legs or the feet, even where the material describes them: they are out of frame, and naming them makes the image model draw the whole figure small. No action or gesture, nothing in the mouth, no events, no smoke or breath, no other figures.
 - Expression: one short phrase at most, and only as the material shows their usual or current bearing.
 - Their people, caste or role stays ("a tidewarden", "of the Ashen caste"), with what that looks like as the material gives it.
 - Background: one short clause at most: from <surroundings> when it is given, else plain ("a plain dark background"); never a room or place the passages tell a scene in, nor its objects. Light: one short clause.
@@ -253,6 +269,27 @@ SCENE_WRITER = SCENE_WRITER.replace(_EARLIER_LINE, (
     _NO_TEXT_RULE, """- When there is a <setting_entry>, the moment happens there: draw the setting as it and its <earlier_look> describe it (what it is built of, its size and shape, how it is lit, its period), so the place looks the same in every picture of it. A thing that has an <entry> and is in the picture is drawn as its entry describes it. The passages win where they say more about this moment.
 """ + _NO_TEXT_RULE)
 assert SCENE_WRITER.count("<setting_entry>: the place") == 1
+
+
+def unframed(text: str) -> str:
+    """A prompt body without what code put around a portrait's text (the frame, an older frame, the crop line): what the
+    writer wrote, for a rewrite. Anything else is returned as given."""
+    text = " ".join(str(text or "").split())
+    for frame in (PORTRAIT_FRAME, PORTRAIT_FRAME_OLD):
+        if text.startswith(frame):
+            text = text[len(frame):].lstrip()
+            break
+    if text.endswith(PORTRAIT_CROP):
+        text = text[:-len(PORTRAIT_CROP)].rstrip()
+    return text
+
+
+def reframed(kind: str, prompt: str) -> str:
+    """A stored portrait prompt to draw again as it is ("same prompt"): one drawn with the older half-length frame
+    (PORTRAIT_FRAME_OLD) gets the mid-chest frame in its place; anything else, the person's own words included, as given."""
+    if kind == "portrait" and prompt.startswith(PORTRAIT_FRAME_OLD):
+        return PORTRAIT_FRAME + prompt[len(PORTRAIT_FRAME_OLD):]
+    return prompt
 
 
 def labels_in(text: str) -> list[str]:
@@ -1315,8 +1352,9 @@ class Illustrator:
 
     @staticmethod
     def _framed(kind: str, text: str) -> str:
-        """The body of a prompt: a portrait's checked text after its fixed framing (PORTRAIT_FRAME), anything else as written."""
-        return f"{PORTRAIT_FRAME} {text}" if kind == "portrait" else text
+        """The body of a prompt: a portrait's checked text between its fixed framing (PORTRAIT_FRAME) and the crop line
+        (PORTRAIT_CROP), anything else as written."""
+        return f"{PORTRAIT_FRAME} {text} {PORTRAIT_CROP}" if kind == "portrait" else text
 
     def view(self, bi: int, anchor: str, finished: frozenset[str] | None = None) -> dict:
         """The gated view of books 0..bi at an anchor of book bi: what a reader there may know (`finished`: the earlier books
@@ -2106,11 +2144,14 @@ class Illustrator:
         references drawn in another style, the likeness words (LIKENESS), numbered the same. A scene without labels (an older
         prompt) gets the likeness words alone, as `likeness_note` words them. A scene's place or thing picture in a spare slot
         (no label, the record's kind "place" or "thing") says what to take from it (PLACE_NOTE, THING_NOTE with its name from
-        `names`, entity id to the name visible at the anchor) and, from another style's set, never its style. "" when there
-        are no references."""
+        `names`, entity id to the name visible at the anchor) and, from another style's set, never its style. A scene with a
+        portrait among its references (a record of kind "portrait", labelled or not) ends with CHEST_UP: the portrait is
+        cropped at mid-chest and the rest of the figure comes from the prompt. "" when there are no references."""
         if not refs:
             return ""
         out = []
+        # a scene drawn from a portrait, cropped at mid-chest, draws the rest of the figure from its text (CHEST_UP, last)
+        chest = [CHEST_UP] if kind != "portrait" and any(r.get("kind") == "portrait" for _, r in refs) else []
         if kind == "portrait":
             out.append(SAME_FIGURE)
         elif labels is not None:
@@ -2124,7 +2165,7 @@ class Illustrator:
                 out.append((PLACE_NOTE.format(n=n) if r["kind"] == "place" else THING_NOTE.format(n=n, name=name))
                            + (OTHER_STYLE if r.get("set") else ""))
         else:
-            return Illustrator.likeness_note(refs)
+            return " ".join(x for x in [Illustrator.likeness_note(refs), *chest] if x)
         # the likeness words are for figures: a place or thing in a spare slot has its own words above
         other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set") and not (
             labels is not None and n <= len(labels) and not labels[n - 1] and r.get("kind") in SETTING_KINDS)]
@@ -2134,7 +2175,7 @@ class Illustrator:
             else:
                 which, them = "Reference pictures " + ", ".join(map(str, other[:-1])) + f" and {other[-1]} are", "them"
             out.append(LIKENESS.format(which=which, them=them))
-        return " ".join(out)
+        return " ".join(out + chest)
 
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
@@ -2502,8 +2543,7 @@ class Illustrator:
         for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
             if tail and refused.endswith(tail):
                 refused = refused[:-len(tail)].rstrip()
-        if refused.startswith(PORTRAIT_FRAME):
-            refused = refused[len(PORTRAIT_FRAME):].lstrip()
+        refused = unframed(refused)
         # the figures the refused text labelled keep their labels (and at least one of them must stay labelled)
         return self._make_prompt(job, finished, soften_request(refused, reason), set(labels_in(refused)))
 
@@ -2930,7 +2970,7 @@ class Illustrator:
                     softened = True
                     try:
                         system, words = self._form(job.kind)
-                        refused = pr.scene[len(PORTRAIT_FRAME):].lstrip() if pr.scene.startswith(PORTRAIT_FRAME) else pr.scene
+                        refused = unframed(pr.scene)
                         given = {f["label"] for f in pr.figures or []}
                         keep = set(labels_in(refused)) & given
                         soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,

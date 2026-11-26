@@ -625,7 +625,9 @@ def test_a_scene_in_another_style_takes_the_figures_likeness_from_a_portrait(env
     assert call["references"] and len(call["references"]) == len(rec["references"])
     # which reference is which labelled figure, then the likeness words, numbered the same (one note)
     labels = [f["label"] for f in rec["figures"] if f["ref"]]
-    assert call["note"] == art.Illustrator.reference_note("event", [(0, {"set": "ink"})] * len(rec["references"]), labels) != ""
+    assert call["note"] == art.Illustrator.reference_note("event", [(0, {"set": "ink", "kind": "portrait"})] * len(rec["references"]),
+                                                          labels) != ""
+    assert call["note"].endswith(art.CHEST_UP)
     assert "likeness" in call["note"] and call["note"] not in call["prompt"]
     assert (env.data / "art" / env.hash / "ink" / "art.json").read_bytes() == ink_before
     assert rec["prompt"] == got["prompt"]                          # the likeness words are not in the person's text
@@ -1985,3 +1987,45 @@ def test_a_same_prompt_redraw_sends_a_later_reference_only_when_the_reader_has_r
     plain = env.c.post(f"/api/library/{KEY}/art/{again['id']}/redraw", json={"note": ""}).json()   # no p: as before
     assert plain["references"] == [port["id"]] and plain["figures"][0]["ref"]
     assert env.c.post(f"/api/library/{KEY}/art/{plain['id']}/redraw", json={"p": "nowhere"}).json()["code"] == "bad-position"
+
+
+# ---- portraits are cropped at mid-chest (portrait-chest-up)
+
+
+def test_every_portrait_prompt_is_framed_at_mid_chest(env):
+    env.key()
+    run_set(env, portraits="all")
+    sent = [c["prompt"] for c in env.image.calls if c["prompt"].startswith("Close portrait")]
+    assert sent and all(p.startswith(art.PORTRAIT_FRAME + " ") and f" {art.PORTRAIT_CROP} " in p for p in sent)
+    portraits = [p for p in pictures(env) if p["kind"] == "portrait"]
+    assert portraits and all(p["prompt"].startswith(art.PORTRAIT_FRAME) for p in portraits)
+    # the sheet's prompt: the body carries the frame and the crop line, the style sentence after them
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "portrait", "target": portraits[0]["target"],
+                                                             "style": "ink"}).json()
+    assert got["body"].startswith(art.PORTRAIT_FRAME + " ") and got["body"].endswith(" " + art.PORTRAIT_CROP)
+    assert got["prompt"] == f"{got['body']} {got['style']} {got['noText']}"
+
+
+def test_a_same_prompt_redraw_of_an_older_portrait_takes_the_mid_chest_frame(env):
+    import json
+    env.key()
+    run_set(env, portraits="all")
+    path = env.data / "art" / env.hash / "ink" / "art.json"
+    m = json.loads(path.read_text())
+    rec = next(p for p in m["pictures"] if p["kind"] == "portrait")
+    rest = rec["prompt"][len(art.PORTRAIT_FRAME):].replace(" " + art.PORTRAIT_CROP, "")
+    rec["prompt"] = art.PORTRAIT_FRAME_OLD + rest           # drawn before the crop was fixed
+    path.write_text(json.dumps(m))
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={"note": "Make it night"})
+    assert r.status_code == 200, r.text
+    sent = env.image.calls[-1]["prompt"]
+    assert sent == "Make it night. " + art.PORTRAIT_FRAME + rest and art.PORTRAIT_FRAME_OLD not in sent
+    # a portrait whose prompt is the person's own words is drawn as given
+    m = json.loads(path.read_text())
+    rec = next(p for p in m["pictures"] if p["kind"] == "portrait")
+    rec["prompt"] = "A woman by a window, drawn in ink."
+    path.write_text(json.dumps(m))
+    r = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={})
+    assert r.status_code == 200, r.text
+    assert env.image.calls[-1]["prompt"] == "A woman by a window, drawn in ink."
