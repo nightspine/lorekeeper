@@ -981,7 +981,7 @@ class Illustrator:
         self._views: dict[tuple, dict] = {}
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._class_lock = threading.Lock()
-        self._name_answers: dict[tuple[str, str], bool] = {}   # (word caught, its sentence) -> used as a name (`_names_among`)
+        self._name_answers: dict[tuple[str, str], bool] = {}   # (word caught, the excerpt of one use) -> used as a name (`_names_among`)
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
