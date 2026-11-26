@@ -811,7 +811,7 @@ export async function openPictureSheet(opts) {
     if (hi === 0) return { text: opts.title ? `Nothing new to draw for ${opts.title} up to here.` : "Nothing new to draw up to here.", ok: false };
     if (hi > lo) {
       const pmax = r.priceMax ?? r.price_max;
-      const cost = r.price != null && pmax != null ? `${money(r.price)} to ${money(pmax).replace(/^about /, "")}` : money(pmax ?? r.price);
+      const cost = moneyRange(lo ? r.price : 0, pmax ?? r.price);
       return { text: `${lo ? `${lo} to ${hi}` : `Up to ${hi}`} ${noun(hi)}, ${cost}. The exact number is known once the run has read how they look.`, ok: true };
     }
     const planned = Number.isFinite(+r.planned?.portraits) ? +r.planned.portraits : lo;
@@ -941,6 +941,18 @@ export async function openPictureSheet(opts) {
   });
   write();
   return sh;
+}
+
+/** A price range in one phrase: "about 7 to 14 cents", "about $1.20 to $2.40", "about 40 cents to $1.20", and with a zero
+ *  floor "up to about 14 cents"; either end unknown is "price unknown". */
+export function moneyRange(lo, hi) {
+  if (lo == null || hi == null || !Number.isFinite(+lo) || !Number.isFinite(+hi)) return "price unknown";
+  if (+hi <= +lo) return money(hi);
+  if (+lo <= 0) return `up to ${money(hi)}`;
+  const a = money(lo).replace(/^about /, ""), b = money(hi).replace(/^about /, "");
+  const cents = (t) => /cents?$/.test(t);
+  // Both in cents: the unit once ("7 to 14 cents"); otherwise each end keeps its own.
+  return cents(a) && cents(b) ? `about ${a.replace(/ cents?$/, "")} to ${b}` : `about ${a} to ${b}`;
 }
 
 /** One sentence for an entry's run (or its count) the server refused. */

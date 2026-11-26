@@ -1940,18 +1940,29 @@ export function mountReader(root) {
    *  in and once it ends, so the entry and the scene references pick the new portraits up. Gated as every picture is. */
   function watchArtRun(job, key) {
     if (!job?.id || preview) return;
-    let seen = -1;
+    const EVERY = 15000, MOST = 120000;
+    let seen = 0, wait = EVERY;
     const tick = async () => {
       if (disposed || s.key !== key) return;
       let j = null;
-      try { j = await api.job(job.id); } catch { return; }   // gone or unreachable: stop watching quietly
+      try { j = await api.job(job.id); } catch (e) {
+        // The run was removed: nothing more will come. Anything else (a blip, a restart): ask again, less often each time.
+        if (e?.status === 404) { refreshPictures({ forget: key }); return; }
+        wait = Math.min(MOST, wait * 2);
+        setTimeout(tick, wait);
+        return;
+      }
+      wait = EVERY;
       if (disposed || s.key !== key) return;
-      const done = +j?.progress?.art?.done || 0;
+      // A pictures job keeps its progress as `art: [done, total, cost]` (the Runs monitor reads it the same way).
+      const art = j?.progress?.art;
+      const done = Array.isArray(art) ? +art[0] || 0 : 0;
       const live = ["queued", "running", "stopping"].includes(j?.status);
-      if (done !== seen || !live) { if (seen >= 0 || !live) refreshPictures({ forget: key }); seen = done; }
-      if (live) setTimeout(tick, 15000);
+      if (done !== seen || !live) refreshPictures({ forget: key });
+      seen = done;
+      if (live) setTimeout(tick, EVERY);
     };
-    setTimeout(tick, 15000);
+    setTimeout(tick, EVERY);
   }
   /** Everything an open picture sheet names (the moment selected now and every moment listed) is still revealed. */
   function sheetVisible(entry) {
