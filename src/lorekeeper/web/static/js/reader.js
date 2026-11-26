@@ -3,6 +3,7 @@ import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
+import { nextName, SELF_NAMED_SHORT, stepList, stepName, statedAge, stepState as stepStateAt, tickInfo, whereText as whereAt } from "./steps.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
 import { renderConnections } from "./graph.js";
@@ -824,40 +825,17 @@ export function mountReader(root) {
     if (s.tab === "overview") paintTabs();
   }
 
-  /** The story chapters as steps, oldest first: { n (position in the map), k (1..N among them), title, seq, from, to }
-   *  with `from`/`to` the reading positions where the chapter starts and ends. Empty without the book file. */
+  /** The story chapters as steps (steps.js): entered at the chapter map's start, the key every per-chapter lookup uses. */
   function stepChapters() {
     if (!s.map?.exact) return [];
     const toc = s.toc?.key === s.key ? s.toc.list : null;
     if (s.stepMemo && s.stepMemo.map === s.map && s.stepMemo.toc === toc) return s.stepMemo.list;
-    const map = s.map.chapters || [];
-    const src = toc ? toc.map((c) => ({ n: c.n, title: c.title || map[c.n - 1]?.title, seq: c.firstSeq, to: s.map.blockEnd(c.lastSeq), story: map[c.n - 1]?.story !== false }))
-      : map.map((c, i) => ({ n: i + 1, title: c.title, seq: c.start, to: map[i + 1] ? s.map.blockStart(map[i + 1].start) : 1, story: c.story !== false }));
-    const all = src.map((c) => ({ ...c, title: tidyTitle(c.title) || `Section ${c.n}`, from: s.map.blockStart(c.seq), to: Math.min(1, c.to) }));
-    const story = all.filter((c) => c.story);
-    const list = (story.length ? story : all).map((c, i) => ({ ...c, k: i + 1 }));
+    const list = stepList(s.map.chapters, toc, s.map, tidyTitle);
     s.stepMemo = { map: s.map, toc, list };
     return list;
   }
-  /** "Chapter XI" for a title that names itself, "Prologue", else "Chapter 11" by its place among the story chapters. */
-  const stepName = (c) => (c.title.match(SELF_NAMED_SHORT)?.[0].trim().replace(/^\w/, (x) => x.toUpperCase())) || `Chapter ${c.k}`;
-  /** Where the position is among the steps: the chapter it is in (`cur`), the one to finish next, the last finished. */
-  function stepState() {
-    const list = stepChapters(), p = s.p, eps = 1e-9;
-    const cur = list.find((c) => c.from <= p + eps && p < c.to - eps) || null;
-    const next = cur || list.find((c) => c.to > p + eps) || null;
-    const last = [...list].reverse().find((c) => c.to <= p + eps) || null;
-    return { list, cur, next, last };
-  }
-  /** One sentence for where the reader is, naming only chapters reached. */
-  function whereText() {
-    const { list, cur, next, last } = stepState();
-    if (!list.length) return `You're ${Math.round(s.p * 100)}% of the way through.`;
-    if (!next) return "You've finished the book.";
-    if (cur && s.p > cur.from + 1e-6) return `You're part way through ${stepName(cur)}.`;
-    if (last) return `You're at the end of ${stepName(last)}.`;
-    return `You haven't started ${stepName(next)} yet.`;
-  }
+  const stepState = () => stepStateAt(stepChapters(), s.p);
+  const whereText = () => whereAt(stepState(), s.p);
   /** The ticks: finished ones lit, the one being read in ember, the rest dark and unnamed. One tab stop; arrows move. */
   function stepTicks(cls = "") {
     const list = stepChapters();
@@ -874,7 +852,7 @@ export function mountReader(root) {
     return ol;
   }
   function markTicks(ol) {
-    const { list, cur, next } = stepState();
+    const st = stepState(), { list, next } = st;
     const bs = ol.querySelectorAll(".step-tick");
     const focusAt = list.indexOf(next || list[list.length - 1]);
     const keep = ol.contains(document.activeElement);
@@ -882,12 +860,11 @@ export function mountReader(root) {
       const c = list[i];
       if (!c) return;
       if (!keep) b.tabIndex = i === focusAt ? 0 : -1;
-      const state = c.to <= s.p + 1e-9 ? "done" : c === cur ? "here" : "ahead";
-      if (b.dataset.state === state) return;
-      b.dataset.state = state;
-      b.title = state === "ahead" ? "" : c.title;
-      b.setAttribute("aria-label", state === "done" ? `${c.title}, finished` : state === "here" ? `${c.title}, reading now. Mark it finished`
-        : `Chapter ${c.k}, not read yet. Mark it finished`);
+      const t = tickInfo(c, st, s.p);
+      if (b.dataset.state === t.state) return;
+      b.dataset.state = t.state;
+      b.title = t.title;
+      b.setAttribute("aria-label", t.label);
     });
   }
   /** The steps row under the ruler, painted on every position change without rebuilding the ticks. */
@@ -902,7 +879,7 @@ export function mountReader(root) {
     el.stepWhere.textContent = whereText();
     const { next } = stepState();
     el.finishBtn.hidden = !next;
-    if (next) el.finishBtn.textContent = `I finished ${stepName(next)}`;
+    if (next) el.finishBtn.textContent = `I finished ${nextName(stepState())}`;
   }
 
   /** Tick marks on the ruler (each with its chapter as a tooltip; Part and Book starts stronger), and the end of the index. */
@@ -1098,7 +1075,9 @@ export function mountReader(root) {
     const v = s.view;
     wrap.classList.toggle("wide", s.tab === "links");
     wrap.classList.toggle("asking-tab", s.tab === "ask");
-    wrap.classList.toggle("on-overview", s.tab === "overview");   // the Overview's card carries the steps   // the map alone gets the full width
+    wrap.classList.toggle("on-overview", s.tab === "overview");
+    // The Overview's "All N people" opens Cast filtered for that one visit: leaving Cast puts the person's own filter back.
+    if (s.tab !== "cast" && s.typesRestore) { s.types = s.typesRestore; s.typesRestore = null; }   // the Overview's card carries the steps   // the map alone gets the full width
     // The short names are for a phone, where all four tabs share one row without scrolling sideways.
     const tabs = [["overview", "Overview", null, "Home"], ["chapters", "Chapters", chapterGroups().length, "Chapters"], ["cast", "Cast & World", castEntities().length, "Cast"],
       ["timeline", "Timeline", v.events.length, "Timeline"], ["links", "Connections", v.relations.length, "Map"]];
@@ -1137,7 +1116,7 @@ export function mountReader(root) {
     const search = h("input.input", { type: "search", placeholder: "Search names", value: s.q, "aria-label": "Search names and aliases" });
     search.addEventListener("input", () => { s.q = search.value; paintList(); });
     const chips = TYPES.filter((t) => counts[t]).map((t) => h(`button.filter-chip.t-${t}`, { type: "button", "aria-pressed": String(s.types.has(t)),
-      on: { click: (e) => { s.types.has(t) ? s.types.delete(t) : s.types.add(t); e.currentTarget.setAttribute("aria-pressed", String(s.types.has(t))); paintList(); } } },
+      on: { click: (e) => { s.typesRestore = null; s.types.has(t) ? s.types.delete(t) : s.types.add(t); e.currentTarget.setAttribute("aria-pressed", String(s.types.has(t))); paintList(); } } },
       TYPE_PLURAL[t], h("span.n", String(counts[t]))));
     const sort = h("select.select.sort-select", { "aria-label": "Sort entries" },
       Object.entries(SORTS).map(([k, label]) => h("option", { value: k, selected: s.sort === k }, label)));
@@ -1626,8 +1605,8 @@ export function mountReader(root) {
   /** The spoiler card: where the reader is, the chapter ticks, and the way forward. */
   function overviewCard() {
     const list = stepChapters();
-    const { next } = stepState();
-    const finish = next ? h("button.btn.primary.ov-finish", { type: "button", on: { click: () => moveTo(next.to) } }, `I finished ${stepName(next)}`) : null;
+    const st = stepState(), { next } = st;
+    const finish = next ? h("button.btn.primary.ov-finish", { type: "button", on: { click: () => moveTo(next.to) } }, `I finished ${nextName(st)}`) : null;
     const jump = h("button.btn.quiet.ov-jump", { type: "button", "aria-haspopup": "dialog", on: { click: openJump } }, "Jump");
     return h("section.ov-card", { "aria-label": "Where you are" },
       h("p.ov-where", icon("shield"), h("span", whereText())),
@@ -1667,7 +1646,7 @@ export function mountReader(root) {
         fresh.has(e.id) ? h("span.ov-new", newLabel) : null));
     };
     const who = h("section.ov-sec", { "aria-labelledby": "ov-who" },
-      h("div.ov-sec-head", h("h3#ov-who", "Who's who so far"), people.length > 8 ? h("button.linkish", { type: "button", on: { click: () => { s.types = new Set(["person", "creature"]); selectTab("cast"); } } },
+      h("div.ov-sec-head", h("h3#ov-who", "Who's who so far"), people.length > 8 ? h("button.linkish", { type: "button", on: { click: () => { s.typesRestore ??= s.types; s.types = new Set(["person", "creature"]); selectTab("cast"); } } },
         `All ${people.length} ${people.every((e) => e.type === "person") ? "people" : "people and creatures"} you've met`) : null),
       people.length ? h("ol.ov-people", people.slice(0, 8).map(card)) : h("p.muted", "Nobody yet. The people you meet appear here as you read."));
 
@@ -2316,8 +2295,6 @@ export function mountReader(root) {
     const short = (i >= 0 ? chapterLabel(title, i + 1) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
     return { short, full };
   }
-  /** "Chapter XIV" out of "Chapter XIV Mina Harker's Journal", "Prologue" out of "Prologue: The Road". */
-  const SELF_NAMED_SHORT = /^\s*(chapter|part|book|section|letter)\s+[\p{L}\p{N}]+|^\s*(prologue|epilogue|preface|introduction|foreword|afterword)\b/iu;
   /** "Portraits" under "Who they are": every visible picture of the entry, oldest to newest, each captioned with its
    *  chapter, the latest marked as the current one; in a series one row per book. Only with two or more. */
   function portraitsSection(e, { looks = false } = {}) {
@@ -2643,16 +2620,12 @@ export function mountReader(root) {
     btn.querySelector("img")?.addEventListener("error", () => hero.classList.add("no-img"));
     return hero;
   }
-  /** An age only as a profile or detail words it ("aged 19", "nineteen years old"); never worked out or guessed. */
-  const AGE = /\b(?:aged\s+(?:\d{1,3}|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:-(?:one|two|three|four|five|six|seven|eight|nine))?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)|(?:\d{1,3}|(?:twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:-(?:one|two|three|four|five|six|seven|eight|nine))?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen)\s+years\s+old)\b/i;
   /** Up to three tiles of what the index states about an entry: an age its own text gives, a group a visible connection
    *  ties it to, the chapter (or earlier book) where it was first met. Nothing is filled in that the view does not hold. */
   function factTiles(e, rels) {
     const tiles = [];
-    for (const t of [e.profile?.text, ...e.facets.map((f) => f.text)]) {
-      const m = t && AGE.exec(t);
-      if (m) { tiles.push({ label: "Age", value: capFirst(m[0]) }); break; }
-    }
+    const age = statedAge(e.profile?.text, e.facets.map((f) => f.text));
+    if (age) tiles.push({ label: "Age", value: capFirst(age) });
     for (const r of rels) {
       const other = nameOf(r.src === e.id ? r.dst : r.src);
       // Only a tie that says it belongs: an alliance or service tie, or an older untyped one worded as membership.
