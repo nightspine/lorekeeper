@@ -46,8 +46,7 @@ STATUS = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|marri
 # "near death", "feared dead", "as if dead": a status word that states no change. Quoting "found Lucy near death"
 # as a change in standing made Haiku write "Dead, ... buried the same day as her mother" chapters early.
 HEDGED = re.compile(r"\b(near|nearly|almost|close to|on the point of|feared|fears?|thought|believed|seem(ed|s)?|as if|"
-                    r"like|half|await(s|ed|ing)?|fac(e|es|ed|ing)|risk(s|ed|ing)?|escap(e|es|ed|ing)|cheat(s|ed|ing)?|"
-                    r"feign(s|ed|ing)?)\s+(\w+\s+){0,2}?(dead|death|dying|dies|died)\b", re.IGNORECASE)
+                    r"like|half)\s+(\w+\s+){0,2}?(dead|death|dying|dies|died)\b", re.IGNORECASE)
 
 
 # A death never comes undone (an Un-Dead Lucy is still dead), so a portrait that knows of one must open with it;
@@ -55,69 +54,50 @@ HEDGED = re.compile(r"\b(near|nearly|almost|close to|on the point of|feared|fear
 DEATH = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|destroyed)\b", re.IGNORECASE)
 
 
-_OBJECT = re.compile(r"\s+(?:(?:the|a|an|his|her|their|its|my|our|your|him|them|it|one|this|that|these|those|some|all|"
-                     r"every)\b|[A-Z])")
-# A death verb tells the subject's own death only in the passive or opening a clause: "is killed", "was buried",
-# "Killed by...", "Dead, slain by...".
-_PASSIVE = re.compile(r"(\b(?:is|was|were|are|be|been|being|got|gets|lies|lay)|^|[.!?:;,\u2014(])$", re.IGNORECASE)
-_TRANSITIVE = {"killed", "murdered", "slain", "buried", "destroyed"}
-
-
-def states_death(text: str, at: list[int] | None = None) -> bool:
-    """Whether `text` states a death, read by code without a list of deaths: a DEATH word that is not hedged ("near death",
-    "awaiting death"), not a proper noun (a capital inside a sentence: "a hunter of the Dead", the vampires of Empire of the
-    Vampire), and not a verb with an object ("buried the silver"). `at`, when given, collects the match positions."""
-    text = HEDGED.sub(lambda m: " " * len(m.group(0)), text)
-    found = False
-    for m in DEATH.finditer(text):
-        w, before = m.group(0), text[:m.start()].rstrip()
-        if w[0].isupper() and before and before[-1] not in ".!?:;\"“(":
-            continue
-        if text[m.start() - 1:m.start()] == "-" or text[m.end():m.end() + 1] == "-":
-            continue                    # a compound: "death-pale", "half-dead"
-        if w.lower() in _TRANSITIVE and not re.match(r"\s+by\b", text[m.end():]):
-            passive = _PASSIVE.search(before)
-            if not passive or (not passive.group(1).strip().isalpha() and _OBJECT.match(text, m.end())):
-                continue                # a deed: "the locals destroyed", "Buried her mother" (a note's subject is its entity)
-        found = True
-        if at is None:
-            return True
-        at.append(m.start())
-    return found
-
-
 def _opens_with(change: str, text: str) -> bool:
     """Whether `text`'s first sentence states the kind of change `change` records."""
-    first = _first(text)
-    return states_death(first) if states_death(change) else bool(STATUS.search(HEDGED.sub(" ", first)))
+    first = HEDGED.sub(" ", _first(text))
+    return bool(DEATH.search(first)) if DEATH.search(HEDGED.sub(" ", change)) else bool(STATUS.search(first))
 
 
 def opens_with_death(text: str) -> bool:
-    """Whether a description's first sentence states a death (`states_death`: not "a hunter of the Dead"), as the prompt asks
-    a dead character's to."""
-    return states_death(_first(text))
+    """Whether a description's first sentence has a death word: only a prefilter for `DEATHS`, which decides."""
+    return bool(DEATH.search(HEDGED.sub(" ", _first(text))))
 
 
-# Whose death a first sentence states is grammar ("suspects Aaron wants him dead", "named among the dead"), so when code sees
-# a death word there a cheap call answers one yes or no, cached per text; nothing it writes is kept.
-OWN_DEATH = """Below is the first sentence of a description of {name} ({kind}) from a reader's companion to a novel. Does it say
-that {name} is dead (died, was killed, slain or destroyed)? Answer "dead": true only when it says {name} itself is dead;
-false when it speaks of others' deaths, of the dead or the undead as a group, of danger, wishes, fears or rumours.
+# Whose death a sentence states ("Renfield is found dead", "Mina's hand ... before he dies", "Her mother died", "a hunter
+# of the Dead") is reading, not a word list: code finds the candidates by a death word, and one cheap call per batch says,
+# for each numbered item, whether it states that this entity itself died or is dead. It only chooses; nothing it writes is
+# kept, and the answers are cached per (entity, text).
+DEATHS = """Below are numbered sentences from a reader's companion to a novel, each about {name} ({kind}) or naming it.
+For each one, does it state that {name} itself died or is dead (killed, slain, destroyed)? Count only {name}'s own death,
+stated as a fact. Leave out sentences about someone else's death, the dead or undead as a group, danger, wishes, fears,
+rumours or a death only feared or nearly come, and figurative uses.
+Return "dead": the numbers of the sentences that state {name}'s own death (an empty list when none do).
 
-{sentence}"""
-OWN_DEATH_SCHEMA = {"type": "object", "required": ["dead"], "properties": {"dead": {"type": "boolean"}}}
+{items}"""
+DEATHS_SCHEMA = {"type": "object", "required": ["dead"],
+                 "properties": {"dead": {"type": "array", "items": {"type": "integer"}}}}
+DEATHS_SYSTEM = "You read the notes of a reader's companion. Answer only with the list of numbers asked for."
+DEATH_BATCH = 40
 
 
-def own_death(model, name: str, kind: str, text: str) -> bool:
-    """Whether a description's first sentence says the entity itself is dead: code first (`opens_with_death`), then one
-    cheap yes or no. A failed call keeps the death (the rule as it was)."""
-    if not opens_with_death(text):
-        return False
-    try:
-        out = model.complete(LOOKS_SYSTEM, OWN_DEATH.format(name=name, kind=kind, sentence=_first(text)), OWN_DEATH_SCHEMA) or {}
-    except Exception:   # noqa: BLE001
-        return True
-    return out.get("dead") is not False
+def own_deaths(model, name: str, kind: str, texts: list[str], cache: dict, key: str | None = None) -> dict[str, bool] | None:
+    """{text: whether it states the entity's own death} for `texts`, asking only for those not in `cache` (keyed
+    (key or name, text)), DEATH_BATCH at a time. None when a call fails (nothing is cached from it)."""
+    key = key or name
+    todo = [t for t in dict.fromkeys(texts) if (key, t) not in cache]
+    for at in range(0, len(todo), DEATH_BATCH):
+        batch = todo[at:at + DEATH_BATCH]
+        try:
+            out = model.complete(DEATHS_SYSTEM, DEATHS.format(name=name, kind=kind, items="\n".join(
+                f"{n}. {t}" for n, t in enumerate(batch, 1))), DEATHS_SCHEMA) or {}
+        except Exception:   # noqa: BLE001 - no answer: the caller keeps the safe default
+            return None
+        yes = set(_numbers(out, "dead", len(batch)))
+        for n, t in enumerate(batch, 1):
+            cache[(key, t)] = n in yes
+    return {t: cache[(key, t)] for t in texts}
 
 
 def changes_standing(text: str) -> bool:
@@ -462,43 +442,11 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                         + turns.get(e["id"], []))
         for e in d["entities"]}
     status: dict[str, list[int]] = {eid: [q for q, _ in xs] for eid, xs in standing.items()}
-    # entity → seqs where the companion records its own death: a checked fact of its that states a death, or a turning point
-    # whose death word comes nearest after this entity's name among the entities it names ("Arthur watches as Lucy dies")
-    deaths: dict[str, list[int]] = {
-        e["id"]: [seq_of[f["from"]] for f in e["facets"] if f.get("kind") not in ("profile", "arc") and f["from"] in seq_of
-                  and states_death(f["text"])] for e in d["entities"]}
-    for ev in d.get("events", []):
-        if ev.get("kind") != "turn" or ev["from"] not in seq_of:
-            continue
-        at: list[int] = []
-        if not states_death(ev.get("summary", ""), at):
-            continue
-        named = [x for x in dict.fromkeys(ev.get("entities", [])) if x in ents]
-        for p in at:
-            if len(named) == 1:
-                dead = named[0]
-            else:
-                last = {x: max((m.end() for pat, _ in pats.get(x, ()) for m in pat.finditer(ev["summary"][:p])), default=-1)
-                        for x in named}
-                dead = max(last, key=last.get) if max(last.values(), default=-1) >= 0 else None
-            if dead:
-                deaths.setdefault(dead, []).append(seq_of[ev["from"]])
-    # "Aaron killed Danton": a death verb with a name as its object is the death of the entity named there
-    for ev in d.get("events", []):
-        if ev.get("kind") != "turn" or ev["from"] not in seq_of:
-            continue
-        summary = HEDGED.sub(lambda m: " " * len(m.group(0)), ev.get("summary", ""))
-        for m in DEATH.finditer(summary):
-            if m.group(0).lower() not in _TRANSITIVE:
-                continue
-            rest = summary[m.end():]
-            at = m.end() + len(rest) - len(rest.lstrip())
-            for x in dict.fromkeys(ev.get("entities", [])):
-                if x in ents and any(pat.match(summary, at) for pat, _ in pats.get(x, ())):
-                    deaths.setdefault(x, []).append(seq_of[ev["from"]])
+    # entity → (seq, text) of its checked facts and the turning points naming it that have a death word: only candidates
+    deaths_of = {eid: [(q, t) for q, t in xs if DEATH.search(HEDGED.sub(" ", t))] for eid, xs in standing.items()}
     last_text: dict[str, str] = {}
     look_cache: dict[str, list[str]] = {}    # description → its look pieces
-    dead_cache: dict[str, bool] = {}         # description → whether its first sentence says the entity is dead
+    dead_cache: dict[tuple[str, str], bool] = {}   # (entity, text) → whether it states that entity's own death
     written: dict[str, list[dict]] = {}
     marks = sorted(set(marks))
     for step, mark in enumerate(marks, 1):
@@ -629,16 +577,21 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             # One gate decides whether a text may replace the previous description, whatever rewrite produced it:
             # - it may not drop the death the previous one opened with (after the stake, Lucy's went from "Dead, after a long
-            #   decline" back to "her health has lately failed"), when the companion records that death (a checked fact or a
-            #   turning point that says this entity died): "a hunter of the Dead" in a first sentence froze Dior's
-            #   description for forty chapters (Empire of the Vampire);
+            #   decline" back to "her health has lately failed"), when the companion records that death: `DEATHS` confirms
+            #   both that the opening states this entity's own death and that a checked fact or turning point of it does.
+            #   Read by code alone, "a hunter of the Dead" froze Dior's description for forty chapters (Empire of the
+            #   Vampire), and "Aaron wants him dead" Gabriel's;
             # - it keeps the looks the previous description stated unless the passages show them changed.
             # One rewrite naming every fault, then the previous description stands.
-            died = any(q <= mark for q in deaths.get(eid, ()))
             who, kind = name_of(e, names), KINDS.get(e["type"], e["type"])
-            if prev and died and prev not in dead_cache:
-                dead_cache[prev] = own_death(model, who, kind, prev)
-            opened_dead = bool(prev and died and dead_cache.get(prev))
+            opened_dead = False
+            if prev and opens_with_death(prev):
+                # the candidates: the entity's checked facts and the turning points naming it, up to here, with a death word
+                told = [t for q, t in deaths_of.get(eid, ()) if q <= mark]
+                if told:
+                    said = own_deaths(model, who, kind, [_first(prev)] + told, dead_cache, eid)
+                    # a failed call keeps the safe default: a death in the opening is kept
+                    opened_dead = said is None or (said[_first(prev)] and any(said[t] for t in told))
             cleared = [False]
 
             def faults(t: str) -> tuple[bool, list[int]]:

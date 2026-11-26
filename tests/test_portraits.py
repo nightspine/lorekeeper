@@ -27,23 +27,30 @@ class Fake:
     """Scripted replies: a string is a description's text, a dict the whole reply. The look-picking call answers from
     `looks` (a list of number lists, one per call; none picked when it runs out) and is logged in `picks`."""
 
-    def __init__(self, replies, looks=(), lost=(), dead=()):
+    def __init__(self, replies, looks=(), lost=(), reader=None, by=None):
+        """`reader(name, sentence)` answers the death question as a careful reader would (default: yes, so the rule stays
+        strict); it may raise to stand for a failed call. `by` maps an entity name to its own replies, for runs where
+        several entities are written at once."""
         self.replies, self.prompts, self.looks, self.picks = list(replies), [], list(looks), []
-        self.lost, self.confirms, self.dead, self.asked_dead = list(lost), [], list(dead), []
+        self.lost, self.confirms, self.asked_dead = list(lost), [], []
+        self.reader, self.by = reader or (lambda name, sentence: True), {k: list(v) for k, v in (by or {}).items()}
 
     def complete(self, system, prompt, schema, prefix=None):
         if schema is portraits.LOOKS_SCHEMA:
             self.picks.append(prompt)
             return {"looks": self.looks.pop(0) if self.looks else []}
-        if schema is portraits.OWN_DEATH_SCHEMA:     # by default: yes, it says so
+        if schema is portraits.DEATHS_SCHEMA:
             self.asked_dead.append(prompt)
-            return {"dead": self.dead.pop(0) if self.dead else True}
+            name = re.search(r"each about (.+?) \(", prompt).group(1)
+            items = re.findall(r"^(\d+)\. (.*)$", prompt.split("\n\n", 1)[1], re.M)
+            return {"dead": [int(n) for n, t in items if self.reader(name, t)]}
         if schema is portraits.LOST_SCHEMA:          # by default every look shown is confirmed lost, by the number shown
             self.confirms.append(prompt)
             shown = [int(n) for n in re.findall(r"^(\d+)\. ", prompt.split("New description:")[1], re.M)]
             return {"lost": self.lost.pop(0) if self.lost else shown}
         self.prompts.append(prompt)
-        r = self.replies.pop(0)
+        who = re.search(r"places so far where (.+?) \(", prompt)
+        r = (self.by[who.group(1)] if self.by and who and who.group(1) in self.by else self.replies).pop(0)
         return r if isinstance(r, dict) else {"text": r}
 
 
@@ -316,20 +323,6 @@ def test_a_rewrite_may_not_drop_the_standing_the_last_portrait_opened_with():
     assert all(p["text"].startswith("Dead") for p in ps)
 
 
-def test_a_first_sentence_naming_the_dead_is_no_death_to_keep():
-    # "the Dead" are the book's vampires: no recorded death, so a rewrite that drops them from its opening stands
-    book = _book([("One", CH1 + ["The Dead came down from the hills at night and walked past the mill."]), ("Two", CH2 + CH1)])
-    d = _doc(book, [_mira()])
-    model = Fake(["A young woman of the mill who fights the Dead.", "A young woman of the mill who keeps a secret."])
-    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
-    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.prompts) == 2
-
-
-def test_only_an_opening_death_must_be_kept():
-    assert portraits.opens_with_death("Dead of the fever; a young woman.") and portraits.opens_with_death("Lucy Westenra is dead, killed.")
-    assert not portraits.opens_with_death("Gabriel de León, the Last of the Silversaints, is a hunter of the Dead.")
-
-
 def test_engaged_does_not_stand_in_for_a_death():
     assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
     assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")
@@ -487,35 +480,6 @@ def test_a_death_anywhere_in_the_first_sentence_is_kept():
     model = Fake([opening, "Mira is a young woman of the village.", "Mira is a young woman of the village."])
     stats = portraits.portraits([(d, book)], model, log=lambda m: None)
     assert stats["dropped: lost the change in standing"] == 1
-    assert portraits.opens_with_death("Lucy Westenra, a young woman of Whitby, is dead.")
-
-
-def test_a_death_word_about_something_else_records_no_death():
-    book, d = _dead_mira("Buried her mother under the old mill.")
-    model = Fake(["Dead tired from grief, a woman of the mill.", "A woman of the mill who keeps a secret."])
-    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
-    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats
-
-
-def test_a_turning_point_records_the_death_of_the_one_who_dies():
-    book = _book([("One", DEAD_CH1), ("Two", DEAD_CH2)])
-    oren = {"id": "oren", "type": "person", "from": "b0", "names": [{"value": "Oren", "kind": "primary", "from": "b0"}],
-            "facets": []}
-    d = _doc(book, [_mira(), oren])
-    d["events"] = [{"id": "e1", "from": "b1", "kind": "turn", "summary": "Mira watches as Oren dies of the fever.",
-                    "entities": ["mira", "oren"], "evidence": ["b1"]}]
-    model = Fake(["Dead tired from the vigil, a woman of the mill.", "A woman of the mill who keeps a secret."])
-    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
-    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats
-
-
-def test_states_death_reads_who_dies():
-    yes = ["Lucy dies.", "Killed by the Count in her bed.", "Was buried in the churchyard.", "Dead of the fever."]
-    yes += ["He was killed by Voss.", "Dead, slain by the wolves."]
-    no = ["He buried the silver under the mill.", "A hunter of the Dead.", "The killer awaiting death in a tower cell.",
-          "Destroyed a dozen of them.", "A river whose bridge the locals destroyed, so travellers turn back.",
-          "He has death-pale skin and bloody eyes.", "Aaron killed Danton."]
-    assert all(portraits.states_death(t) for t in yes) and not any(portraits.states_death(t) for t in no)
 
 
 def test_looks_over_the_cap_are_counted():
@@ -527,9 +491,120 @@ def test_looks_over_the_cap_are_counted():
     assert stats["looks over the cap"] == 15 - portraits.MAX_LOOKS
 
 
-def test_a_death_the_first_sentence_gives_someone_else_need_not_be_kept():
-    book, d = _dead_mira()
-    model = Fake(["Mira is a young woman of the village and the mill who fears her rival wants her dead.",
-                  "Mira is a young woman of the village."], dead=[False])
+# ---- round 3: whose death a sentence states is asked, never guessed
+
+def _people(chapters, people, events=()):
+    """A book of two chapters and a doc of people [(id, [names], [facts])] with turning points [(summary, [ids])] at b1."""
+    book = _book(chapters)
+    ents = [{"id": i, "type": "person", "from": "b0", "names": [{"value": n, "kind": "primary" if k == 0 else "alias",
+                                                                 "from": "b0"} for k, n in enumerate(ns)],
+             "facets": [{"id": f"{i}.f{k}", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": t}
+                        for k, t in enumerate(facts)]} for i, ns, facts in people]
+    d = _doc(book, ents)
+    d["events"] = [{"id": f"e{k}", "from": "b1", "kind": "turn", "summary": t, "entities": ids, "evidence": ["b1"]}
+                   for k, (t, ids) in enumerate(events)]
+    return book, d
+
+
+def _profiles(d, eid):
+    return [f["text"] for e in d["entities"] if e["id"] == eid for f in e["facets"] if f.get("kind") == "profile"]
+
+
+def test_renfield_found_dead_is_recorded_though_no_name_pattern_hits():
+    # dracula.ev.257: his names are "R. M. Renfield" and "Mr. Renfield"; four entities on the turning point
+    ch1 = ["Mr. Renfield sat in his room at the asylum catching flies all the long day.",
+           "Mr. Renfield spoke to the doctor of lives and of the master who would come."]
+    ch2 = [f"Mr. Renfield was spoken of by the attendants on the night of the storm, said one {i}." for i in range(6)]
+    turn = "Renfield is found dead on the floor with broken neck bones, and Seward and Van Helsing are called."
+    book, d = _people([("One", ch1), ("Two", ch2)], [("renfield", ["Mr. Renfield", "R. M. Renfield"], []),
+                                                     ("seward", ["Seward"], []), ("helsing", ["Van Helsing"], [])],
+                      [(turn, ["renfield", "seward", "helsing"])])
+    reader = lambda name, t: name == "Mr. Renfield" and t in (turn, "Dead, his neck broken; a patient of the asylum.")  # noqa: E731
+    model = Fake([], reader=reader, by={"Mr. Renfield": ["Dead, his neck broken; a patient of the asylum.",
+                                                         "A patient of the asylum.", "A patient of the asylum."]})
     stats = portraits.portraits([(d, book)], model, log=lambda m: None)
-    assert stats["portraits"] == 2 and len(model.asked_dead) == 1 and "dropped: lost the change in standing" not in stats
+    assert stats["dropped: lost the change in standing"] == 1
+    assert _profiles(d, "renfield") == ["Dead, his neck broken; a patient of the asylum."]
+
+
+MORRIS = "Morris, mortally wounded in the side, takes Mina's hand and speaks of the curse passing away before he dies."
+
+
+def test_morris_dies_and_mina_does_not():
+    # dracula.ev.347: "Mina" ends later than "Morris" before "dies"; the reader knows it is Morris who dies
+    ch1 = ["Quincey Morris rode beside Mina at the head of the party all that day.",
+           "Quincey Morris and Mina watched the road to the castle as the sun went down."]
+    ch2 = [f"Quincey Morris and Mina were remembered by the others at the fire, said one {i}." for i in range(6)]
+    book, d = _people([("One", ch1), ("Two", ch2)], [("quincey", ["Quincey Morris"], []), ("mina", ["Mina"], [])],
+                      [(MORRIS, ["quincey", "mina"])])
+    q_open, m_open = "Dead of a wound in the side; a rider of the party.", "Mina, at whose side Morris dies, is a young woman."
+    reader = lambda name, t: name == "Quincey Morris" and t in (MORRIS, q_open)  # noqa: E731
+    model = Fake([], reader=reader, by={"Quincey Morris": [q_open, "A rider of the party.", "A rider of the party."],
+                                        "Mina": [m_open, "Mina is a young woman of the party."]})
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert _profiles(d, "quincey") == [q_open] and stats["dropped: lost the change in standing"] == 1
+    assert _profiles(d, "mina") == [m_open, "Mina is a young woman of the party."]
+
+
+def test_her_mothers_death_is_not_hers():
+    book, d = _dead_mira("Her mother died in the winter.")
+    opening = "Mira, whose mother died in the winter, is a young woman of the mill."
+    model = Fake([opening, "Mira is a young woman of the mill."], reader=lambda name, t: False)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.asked_dead) == 1
+
+
+def test_she_faced_him_and_died_is_recorded():
+    book, d = _dead_mira("She faced him and died.")
+    opening = "Dead, having faced him at the mill; a young woman."
+    model = Fake([opening, "A young woman of the mill.", "A young woman of the mill."],
+                 reader=lambda name, t: t in ("She faced him and died.", opening))
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1 and _profiles(d, "mira") == [opening]
+
+
+def test_a_hunter_of_the_dead_is_no_death():
+    book = _book([("One", DEAD_CH1 + ["The Dead came down from the hills at night and walked past the mill."]),
+                  ("Two", DEAD_CH2)])
+    fact = {"id": "f1", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": "Hunts the Dead by night."}
+    d = _doc(book, [_mira(facets=[fact])])
+    model = Fake(["A young woman of the mill, a hunter of the Dead.", "A young woman of the mill who keeps a secret."],
+                 reader=lambda name, t: False)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.asked_dead) == 1
+
+
+def test_lucys_death_is_kept():
+    book, d = _dead_mira("Lucy dies, and Seward leads the grieving Arthur away.")
+    model = Fake(["Dead, after a long decline; a young woman.", "Mira is a young woman whose health has failed.",
+                  "Mira is a young woman whose health has failed."], reader=lambda name, t: True)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+
+
+def test_no_death_is_recorded_that_the_model_did_not_confirm():
+    # a death word in the opening and in a fact of her own is only a candidate: the reader says no to the fact
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman whose health has failed."],
+                 reader=lambda name, t: t.startswith("Dead"))
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats
+
+
+def test_a_failed_death_call_keeps_the_opening():
+    def fails(name, t):
+        raise RuntimeError("no answer")
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman.", "Mira is a young woman."], reader=fails)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+
+
+def test_death_answers_are_cached_per_entity_and_text():
+    cache, model = {}, Fake([], reader=lambda name, t: t == "Lucy dies.")
+    assert portraits.own_deaths(model, "Lucy", "a character", ["Lucy dies.", "Arthur weeps."], cache, "lucy") == \
+        {"Lucy dies.": True, "Arthur weeps.": False}
+    portraits.own_deaths(model, "Miss Lucy", "a character", ["Lucy dies."], cache, "lucy")
+    assert len(model.asked_dead) == 1 and "about Lucy (a character)" in model.asked_dead[0]
+    assert "numbers" in portraits.DEATHS_SYSTEM and portraits.DEATHS_SCHEMA["properties"]["dead"]["type"] == "array"
+
