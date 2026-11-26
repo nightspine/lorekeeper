@@ -2020,7 +2020,10 @@ def test_a_same_prompt_redraw_of_an_older_portrait_takes_the_mid_chest_frame(env
     r = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={"note": "Make it night"})
     assert r.status_code == 200, r.text
     sent = env.image.calls[-1]["prompt"]
-    assert sent == "Make it night. " + art.PORTRAIT_FRAME + rest and art.PORTRAIT_FRAME_OLD not in sent
+    body, tail = rest.split(" " + art.STYLES["ink"] + " ")
+    # the new frame first (after the note), the crop line closing the old body, then the style and no-text line
+    assert sent == f"Make it night. {art.PORTRAIT_FRAME}{body} {art.PORTRAIT_CROP} {art.STYLES['ink']} {tail}"
+    assert art.PORTRAIT_FRAME_OLD not in sent and sent.count(art.PORTRAIT_CROP) == 1
     # a portrait whose prompt is the person's own words is drawn as given
     m = json.loads(path.read_text())
     rec = next(p for p in m["pictures"] if p["kind"] == "portrait")

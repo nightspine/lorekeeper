@@ -291,12 +291,23 @@ def unframed(text: str) -> str:
     return text
 
 
-def reframed(kind: str, prompt: str) -> str:
+def reframed(kind: str, prompt: str, style: str = "") -> str:
     """A stored portrait prompt to draw again as it is ("same prompt"): one drawn with the older half-length frame
-    (PORTRAIT_FRAME_OLD) gets the mid-chest frame in its place; anything else, the person's own words included, as given."""
-    if kind == "portrait" and prompt.startswith(PORTRAIT_FRAME_OLD):
-        return PORTRAIT_FRAME + prompt[len(PORTRAIT_FRAME_OLD):]
-    return prompt
+    (PORTRAIT_FRAME_OLD) gets the mid-chest frame in its place and, when it lacks it, the crop line (PORTRAIT_CROP) at the
+    end of its body: before the style sentence (`style`, the set's) and the no-text line where the prompt still ends with
+    them, else before the no-text line, else at the very end. The old body is kept as written, even where it names hands
+    or gear. Anything else, the person's own words included, as given."""
+    if kind != "portrait" or not prompt.startswith(PORTRAIT_FRAME_OLD):
+        return prompt
+    text = PORTRAIT_FRAME + prompt[len(PORTRAIT_FRAME_OLD):]
+    if PORTRAIT_CROP in text:
+        return text
+    style = " ".join(str(style or "").split())
+    for tail in ([f"{style} {NO_TEXT}"] if style else []) + [NO_TEXT]:
+        k = text.rfind(tail)
+        if k > 0 and text[k:].rstrip() == tail and text[k - 1].isspace():
+            return f"{text[:k].rstrip()} {PORTRAIT_CROP} {text[k:]}"
+    return f"{text.rstrip()} {PORTRAIT_CROP}"
 
 
 def labels_in(text: str) -> list[str]:

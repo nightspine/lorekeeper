@@ -2163,9 +2163,16 @@ def test_unframed_and_reframed():
     assert art.unframed(body) == "A young woman." == art.unframed(f"{art.PORTRAIT_FRAME_OLD} A young woman.")
     assert art.unframed("A grey mill yard at dusk.") == "A grey mill yard at dusk."
     old = f"{art.PORTRAIT_FRAME_OLD} A young woman. Ink. {art.NO_TEXT}"
-    assert art.reframed("portrait", old) == f"{art.PORTRAIT_FRAME} A young woman. Ink. {art.NO_TEXT}"
     new = f"{art.PORTRAIT_FRAME} A young woman. {art.PORTRAIT_CROP} Ink. {art.NO_TEXT}"
-    assert art.reframed("portrait", new) == new                           # already the new frame: as given
+    # the new frame, and the crop line at the end of the body, before the set's style sentence and the no-text line
+    assert art.reframed("portrait", old, "Ink.") == new
+    # an unknown style: before the no-text line; no no-text line either: at the end
+    assert art.reframed("portrait", old) == f"{art.PORTRAIT_FRAME} A young woman. Ink. {art.PORTRAIT_CROP} {art.NO_TEXT}"
+    assert art.reframed("portrait", old, "Chalk.") == art.reframed("portrait", old)
+    assert (art.reframed("portrait", f"{art.PORTRAIT_FRAME_OLD} A young woman with a sword at the hip.")
+            == f"{art.PORTRAIT_FRAME} A young woman with a sword at the hip. {art.PORTRAIT_CROP}")   # old body kept
+    assert art.reframed("portrait", new, "Ink.") == new                   # already the new frame: as given
+    assert art.reframed("portrait", f"{art.PORTRAIT_FRAME_OLD} A. {art.PORTRAIT_CROP} Ink.").count(art.PORTRAIT_CROP) == 1
     assert art.reframed("portrait", "Draw her by a window.") == "Draw her by a window."   # a person's own words: as given
     assert art.reframed("event", old) == old                              # only portraits carry the frame
 
