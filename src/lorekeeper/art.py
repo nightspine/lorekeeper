@@ -1147,9 +1147,9 @@ class Illustrator:
         got, why, flagged = self._unknown_words(text, known, source, words[1] * 9)
         if got is None:
             return None, why
-        if flagged:
-            if names := self._names_among(got, flagged):
-                return None, f"unknown name: {names[0]}"
+        # a caught word fails the text only when it is used as a name there (`_names_among`)
+        if flagged and (names := self._names_among(got, flagged)):
+            return None, f"unknown name: {names[0]}"
         if ABOUT_THE_TEXT.search(got):
             return None, "wording: about the passage"
         hit = self.names[bi].find(got)
