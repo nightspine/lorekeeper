@@ -1518,8 +1518,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def prompt_key(key: str, job, fin) -> tuple:
         """What a cached Prompt is for: never the style or the shape, which change no word the writer wrote. `finished`
-        None (every earlier book read) and [] (none read) are two keys: ("*",) and ()."""
-        return (key, job.kind, job.target, job.anchor, ("*",) if fin is None else tuple(fin))
+        None (every earlier book read) and [] (none read) are two keys: ("*",) and (). The reader's frontier (`job.reach`) is
+        part of it: a scene's figure may take its earliest picture after the moment up to there, so a prompt written further on
+        is never drawn for a reader who has not reached that picture."""
+        return (key, job.kind, job.target, job.anchor, ("*",) if fin is None else tuple(fin), getattr(job, "reach", None))
 
     def picked_references(il, job, pr, fin) -> list:
         """The references the pipeline would attach in this set to a picture showing `pr.shows`: a scene's figures most tied
