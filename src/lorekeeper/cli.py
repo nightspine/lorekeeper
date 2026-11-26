@@ -612,6 +612,28 @@ def _llm_images():
     return llm.IMAGE_PROVIDERS
 
 
+def _text_choice(value: str | None, flag: str) -> tuple[str, str | None] | None:
+    """A text model given as PROVIDER:MODEL (or PROVIDER alone, for its default tier), checked against the registry."""
+    from . import llm
+    if not value:
+        return None
+    provider, _, model = value.partition(":")
+    if provider not in llm.PROVIDERS:
+        raise SystemExit(f"error: {flag}: no provider {provider!r} (one of: {', '.join(llm.PROVIDERS)}); write PROVIDER:MODEL")
+    return provider, model.strip() or None
+
+
+def _portrait_image_choice(args) -> tuple[str | None, str | None]:
+    """--portrait-model as (provider, model): PROVIDER:MODEL, or a model of --provider; (None, None) when not given."""
+    v = getattr(args, "portrait_model", None)
+    if not v:
+        return None, None
+    provider, sep, model = v.partition(":")
+    if sep:
+        return provider, model.strip() or None
+    return args.provider, v
+
+
 def cmd_illustrate(args) -> int:
     """Draw an art set for one or more indexes (series reading order): chapter pictures and portraits, resumable. The index is never written."""
     import copy
@@ -628,6 +650,18 @@ def cmd_illustrate(args) -> int:
     levels = (row or {}).get("levels", images.QUALITIES)
     if args.quality not in levels:
         raise SystemExit(f"error: {args.model or spec['default']} offers only these quality levels: {', '.join(levels)}")
+    pp, pm = _portrait_image_choice(args)
+    if pp is not None:
+        if pp == "claude":
+            raise SystemExit("error: --portrait-model: Claude cannot draw")
+        if pp not in llm.IMAGE_PROVIDERS:
+            raise SystemExit(f"error: --portrait-model: no image provider {pp} (one of: {', '.join(llm.IMAGE_PROVIDERS)})")
+        pm = pm or llm.image_spec(pp)["default"]
+        plevels = (llm.image_model(pp, pm) or {}).get("levels", images.QUALITIES)
+        if args.quality not in plevels:
+            raise SystemExit(f"error: {pm} offers only these quality levels: {', '.join(plevels)}")
+    writers = {flag: _text_choice(getattr(args, dest), flag) for flag, dest in
+               (("--writer", "writer"), ("--portrait-writer", "portrait_writer"), ("--picker", "picker"))}
     epubs = []
     for p, d, e in zip(paths, docs, args.epub):
         bk = epub.read(e)
@@ -643,11 +677,37 @@ def cmd_illustrate(args) -> int:
         image = llm.make_image(args.provider, args.model, api_key=key)
     except ValueError as e:
         raise SystemExit(f"error: {e}") from e
+    portrait_image = None
+    if pp is not None and (pp, pm) != (args.provider, getattr(image, "name", None)):
+        pkey = key if pp == args.provider else llm.env_key(pp)
+        if not pkey:
+            pspec = llm.image_spec(pp)
+            raise SystemExit(f"error: no API key for {pspec['label']}: set {pspec['key_env']}")
+        try:
+            portrait_image = llm.make_image(pp, pm, api_key=pkey)
+        except ValueError as e:
+            raise SystemExit(f"error: {e}") from e
     tp = args.text_provider or ("claude" if llm.env_key("claude") else args.provider)
-    targs = copy.copy(args)
-    if tp != args.provider:
-        targs.api_key_file = None
-    model = _make_model(targs, args.text_model or (llm.PROVIDERS[tp]["cheap"] if tp in llm.PROVIDERS else None), tp)
+    made: dict[tuple, object] = {}
+
+    def text_model(provider: str, name: str | None):
+        """One backend per (provider, model), so a model chosen for two responsibilities is one model (and one cost)."""
+        if (provider, name) not in made:
+            targs = copy.copy(args)
+            if provider != args.provider:
+                targs.api_key_file = None
+            made[(provider, name)] = _make_model(targs, name, provider)
+        return made[(provider, name)]
+
+    def tier(provider: str, which: str) -> str | None:
+        return llm.PROVIDERS[provider].get(which) if provider in llm.PROVIDERS else None
+    sp, sm = writers["--writer"] or (tp, args.text_model or tier(tp, "cheap"))
+    model = text_model(sp, sm or tier(sp, "cheap"))
+    # portraits are few and every scene takes them as references: by default the strong tier of the text provider writes them
+    wp, wm = writers["--portrait-writer"] or (tp, tier(tp, "strong") or args.text_model or tier(tp, "cheap"))
+    portrait_text = text_model(wp, wm or tier(wp, "strong") or tier(wp, "cheap"))
+    kp, km = writers["--picker"] or (tp, args.text_model or tier(tp, "cheap"))
+    picker = text_model(kp, km or tier(kp, "cheap"))
     def likeness(folder: Path) -> dict:
         """The other style folders beside a set (same edition): a figure with no picture in this style takes its likeness
         from one of them."""
@@ -668,7 +728,8 @@ def cmd_illustrate(args) -> int:
     chapters = set(_parse_ranges(args.chapters)) if args.chapters else None
     try:
         il = art.Illustrator(books, model, image, args.style, portraits=None if args.portraits == "none" else args.portraits, quality=args.quality, cap=args.cap,
-                             max_pictures=args.limit, chapters=chapters, series=series, log=lambda m: print(m, file=sys.stderr))
+                             max_pictures=args.limit, chapters=chapters, series=series, log=lambda m: print(m, file=sys.stderr),
+                             cheap_text=picker, portrait_text=portrait_text, portrait_image=portrait_image)
     except ValueError as e:
         raise SystemExit(f"error: {e}") from e
     rep = il.run()
@@ -908,7 +969,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_arcs)
 
-    s = sub.add_parser("illustrate", help="draw chapter pictures and portraits for an index (Gemini or OpenAI for the pictures, a cheap text model for the prompts)")
+    s = sub.add_parser("illustrate", help="draw chapter pictures and portraits for an index (Gemini or OpenAI for the pictures; a cheap text model writes the scene prompts and makes the choosing calls, a strong one the portrait prompts)")
     s.add_argument("index", nargs="+", help="index files of the run, in series reading order")
     s.add_argument("--epub", action="append", help="each index's EPUB, in the same order (required)")
     s.add_argument("--series", help="the series manifest, when the indexes are series books")
@@ -925,8 +986,16 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", default=None, help="image model (default: the provider's own default)")
     s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
     s.add_argument("--api-key-file", metavar="PATH", help="file holding the image provider's key (default: its environment variable)")
-    s.add_argument("--text-provider", default=None, help="provider of the model that writes the prompts (default: claude when a key exists, else the image provider)")
-    s.add_argument("--text-model", default=None, help="that model (default: the provider's cheap model)")
+    s.add_argument("--text-provider", default=None, help="provider of the text models (default: claude when a key exists, else the image provider): its cheap model writes the scene prompts and makes the choosing calls, its strong model the portrait prompts, unless --writer, --picker or --portrait-writer say otherwise")
+    s.add_argument("--text-model", default=None, help="the model that writes the scene prompts and makes the choosing calls (default: the provider's cheap model); portrait prompts stay with the strong model unless --portrait-writer is given")
+    s.add_argument("--writer", metavar="PROVIDER:MODEL", default=None,
+                   help="the model that writes the scene prompts (chapter and moment pictures; default: --text-provider's cheap model, or --text-model)")
+    s.add_argument("--portrait-writer", metavar="PROVIDER:MODEL", default=None,
+                   help="the model that writes the prompts of portraits, places and things (default: --text-provider's strong model)")
+    s.add_argument("--picker", metavar="PROVIDER:MODEL", default=None,
+                   help="the model that makes the choosing calls: chapter screening, the look index, the look sentences (default: --text-model when given, else --text-provider's cheap model)")
+    s.add_argument("--portrait-model", metavar="[PROVIDER:]MODEL", default=None,
+                   help="the image model that draws portraits, places and things (PROVIDER:MODEL, or a model of --provider; default: the scene image model)")
     s.add_argument("--base-url", default=None, help=argparse.SUPPRESS)
     s.add_argument("--cap", type=float, default=10.0, help="stop when the run has cost this many dollars (default 10); what was drawn is kept")
     s.add_argument("--limit", type=int, default=None, help="draw at most this many pictures")

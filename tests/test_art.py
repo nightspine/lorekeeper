@@ -2465,3 +2465,483 @@ def test_the_writer_states_the_worlds_period_and_technology_wherever_it_draws_a_
     for word in ("Red Rising", "Mars", "Gold", "silversaint", "Dracula", "Transylvania", "Carpathian", "Sherlock", "Holmes", "London",
                  "Empire of the Vampire", "Victorian", "far-future"):
         assert word not in told, word
+
+
+# ---- one entry drawn through the book up to the reader's position (draw-character-through-book)
+
+def oren_with_a_lost_eye():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][1]["facets"].append({"id": "bk.oren.f1", "from": "a10", "basis": "stated", "evidence": ["a10"],
+                                       "text": "Oren lost an eye in the storm."})
+    return bk, d
+
+
+def test_chosen_entities_get_portraits_whatever_the_main_cast_rule_says():
+    bk, d = oren_with_a_lost_eye()
+    il, rep, sink, t, im = run(d, bk, portraits={"oren", "mill", "nobody"}, level="none")
+    assert [(p["target"], p["from"]) for p in pics(sink)] == [("oren", "a3"), ("oren", "a10")]
+    assert "oren" not in art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", log=lambda *_: None).main_cast(0)
+    assert art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", portraits=set(), log=lambda *_: None).portraits is None
+
+
+def test_until_draws_nothing_past_it_and_no_look_change_after_it():
+    bk, d = oren_with_a_lost_eye()
+    il, rep, sink, t, im = run(d, bk, portraits={"oren"}, level="main", until=(0, "a5"))
+    ords = ordinal(d)
+    assert [(p["kind"], p["target"], p["from"]) for p in pics(sink)] == [("portrait", "oren", "a3"), ("plate", "One", "a5")]
+    assert all(ords[s] <= ords["a5"] for p in pics(sink) for s in p["sources"])
+    assert not any("Which of them are a visible moment" in p and "Gabriel" in p for p in t.prompts)   # chapter Two not screened
+    assert il.counts(0)["portraits"] == 1 and il.counts(0)["new_portraits"] == 0
+    assert [c["chosen"] for c in il.counts(0)["chapters"]] == [True, False]
+    # at the end of the book the look change is drawn too, and the first portrait is not drawn again
+    _, rep2, _, _, im2 = run(d, bk, sink, portraits={"oren"}, level="none", until=(-1, len(d["anchors"]) - 1))
+    assert rep2.drawn == 1 and [p["from"] for p in pics(sink, "portrait")] == ["a3", "a10"]
+    with pytest.raises(ValueError, match="until"):
+        art.Illustrator([art.Book(d, bk, Mem())], Text(), Image(), "ink", until=(0, "nowhere"), log=lambda *_: None)
+
+
+def test_until_before_the_first_look_draws_the_first_profile_instead():
+    bk, d = vesna_doc()                      # her look is first described at a9, her first profile is at a2
+    _, _, sink, t, _ = run(d, bk, portraits={"vesna"}, level="none", until=(0, "a5"))
+    assert [p["from"] for p in pics(sink)] == ["a2"]
+    asked = [p for p in t.scenes() if drawing(p) == "Vesna"]
+    assert asked and not any(w in p for p in asked for w in ("white hair", "hooked nose", "black shawl"))   # the a9 look
+    _, _, sink2, _, _ = run(d, bk, portraits={"vesna"}, level="none")
+    assert [p["from"] for p in pics(sink2)] == ["a9"]       # a bulk run's plan when nothing limits it
+
+
+def test_a_reader_who_has_not_finished_the_earlier_book_gets_partial_pictures_of_this_one_only():
+    bk1, d1, bk2, d2 = series_docs()
+
+    def go(finished, s1, s2):
+        il = art.Illustrator([art.Book(d1, bk1, s1, None), art.Book(d2, bk2, s2, None)], Text(), Image(), "ink",
+                             portraits={"mira"}, until=(1, "b2.a5"), finished=finished, workers=1, log=lambda *_: None, pause=0)
+        return il, il.run()
+    s1, s2 = Mem(), Mem()
+    il, rep = go([], s1, s2)
+    assert s1.m is None or not pics(s1)                                   # the unfinished book is never drawn
+    assert [p["target"] for p in pics(s2)] == ["mira"] and all(p.get("partial") for p in pics(s2))
+    written = il.text.scenes()
+    assert written and not any(w in p for p in written for w in ("Zephyr", "Gabriel", "Stranger", "silver coin"))   # book one only
+    assert il.counts(0)["portraits"] == 0 and il.counts(1)["new_portraits"] == 0
+    _, rep2 = go([], s1, s2)                                              # drawn already, for this reader
+    assert rep2.drawn == 0
+    s1b, s2b = Mem(), Mem()
+    il3, rep3 = go(["b1"], s1b, s2b)                                      # a reader who finished book one
+    assert [p["target"] for p in pics(s1b)] == ["mira"] and not any(p.get("partial") for p in pics(s1b) + pics(s2b))
+    assert [p["target"] for p in pics(s2b)] == ["mira"]                   # the scar is a look change in book two
+    # a partial picture never counts as drawn for a reader who finished every book
+    il4 = art.Illustrator([art.Book(d1, bk1, Mem(), None), art.Book(d2, bk2, s2, None)], Text(), Image(), "ink",
+                          portraits={"mira"}, finished=["b1"], workers=1, log=lambda *_: None, pause=0)
+    assert il4.counts(1)["new_portraits"] == il4.counts(1)["portraits"] >= 1
+
+
+def test_counts_for_chosen_entities_and_until_need_no_model_call():
+    bk, d = oren_with_a_lost_eye()
+    t = Text()
+    il = art.Illustrator([art.Book(d, bk, Mem())], t, Image(), "ink", portraits={"oren"}, until=(0, "a11"),
+                         log=lambda *_: None)
+    got = il.counts(0, level=None)
+    assert got["portraits"] == got["new_portraits"] == 1 and got["plates"] == 0 and t.prompts == []   # looks unchecked
+    il.classify(0, ["oren"])
+    assert il.counts(0, level=None)["new_portraits"] == 2
+    il2 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], t, Image(), "ink", portraits={"oren"}, until=(0, "a9"),
+                          log=lambda *_: None)
+    assert il2.counts(0, level=None)["new_portraits"] == 1
+
+
+def test_until_after_a_look_but_before_the_first_profile_starts_at_the_look_and_keeps_its_changes():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    mira = d["entities"][0]
+    mira["facets"] = [{"id": "bk.mira.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
+                       "text": "A slight young woman with dark braided hair."},
+                      {"id": "bk.mira.f2", "from": "a4", "basis": "stated", "evidence": ["a4"],
+                       "text": "Her arm is scarred by the mill wheel."},
+                      portrait("mira", "a10", "A slight young woman with a scarred arm who carries baskets to the mill.")]
+    _, _, sink, _, _ = run(d, bk, portraits={"mira"}, level="none", until=(0, "a5"))
+    assert [p["from"] for p in pics(sink)] == ["a1", "a4"]
+    _, _, sink2, _, _ = run(d, bk, portraits={"mira"}, level="none")
+    assert [p["from"] for p in pics(sink2)][:2] == ["a1", "a4"]      # what a bulk run plans up to there (then a10)
+
+
+# ---- the scene's place and things (consistent-scene-places)
+
+
+MILL_THEN = "A stone mill of grey granite with a slate roof and a great oak wheel turning in the river."
+MILL_NOW = "The mill on the river where travellers ask for a bed."
+
+
+def place_doc(link=True):
+    """The mill described twice (its look told first, then only its use), a silver coin (a thing) described twice the same
+    way, and e6 (Mira and the Stranger, with the coin) happening at the mill when `link`."""
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][2]["facets"] = [portrait("mill", "a0", MILL_THEN, 1), portrait("mill", "a7", MILL_NOW, 2)]
+    d["entities"].append(ent("coin", "the silver coin", "object", frm="a7", facets=[
+        portrait("coin", "a7", "A silver coin stamped with a crowned wolf on one face.", 1),
+        portrait("coin", "a9", "The coin the stranger left behind on the table.", 2)]))
+    d["events"][5]["entities"].append("coin")
+    if link:
+        d["events"][5]["setting"] = {"text": "the mill yard", "place": "mill"}
+    return bk, d
+
+
+def scene_writer(d, bk, kind="event", target="e6", at="a11", sink=None, **kw):
+    sink = sink or Mem()
+    t = Text(picks=lambda s: True)
+    il = art.Illustrator([art.Book(d, bk, sink)], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0, **kw)
+    pr = il.make_prompt(il.job(kind, target, at=at))
+    return writer_calls(t)[-1], pr, il
+
+
+def labelled_sink(d):
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], "ink"), "pictures": [pic("pmira001", "mira", "a4"),
+                                                                            pic("pstra001", "stranger", "a7")]}
+    sink.files.update({"pmira001.png": b"mira", "pstra001.png": b"stranger"})
+    return sink
+
+
+def test_a_scene_at_a_linked_place_gets_the_places_entry_with_its_earlier_look_and_the_figures_are_unchanged():
+    bk, d = place_doc()
+    w, pr, _ = scene_writer(d, bk, sink=labelled_sink(d))
+    assert tag(w, "setting_entry") == MILL_NOW and 'name="the mill" type="place"' in w
+    assert "slate roof" in tag(w.split("<setting_entry", 1)[1], "earlier_look")        # its look told earlier comes with it
+    assert '<entry name="the mill"' not in w and w.index("<setting_entry") > w.rindex("<entry ")
+    assert "(where: the mill yard)" in tag(w, "moment") and {"a0", "a7"} <= set(pr.sources)
+    # the thing the event names keeps its look the same way
+    coin = re.search(r'<entry name="the silver coin" type="thing">(.*?)</entry>\s*<earlier_look name="the silver coin">(.*?)</earlier_look>', w, re.S)
+    assert coin and "crowned wolf" in coin.group(2)
+    # the figures' entries, their labels and what is attached are those of the same scene with no linked place
+    bk2, d2 = place_doc(link=False)
+    w2, pr2, _ = scene_writer(d2, bk2, sink=labelled_sink(d2))
+    entries = lambda w: re.findall(r'<entry [^>]*>.*?</entry>(?:\s*<earlier_look name="[^"]*">.*?</earlier_look>)?', w, re.S)
+    assert entries(w) == entries(w2) and "<setting_entry" not in w2
+    assert pr.figures == pr2.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "stranger"}]
+    assert [r["id"] for _, r in pr.references] == [r["id"] for _, r in pr2.references] == ["pmira001", "pstra001"]
+    assert pr.shows == pr2.shows
+
+
+def test_the_place_entry_is_the_one_visible_at_the_anchor_and_never_counts_against_the_figures(monkeypatch):
+    bk, d = place_doc()
+    d["entities"][2]["facets"][1]["from"] = d["entities"][2]["facets"][1]["evidence"][0] = "a10"   # described after e6
+    w, _, _ = scene_writer(d, bk, at="a9")
+    assert tag(w, "setting_entry") == MILL_THEN and "travellers" not in w
+    bk, d = place_doc()
+    for e in d["entities"]:
+        if e["id"] == "mill":            # the place itself is first named after the moment: no entry, the words stay
+            e["from"] = e["names"][0]["from"] = "a10"
+            e["facets"] = [portrait("mill", "a10", MILL_THEN, 1)]
+    w, _, _ = scene_writer(d, bk, at="a11")
+    assert "<setting_entry" not in w and "slate roof" not in w and "(where: the mill yard)" in w
+    bk, d = place_doc()
+    monkeypatch.setattr(art, "MAX_ENTRIES", 2)        # the figures fill the entries; the place still has its own
+    w, _, _ = scene_writer(d, bk)
+    assert w.count("<entry ") == 2 and 'name="Mira"' in w and 'name="the Stranger"' in w and tag(w, "setting_entry") == MILL_NOW
+
+
+def test_a_place_only_an_unfinished_earlier_book_has_never_reaches_the_scene():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"][2]["facets"] = [portrait("mill", "a0", MILL_THEN, 1, "b1")]
+    d2["events"][0]["setting"] = {"text": "the mill door", "place": "mill"}
+    t = Text(picks=lambda s: True)
+    il = art.Illustrator([art.Book(d1, bk1, Mem(), None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink",
+                         portraits="all", workers=1, log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("event", "e1", at="b2.a5", finished=set()))
+    w = writer_calls(t)[-1]
+    assert "<setting_entry" not in w and "slate roof" not in w and pr.inherits == [] and pr.partial
+    pr = il.make_prompt(il.job("event", "e1", at="b2.a5", finished={"b1"}))
+    assert tag(writer_calls(t)[-1], "setting_entry") == MILL_THEN and "b1" in pr.inherits
+
+
+def test_a_plate_takes_the_place_of_its_main_moment_only():
+    bk, d = place_doc()
+    w, pr, il = scene_writer(d, bk, "plate", "Two")
+    assert il.job("plate", "Two").event["id"] == "e4" and "<setting_entry" not in w     # e6's place is not the plate's
+    d["events"][3]["setting"] = {"text": "the mill", "place": "mill"}
+    w, pr, _ = scene_writer(d, bk, "plate", "Two")
+    assert tag(w, "setting_entry") == MILL_NOW
+
+
+def test_the_place_rule_is_the_scene_writers_and_a_portrait_never_gets_a_setting_entry():
+    rule = "When there is a <setting_entry>, the moment happens there: draw the setting as it and its <earlier_look> describe it"
+    assert rule in art.SCENE_WRITER and rule not in art.WRITER and rule not in art.PORTRAIT_WRITER
+    assert "<setting_entry>" not in art.WRITER and "<setting_entry>" not in art.PORTRAIT_WRITER
+    bk, d = place_doc()
+    for kind, target in (("portrait", "stranger"), ("place", "mill"), ("thing", "coin")):
+        w, _, _ = scene_writer(d, bk, kind, target)
+        assert "<setting_entry" not in w, kind
+
+
+def place_sink(d, *extra):
+    sink = labelled_sink(d)
+    for r in (pic("pmill001", "mill", "a0", kind="place"), pic("pcoin001", "coin", "a7", kind="thing")) + extra:
+        sink.m["pictures"].append(r)
+        sink.files[r["file"]] = r["id"].encode()
+    return sink
+
+
+def test_place_and_thing_pictures_are_no_reference_unless_the_flag_is_on():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert il.place_refs is False
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]
+    il.draw(job, pr)
+    assert im.calls[-1]["references"] == [b"mira", b"stranger"] and "place where the scene happens" not in im.calls[-1]["note"]
+
+
+def test_with_place_refs_the_place_then_the_things_take_the_slots_after_the_figures():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0,
+                         place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert pr.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "stranger"}]      # figures unchanged
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert il.references(job, pr.shows, figures=pr.figures) == pr.references
+    rec = il.draw(job, pr)
+    call = im.calls[-1]
+    assert call["references"] == [b"mira", b"stranger", b"pmill001", b"pcoin001"]
+    assert call["note"] == " ".join([
+        "Reference picture 1 is figure A.", "Reference picture 2 is figure B.", art.FIGURE_NOTE,
+        art.PLACE_NOTE.format(n=3), art.THING_NOTE.format(n=4, name="the silver coin")])
+    assert "never its framing, viewpoint or composition" in call["note"] and "never its size or placement" in call["note"]
+    assert call["note"] not in call["prompt"]
+    assert rec["references"] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": "pmira001"},
+                              {"label": "B", "entity": "stranger", "ref": "pstra001"}]
+    # a person's text that drops a label: that figure's picture goes, the place and thing stay after the others
+    im.calls.clear()
+    il.draw(job, pr, text="A grey stone mill yard at dusk. Figure B, a hooded traveller, waits at the gate by the wheel.")
+    assert im.calls[-1]["references"] == [b"stranger", b"pmill001", b"pcoin001"]
+    assert im.calls[-1]["note"].startswith("Reference picture 1 is figure B. ") and art.PLACE_NOTE.format(n=2) in im.calls[-1]["note"]
+
+
+def test_the_place_and_things_only_fill_slots_the_figures_leave(monkeypatch):
+    bk, d = place_doc()
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    monkeypatch.setattr(art, "MAX_REFERENCES", 3)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001"]          # the place before the thing
+    monkeypatch.setattr(art, "MAX_REFERENCES", 2)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]                       # no room: figures only
+
+
+def test_a_place_reference_is_never_past_the_anchor_and_one_in_another_style_keeps_only_what_it_should():
+    bk, d = place_doc()
+    sink = labelled_sink(d)
+    sink.m["pictures"].append(pic("pmill009", "mill", "a10", kind="place"))     # drawn from after the moment
+    sink.files["pmill009.png"] = b"late mill"
+    digital = likeness_set(d, pic("pmilldig", "mill", "a0", kind="place"))
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink, likeness={"digital-art": digital})], Text(), im, "ink", portraits="all",
+                         workers=1, log=lambda *_: None, pause=0, place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmilldig"]
+    il.draw(job, pr)
+    note = im.calls[-1]["note"]
+    assert art.PLACE_NOTE.format(n=3) + art.OTHER_STYLE in note and "likeness of the figure" not in note
+    # a place the reader has not reached is never a reference: its entity is not in the view
+    bk, d = place_doc()
+    for e in d["entities"]:
+        if e["id"] == "mill":
+            e["from"] = e["names"][0]["from"] = "a10"
+            e["facets"] = [portrait("mill", "a10", MILL_THEN, 1)]
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert "pmill001" not in [r["id"] for _, r in pr.references]
+
+
+def test_a_thing_the_moments_summary_names_is_in_the_scene_and_one_not_reached_is_not():
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][5]["summary"] = "Mira finds the silver coin the stranger left behind."
+    w, pr, _ = scene_writer(d, bk)
+    assert '<entry name="the silver coin" type="thing">' in w and "coin" in pr.shows and "crowned wolf" in w
+    d["events"][5]["summary"] = "Mira finds the silvery coins the stranger left behind."        # as written, or no match
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="the silver coin"' not in w
+    d["events"][5]["summary"] = "Mira finds a silver coin-shaped stone the stranger left behind."   # a compound is no coin
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["names"][0]["value"] = "coin"
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="coin"' not in w and "crowned wolf" not in w
+    d["events"][5]["summary"] = "Mira finds the coin the stranger left behind."                  # the whole word is
+    w, _, _ = scene_writer(d, bk)
+    assert '<entry name="coin" type="thing">' in w
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][4]["summary"] = "Gabriel rides in with the silver coin and news of a storm."     # e5 at a8: coin is from a7
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["from"] = e["names"][0]["from"] = "a9"
+            for f in e["facets"]:
+                f["from"] = f["evidence"][0] = "a9"
+    w, _, _ = scene_writer(d, bk, target="e5", at="a11")
+    assert '<entry name="the silver coin"' not in w and "crowned wolf" not in w          # not reached at a8
+
+
+# ---- one model per responsibility
+
+
+class Named(Text):
+    """A scripted text model with a provider, a name and a usage counter that costs `each` dollars a call."""
+
+    def __init__(self, provider, name, each=0.001, **kw):
+        super().__init__(**kw)
+        self.provider, self.name, self.each = provider, name, each
+        self.usage = llm.Usage()
+
+    def complete(self, system, prompt, schema, prefix=None):
+        self.usage.cost_usd += self.each
+        return super().complete(system, prompt, schema, prefix)
+
+    def choosing(self):
+        return [p for p, s in zip(self.prompts, self.systems) if s not in WRITERS]
+
+
+class NamedImage(Image):
+    def __init__(self, provider, name, **kw):
+        super().__init__(**kw)
+        self.provider, self.name = provider, name
+
+    def draw(self, prompt, *, shape="landscape", quality="standard", references=(), **kw):
+        got = super().draw(prompt, shape=shape, quality=quality, references=references, **kw)
+        return images.Drawn(got.data, got.mime, self.name, got.cost)
+
+
+def test_each_responsibility_uses_its_own_model():
+    scene, portrait, picker = Named("claude", "haiku"), Named("claude", "sonnet"), Named("gemini", "flash-lite")
+    il, rep, sink, _, im = run(text_=scene, portrait_text=portrait, cheap_text=picker)
+    assert pics(sink, "plate") and pics(sink, "portrait")
+    # the scene writer writes scene prompts only, the portrait writer portrait prompts only, the picker only chooses
+    assert scene.scenes() and not any(is_portrait(p) for p in scene.scenes()) and not scene.choosing()
+    assert portrait.scenes() and all(is_portrait(p) for p in portrait.scenes()) and not portrait.choosing()
+    assert not picker.scenes() and any("Which of them are a visible moment" in p for p in picker.choosing())
+    assert any("notes a reader's companion keeps" in p for p in picker.choosing())
+    for r in pics(sink, "plate"):
+        assert r["writer"] == {"provider": "claude", "model": "haiku"}
+    for r in pics(sink, "portrait"):
+        assert r["writer"] == {"provider": "claude", "model": "sonnet"}
+    # the text cost is split by responsibility
+    assert rep.text_costs == {"scene prompts": pytest.approx(scene.usage.cost_usd),
+                              "portrait prompts": pytest.approx(portrait.usage.cost_usd),
+                              "choosing calls": pytest.approx(picker.usage.cost_usd)}
+    assert rep.text_cost == pytest.approx(scene.usage.cost_usd + portrait.usage.cost_usd + picker.usage.cost_usd)
+    assert "portrait prompts $" in rep.lines()[0]
+
+
+def test_the_look_sentences_are_picked_by_the_picker():
+    scene, picker = Named("claude", "haiku"), Named("gemini", "flash-lite")
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         scene, Image(), "ink", portraits="all", cheap_text=picker, workers=1, log=lambda *_: None, pause=0)
+    il.look_sentences(0, "mira", make=True)
+    assert any("Which sentences tell how" in p for p in picker.prompts) and not scene.prompts
+
+
+def test_one_model_for_every_text_responsibility_behaves_as_before():
+    t = Named("claude", "haiku")
+    il, rep, sink, _, _ = run(text_=t)
+    assert any(is_portrait(p) for p in t.scenes()) and any(not is_portrait(p) for p in t.scenes()) and t.choosing()
+    assert rep.text_costs == {"scene prompts and portrait prompts and choosing calls": pytest.approx(t.usage.cost_usd)}
+    assert "(" not in rep.lines()[0].split("text $")[1]       # no split shown for one model
+    assert all(r["writer"] == {"provider": "claude", "model": "haiku"} for r in pics(sink))
+
+
+def test_a_model_with_no_name_writes_no_writer_on_the_record():
+    il, rep, sink, _, _ = run()
+    assert pics(sink) and not any("writer" in r for r in pics(sink))
+
+
+def test_the_portrait_image_model_draws_portraits_only():
+    scenes, portraits = NamedImage("gemini", "nano-banana"), NamedImage("openai", "gpt-image")
+    il, rep, sink, _, _ = run(image=scenes, portrait_image=portraits)
+    assert scenes.calls and portraits.calls
+    assert all(c["shape"] == "portrait" for c in portraits.calls) and all(c["shape"] != "portrait" for c in scenes.calls)
+    assert all((r["provider"], r["model"]) == ("openai", "gpt-image") for r in pics(sink, "portrait"))
+    assert all((r["provider"], r["model"]) == ("gemini", "nano-banana") for r in pics(sink, "plate"))
+    assert il.image_for("place")[0] is portraits and il.image_for("thing")[0] is portraits
+    assert il.image_for("event")[0] is scenes
+
+
+def test_a_refused_portrait_is_rewritten_by_the_portrait_writer():
+    quiet = ("A woman of middle height in a plain grey dress and a dark shawl, her hair pinned back, a calm and steady look "
+             "on her face, against a plain pale wall lit by soft daylight from one side, quiet and still.")
+    scene = Named("claude", "haiku")
+    portrait = Named("claude", "sonnet", scene=lambda p: quiet if "quieter composition" in p else PORTRAIT_SCENE)
+    im = Image(refuse=[lambda prompt, n: prompt.startswith(art.PORTRAIT_FRAME) and quiet not in prompt and n <= 1])
+    il, rep, sink, _, _ = run(text_=scene, portrait_text=portrait, image=im)
+    assert rep.softened == 1
+    assert any("quieter composition" in p for p in portrait.prompts)
+    assert not any("quieter composition" in p for p in scene.prompts)
+
+
+def test_the_cheaper_image_model_bounds_the_room_left(monkeypatch):
+    prices = {("gemini", "dear"): 1.0, ("gemini", "cheap"): 0.1}
+    monkeypatch.setattr(llm, "image_price", lambda p, m, q="standard", s=None: prices.get((p, m)))
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         Text(), NamedImage("gemini", "dear"), "ink", portrait_image=NamedImage("gemini", "cheap"), cap=1.0,
+                         log=lambda *_: None, pause=0)
+    assert il._budget() == 10
+
+
+def test_illustrate_command_takes_a_model_per_responsibility(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    i1 = _cli_index(tmp_path, base_doc(bk), bk, "mill.lore.json")
+    made, drew = {}, []
+
+    def make_model(args, model=None, provider=None):
+        return made.setdefault((provider, model), Named(provider, model))
+
+    def make_image(provider, model=None, **k):
+        drew.append((provider, model))
+        return NamedImage(provider, model or llm.image_spec(provider)["default"])
+    monkeypatch.setattr(cli, "_make_model", make_model)
+    monkeypatch.setattr(llm, "make_image", make_image)
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    seen = []
+    real = art.Illustrator
+
+    def spy(*a, **k):
+        il = real(*a, **k)
+        seen.append(il)
+        return il
+    monkeypatch.setattr(art, "Illustrator", spy)
+    base = ["illustrate", str(i1), "--epub", "1.epub", "--out", str(tmp_path / "o"), "--limit", "0", "--quality", "standard"]
+    assert cli.main(base) == 0                              # defaults: cheap scene writer and picker, strong portrait writer
+    il = seen[-1]
+    cheap, strong = llm.PROVIDERS["gemini"]["cheap"], llm.PROVIDERS["gemini"]["strong"]
+    assert (il.text.name, il.portrait_text.name, il.cheap.name) == (cheap, strong, cheap) and il.cheap is il.text
+    assert il.portrait_image is il.image
+    assert cli.main(base + ["--writer", "openai:gpt-x", "--portrait-writer", "gemini:g-pro", "--picker", "gemini",
+                            "--portrait-model", "openai:" + llm.image_spec("openai")["default"]]) == 0
+    il = seen[-1]
+    assert (il.text.provider, il.text.name) == ("openai", "gpt-x")
+    assert (il.portrait_text.provider, il.portrait_text.name) == ("gemini", "g-pro")
+    assert (il.cheap.provider, il.cheap.name) == ("gemini", cheap)
+    assert il.portrait_provider == "openai" and il.provider == "gemini"
+    # --text-model alone keeps one model for the scene prompts and the choosing calls, as before; portraits go strong
+    assert cli.main(base + ["--text-provider", "gemini", "--text-model", "gemini-x"]) == 0
+    il = seen[-1]
+    assert il.text.name == "gemini-x" and il.cheap is il.text and il.portrait_text.name == strong
+    with pytest.raises(SystemExit, match="no provider"):
+        cli.main(base + ["--writer", "nobody:x"])
+    with pytest.raises(SystemExit, match="Claude cannot draw"):
+        cli.main(base + ["--portrait-model", "claude:x"])

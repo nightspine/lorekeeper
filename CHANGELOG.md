@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.22.0](https://github.com/nightspine/lorekeeper/compare/v0.21.0...v0.22.0) (2026-11-26)
+
+
+### Features
+
+* a scene's place and the objects it names keep their look across pictures ([#124](https://github.com/nightspine/lorekeeper/issues/124)) ([a471916](https://github.com/nightspine/lorekeeper/commit/a471916ce3dc328296584a15e18d510058bf5826))
+* draw one character's portraits through the book so far ([#126](https://github.com/nightspine/lorekeeper/issues/126)) ([f291b81](https://github.com/nightspine/lorekeeper/commit/f291b812ddc901701fe7602282b6e6c3165a210f))
+
+## [0.21.0](https://github.com/nightspine/lorekeeper/compare/v0.20.0...v0.21.0) (2026-11-26)
+
+
+### Features
+
+* choose the text and image model for each picture job ([#121](https://github.com/nightspine/lorekeeper/issues/121)) ([609f757](https://github.com/nightspine/lorekeeper/commit/609f7572ce2c78d31fac6eef0c74f6c954861fdf))
+
 ## [0.20.0](https://github.com/nightspine/lorekeeper/compare/v0.19.0...v0.20.0) (2026-11-25)
 
 

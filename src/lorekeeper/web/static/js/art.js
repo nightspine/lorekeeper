@@ -49,8 +49,15 @@ export function artDefaults() {
   try { d = JSON.parse(read("lk-art-defaults", "{}")) || {}; } catch {}
   return { style: typeof d.style === "string" ? d.style : "digital-art", quality: ["draft", "standard", "best"].includes(d.quality) ? d.quality : "standard",
     cap: Number.isFinite(+d.cap) && +d.cap > 0 ? +d.cap : 10, provider: typeof d.provider === "string" ? d.provider : null,
-    model: typeof d.model === "string" ? d.model : null };
+    model: typeof d.model === "string" ? d.model : null,
+    // The text models of each responsibility ({ provider, model } or null: the server's default) and the portraits' image
+    // model (null: the same as scenes). A choice whose provider or model is no longer offered is ignored where it is used.
+    writer: textPick(d.writer), portraitWriter: textPick(d.portraitWriter), picker: textPick(d.picker),
+    portraitProvider: typeof d.portraitProvider === "string" && d.portraitProvider ? d.portraitProvider : null,
+    portraitModel: typeof d.portraitModel === "string" && d.portraitModel ? d.portraitModel : null };
 }
+const textPick = (v) => (v && typeof v === "object" && typeof v.provider === "string" && v.provider && typeof v.model === "string" && v.model
+  ? { provider: v.provider, model: v.model } : null);
 export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ ...artDefaults(), ...d }));
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
@@ -87,18 +94,126 @@ export function forgetArt(key = null) {
   for (const k of [...cache.keys()]) if (key == null || k.startsWith(`${key}\n`)) cache.delete(k);
 }
 
-/** The image providers that can draw now: configured cloud providers that have an image table. Cached for a minute. */
+/** Every provider row of /api/providers, cached for a minute ([] when the call fails). */
 let provCache = null;
-export function imageProviders({ fresh = false } = {}) {
+function allProviders({ fresh = false } = {}) {
   if (fresh || !provCache || Date.now() - provCache.at > 60000) {
     const promise = api.providers().then((r) => {
-      const all = r.providers || [];
-      for (const p of all) for (const m of imageModels(p)) MODEL_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
-      return all.filter((p) => canDraw(p));
+      const all = Array.isArray(r?.providers) ? r.providers : [];
+      for (const p of all) {
+        if (typeof p?.label === "string") PROVIDER_NAME.set(p.id, p.label);
+        for (const m of imageModels(p)) MODEL_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
+        for (const m of textModels(p)) TEXT_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
+      }
+      return all;
     }).catch(() => []);
     provCache = { at: Date.now(), promise };
   }
   return provCache.promise;
+}
+/** The image providers that can draw now: configured cloud providers that have an image table. */
+export function imageProviders(opts = {}) {
+  return allProviders(opts).then((all) => all.filter((p) => canDraw(p)));
+}
+/** The providers that can write prompts now: every cloud provider whose key works and that lists a text model (Ollama is
+ *  not one of them: /api/providers lists cloud providers only). */
+export function textProviders(opts = {}) {
+  return allProviders(opts).then((all) => all.filter((p) => p && p.ok && textModels(p).length));
+}
+/** Both lists from one request: { image, text }. */
+export function modelProviders(opts = {}) {
+  return allProviders(opts).then((all) => ({ image: all.filter((p) => canDraw(p)), text: all.filter((p) => p && p.ok && textModels(p).length) }));
+}
+/** Text model names by "provider\nid", and provider names by id (the lightbox names the model that wrote a prompt). */
+const TEXT_LABEL = new Map();
+const PROVIDER_NAME = new Map();
+/** A provider's text models as Settings lists them: presets, then live ones the presets lack; a custom server's
+ *  configured model when it lists none. [{ id, label, price: [in, out] per million tokens | null, tier }] */
+export function textModels(p) {
+  if (!p) return [];
+  const seen = new Set(), out = [];
+  for (const m of [...(Array.isArray(p.models) ? p.models : []), ...(Array.isArray(p.liveModels) ? p.liveModels : [])]) {
+    if (!m || typeof m.id !== "string" || !m.id || seen.has(m.id)) continue;
+    seen.add(m.id); out.push(m);
+  }
+  if (!out.length && typeof p.default === "string" && p.default) out.push({ id: p.default, label: p.default, price: null, tier: null });
+  return out;
+}
+const dollars = (v) => `$${v < 1 ? v.toFixed(2) : v.toFixed(v % 1 ? 2 : 0)}`;
+/** "Claude Haiku 5.5, $0.10 in and $0.50 out per million tokens", or "..., price unknown". */
+export function textModelLine(m) {
+  const pr = Array.isArray(m?.price) && m.price.length === 2 && m.price.every((x) => Number.isFinite(+x)) ? m.price : null;
+  return `${m.label || m.id}, ${pr ? `${dollars(+pr[0])} in and ${dollars(+pr[1])} out per million tokens` : "price unknown"}`;
+}
+/** A text model's name ("Claude Sonnet 5.5"), else its id. */
+export const textModelLabel = (provider, id) => (id ? TEXT_LABEL.get(`${provider}\n${id}`) || id : "");
+/** "Claude Sonnet 5.5 on Claude": who wrote a picture's prompt, from a record's `writer`; "" when it does not say. */
+export function writerFact(w) {
+  if (!w || typeof w !== "object" || typeof w.model !== "string" || !w.model) return "";
+  const prov = typeof w.provider === "string" ? PROVIDER_NAME.get(w.provider) || PROVIDER_LABEL[w.provider] || w.provider : "";
+  const name = textModelLabel(w.provider, w.model);
+  return prov && !name.toLowerCase().includes(prov.toLowerCase()) ? `${name} on ${prov}` : name;
+}
+/** A saved or chosen text model when it can still be used ({ provider, model } of a working provider that lists it),
+ *  else null: the server's default then. */
+export function textChoice(provs, want) {
+  if (!want || typeof want.provider !== "string" || typeof want.model !== "string") return null;
+  const p = provs.find((x) => x.id === want.provider);
+  return p && textModels(p).some((m) => m.id === want.model) ? { provider: p.id, model: want.model } : null;
+}
+/** The text model the server uses when none is chosen: the `tier` model of `prefer` (a run's own cloud provider) when it
+ *  works, else of the first working provider. */
+function tierDefault(provs, tier, prefer = null) {
+  const first = provs.find((p) => p.id === prefer);
+  for (const p of first ? [first, ...provs.filter((x) => x !== first)] : provs) {
+    const id = typeof p[tier] === "string" && p[tier] ? p[tier] : null;
+    const m = id ? textModels(p).find((x) => x.id === id) : textModels(p)[0];
+    if (m) return { p, m };
+  }
+  return null;
+}
+/** The first option of a writer select: "Default: Claude Haiku 5.5, $0.10 in and ...". */
+const defaultLine = (provs, tier, prefer = null) => { const def = tierDefault(provs, tier, prefer); return def ? `Default: ${textModelLine(def.m)}` : "Default"; };
+/** Say again which model Default stands for in a writer select made by `writerSelect` (the run's provider changed). */
+export function setWriterDefault(sel, provs, tier, prefer = null) {
+  const opt = sel?.querySelector("option[value='']");
+  if (opt) opt.textContent = defaultLine(provs, tier, prefer);
+}
+const SEP = "|";   // provider ids are slugs, so "provider|model" splits at its first bar whatever the model id holds
+const splitChoice = (v) => { const i = String(v || "").indexOf(SEP); return i > 0 ? { provider: v.slice(0, i), model: v.slice(i + 1) } : null; };
+/**
+ * A select of every text model of the working providers, grouped by provider, each with its price per million tokens;
+ * the first option is the server's default for `tier` ("Default: Claude Haiku 5.5"). `value` is { provider, model } or
+ * null; `onChange(choice)` gets the same.
+ */
+export function writerSelect({ id, provs, value = null, tier = "cheap", prefer = null, disabled = false, onChange, label = null }) {
+  const cur = textChoice(provs, value);
+  return h(`select.select.art-writer#${id}`, { disabled, ...(label ? { "aria-label": label } : {}), on: { change: (e) => onChange?.(splitChoice(e.target.value)) } },
+    h("option", { value: "", selected: !cur }, defaultLine(provs, tier, prefer)),
+    provs.map((p) => h("optgroup", { label: p.label }, textModels(p).map((m) =>
+      h("option", { value: `${p.id}${SEP}${m.id}`, selected: Boolean(cur && cur.provider === p.id && cur.model === m.id) }, textModelLine(m))))));
+}
+/** The portrait image model chosen ({ provider, model } of a provider that draws and lists it), else null: same as scenes.
+ *  A saved model the provider no longer lists is never swapped for its default: it falls back to the same as scenes. */
+export function portraitImageChoice(provs, provider, model) {
+  const p = typeof provider === "string" ? provs.find((x) => x.id === provider) : null;
+  if (!p) return null;
+  const ms = imageModels(p);
+  if (!ms.length) return { provider: p.id, model: null };   // an older server with no image table: it picks the model itself
+  return typeof model === "string" && ms.some((m) => m.id === model) ? { provider: p.id, model } : null;
+}
+/** "Portraits drawn with": "Same as scenes" first, then every image model grouped by provider, priced at `quality`. */
+export function portraitImageSelect({ id, provs, provider = null, model = null, quality = "standard", disabled = false, onChange }) {
+  const cur = portraitImageChoice(provs, provider, model);
+  return h(`select.select.art-pimage#${id}`, { disabled, on: { change: (e) => onChange?.(splitChoice(e.target.value)) } },
+    h("option", { value: "", selected: !cur }, "Same as scenes"),
+    provs.map((p) => {
+      const ms = imageModels(p);
+      // An older server lists no image table: the provider alone, drawn with its default.
+      if (!ms.length) return h("option", { value: `${p.id}${SEP}`, selected: Boolean(cur && cur.provider === p.id) }, p.label);
+      return h("optgroup", { label: p.label }, ms.map((m) =>
+        h("option", { value: `${p.id}${SEP}${m.id}`, selected: Boolean(cur && cur.provider === p.id && cur.model === m.id) }, imageLine(p, quality, m.id))));
+    }));
 }
 /** Image model names by "provider\nid", from every /api/providers reply (the lightbox names the model a picture was drawn with). */
 const MODEL_LABEL = new Map();
@@ -267,6 +382,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const facts = [
       ["Style", styleLabel(it.style || r.style, it.styleText)],
       ["Model", modelFact(r)],
+      ["Prompt written by", writerFact(r.writer)],
       ["Quality", r.quality ? `${r.quality[0].toUpperCase()}${r.quality.slice(1)}` : null],
       ["Cost", typeof r.cost === "number" ? (r.cost > 0 ? money(r.cost).replace(/^about /, "") : "Price unknown") : null],
       ["Drawn", when(r.created)],
@@ -277,7 +393,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       hiddenUntil ? h("div.lb-details-body", h("p.lb-hidden", `How this was drawn is hidden until you finish ${hiddenUntil}.`)) : h("div.lb-details-body",
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         h("div.lb-figs", lbFigures(it)),
-        h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : "dd", v)])))));
+        h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
     clear(acts, it.canEdit ? [
       it.canRedraw === false ? null : h("button.btn.quiet", { type: "button", on: { click: () => redraw(it) } }, icon("refresh"), "Redraw"),
       h("button.btn.quiet.danger", { type: "button", on: { click: () => remove(it) } }, icon("trash"), "Delete"),
@@ -355,9 +471,11 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   // The model's name comes with the providers list; until it has arrived the id stands, then the line is put right in
   // place (a repaint would close "How this was drawn" under the person's eyes).
   imageProviders().then(() => {
-    const dd = dlg.isConnected ? how.querySelector(".lb-model") : null;
-    const r = items[i]?.rec;
-    if (dd && r) dd.textContent = modelFact(r);
+    const r = dlg.isConnected ? items[i]?.rec : null;
+    if (!r) return;
+    const dd = how.querySelector(".lb-model"), wd = how.querySelector(".lb-writer");
+    if (dd) dd.textContent = modelFact(r);
+    if (wd) wd.textContent = writerFact(r.writer) || wd.textContent;
   });
   return { close, refresh };
 }
@@ -395,10 +513,13 @@ export function modalToasts() {
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
  *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
  *                the old one stays (no `replaces` is sent)
+ *   through      a person or creature portrait: the sheet also offers "Through the book so far", the portraits a run would
+ *                plan for this one entry (first look, then each lasting look change) up to the position, already drawn ones
+ *                skipped, counted by the estimate and started as a pictures run on the queue (never with `replaces`)
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
-  const provs = await imageProviders({ fresh: true });
+  const { image: provs, text: writers } = await modelProviders({ fresh: true });
   if (!provs.length) {
     const sh = sheet({ title: "Draw a picture", className: "art-sheet",
       content: h("div.art-sheet-body", h("p", "Pictures need a Gemini or OpenAI key."),
@@ -415,6 +536,9 @@ export async function openPictureSheet(opts) {
     prompt: "", written: "", price: null, asked: null, slug: null,
     parts: null, sentence: null, missing: false,   // the prompt's parts, the style sentence in it now, and whether that is lost
     busy: false, closed: false, figures: [],   // figures: the labelled figures of the prompt on screen
+    mode: "now",   // "now": one portrait at the position; "through": the entry's portraits through the book so far, as a run
+    est: null,     // through: { ask, r, error } the estimate for the choices and position in `ask` (a JSON key)
+    writer: null,   // the text model that writes the prompt ({ provider, model }); null: the server's default, the strong tier
   };
   if (!STYLE_LABEL[st.style]) {
     st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
@@ -423,6 +547,9 @@ export async function openPictureSheet(opts) {
   }
   // The Settings model when it is the Settings provider's, else the provider's default (null: an older server picks).
   st.model = modelFor(st.provider, st.provider.id === d.provider ? d.model : null);
+  // A portrait, place or thing starts from the Settings portrait image model, when one is chosen and can draw.
+  const forPortraits = ENTITY_KINDS.has(st.kind) ? portraitImageChoice(provs, d.portraitProvider, d.portraitModel) : null;
+  if (forPortraits) { st.provider = provs.find((p) => p.id === forPortraits.provider); st.model = forPortraits.model; }
   st.quality = fitQuality(st.provider, st.model, st.quality);
   // The style as sent to the server (a known slug, or the person's words), and the folder slug pictures are filed under:
   // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
@@ -435,14 +562,16 @@ export async function openPictureSheet(opts) {
 
   const body = h("div.art-sheet-body");
   const drawBtn = h("button.btn.primary", { type: "button", disabled: true }, icon("sparkle"), "Draw");
+  const through = Boolean(opts.through) && opts.kind === "portrait" && !(typeof opts.replaces === "string" && opts.replaces);
+  const startBtn = h("button.btn.primary", { type: "button", disabled: true, hidden: true }, icon("sparkle"), "Start");
   const footNote = h("span.art-price.num", { role: "status" });
   const replaces = typeof opts.replaces === "string" && ID_RE.test(opts.replaces) ? opts.replaces : null;
   const sh = sheet({ title: `${replaces ? "Redraw" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
-    footer: h("div.art-foot", footNote, drawBtn),
+    footer: h("div.art-foot", footNote, drawBtn, startBtn),
     // Always closable: a prompt in flight is abandoned; a drawing already sent is not (the server files it either way), and
     // when it lands its toast, with Undo for a redraw, shows where the sheet was opened from. An edited prompt is asked about first.
     beforeClose: () => {
-      if (st.drawing) return true;
+      if (st.drawing || st.starting) return true;
       if (st.busy) { abort(); return true; }
       if (!st.prompt || st.prompt === st.written) return true;
       confirmDialog({ title: "Discard your prompt?", message: "The prompt you changed is not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
@@ -467,8 +596,11 @@ export async function openPictureSheet(opts) {
     opts.canEditWorld = canEditWorld;   // decided again for the position now: a note hidden here is never written over
     st.prompt = st.written = "";
     st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
+    if (st.mode === "through") { paintFoot(); return; }   // counted again up to the position now; the prompt waits for "now"
     write();
   };
+  /** The position moved (either way): "Through the book so far" counts again up to where the reader is now. */
+  sh.moved = () => { if (st.mode === "through" && !st.closed) paintFoot(); };
 
   const textarea = h("textarea.input.art-prompt", { rows: "7", "aria-label": "Prompt", spellcheck: "true" });
   textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); paintFigures(); });
@@ -484,7 +616,7 @@ export async function openPictureSheet(opts) {
     st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
     textarea.value = "";
     if (!retried) { write({ retried: true }); return; }
-    clear(body, h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
+    clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
       h("button.btn", { type: "button", on: { click: () => write() } }, "Write it again"));
     paintFoot();
   }
@@ -494,12 +626,13 @@ export async function openPictureSheet(opts) {
     const mine = ++gen;
     ctrl = new AbortController();
     st.busy = true;
-    clear(body, loading("Writing a prompt from what you have read…"));
+    clear(body, modePick(), loading("Writing a prompt from what you have read…"));
     paintFoot();
     const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
+    const writer = textChoice(writers, st.writer);
     try {
       const r = await api.artPrompt(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
-        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...here() }, ctrl.signal);
+        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...(writer ? { writer } : {}), ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
       if (!reachedNow(r)) { st.busy = false; ctrl = null; moved(retried); return; }
       st.parts = promptParts(r);
@@ -533,7 +666,7 @@ export async function openPictureSheet(opts) {
         clear(err, h("p", why));
         return;
       }
-      clear(body, h("div.art-error", { role: "alert" }, h("p", why)),
+      clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", why)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
       paintFoot();
     }
@@ -548,9 +681,10 @@ export async function openPictureSheet(opts) {
     clear(err, loading("Rewriting the prompt so it can be drawn…"));
     paintFoot();
     const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
+    const writer = textChoice(writers, st.writer);
     try {
       const r = await api.artSoften(opts.key, { kind: st.kind, target: st.target, style: asked.style, shape: asked.shape,
-        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), text, reason, ...here() }, ctrl.signal);
+        quality: asked.quality, provider: asked.provider, ...(asked.model ? { model: asked.model } : {}), ...(writer ? { writer } : {}), text, reason, ...here() }, ctrl.signal);
       if (mine !== gen || st.closed) return;
       if (!reachedNow(r)) { st.busy = false; ctrl = null; moved(false); return; }
       const parts = promptParts(r);
@@ -587,7 +721,7 @@ export async function openPictureSheet(opts) {
    *  server sends no parts, so there the prompt is written again. Updates the text area in place (typing keeps focus). */
   function applyStyle() {
     if (!st.prompt && !st.parts) return;
-    if (!st.parts) { if (styleText() && styleText() !== st.promptStyle) write(); return; }
+    if (!st.parts) { if (st.mode === "now" && styleText() && styleText() !== st.promptStyle) write(); return; }
     const next = sentenceFor(st.parts, st.style, st.custom);
     if (next == null) { st.missing = true; return; }   // a known style the server did not list: the text stays as it is
     Object.assign(st, restyle({ prompt: st.prompt, written: st.written, parts: st.parts, old: st.sentence, next }));
@@ -656,7 +790,24 @@ export async function openPictureSheet(opts) {
       }), (nodes) => h("div.art-moments", { role: "radiogroup", "aria-label": "Moment to draw" }, nodes),
       { show: 4, noun: "moments", open: momentsOpen, onToggle: (o) => { momentsOpen = o; },
         keep: [opts.moments.findIndex((m) => m.kind === st.kind && m.target === st.target)] })) : null;
+    const modeSeg = modePick();
+    if (st.mode === "through") {
+      clear(body, modeSeg,
+        h("p.hint", "A portrait at their first look and one at each lasting change in how they look, up to your position. Portraits already drawn are skipped. They are drawn as a run, which you can follow in Runs."),
+        h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
+        h("div.art-row",
+          h("div.art-field", h("span.label", "Quality"), qualitySeg),
+          provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
+        modelPick ? h("div.art-field", models.length <= 3 ? h("span.label", "Model") : h("label.label", { for: "art-model" }, "Model"), modelPick) : null,
+        // the run's portrait writer: it writes every portrait's prompt (none chosen: the server's default, the strong tier)
+        writers.length ? h("div.art-field", h("label.label", { for: "art-writer" }, "Prompts written by"),
+          writerSelect({ id: "art-writer", provs: writers, value: st.writer, tier: "strong", onChange: (c) => { st.writer = c; } })) : null,
+        err);
+      paintFoot();
+      return;
+    }
     clear(body,
+      modeSeg,
       opts.drawnLine ? h("p.art-drawn.subtle", opts.drawnLine) : null,
       moments,
       h("div.art-field", h("label.label", { for: "art-prompt" }, "Prompt"), textarea,
@@ -669,6 +820,9 @@ export async function openPictureSheet(opts) {
         h("div.art-field", h("span.label", "Quality"), qualitySeg),
         provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
       modelPick ? h("div.art-field", models.length <= 3 ? h("span.label", "Model") : h("label.label", { for: "art-model" }, "Model"), modelPick) : null,
+      // Who writes the prompt: kept for "Write it again" (and a rewrite after a refusal); choosing one never writes it again.
+      writers.length ? h("div.art-field", h("label.label", { for: "art-writer" }, "Prompt written by"),
+        writerSelect({ id: "art-writer", provs: writers, value: st.writer, tier: "strong", onChange: (c) => { st.writer = c; } })) : null,
       worldLine(),
       err);
     textarea.id = "art-prompt";
@@ -718,7 +872,94 @@ export async function openPictureSheet(opts) {
     const a = st.asked;
     return a && a.quality === st.quality && a.provider === st.provider.id && a.model === st.model && a.shape === st.shape ? st.price : null;
   }
+  /** The choice between one portrait now and the entry's portraits through the book so far (null when not offered); it
+   *  heads every state of the sheet, a prompt being written or failed included, so either way is always open. */
+  function modePick() {
+    return through ? h("div.art-field", h("span.label", "What to draw"),
+      h("div.seg.art-mode", { role: "group", "aria-label": "What to draw" },
+        [["now", "As they are now"], ["through", "Through the book so far"]].map(([k, l]) =>
+          h("button", { type: "button", "aria-pressed": String(st.mode === k), on: { click: () => setMode(k) } }, l)))) : null;
+  }
+  /** "As they are now" or "Through the book so far". Leaving "now" keeps a prompt already on screen (typed text included)
+   *  and abandons one being written; coming back writes one only when there is none. */
+  function setMode(k) {
+    if (k === st.mode) return;
+    if (k === "through" && st.busy) abort();
+    st.mode = k;
+    clear(err);
+    if (k === "now" && !st.prompt) { write(); return; }
+    paint();
+    body.querySelector(".art-mode [aria-pressed=true]")?.focus();
+  }
+  /** The run's choices as the estimate and the run route take them: no scenes, portraits of this entry only, up to the
+   *  reader's position now (`until`, the frontier anchor) with their finished books. */
+  function throughAsk() {
+    const at = here();
+    // The sheet's image model is the one that draws these portraits: sent as the portrait image model (the estimate prices
+    // portraits with it, the run draws them with it), and as the scenes' too, since the run draws no scene.
+    return { style: styleText(), level: "none", portraits: "none", entities: [opts.target], until: at.p, finished: at.finished,
+      quality: st.quality, provider: st.provider.id, ...(st.model ? { model: st.model } : {}),
+      portraitProvider: st.provider.id, ...(st.model ? { portraitModel: st.model } : {}) };
+  }
+  let estGen = 0, estTimer = null;
+  /** Ask the estimate for the choices and position now, unless it already answered for exactly those. */
+  async function estimateThrough() {
+    const ask = throughAsk();
+    const key = JSON.stringify(ask);
+    if (!ask.style || ask.until == null) { st.est = null; paintFoot(); return; }
+    if (st.est?.ask === key) return;
+    const mine = ++estGen;
+    st.est = { ask: key, r: null, error: null, busy: true };
+    paintFoot();
+    let r = null, error = null;
+    try {
+      r = await api.artEstimate({ key: opts.key, ...ask });
+    } catch (e) { error = e; }
+    if (mine !== estGen || st.closed) return;
+    st.est = { ask: key, r, error, busy: false };
+    paintFoot();
+  }
+  /** The estimate as one sentence ("3 portraits, about 10 cents."), a range while the look index is not checked yet, and
+   *  whether there is anything to start. Counts only what the server counted up to the position. */
+  function throughLine() {
+    const e = st.est;
+    if (!styleText()) return { text: "Describe the style first.", ok: false };
+    if (here().p == null) return { text: "Nothing is revealed at your position yet.", ok: false };
+    if (!e || e.busy) return { text: "Counting the portraits…", ok: false };
+    if (e.error) return { text: runError(e.error, "Couldn't count the portraits"), ok: false };
+    const r = e.r || {};
+    // A server that does not know an entry's run counts the whole cast and would draw it: only an answer that says it
+    // counted this entry is a count for it.
+    if (!Array.isArray(r.entities) || !r.entities.includes(opts.target)) return { text: "This server can't draw one character through the book yet.", ok: false };
+    const lo = Number.isFinite(+r.portraits) ? +r.portraits : null;
+    if (lo == null) return { text: "Couldn't count the portraits.", ok: false };
+    const hiRaw = r.portraitsMax ?? r.portraits_max;
+    const hi = Number.isFinite(+hiRaw) && +hiRaw > lo ? +hiRaw : lo;
+    const noun = (n) => `portrait${n === 1 ? "" : "s"}`;
+    if (hi === 0) return { text: opts.title ? `Nothing new to draw for ${opts.title} up to here.` : "Nothing new to draw up to here.", ok: false };
+    if (hi > lo) {
+      const pmax = r.priceMax ?? r.price_max;
+      const cost = moneyRange(lo ? r.price : 0, pmax ?? r.price);
+      return { text: `${lo ? `${lo} to ${hi}` : `Up to ${hi}`} ${noun(hi)}, ${cost}. The exact number is known once the run has read how they look.`, ok: true };
+    }
+    const planned = Number.isFinite(+r.planned?.portraits) ? +r.planned.portraits : lo;
+    const held = planned > lo ? ` ${planned - lo} more ${planned - lo === 1 ? "is" : "are"} already drawn.` : "";
+    return { text: `${lo} ${noun(lo)}, ${money(r.price)}.${held}`, ok: true };
+  }
   function paintFoot() {
+    drawBtn.hidden = st.mode === "through";
+    startBtn.hidden = st.mode !== "through";
+    if (st.mode === "through") {
+      const ask = throughAsk();
+      const stale = st.est?.ask !== JSON.stringify(ask);
+      // A count made for other choices or another position is never shown as this one's.
+      const line = stale && ask.style && ask.until != null ? { text: "Counting the portraits…", ok: false } : throughLine();
+      footNote.textContent = line.text;
+      startBtn.disabled = !line.ok || st.starting || stale;
+      // A choice or the position changed: count again shortly (a typed custom style asks once the typing pauses).
+      if (stale && !st.closed && ask.style && ask.until != null) { clearTimeout(estTimer); estTimer = setTimeout(() => { if (st.mode === "through") estimateThrough(); }, 250); }
+      return;
+    }
     // An older server's prompt carries its style in the text: until it is written again for a new style, Draw waits.
     const stale = !st.parts && st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
     const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !stale;
@@ -732,6 +973,33 @@ export async function openPictureSheet(opts) {
         : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Price unknown for these choices" : "Price unknown";
   }
 
+  startBtn.addEventListener("click", async () => {
+    if (st.starting || st.mode !== "through") return;
+    // The count shown must be for the position now: a move since it was counted counts again first, and nothing starts.
+    if (st.est?.ask !== JSON.stringify(throughAsk())) { estimateThrough(); return; }
+    st.starting = true; startBtn.disabled = true;
+    // The run takes the position as `{p}` (an anchor id here) and portraits off: the entries alone say whose portraits.
+    const { until, finished, portraits: _all, ...rest } = throughAsk();
+    const cap = artDefaults().cap;
+    try {
+      // The writer chosen in the sheet writes these portraits' prompts (the run's portrait writer); none chosen: the
+      // server's default for portrait prompts, the strong tier.
+      const writer = textChoice(writers, st.writer);
+      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap,
+        ...(writer ? { portraitWriter: writer } : {}) });
+      st.starting = false;
+      st.written = st.prompt;   // nothing to ask about on close
+      sh.close(true);
+      toast(opts.title ? `Drawing ${opts.title} through the book so far.` : "Drawing their portraits through the book so far.", "ok", { host: modalToasts(),
+        action: job?.id ? { label: "Follow it in Runs", run: () => { location.hash = `#/studio/job/${encodeURIComponent(job.id)}`; } } : null });
+      opts.onStarted?.(job);
+    } catch (e) {
+      st.starting = false;
+      if (st.closed) { toast(`Couldn't start the run: ${e.message}`, "error", { host: modalToasts() }); return; }
+      clear(err, h("p", runError(e, "Couldn't start the run")));
+      paintFoot();
+    }
+  });
   drawBtn.addEventListener("click", async () => {
     if (st.busy) return;
     // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.
@@ -807,6 +1075,27 @@ export async function openPictureSheet(opts) {
   return sh;
 }
 
+/** A price range in one phrase: "about 7 to 14 cents", "about $1.20 to $2.40", "about 40 cents to $1.20", and with a zero
+ *  floor "up to about 14 cents"; either end unknown is "price unknown". */
+export function moneyRange(lo, hi) {
+  if (lo == null || hi == null || !Number.isFinite(+lo) || !Number.isFinite(+hi)) return "price unknown";
+  if (+hi <= +lo) return money(hi);
+  if (+lo <= 0) return `up to ${money(hi)}`;
+  const a = money(lo).replace(/^about /, ""), b = money(hi).replace(/^about /, "");
+  const cents = (t) => /cents?$/.test(t);
+  // Both in cents: the unit once ("7 to 14 cents"); otherwise each end keeps its own.
+  return cents(a) && cents(b) ? `about ${a.replace(/ cents?$/, "")} to ${b}` : `about ${a} to ${b}`;
+}
+
+/** One sentence for an entry's run (or its count) the server refused. */
+function runError(e, what) {
+  if (e.code === "not-visible") return "This isn't revealed at your position yet.";
+  if (e.code === "busy") return "Pictures are being drawn for this book. Try again once that run has finished.";
+  if (e.code === "bad-entity") return "Only people and creatures can be drawn through the book.";
+  if (e.code === "bad-position") return "Your position or finished books don't fit this book. Move the position and try again.";
+  return `${what}: ${e.message}`;
+}
+
 /** One sentence for a prompt the server could not write. "dropped" is the pipeline's own check refusing what the model wrote
  *  (a name, hindsight wording...): asking again usually gives a usable one. `why` names the check and the word it caught
  *  ("a name the picture must not show: Hagrid"), when the server could say it without revealing anything. */
@@ -851,11 +1140,14 @@ export function chapterCount(c) {
   return `${n} picture${n === 1 ? "" : "s"}${done ? `, ${done} already drawn` : ""}`;
 }
 
-export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null } = {}) {
+export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null, runProvider = null } = {}) {
   const d = artDefaults();
   const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
-    quality: d.quality, provider: null, model: null, cap: d.cap };
-  let provs = null;
+    quality: d.quality, provider: null, model: null, cap: d.cap,
+    // The Models group: each responsibility's text model (null: the server's default) and the portraits' image model
+    // (null provider: the same as scenes), from the Settings defaults.
+    writer: d.writer, portraitWriter: d.portraitWriter, picker: d.picker, pProvider: d.portraitProvider, pModel: d.portraitModel, modelsOpen: false };
+  let provs = null, writers = [];
   // The chapter list: `chs` is the estimate's last list (null before it, or from a server that does not number chapters),
   // `picked` the chosen plan numbers, every chapter that can get a picture at first. What can be ticked follows the level
   // (`chapterChoosable`); a row that stops being choosable keeps its tick for when it is again, and is never counted or sent
@@ -940,8 +1232,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     st.model = p ? modelFor(p, want) : null;
     if (p) st.quality = fitQuality(p, st.model, st.quality);
   };
-  imageProviders().then((list) => {
+  modelProviders().then(({ image: list, text }) => {
     provs = list;
+    writers = text;
     const p = list.find((x) => x.id === d.provider) || list[0] || null;
     pickProvider(p, p && p.id === d.provider ? d.model : null);
     paint();
@@ -991,16 +1284,43 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       h("div.field", h("span.label", "Quality"), h("div.seg", { role: "group", "aria-label": "Quality" },
         QUALITIES.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(st.quality === k), disabled: !st.on || !levels.includes(k),
           title: levels.includes(k) ? null : `This model has no ${l} quality`, on: { click: () => { st.quality = k; paint(); } } }, l)))),
-      provs && provs.length > 1 ? h("div.field", h("label", { for: `${idPrefix}-prov` }, "Draw with"),
-        h(`select.select#${idPrefix}-prov`, { disabled: !st.on, on: { change: (e) => { pickProvider(provs.find((p) => p.id === e.target.value)); paint(); } } },
-          provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider?.id }, p.label)))) : null,
-      modelSel ? h("div.field", h("label", { for: `${idPrefix}-model` }, "Image model"), modelSel)
-        : provs && provs.length === 1 ? h("p.hint", `Drawn with ${provs[0].label}: ${imageLine(provs[0], st.quality, st.model)}.`) : null,
+      modelsGroup(modelSel),
       h("div.field.art-cap", h("label", { for: `${idPrefix}-cap` }, "Stop at"), h("span.art-cap-row", "$", cap),
         h("p.hint", "The run stops drawing there and keeps what it drew.")));
     paintChapters();
     onChange?.();
     refresh();
+  }
+  /** The five model choices, closed: who writes scene prompts, portrait prompts and the choosing calls, and which image
+   *  models draw scenes and portraits. Its open state survives the repaint every choice makes. */
+  function modelsGroup(modelSel) {
+    const field = (id, label, control) => h("div.field", h("label", { for: id }, label), control);
+    // Default is what the server would use: the cheap or strong model of the run's own cloud provider (the build form's
+    // "Where should it run?"), else of the first working provider.
+    const w = (key, id, tier) => writerSelect({ id, provs: writers, value: st[key], tier, prefer: runProvider?.() || null, disabled: !st.on, onChange: (c) => { st[key] = c; onChange?.(); } });
+    const sceneModel = st.provider ? (imageModels(st.provider).find((m) => m.id === st.model)?.label || st.provider.label) : "";
+    const pc = provs ? portraitImageChoice(provs, st.pProvider, st.pModel) : null;
+    const pp = pc ? provs.find((p) => p.id === pc.provider) : null;
+    const portraitModel = pc ? (imageModels(pp).find((m) => m.id === pc.model)?.label || pp.label) : "";
+    const det = h("details.advanced.art-models-group", { open: st.modelsOpen || null },
+      h("summary", icon("chevron"), "Models", h("span.sum-hint", [sceneModel, portraitModel ? `${portraitModel} for portraits` : ""].filter(Boolean).join(", "))),
+      h("div.advanced-body",
+        writers.length ? [
+          field(`${idPrefix}-writer`, "Scene prompts written by", w("writer", `${idPrefix}-writer`, "cheap")),
+          field(`${idPrefix}-pwriter`, "Portrait prompts written by", w("portraitWriter", `${idPrefix}-pwriter`, "strong")),
+          field(`${idPrefix}-picker`, "Choosing calls by", w("picker", `${idPrefix}-picker`, "cheap")),
+        ] : null,
+        provs && provs.length > 1 ? field(`${idPrefix}-prov`, "Draw with",
+          h(`select.select#${idPrefix}-prov`, { disabled: !st.on, on: { change: (e) => { pickProvider(provs.find((p) => p.id === e.target.value)); paint(); } } },
+            provs.map((p) => h("option", { value: p.id, selected: p.id === st.provider?.id }, p.label)))) : null,
+        modelSel ? field(`${idPrefix}-model`, "Image model", modelSel)
+          : provs && provs.length === 1 ? h("p.hint", `Drawn with ${provs[0].label}: ${imageLine(provs[0], st.quality, st.model)}.`) : null,
+        provs && provs.length ? field(`${idPrefix}-pimage`, "Portraits drawn with", portraitImageSelect({ id: `${idPrefix}-pimage`, provs,
+          provider: st.pProvider, model: st.pModel, quality: st.quality, disabled: !st.on,
+          onChange: (c) => { st.pProvider = c?.provider || null; st.pModel = c?.model || null; paint(); } })) : null,
+        h("p.hint", "Choosing calls pick the moments worth drawing and the details that say how someone looks.")));
+    det.addEventListener("toggle", () => { st.modelsOpen = det.open; });
+    return det;
   }
   let seq = 0;
   async function refresh() {
@@ -1014,7 +1334,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     let r = null;
     const asked = listChapters ? chapterParam() : undefined;
     try {
+      const pc = portraitImageChoice(provs || [], st.pProvider, st.pModel);
       r = await estimate?.({ style: slug(), level: st.level, portraits: st.cast, quality: st.quality, provider: st.provider.id, model: st.model,
+        ...(pc ? { portraitProvider: pc.provider, ...(pc.model ? { portraitModel: pc.model } : {}) } : {}),
         ...(listChapters ? { chapters: asked } : {}) });
     } catch { r = null; }
     if (mine !== seq) return;
@@ -1040,11 +1362,26 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       line.textContent = rough || "The count is worked out when the index is written.";
     }
   }
+  /** The model choices for the job's `art`: only what was chosen (absent means the server's default). */
+  function models() {
+    const out = {};
+    for (const k of ["writer", "portraitWriter", "picker"]) { const c = textChoice(writers, st[k]); if (c) out[k] = c; }
+    const pc = portraitImageChoice(provs || [], st.pProvider, st.pModel);
+    if (pc) { out.portraitProvider = pc.provider; if (pc.model) out.portraitModel = pc.model; }
+    return out;
+  }
+  /** The run's provider changed: the Default options name that provider's models now (nothing else is repainted). */
+  function runProviderChanged() {
+    const prefer = runProvider?.() || null;
+    for (const [suffix, tier] of [["writer", "cheap"], ["pwriter", "strong"], ["picker", "cheap"]])
+      setWriterDefault(el.querySelector(`#${idPrefix}-${suffix}`), writers, tier, prefer);
+  }
   paint();
   return {
     el,
+    runProviderChanged,
     config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
-      provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}) } : null),
+      provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}), ...models() } : null),
     refresh,
     reason,
     ready: () => Boolean(st.provider && slug()),

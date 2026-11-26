@@ -39,7 +39,8 @@ from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import BookStore, JobManager, art_config, chapter_choice, describe, is_story
+from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits,
+                   text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -569,6 +570,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(404, f"unknown provider {pid!r}")
         return pid
 
+    def text_models(pid: str) -> set[str]:
+        """The text model ids a provider lists right now (presets and live, as Settings shows them)."""
+        st = provider_status(pid)
+        return {m["id"] for m in st["models"] + st["liveModels"]} | ({st["model"]} if st.get("model") else set())
+    jobs.text_models = text_models
+
     @app.get("/api/providers")
     def list_providers(fresh: bool = False):
         return {"providers": [provider_status(p, fresh) for p in llm.PROVIDERS],
@@ -665,6 +672,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if config.get("art"):
             try:
                 config["art"] = art_config(config["art"])
+                jobs.check_art_models(config["art"])
             except ValueError as e:
                 raise HTTPException(422, str(e)) from e
 
@@ -1193,6 +1201,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             self.status, self.code, self.detail, self.why = status, code, detail, why
 
     QUALITIES = ("draft", "standard", "best")
+    PORTRAIT_KINDS = ("portrait", "place", "thing")     # drawn with the portrait image model when one is chosen
 
     def art_index(key: str) -> dict:
         """The one index a pictures route works on (no library scan: only the series prior needs one)."""
@@ -1237,14 +1246,22 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return None
         return f"generated--{rel.replace('/', '--')}"
 
-    def art_journal(job, h: str, slug_: str, added: list[str]) -> str | None:
-        """A run's pictures as one journal entry: its undo takes out exactly those."""
+    def art_journal(job, h: str, slug_: str, added: list[str], also: list[dict] | None = None) -> str | None:
+        """A run's pictures as one journal entry: its undo takes out exactly those (`also`: those it drew into earlier
+        books' sets, each {textHash, style, added})."""
         key = art_key_for(job)
         if not key or library.get(key) is None:
             return None
-        return journal_art(key, [], {"op": "add", "textHash": h, "style": slug_, "added": added},
-                           f"drew {len(added)} picture{'s' if len(added) != 1 else ''}")["id"]
-    jobs.art_inputs, jobs.art_journal = art_inputs, art_journal
+        n = len(added) + sum(len(a["added"]) for a in also or [])
+        return journal_art(key, [], {"op": "add", "textHash": h, "style": slug_, "added": added,
+                                     **({"also": also} if also else {})},
+                           f"drew {n} picture{'s' if n != 1 else ''}")["id"]
+
+    def prior_epub(h: str) -> epub.Book | None:
+        """An earlier series book's EPUB by its edition hash, when it is here (an entry's portraits are drawn into it)."""
+        p = library.edition_path(h) if artstore.HASH.fullmatch(h or "") else None
+        return parsed(p) if p is not None else None
+    jobs.art_inputs, jobs.art_journal, jobs.art_epub_for = art_inputs, art_journal, prior_epub
 
     def journal_art(key: str, keep: list[Path], art: dict, what: str) -> dict:
         return identity.snapshot(key, keep, {"kind": "art", "what": what, "art": art})
@@ -1278,6 +1295,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 with arts.lock(h, "background"):
                     arts.set_background(h, a["background"])
             return
+        for more in a.get("also", []):          # a run's pictures in earlier books' sets
+            with arts.lock(more["textHash"], more["style"]):
+                arts.take_out(more["textHash"], more["style"], more["added"])
         slug_ = a["style"]
         with arts.lock(h, slug_):
             if a.get("added"):
@@ -1303,18 +1323,43 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-position", "Only earlier books of this series can be finished.")
         return sorted(set(fin))
 
+    def art_writer(body: dict) -> dict | None:
+        """The request's `writer` ({provider, model}, the sheet's "Prompt written by"), checked against what is set up and
+        listed here; None means the default, the strong tier."""
+        try:
+            choice = text_choice_config(body.get("writer"), "prompt")
+            jobs.check_text_choice(choice, "prompt")
+        except ValueError as e:
+            raise ArtRefusal(422, "bad-writer", str(e)) from e
+        return choice
+
+    def art_image_choice(body: dict, kind) -> tuple[str | None, str | None]:
+        """(provider, model) of the image model a sheet request draws with: for a portrait, place or thing the request's
+        `portraitProvider` / `portraitModel` when it sends either (a model alone is one of `provider`'s), else `provider` /
+        `model` as for every picture."""
+        prov, mod = body.get("provider"), body.get("model")
+        if kind in PORTRAIT_KINDS and (body.get("portraitProvider") is not None or body.get("portraitModel") is not None):
+            pp = body.get("portraitProvider")
+            return pp if pp is not None else prov, body.get("portraitModel")
+        return prov, mod
+
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    portraits: str | bool | None = "main", tier: str = "cheap"):
+                    portraits: str | bool | None = "main", tier: str = "cheap", writer: dict | None = None,
+                    cfg: dict | None = None):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
-        pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over."""
+        pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over.
+        `writer` (checked, `art_writer`) writes every kind's prompt; else the `tier` model does. `cfg`, an entity run's
+        checked config (`entity_choice`): the earlier books it draws are given with their EPUB, and the pipeline gets its
+        entries, position and finished books (`jobs.run_limits`)."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
             raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
         if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
             raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
         if quality not in QUALITIES:
             raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
-        # One picture asked for in the sheet is written by the strong tier (`tier`); runs keep the cheap one.
-        text_model = (jobs.strong_model(None) if tier == "strong" else jobs.cheap_model(None)) if text_needed else None
+        # One picture asked for in the sheet is written by the chosen writer, else the strong tier (`tier`); runs keep
+        # their own choices (`JobManager._art`).
+        text_model = jobs.writer_model(writer, tier) if text_needed else None
         if text_model is None and text_needed:
             raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
         try:
@@ -1326,11 +1371,48 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for d in art_prior(ctx):   # every earlier book; what a reader has not finished is kept out by `finished` on the job
             ph = artstore.text_hash(d)
             if artstore.HASH.fullmatch(ph):
-                books_.append(arts.book(d, None, ph, arts.resolve(ph, style)[1], None, draw=False))
+                pb = prior_epub(ph) if cfg is not None and entity_run(cfg, d) else None
+                books_.append(arts.book(d, pb, ph, arts.resolve(ph, style)[1], None, draw=pb is not None))
         books_.append(arts.book(ctx["doc"], art_epub(ctx), ctx["hash"], style, None))
+        extra = run_limits(cfg, ctx["doc"], len(books_) - 1) if cfg is not None else {}
+        if "portraits" in extra:
+            portraits = extra.pop("portraits")
+        # The sheet's writer writes every kind, and the sheet already chose the image model for the kind it draws.
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0,
-                                  cheap_text=jobs.cheap_model(None) if text_needed else None), image, slug_
+                                  cheap_text=jobs.cheap_model(None) if text_needed else None,
+                                  portrait_text=text_model, portrait_image=image, **extra), image, slug_
+
+    def entity_choice(ctx: dict, cfg: dict) -> tuple[dict, list[str]]:
+        """Check a checked art config's entries, position and finished books against the index, as the reader stands:
+        `until` is resolved to an anchor of this book (`art_position`, finished mode), every entry must be visible there
+        to a reader who finished `finished` and be a person or creature. Returns the config with `until` as
+        {"p": anchor id, "book": series book key} and `finished` checked, and the editions of the earlier books the run
+        draws into (finished ones with their EPUB here). An unknown entry and one past the position get the same answer."""
+        if not (cfg.get("entities") or cfg.get("until")):
+            return cfg, []
+        fin = art_finished(ctx, {"finished": cfg.get("finished")})
+        sbook = (ctx["doc"].get("series") or {}).get("book")
+        until = cfg.get("until")
+        if until:
+            if until.get("book") is not None and until["book"] != sbook:
+                raise ArtRefusal(422, "bad-position", "The position is in another book.")
+            _, at = art_position(ctx, {"p": until["p"]})
+            if at is None:
+                raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+        else:
+            at = ctx["doc"]["anchors"][-1]["id"]
+        cfg = {**cfg, "finished": fin, "until": {"p": at, "book": sbook} if until else None}
+        il = illustrator(ctx, cfg["style"], cfg["quality"], cfg["provider"], cfg["model"], text_needed=False)[0]
+        v = il.view(len(il.books) - 1, at, None if fin is None else frozenset(fin))
+        types = {e["id"]: e["type"] for e in v["entities"]}
+        for eid in cfg.get("entities") or []:
+            if eid not in types:
+                raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+            if types[eid] not in artmod.PORTRAIT_TYPES:
+                raise ArtRefusal(422, "bad-entity", "Only a person or a creature has portraits through the book.")
+        also = [artstore.text_hash(d) for d in art_prior(ctx) if entity_run(cfg, d)]
+        return cfg, [ph for ph in also if artstore.HASH.fullmatch(ph) and library.edition_path(ph) is not None]
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1644,16 +1726,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @art_route
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: str = "main",
                      provider: str | None = None, model: str | None = None, quality: str = "standard",
-                     chapters: str | None = None):
+                     chapters: str | None = None, portraitProvider: str | None = None, portraitModel: str | None = None,
+                     entities: str | None = None, until: str | None = None, finished: str | None = None):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
         none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
         what it would get at the level whether chosen or not (`pictures`) and how many of those are drawn (`drawn`). The
         totals (`pictures`, `plates`, `portraits`, `price`) count what a run would still draw: the chosen chapters'
         pictures not drawn yet, plus the new portraits, which the chapter choice never limits; `planned` has the same
-        three counts with what is already drawn included. `portraitsMax`, `picturesMax` and `priceMax` are the top of the
-        range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
-        `art.MAX_VERSIONS` here; all three equal the plain numbers when every counted entity is checked."""
+        three counts with what is already drawn included. `entities` ("id,id"), `until` (an anchor id or the fraction of
+        the book read) and `finished` ("key,key"; absent: every earlier book) estimate an entry's portraits through the book
+        as the run route would check them: the portraits of those entries only, at or before the position, in this book and
+        the earlier books the reader finished, without what is drawn. `portraitsMax`, `picturesMax` and `priceMax` are the
+        top of the range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
+        `art.MAX_VERSIONS` here (the pipeline's `portraits_max`); all three equal the plain numbers when every counted entity
+        is checked."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1667,11 +1754,36 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if len(parts) > 10000 or not all(re.fullmatch(r"[0-9]{1,9}", x) for x in parts):   # ASCII only
                 raise ArtRefusal(422, "bad-config", "chapters must be chapter numbers separated by commas.")
             chosen = {int(x) for x in parts}
-        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=cast)
+        ecfg = None
+        if entities is not None or until is not None or finished is not None:
+            def listed(raw: str | None) -> list[str] | None:
+                return None if raw is None else [x.strip() for x in raw.split(",") if x.strip()]
+            u = None
+            if until is not None:
+                u = {"p": float(until) if re.fullmatch(r"(0|1)(\.[0-9]{1,12})?", until) else until}
+            try:
+                ecfg = art_config({"style": style, "level": level, "chapters": None, "portraits": cast or False,
+                                   "quality": quality, "provider": provider, "model": model, "cap": 1,
+                                   "entities": listed(entities), "until": u, "finished": listed(finished)})
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            ecfg = entity_choice(ctx, ecfg)[0]
+        il, image, _ = illustrator(ctx, art_style(style), quality, provider, model, text_needed=False, portraits=cast,
+                                   cfg=ecfg)
         if chosen and any(n not in {c["n"] for c in il.books[-1].chapters} for n in chosen):
             raise ArtRefusal(422, "bad-config", "Some of the chosen chapters are not chapters of this book.")
         il.scene_chapters = chosen     # the chapter choice limits scenes only (art.Illustrator's `scene_chapters`)
         got = il.counts(level=level)
+        # an upper bound while a look index is unchecked (the pipeline's `portraits_max`, when it gives one)
+        # (`portraits_max` is what `new_portraits` could grow to, so the range's extra is measured from that)
+        extra_max = max(0, got.get("portraits_max", got["new_portraits"]) - got["new_portraits"])
+        for bi in range(len(il.books) - 1):     # an entity run's earlier books the reader finished: their portraits too
+            b = il.books[bi]
+            if b.b.draw and b.epub is not None:
+                g = il.counts(bi, level=None)
+                for k in ("portraits", "new_portraits"):
+                    got[k] += g[k]
+                extra_max += max(0, g.get("portraits_max", g["new_portraits"]) - g["new_portraits"])
         rows = story_rows(il, got["chapters"])
         # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
         plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
@@ -1681,19 +1793,27 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-        each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
-        # before a run has checked an entity's looks it counts one portrait, but may draw up to MAX_VERSIONS: the range's
-        # top (`portraits_max`, from art.Illustrator.counts; an older pipeline without it means no range)
-        ports_max = max(ports, got.get("portraits_max", ports))
-
-        def priced(n_ports: int):
-            return None if (plates and each[0] is None) or (n_ports and each[1] is None) else \
-                round(plates * (each[0] or 0) + n_ports * (each[1] or 0), 4)
-        price = priced(ports)
+        # Portraits are priced with their own image model (`portraitProvider` / `portraitModel`; a model alone is one of
+        # the scene provider's), else the scenes' one.
+        pprov = portraitProvider if portraitProvider is not None else prov
+        if pprov not in llm.IMAGE_PROVIDERS:
+            raise ArtRefusal(422, "bad-provider", f"No image provider {pprov!r} for portraits.")
+        pname = portraitModel if portraitModel is not None else \
+            (name if pprov == prov else llm.IMAGE_PROVIDERS[pprov]["default"])
+        if not llm.image_model(pprov, pname):
+            raise ArtRefusal(422, "bad-model", f"Unknown image model {pname!r} for portraits.")
+        # each at the level its model is drawn at: the one asked for, else the nearest it offers (`llm.nearest_quality`)
+        squal, pqual = llm.nearest_quality(prov, name, quality), llm.nearest_quality(pprov, pname, quality)
+        each = [llm.image_price(prov, name, squal, "landscape"), llm.image_price(pprov, pname, pqual, "portrait")]
+        price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
+            round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
+        high = ports + extra_max
+        price_max = None if price is None or (high and each[1] is None) else round(price + extra_max * (each[1] or 0), 4)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
-                "picturesMax": plates + ports_max, "portraitsMax": ports_max,
-                "priceMax": price if ports_max == ports else priced(ports_max),
-                "model": name, "level": level, "chapters": chapters_,
+                "picturesMax": plates + high, "portraitsMax": high, "priceMax": price_max,
+                **({"entities": ecfg["entities"], "until": ecfg["until"], "finished": ecfg["finished"]} if ecfg else {}),
+                "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
+                "level": level, "chapters": chapters_,
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
@@ -1723,9 +1843,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     il = illustrator(ctx, cfg["style"], cfg["quality"], cfg["provider"], cfg["model"], text_needed=False,
                                      portraits=cfg["portraits"])[0]
                     chapter_choice(cfg, il.books[-1].chapters)
+                cfg, also = entity_choice(ctx, cfg)     # an entry's portraits through the book, up to the reader's position
                 job = jobs.submit_art(key, cfg, index_path=str(ctx["item"]["path"]),
                                       book_id=(owner or {}).get("localId") or "", text_hash=ctx["hash"],
-                                      title=ctx["doc"].get("work", {}).get("title") or key)
+                                      title=ctx["doc"].get("work", {}).get("title") or key, also=also)
             except ValueError as e:
                 raise ArtRefusal(422, "bad-config", str(e)) from e
             except RuntimeError as e:
@@ -1749,7 +1870,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
+                il, image, slug_ = illustrator(ctx, style, quality, *art_image_choice(body, body.get("kind")),
+                                               tier="strong", writer=art_writer(body))
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job, pr = prompt_for(il, args)
@@ -1763,14 +1885,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         slug_, stored = arts.resolve(ctx["hash"], style)
         body_, sentence, no_text = prompt_parts(il, pr, stored)
         # The price of the chosen provider and quality, also before its key is added.
-        prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
-        name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-        # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
-        wp, wn = jobs.text_choice("strong") or (None, None)
+        ip, im = art_image_choice(body, job.kind)
+        prov = ip or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+        name = im or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
+        # `model` stays the image model (the sheet's Model choice, the portrait one for a portrait, place or thing when
+        # sent); `writer` names the text model that wrote the prompt: the request's choice, else the strong tier
+        chosen = text_choice_config(body.get("writer")) if body.get("writer") is not None else None
+        wp, wn = (chosen["provider"], chosen["model"]) if chosen else (jobs.text_choice("strong") or (None, None))
+        if isinstance(getattr(pr, "written_by", None), dict):     # the model that did write it, when it has a name
+            wp, wn = pr.written_by.get("provider"), pr.written_by.get("model")
         out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
                "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
-               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "quality": llm.nearest_quality(prov, name, quality),
+               "price": llm.image_price(prov, name, llm.nearest_quality(prov, name, quality), pr.shape), "slug": slug_,
                "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
         return out
 
@@ -1796,7 +1924,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
+                il, image, slug_ = illustrator(ctx, style, quality, *art_image_choice(body, body.get("kind")),
+                                               tier="strong", writer=art_writer(body))
                 given, at = art_position(ctx, body)
                 job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 if not hasattr(il, "soften"):
@@ -1830,8 +1959,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"), tier="strong")   # a cache miss writes as the sheet does
+                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard",
+                                               *art_image_choice(body, body.get("kind")), tier="strong",
+                                               writer=art_writer(body))   # a cache miss writes as the sheet does
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
@@ -1988,7 +2118,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
-                                   version=rec.get("notes"), body=text_, figures=figures)
+                                   version=rec.get("notes"), body=text_, figures=figures,
+                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None)
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
@@ -2114,7 +2245,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         art_entry = (last or {}).get("kind") == "art" and last["id"] == merge_id
         if not art_entry:
             not_community(key)
-        elif jobs.drawing(last["art"]["textHash"]):
+        elif any(jobs.drawing(h_) for h_ in [last["art"]["textHash"], *(a["textHash"] for a in last["art"].get("also", []))]):
             raise HTTPException(409, "Pictures are being drawn for this book. Undo once that run has finished.")
         try:
             if art_entry:   # only the records the entry touched: pictures drawn since stay
