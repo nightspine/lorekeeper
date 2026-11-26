@@ -1651,7 +1651,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         what it would get at the level whether chosen or not (`pictures`) and how many of those are drawn (`drawn`). The
         totals (`pictures`, `plates`, `portraits`, `price`) count what a run would still draw: the chosen chapters'
         pictures not drawn yet, plus the new portraits, which the chapter choice never limits; `planned` has the same
-        three counts with what is already drawn included."""
+        three counts with what is already drawn included. `portraitsMax`, `picturesMax` and `priceMax` are the top of the
+        range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
+        `art.MAX_VERSIONS` here; all three equal the plain numbers when every counted entity is checked."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1680,9 +1682,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
         each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
-        price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
-            round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
+        # before a run has checked an entity's looks it counts one portrait, but may draw up to MAX_VERSIONS: the range's
+        # top (`portraits_max`, from art.Illustrator.counts; an older pipeline without it means no range)
+        ports_max = max(ports, got.get("portraits_max", ports))
+
+        def priced(n_ports: int):
+            return None if (plates and each[0] is None) or (n_ports and each[1] is None) else \
+                round(plates * (each[0] or 0) + n_ports * (each[1] or 0), 4)
+        price = priced(ports)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
+                "picturesMax": plates + ports_max, "portraitsMax": ports_max,
+                "priceMax": price if ports_max == ports else priced(ports_max),
                 "model": name, "level": level, "chapters": chapters_,
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
