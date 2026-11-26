@@ -37,11 +37,9 @@ export function toggleTheme() {
 document.addEventListener("click", (e) => { if (e.target.closest?.("[data-theme-toggle]")) toggleTheme(); });
 
 // ---- the shell: rail, phone app bar and tab bar ------------------------------------------------------
-// Sticky offsets in the stylesheets are expressed from --topbar-h: the phone app bar's height, 0 beside the rail.
-const appbar = document.getElementById("appbar");
-new ResizeObserver(() => {
-  document.documentElement.style.setProperty("--topbar-h", `${Math.round(appbar.getBoundingClientRect().height)}px`);
-}).observe(appbar);
+// Sticky offsets in the stylesheets are expressed from --topbar-h: the phone app bar's height, 0 beside the rail. It is
+// pure CSS (phone.css: the app bar's own height and every offset are the same expression, so they cannot disagree
+// when iOS changes its safe-area inset); nothing is measured here.
 
 const kbd = document.getElementById("palette-kbd");
 const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
