@@ -1378,8 +1378,8 @@ def test_an_on_demand_prompt_is_one_writer_call_and_nothing_else_on_a_fresh_set(
 def test_the_prompt_is_the_writers_text_then_the_style_sentence_then_no_text():
     il, t = fresh(style="anime")
     pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
-    assert (pr.body, pr.style, pr.no_text) == (f"{art.PORTRAIT_FRAME} {PORTRAIT_SCENE}", art.STYLES["anime"], art.NO_TEXT)
-    assert pr.text == f"{art.PORTRAIT_FRAME} {PORTRAIT_SCENE} {art.STYLES['anime']} {art.NO_TEXT}" and pr.scene == pr.body
+    assert (pr.body, pr.style, pr.no_text) == (f"{art.PORTRAIT_FRAME} {PORTRAIT_SCENE} {art.PORTRAIT_CROP}", art.STYLES["anime"], art.NO_TEXT)
+    assert pr.text == f"{art.PORTRAIT_FRAME} {PORTRAIT_SCENE} {art.PORTRAIT_CROP} {art.STYLES['anime']} {art.NO_TEXT}" and pr.scene == pr.body
     assert il.style_sentence() == art.STYLES["anime"] and il.style_sentence("ink") == art.STYLES["ink"]
     assert il.style_sentence("  Chalk   on slate. ") == "Chalk on slate."
     writer = writer_calls(t)[0]
@@ -2043,7 +2043,7 @@ def test_a_figure_with_no_picture_in_this_set_takes_its_likeness_from_another_st
     il2.draw(job, pr)
     # (her own picture, so no likeness words: only which reference is which figure)
     assert im2.calls[-1]["references"] == [b"comic mira"] and im2.calls[-1]["note"] == (
-        "Reference picture 1 is figure A. " + art.FIGURE_NOTE)
+        "Reference picture 1 is figure A. " + art.FIGURE_NOTE + " " + art.CHEST_UP)
 
 
 def test_a_likeness_is_never_past_the_anchor_older_partial_or_another_edition():
@@ -2102,12 +2102,21 @@ def test_a_portrait_is_a_likeness_with_the_framing_put_first_by_code():
     pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
     assert t.systems == [art.PORTRAIT_WRITER] and pr.text.startswith(art.PORTRAIT_FRAME + " " + PORTRAIT_SCENE)
     assert pr.body.startswith(art.PORTRAIT_FRAME) and pr.text.index(art.PORTRAIT_FRAME) == 0
-    for rule in ("framing and the pose are fixed and put before your text", "Their hands and mouth are empty: no action or gesture, nothing held up or in use",
+    # the crop is said again at the end of the body, before the style sentence
+    assert pr.body.endswith(" " + art.PORTRAIT_CROP) and pr.text == f"{pr.body} {pr.style} {art.NO_TEXT}"
+    for rule in ("framing and the pose are fixed and put around your text by code: the picture is cropped at mid-chest",
+                 "Describe only what shows from mid-chest up", "Never the hands or the arms below the shoulder, anything held or carried",
+                 "a belt or anything at the waist or hip, the legs or the feet, even where the material describes them",
                  "no smoke or breath, no other figures", "Expression: one short phrase at most",
-                 "Background: one short clause at most", "never a room or place the passages tell a scene in", "50 to 110 words",
+                 "Background: one short clause at most", "never a room or place the passages tell a scene in", "40 to 90 words",
                  "A portrait shows the figure as a living presence", "Never give a specific look the material does not state"):
         assert rule in art.PORTRAIT_WRITER, rule
     assert "60 to 150 words" not in art.PORTRAIT_WRITER and "framing and the pose" not in art.WRITER
+    # nothing a mid-chest crop leaves out is asked for any more
+    assert "a sword at the hip" not in art.PORTRAIT_WRITER and "what they wear and carry" not in art.PORTRAIT_WRITER
+    assert "half length" not in art.PORTRAIT_FRAME and "mid-chest" in art.PORTRAIT_FRAME and "hands" in art.PORTRAIT_FRAME
+    assert "creature" in art.PORTRAIT_FRAME     # worded for a creature too
+    assert "mid-chest" not in art.WRITER and "mid-chest" not in art.SCENE_WRITER   # scenes still draw the whole figure
     assert "The framing and pose are given" in writer_calls(t)[0]
     il, t = fresh()                        # no event has a setting: no surroundings, so a plain background
     il.make_prompt(il.job("portrait", "oren", at="a11"))
@@ -2139,7 +2148,33 @@ def test_soften_of_a_portrait_keeps_the_frame_and_does_not_send_it_to_the_writer
     pr = il.soften(job, first.text, "safety")
     w = writer_calls(t)[-1]
     assert art.PORTRAIT_FRAME not in w and f'"{PORTRAIT_SCENE}"' in w and t.systems[-1] == art.PORTRAIT_WRITER
-    assert pr.body.startswith(art.PORTRAIT_FRAME + " A young woman stands")
+    assert art.PORTRAIT_CROP not in w          # the crop line is code's too: the writer is never asked to rewrite it
+    assert pr.body.startswith(art.PORTRAIT_FRAME + " A young woman stands") and pr.body.endswith(art.PORTRAIT_CROP)
+    assert pr.body.count(art.PORTRAIT_CROP) == 1 and pr.body.count(art.PORTRAIT_FRAME) == 1
+    # a refused portrait drawn with the older frame is stripped of it as well
+    old = first.text.replace(art.PORTRAIT_FRAME, art.PORTRAIT_FRAME_OLD).replace(" " + art.PORTRAIT_CROP, "")
+    il.soften(job, old, "safety")
+    w = writer_calls(t)[-1]
+    assert art.PORTRAIT_FRAME_OLD not in w and f'"{PORTRAIT_SCENE}"' in w
+
+
+def test_unframed_and_reframed():
+    body = f"{art.PORTRAIT_FRAME} A young woman. {art.PORTRAIT_CROP}"
+    assert art.unframed(body) == "A young woman." == art.unframed(f"{art.PORTRAIT_FRAME_OLD} A young woman.")
+    assert art.unframed("A grey mill yard at dusk.") == "A grey mill yard at dusk."
+    old = f"{art.PORTRAIT_FRAME_OLD} A young woman. Ink. {art.NO_TEXT}"
+    new = f"{art.PORTRAIT_FRAME} A young woman. {art.PORTRAIT_CROP} Ink. {art.NO_TEXT}"
+    # the new frame, and the crop line at the end of the body, before the set's style sentence and the no-text line
+    assert art.reframed("portrait", old, "Ink.") == new
+    # an unknown style: before the no-text line; no no-text line either: at the end
+    assert art.reframed("portrait", old) == f"{art.PORTRAIT_FRAME} A young woman. Ink. {art.PORTRAIT_CROP} {art.NO_TEXT}"
+    assert art.reframed("portrait", old, "Chalk.") == art.reframed("portrait", old)
+    assert (art.reframed("portrait", f"{art.PORTRAIT_FRAME_OLD} A young woman with a sword at the hip.")
+            == f"{art.PORTRAIT_FRAME} A young woman with a sword at the hip. {art.PORTRAIT_CROP}")   # old body kept
+    assert art.reframed("portrait", new, "Ink.") == new                   # already the new frame: as given
+    assert art.reframed("portrait", f"{art.PORTRAIT_FRAME_OLD} A. {art.PORTRAIT_CROP} Ink.").count(art.PORTRAIT_CROP) == 1
+    assert art.reframed("portrait", "Draw her by a window.") == "Draw her by a window."   # a person's own words: as given
+    assert art.reframed("event", old) == old                              # only portraits carry the frame
 
 
 def test_the_writer_states_age_only_as_the_material_gives_it():
@@ -2340,7 +2375,8 @@ def test_references_are_the_labels_in_the_text_in_label_order_and_an_unseen_figu
     rec = il.draw(job, pr)
     call = im.calls[-1]
     assert call["references"] == [sink.files[by["stranger"]["file"]]]
-    assert call["note"] == "Reference picture 1 is figure B. " + art.FIGURE_NOTE and call["note"] not in call["prompt"]
+    assert call["note"] == "Reference picture 1 is figure B. " + art.FIGURE_NOTE + " " + art.CHEST_UP
+    assert call["note"] not in call["prompt"]
     assert rec["references"] == [by["stranger"]["id"]]
     assert rec["figures"] == [{"label": "B", "entity": "stranger", "ref": by["stranger"]["id"]}]
     for name in ("Mira", "Stranger"):
@@ -2386,7 +2422,8 @@ def test_an_edited_text_without_a_label_drops_its_reference_and_a_label_with_no_
     sink.files.pop(by["mira"]["file"])
     rec = il.draw(job, pr, text=whole + " Figure C watches.")
     call = im.calls[-1]
-    assert call["references"] == [sink.files[by["stranger"]["file"]]] and call["note"] == "Reference picture 1 is figure B. " + art.FIGURE_NOTE
+    assert call["references"] == [sink.files[by["stranger"]["file"]]] and call["note"] == ("Reference picture 1 is figure B. " + art.FIGURE_NOTE
+                                                                              + " " + art.CHEST_UP)
     assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": None},
                               {"label": "B", "entity": "stranger", "ref": by["stranger"]["id"]}]
     rec = il.draw(job, pr, text=ROOM + " " + ROOM)          # no label left: nothing is sent
@@ -2417,7 +2454,7 @@ def test_a_likeness_from_another_style_is_labelled_like_any_reference():
     assert im.calls[-1]["note"] == ("Reference picture 1 is figure A. " + art.FIGURE_NOTE + " Reference picture 1 is drawn in "
                                     "another style. Take from it only the likeness of the figure (face, hair, build, marks), "
                                     "never the drawing style, medium, line or colour treatment: draw everything in the style "
-                                    "the prompt asks for.")
+                                    "the prompt asks for. " + art.CHEST_UP)
     assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": {"set": "digital-art", "id": "pdig0001"}}]
 
 
@@ -2462,7 +2499,8 @@ def test_an_older_prompt_without_figures_is_drawn_as_before():
     assert old.figures is None
     rec = il.draw(job, old, text=old.text)
     call = im.calls[-1]
-    assert call["references"] == [sink.files[by["mira"]["file"]], sink.files[by["stranger"]["file"]]] and call["note"] == ""
+    # an older prompt: no labels, so only the words on using a portrait cropped at mid-chest
+    assert call["references"] == [sink.files[by["mira"]["file"]], sink.files[by["stranger"]["file"]]] and call["note"] == art.CHEST_UP
     assert "figures" not in rec and rec["references"] == [by["mira"]["id"], by["stranger"]["id"]]
 
 
@@ -2889,7 +2927,7 @@ def test_with_place_refs_the_place_then_the_things_take_the_slots_after_the_figu
     assert call["references"] == [b"mira", b"stranger", b"pmill001", b"pcoin001"]
     assert call["note"] == " ".join([
         "Reference picture 1 is figure A.", "Reference picture 2 is figure B.", art.FIGURE_NOTE,
-        art.PLACE_NOTE.format(n=3), art.THING_NOTE.format(n=4, name="the silver coin")])
+        art.PLACE_NOTE.format(n=3), art.THING_NOTE.format(n=4, name="the silver coin"), art.CHEST_UP])
     assert "never its framing, viewpoint or composition" in call["note"] and "never its size or placement" in call["note"]
     assert call["note"] not in call["prompt"]
     assert rec["references"] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
@@ -3052,6 +3090,38 @@ def test_the_portrait_image_model_draws_portraits_only():
     assert all((r["provider"], r["model"]) == ("gemini", "nano-banana") for r in pics(sink, "plate"))
     assert il.image_for("place")[0] is portraits and il.image_for("thing")[0] is portraits
     assert il.image_for("event")[0] is scenes
+
+
+def test_a_refused_portrait_in_a_run_is_rewritten_without_the_frame_and_framed_again():
+    quiet = ("A woman of middle height in a plain grey collar and a dark shawl at the shoulders, her hair pinned back, a calm "
+             "and steady look on her face, against a plain pale wall lit by soft daylight from one side, quiet and still.")
+    portrait = Named("claude", "sonnet", scene=lambda p: quiet if "quieter composition" in p else PORTRAIT_SCENE)
+    im = Image(refuse=[lambda prompt, n: prompt.startswith(art.PORTRAIT_FRAME) and quiet not in prompt and n <= 1])
+    il, rep, sink, _, _ = run(text_=Named("claude", "haiku"), portrait_text=portrait, image=im)
+    asks = [p for p in portrait.prompts if "quieter composition" in p]
+    assert asks and all(art.PORTRAIT_FRAME not in p and art.PORTRAIT_CROP not in p for p in asks)
+    drawn = [c["prompt"] for c in im.calls if quiet in c["prompt"]]
+    assert drawn and all(c.startswith(art.PORTRAIT_FRAME + " " + quiet + " " + art.PORTRAIT_CROP + " ") for c in drawn)
+
+
+def test_a_scene_note_says_how_to_use_a_portrait_cropped_at_mid_chest():
+    portrait = (0, {"id": "p1", "kind": "portrait"})
+    place = (0, {"id": "p2", "kind": "place", "target": "mill"})
+    note = art.Illustrator.reference_note("event", [portrait], ["A"])
+    assert note == "Reference picture 1 is figure A. " + art.FIGURE_NOTE + " " + art.CHEST_UP
+    for words in ("only the head and upper chest", "arms, hands, dress below the chest, what they carry",
+                  "natural proportions for the whole body"):
+        assert words in art.CHEST_UP
+    # an older prompt with no labels gets it too, after any likeness words
+    assert art.Illustrator.reference_note("plate", [portrait], None) == art.CHEST_UP
+    other = (0, {"id": "p3", "kind": "portrait", "set": "anime"})
+    assert art.Illustrator.reference_note("plate", [other], None) == art.Illustrator.likeness_note([other]) + " " + art.CHEST_UP
+    # no portrait among the references (a place in a spare slot, or an older record with no kind): no such words
+    assert art.CHEST_UP not in art.Illustrator.reference_note("event", [place], [None])
+    assert art.Illustrator.reference_note("event", [(0, {"id": "p4"})], None) == ""
+    # a portrait's own reference keeps SAME_FIGURE, which leaves the framing to the prompt
+    assert art.Illustrator.reference_note("portrait", [portrait]) == art.SAME_FIGURE
+    assert "framing from the prompt, not from the reference picture" in art.SAME_FIGURE
 
 
 def test_a_refused_portrait_is_rewritten_by_the_portrait_writer():
@@ -3224,3 +3294,16 @@ def test_a_stored_later_reference_is_sent_again_only_within_the_readers_frontier
     first = next(it["id"] for it in il.items(0, "mira") if it["from"] == "a4")   # her profile, flagged as a look change
     il.man[0]["looks"] = {"mira": {"key": il._items_key(il.items(0, "mira")), "items": {first: {"look": True, "change": True}}}}
     assert not il.reference_reached(at("a11"), 0, mira)                 # a recorded look change between: never
+
+
+def test_the_scene_writer_asks_for_no_more_than_two_hands_can_do_and_figures_kept_apart():
+    for words in ("a figure holds or uses at most two things in all, one in each hand",
+                  "A thing they are not using is worn, stowed or set down, never held",
+                  "Say which hand does what only when the moment turns on it",
+                  "far enough apart to read as separate whole bodies, unless the moment is about their touching"):
+        assert words in art.SCENE_WRITER, words
+        assert words not in art.WRITER and words not in art.PORTRAIT_WRITER     # scenes only: places, things, portraits keep theirs
+    assert art.SCENE_WRITER.index(art.SCENE_HANDS) < art.SCENE_WRITER.index("- No text, letters, titles")
+    il, t = fresh()
+    il.make_prompt(il.job("event", "e5", at="a11"))
+    assert t.systems[-1] == art.SCENE_WRITER
