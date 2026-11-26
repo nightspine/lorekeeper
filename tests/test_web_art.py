@@ -1763,7 +1763,7 @@ def models_env(env, monkeypatch, live=()):
     made = {}
     monkeypatch.setattr(jobs_mod.JobManager, "cloud_model",
                         lambda self, p, m=None: made.setdefault((p, m), Named(f"{p}:{m}")))
-    monkeypatch.setattr(llm, "list_models", lambda *a, **kw: list(live))
+    monkeypatch.setattr(llm, "live_models", lambda *a, **kw: list(live))
     images_made = []
     monkeypatch.setattr(llm, "make_image", lambda provider, model=None, api_key=None, base_url=None:
                         images_made.append((provider, model)) or env.image)
@@ -1811,6 +1811,18 @@ def test_a_choice_of_a_provider_not_set_up_or_a_model_it_does_not_list_is_refuse
         r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {**base, **bad}})
         assert r.status_code == 422 and r.json()["code"] == "bad-config", (bad, r.text)
     assert env.c.get("/api/jobs").json() == [] or all(j["kind"] != "art" for j in env.c.get("/api/jobs").json())
+
+
+def test_a_live_model_that_cannot_write_text_is_never_a_writer(env, monkeypatch):
+    models_env(env, monkeypatch, live=[{"id": "gemini-live-x", "text": True}, {"id": "lyria-3.5", "text": False}])
+    g = next(p for p in env.c.get("/api/providers").json()["providers"] if p["id"] == "gemini")
+    assert [m["id"] for m in g["liveModels"]] == ["gemini-live-x"]
+    assert [m["id"] for m in g["otherModels"]] == ["lyria-3.5"] and g["otherModels"][0]["text"] is False
+    bad = {"provider": "gemini", "model": "lyria-3.5"}
+    r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink", "writer": bad})
+    assert r.status_code == 422 and r.json()["code"] == "bad-writer", r.text
+    r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {"style": "ink", "cap": 1, "picker": bad}})
+    assert r.status_code == 422 and r.json()["code"] == "bad-config", r.text
 
 
 def test_a_build_config_with_a_model_choice_is_checked_too(env, monkeypatch):
