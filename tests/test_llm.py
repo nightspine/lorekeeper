@@ -337,3 +337,57 @@ def test_the_gemini_strong_preset_is_a_model_new_keys_can_use_with_its_price():
     strong = next(m for m in spec["models"] if m["id"] == spec["strong"])
     assert spec["strong"] == "gemini-3.1-pro-preview" and strong["price"] == (2.00, 12.00) and strong["tier"] == "strong"
     assert "gemini-2.5-pro" not in {m["id"] for m in spec["models"]}      # answers 404 for new users
+
+
+GEMINI_NATIVE_PAGES = [
+    {"models": [
+        {"name": "models/gemini-2.5-flash", "displayName": "Gemini 2.5 Flash", "thinking": True,
+         "supportedGenerationMethods": ["generateContent", "countTokens"]},
+        {"name": "models/gemini-3-pro-image", "displayName": "Nano Banana Pro", "thinking": True,
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/nano-banana-pro-preview", "displayName": "Nano Banana Pro", "thinking": True,
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/lyria-3.5", "displayName": "Lyria 3.5", "description": "Music Generation model",
+         "supportedGenerationMethods": ["generateContent", "countTokens"]},
+    ], "nextPageToken": "page 2"},
+    {"models": [
+        {"name": "models/gemini-3.8-flash-tts", "displayName": "Gemini 3.8 Flash TTS",
+         "supportedGenerationMethods": ["generateContent"]},
+        {"name": "models/lyria-realtime-exp", "supportedGenerationMethods": ["bidiGenerateMusic"]},
+        {"name": "models/gemini-embedding-2", "supportedGenerationMethods": ["embedContent"]},
+        {"name": "models/gemma-4-31b-it", "displayName": "Gemma 4 31B IT", "thinking": True,
+         "supportedGenerationMethods": ["generateContent"]},
+    ]},
+]
+
+
+def test_gemini_live_models_come_from_its_native_list_and_only_writers_count_as_text(monkeypatch):
+    asked = []
+
+    def fake_http(method, url, headers, body, timeout):
+        asked.append((url, headers.get("x-goog-api-key")))
+        return 200, GEMINI_NATIVE_PAGES[1 if "pageToken=" in url else 0]
+    monkeypatch.setattr(llm, "_http", fake_http)
+    rows = {r["id"]: r["text"] for r in llm.live_models("gemini", "k-1")}
+    assert {i for i, t in rows.items() if t} == {"gemini-2.5-flash", "gemma-4-31b-it"}
+    assert set(rows) == {"gemini-2.5-flash", "gemini-3-pro-image", "nano-banana-pro-preview", "lyria-3.5",
+                         "gemini-3.8-flash-tts", "lyria-realtime-exp", "gemini-embedding-2", "gemma-4-31b-it"}
+    assert len(asked) == 2 and asked[0][0].startswith(llm.GEMINI_NATIVE + "/models?") and asked[0][1] == "k-1"
+    assert "pageToken=page%202" in asked[1][0]
+    monkeypatch.setattr(llm, "_http", lambda *a: (400, {"error": {"message": "API key not valid"}}))
+    with pytest.raises(llm.ProviderError, match="rejected"):
+        llm.live_models("gemini", "bad")
+
+
+def test_live_models_read_what_openai_compatible_lists_say(monkeypatch):
+    def reply(rows):
+        monkeypatch.setattr(llm, "_http", lambda *a: (200, {"data": rows}))
+    reply([{"id": "a/chat", "architecture": {"output_modalities": ["text"]}},           # OpenRouter
+           {"id": "a/painter", "architecture": {"output_modalities": ["image"]}}])
+    assert llm.live_models("openrouter", "k") == [{"id": "a/chat", "text": True}, {"id": "a/painter", "text": False}]
+    reply([{"id": "chatty", "capabilities": {"completion_chat": True}},                  # Mistral
+           {"id": "ocr", "capabilities": {"completion_chat": False}}])
+    assert [r["text"] for r in llm.live_models("mistral", "k")] == [True, False]
+    reply([{"id": "gpt-5-mini"}, {"id": "gpt-image-2"}, {"id": "whisper-x"}])            # nothing said: only listed images out
+    assert llm.live_models("openai", "k") == [{"id": "gpt-5-mini", "text": True}, {"id": "gpt-image-2", "text": False},
+                                              {"id": "whisper-x", "text": True}]
