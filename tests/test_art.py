@@ -2447,6 +2447,234 @@ def test_the_writer_states_the_worlds_period_and_technology_wherever_it_draws_a_
         assert word not in told, word
 
 
+# ---- the scene's place and things (consistent-scene-places)
+
+
+MILL_THEN = "A stone mill of grey granite with a slate roof and a great oak wheel turning in the river."
+MILL_NOW = "The mill on the river where travellers ask for a bed."
+
+
+def place_doc(link=True):
+    """The mill described twice (its look told first, then only its use), a silver coin (a thing) described twice the same
+    way, and e6 (Mira and the Stranger, with the coin) happening at the mill when `link`."""
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][2]["facets"] = [portrait("mill", "a0", MILL_THEN, 1), portrait("mill", "a7", MILL_NOW, 2)]
+    d["entities"].append(ent("coin", "the silver coin", "object", frm="a7", facets=[
+        portrait("coin", "a7", "A silver coin stamped with a crowned wolf on one face.", 1),
+        portrait("coin", "a9", "The coin the stranger left behind on the table.", 2)]))
+    d["events"][5]["entities"].append("coin")
+    if link:
+        d["events"][5]["setting"] = {"text": "the mill yard", "place": "mill"}
+    return bk, d
+
+
+def scene_writer(d, bk, kind="event", target="e6", at="a11", sink=None, **kw):
+    sink = sink or Mem()
+    t = Text(picks=lambda s: True)
+    il = art.Illustrator([art.Book(d, bk, sink)], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0, **kw)
+    pr = il.make_prompt(il.job(kind, target, at=at))
+    return writer_calls(t)[-1], pr, il
+
+
+def labelled_sink(d):
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], "ink"), "pictures": [pic("pmira001", "mira", "a4"),
+                                                                            pic("pstra001", "stranger", "a7")]}
+    sink.files.update({"pmira001.png": b"mira", "pstra001.png": b"stranger"})
+    return sink
+
+
+def test_a_scene_at_a_linked_place_gets_the_places_entry_with_its_earlier_look_and_the_figures_are_unchanged():
+    bk, d = place_doc()
+    w, pr, _ = scene_writer(d, bk, sink=labelled_sink(d))
+    assert tag(w, "setting_entry") == MILL_NOW and 'name="the mill" type="place"' in w
+    assert "slate roof" in tag(w.split("<setting_entry", 1)[1], "earlier_look")        # its look told earlier comes with it
+    assert '<entry name="the mill"' not in w and w.index("<setting_entry") > w.rindex("<entry ")
+    assert "(where: the mill yard)" in tag(w, "moment") and {"a0", "a7"} <= set(pr.sources)
+    # the thing the event names keeps its look the same way
+    coin = re.search(r'<entry name="the silver coin" type="thing">(.*?)</entry>\s*<earlier_look name="the silver coin">(.*?)</earlier_look>', w, re.S)
+    assert coin and "crowned wolf" in coin.group(2)
+    # the figures' entries, their labels and what is attached are those of the same scene with no linked place
+    bk2, d2 = place_doc(link=False)
+    w2, pr2, _ = scene_writer(d2, bk2, sink=labelled_sink(d2))
+    entries = lambda w: re.findall(r'<entry [^>]*>.*?</entry>(?:\s*<earlier_look name="[^"]*">.*?</earlier_look>)?', w, re.S)
+    assert entries(w) == entries(w2) and "<setting_entry" not in w2
+    assert pr.figures == pr2.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "stranger"}]
+    assert [r["id"] for _, r in pr.references] == [r["id"] for _, r in pr2.references] == ["pmira001", "pstra001"]
+    assert pr.shows == pr2.shows
+
+
+def test_the_place_entry_is_the_one_visible_at_the_anchor_and_never_counts_against_the_figures(monkeypatch):
+    bk, d = place_doc()
+    d["entities"][2]["facets"][1]["from"] = d["entities"][2]["facets"][1]["evidence"][0] = "a10"   # described after e6
+    w, _, _ = scene_writer(d, bk, at="a9")
+    assert tag(w, "setting_entry") == MILL_THEN and "travellers" not in w
+    bk, d = place_doc()
+    for e in d["entities"]:
+        if e["id"] == "mill":            # the place itself is first named after the moment: no entry, the words stay
+            e["from"] = e["names"][0]["from"] = "a10"
+            e["facets"] = [portrait("mill", "a10", MILL_THEN, 1)]
+    w, _, _ = scene_writer(d, bk, at="a11")
+    assert "<setting_entry" not in w and "slate roof" not in w and "(where: the mill yard)" in w
+    bk, d = place_doc()
+    monkeypatch.setattr(art, "MAX_ENTRIES", 2)        # the figures fill the entries; the place still has its own
+    w, _, _ = scene_writer(d, bk)
+    assert w.count("<entry ") == 2 and 'name="Mira"' in w and 'name="the Stranger"' in w and tag(w, "setting_entry") == MILL_NOW
+
+
+def test_a_place_only_an_unfinished_earlier_book_has_never_reaches_the_scene():
+    bk1, d1, bk2, d2 = series_docs()
+    d1["entities"][2]["facets"] = [portrait("mill", "a0", MILL_THEN, 1, "b1")]
+    d2["events"][0]["setting"] = {"text": "the mill door", "place": "mill"}
+    t = Text(picks=lambda s: True)
+    il = art.Illustrator([art.Book(d1, bk1, Mem(), None, draw=False), art.Book(d2, bk2, Mem())], t, Image(), "ink",
+                         portraits="all", workers=1, log=lambda *_: None, pause=0)
+    pr = il.make_prompt(il.job("event", "e1", at="b2.a5", finished=set()))
+    w = writer_calls(t)[-1]
+    assert "<setting_entry" not in w and "slate roof" not in w and pr.inherits == [] and pr.partial
+    pr = il.make_prompt(il.job("event", "e1", at="b2.a5", finished={"b1"}))
+    assert tag(writer_calls(t)[-1], "setting_entry") == MILL_THEN and "b1" in pr.inherits
+
+
+def test_a_plate_takes_the_place_of_its_main_moment_only():
+    bk, d = place_doc()
+    w, pr, il = scene_writer(d, bk, "plate", "Two")
+    assert il.job("plate", "Two").event["id"] == "e4" and "<setting_entry" not in w     # e6's place is not the plate's
+    d["events"][3]["setting"] = {"text": "the mill", "place": "mill"}
+    w, pr, _ = scene_writer(d, bk, "plate", "Two")
+    assert tag(w, "setting_entry") == MILL_NOW
+
+
+def test_the_place_rule_is_the_scene_writers_and_a_portrait_never_gets_a_setting_entry():
+    rule = "When there is a <setting_entry>, the moment happens there: draw the setting as it and its <earlier_look> describe it"
+    assert rule in art.SCENE_WRITER and rule not in art.WRITER and rule not in art.PORTRAIT_WRITER
+    assert "<setting_entry>" not in art.WRITER and "<setting_entry>" not in art.PORTRAIT_WRITER
+    bk, d = place_doc()
+    for kind, target in (("portrait", "stranger"), ("place", "mill"), ("thing", "coin")):
+        w, _, _ = scene_writer(d, bk, kind, target)
+        assert "<setting_entry" not in w, kind
+
+
+def place_sink(d, *extra):
+    sink = labelled_sink(d)
+    for r in (pic("pmill001", "mill", "a0", kind="place"), pic("pcoin001", "coin", "a7", kind="thing")) + extra:
+        sink.m["pictures"].append(r)
+        sink.files[r["file"]] = r["id"].encode()
+    return sink
+
+
+def test_place_and_thing_pictures_are_no_reference_unless_the_flag_is_on():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert il.place_refs is False
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]
+    il.draw(job, pr)
+    assert im.calls[-1]["references"] == [b"mira", b"stranger"] and "place where the scene happens" not in im.calls[-1]["note"]
+
+
+def test_with_place_refs_the_place_then_the_things_take_the_slots_after_the_figures():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0,
+                         place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert pr.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "stranger"}]      # figures unchanged
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert il.references(job, pr.shows, figures=pr.figures) == pr.references
+    rec = il.draw(job, pr)
+    call = im.calls[-1]
+    assert call["references"] == [b"mira", b"stranger", b"pmill001", b"pcoin001"]
+    assert call["note"] == " ".join([
+        "Reference picture 1 is figure A.", "Reference picture 2 is figure B.", art.FIGURE_NOTE,
+        art.PLACE_NOTE.format(n=3), art.THING_NOTE.format(n=4, name="the silver coin")])
+    assert "never its framing, viewpoint or composition" in call["note"] and "never its size or placement" in call["note"]
+    assert call["note"] not in call["prompt"]
+    assert rec["references"] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": "pmira001"},
+                              {"label": "B", "entity": "stranger", "ref": "pstra001"}]
+    # a person's text that drops a label: that figure's picture goes, the place and thing stay after the others
+    im.calls.clear()
+    il.draw(job, pr, text="A grey stone mill yard at dusk. Figure B, a hooded traveller, waits at the gate by the wheel.")
+    assert im.calls[-1]["references"] == [b"stranger", b"pmill001", b"pcoin001"]
+    assert im.calls[-1]["note"].startswith("Reference picture 1 is figure B. ") and art.PLACE_NOTE.format(n=2) in im.calls[-1]["note"]
+
+
+def test_the_place_and_things_only_fill_slots_the_figures_leave(monkeypatch):
+    bk, d = place_doc()
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    monkeypatch.setattr(art, "MAX_REFERENCES", 3)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001"]          # the place before the thing
+    monkeypatch.setattr(art, "MAX_REFERENCES", 2)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]                       # no room: figures only
+
+
+def test_a_place_reference_is_never_past_the_anchor_and_one_in_another_style_keeps_only_what_it_should():
+    bk, d = place_doc()
+    sink = labelled_sink(d)
+    sink.m["pictures"].append(pic("pmill009", "mill", "a10", kind="place"))     # drawn from after the moment
+    sink.files["pmill009.png"] = b"late mill"
+    digital = likeness_set(d, pic("pmilldig", "mill", "a0", kind="place"))
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink, likeness={"digital-art": digital})], Text(), im, "ink", portraits="all",
+                         workers=1, log=lambda *_: None, pause=0, place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmilldig"]
+    il.draw(job, pr)
+    note = im.calls[-1]["note"]
+    assert art.PLACE_NOTE.format(n=3) + art.OTHER_STYLE in note and "likeness of the figure" not in note
+    # a place the reader has not reached is never a reference: its entity is not in the view
+    bk, d = place_doc()
+    for e in d["entities"]:
+        if e["id"] == "mill":
+            e["from"] = e["names"][0]["from"] = "a10"
+            e["facets"] = [portrait("mill", "a10", MILL_THEN, 1)]
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert "pmill001" not in [r["id"] for _, r in pr.references]
+
+
+def test_a_thing_the_moments_summary_names_is_in_the_scene_and_one_not_reached_is_not():
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][5]["summary"] = "Mira finds the silver coin the stranger left behind."
+    w, pr, _ = scene_writer(d, bk)
+    assert '<entry name="the silver coin" type="thing">' in w and "coin" in pr.shows and "crowned wolf" in w
+    d["events"][5]["summary"] = "Mira finds the silvery coins the stranger left behind."        # as written, or no match
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="the silver coin"' not in w
+    d["events"][5]["summary"] = "Mira finds a silver coin-shaped stone the stranger left behind."   # a compound is no coin
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["names"][0]["value"] = "coin"
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="coin"' not in w and "crowned wolf" not in w
+    d["events"][5]["summary"] = "Mira finds the coin the stranger left behind."                  # the whole word is
+    w, _, _ = scene_writer(d, bk)
+    assert '<entry name="coin" type="thing">' in w
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][4]["summary"] = "Gabriel rides in with the silver coin and news of a storm."     # e5 at a8: coin is from a7
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["from"] = e["names"][0]["from"] = "a9"
+            for f in e["facets"]:
+                f["from"] = f["evidence"][0] = "a9"
+    w, _, _ = scene_writer(d, bk, target="e5", at="a11")
+    assert '<entry name="the silver coin"' not in w and "crowned wolf" not in w          # not reached at a8
+
+
 # ---- one model per responsibility
 
 
