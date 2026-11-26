@@ -412,7 +412,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   /** The actions under the picture: Fix, Redraw and Delete. Fix needs the image provider that drew this picture set up
    *  here (the list arrives after the lightbox opens: `drawers`), since the fix is drawn by that same model. */
   let drawers = null;   // the image provider rows that can draw now, once known
-  const fixable = (it) => Boolean(it.canEdit && it.canRedraw !== false && drawers && typeof it.rec.provider === "string" && drawers.some((p) => p.id === it.rec.provider));
+  // Not while "How this was drawn" is hidden: the faults are read against that prompt and could carry an unfinished book.
+  const fixable = (it) => Boolean(it.canEdit && it.canRedraw !== false && !(it.promptHiddenUntil && it.promptHiddenUntil(it.rec)) && drawers && typeof it.rec.provider === "string" && drawers.some((p) => p.id === it.rec.provider));
   function paintActs() {
     const it = items[i];
     clear(acts, it.canEdit ? [
@@ -432,6 +433,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   async function fix(it) {
     const rec = it.rec;
     const ctl = new AbortController();
+    dlg.addEventListener("close", () => ctl.abort(), { once: true });   // closed while looking: the check is not waited for
     let gone = false;
     const cancel = h("button.btn.quiet", { type: "button", on: { click: () => { gone = true; ctl.abort(); paintActs(); } } }, "Cancel");
     clear(acts, h("div.lb-fix", loading("Looking for drawing faults…"), h("div.btns", cancel)));
@@ -499,12 +501,14 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         forgetArt(it.key);
         const rec = r?.record || r;
         if (rec && ID_RE.test(rec.id || "")) { it.rec = rec; it.src = it.srcFor ? it.srcFor(rec) : it.src; }
-        if (!dlg.open) return;
-        paint();
+        // The fix is filed even when the lightbox closed meanwhile: the toast with Undo then goes where it was opened
+        // from (undoable picks the host), and the page fetches the art set again either way.
+        if (dlg.open && items[i] === it) paint();
         undoable(it, r, "Picture fixed");
         onChanged?.();
       } catch (e) {
-        if (!dlg.open || items[i] !== it) return;
+        if (!dlg.open) { toast(e.code === "refused" ? `The provider would not draw it: ${e.message}` : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
+        if (items[i] !== it) return;
         fixForm(it, keep.faults, said, { note: keep.note, error: e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message });
       }
     });
@@ -1034,7 +1038,9 @@ export async function openPictureSheet(opts) {
     // portraits with it, the run draws them with it), and as the scenes' too, since the run draws no scene.
     return { style: styleText(), level: "none", portraits: "none", entities: [opts.target], until: at.p, finished: at.finished,
       quality: st.quality, provider: st.provider.id, ...(st.model ? { model: st.model } : {}),
-      portraitProvider: st.provider.id, ...(st.model ? { portraitModel: st.model } : {}) };
+      portraitProvider: st.provider.id, ...(st.model ? { portraitModel: st.model } : {}),
+      // the drawing-fault check: priced by the estimate and done by the run (both read it as a boolean)
+      ...(artDefaults().check ? { check: true } : {}) };
   }
   let estGen = 0, estTimer = null;
   /** Ask the estimate for the choices and position now, unless it already answered for exactly those. */
@@ -1120,7 +1126,7 @@ export async function openPictureSheet(opts) {
       // The writer chosen in the sheet writes these portraits' prompts (the run's portrait writer); none chosen: the
       // server's default for portrait prompts, the strong tier.
       const writer = textChoice(writers, st.writer);
-      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap, ...(artDefaults().check ? { check: true } : {}),
+      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap,
         ...(writer ? { portraitWriter: writer } : {}) });
       st.starting = false;
       st.written = st.prompt;   // nothing to ask about on close
