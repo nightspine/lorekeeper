@@ -285,7 +285,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
       saved = list.find((s) => s.slug === saved.slug) || (back?.slug === saved.slug ? back : saved);
       changed = true;
     } catch (e) {
-      prevErr.textContent = e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
+      prevErr.textContent = e.code === "refused" ? `The provider would not draw it: ${String(e.message).replace(/^refused:\s*/i, "")}` : e.message;
     } finally {
       busy = false; paintDraw(); if (sh.el.isConnected) paintPreview();
     }
