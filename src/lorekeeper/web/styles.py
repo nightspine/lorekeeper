@@ -5,8 +5,8 @@ Saved styles live in `lorekeeper-data/styles.json` (`{"styles": [{slug, name, te
 "retired": {slug: text}}`) and their previews in `lorekeeper-data/styles/<slug>.<ext>`. A saved style is passed around by
 its slug, as a listed one is: `art.SAVED_STYLES` (kept in step here) gives `art.style_sentence` its words, so a job config,
 the picture sheet and the art store's `resolve` need nothing else. A deleted style's words stay in `retired`, never listed,
-so the art sets drawn in it keep drawing in its words. A preview is `art.preview_prompt` (the shared scene, the style
-sentence, the no-text line) drawn by the image provider; it is stale once the style's words change.
+so the art sets drawn in it keep drawing in its words. A preview is the shared scene, the style's stored words as written and the
+no-text line (`art.preview_prompt`'s parts), drawn square; it is stale once the style's words change.
 """
 
 from __future__ import annotations
@@ -35,21 +35,10 @@ EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME = {v: k for k, v in EXT.items()}
 QUALITIES = ("draft", "standard", "best")
 STATIC_STYLES = Path(__file__).parent / "static" / "styles"
-# Until the pipeline's preview scene is in: the same parts a real prompt has.
-_FALLBACK_SCENE = ("A lone traveller in a long coat walks along a muddy road at dusk toward a ruined castle on a hilltop, "
-                   "gravestones by the road, a stormy sky with a pale sun.")
-
-
-def preview_prompt(style: str) -> str:
-    """The preview prompt of a style (a slug, listed or saved): `art.preview_prompt` when the pipeline has it."""
-    fn = getattr(art, "preview_prompt", None)
-    if fn is not None:
-        return fn(style)
-    return " ".join((getattr(art, "PREVIEW_SCENE", _FALLBACK_SCENE), art.style_sentence(style), art.NO_TEXT))
-
-
-def preview_shape() -> str:
-    return getattr(art, "PREVIEW_SHAPE", "square")
+def preview_prompt(text: str) -> str:
+    """The preview prompt of a saved style: its stored words as written, never looked up, so a description that reads like
+    a listed slug ("ink") is still the person's own words. No book, so no names are replaced."""
+    return art.Illustrator._assemble(art.PREVIEW_SCENE, style=" ".join(text.split()))
 
 
 class StyleError(Exception):
@@ -281,7 +270,7 @@ def router(store: StyleStore, image_model: Callable) -> APIRouter:
                 raise StyleError(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
             prov, name = getattr(image, "provider", provider) or provider, getattr(image, "name", model) or model
             q = llm.nearest_quality(prov, name, quality) if prov and name else quality
-            shape = preview_shape()
+            shape = art.PREVIEW_SHAPE
             price = llm.image_price(prov, name, q, shape) if prov and name else None
             with drawing_lock:
                 if slug in drawing:
@@ -290,7 +279,7 @@ def router(store: StyleStore, image_model: Callable) -> APIRouter:
             try:
                 text = row["text"]
                 try:
-                    got = image.draw(preview_prompt(slug), shape=shape, quality=q)
+                    got = image.draw(preview_prompt(text), shape=shape, quality=q)
                 except images.ImageRefused as e:
                     raise StyleError(422, "refused", f"refused: {e.reason[:160]}") from e
                 except llm.ProviderError as e:

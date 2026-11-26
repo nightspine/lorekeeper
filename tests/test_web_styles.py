@@ -68,8 +68,8 @@ def test_a_preview_is_the_shared_scene_in_the_style_and_replaces_the_old_one(env
     assert r.status_code == 200, r.text
     got = r.json()
     call = env.image.calls[-1]
-    assert call["prompt"] == styles_mod.preview_prompt("moody-noir") and NOIR in call["prompt"]
-    assert call["prompt"].endswith(art.NO_TEXT) and call["shape"] == styles_mod.preview_shape() and call["references"] == []
+    assert call["prompt"] == art.preview_prompt(NOIR) == styles_mod.preview_prompt(NOIR) and NOIR in call["prompt"]
+    assert call["prompt"].endswith(art.NO_TEXT) and call["shape"] == art.PREVIEW_SHAPE == "square" and call["references"] == []
     q = llm.nearest_quality("gemini", GEMINI, "draft")
     assert got["quality"] == q and got["price"] == llm.image_price("gemini", GEMINI, q, call["shape"])
     assert got["preview"].startswith("/api/styles/moody-noir/preview?v=") and not got["stale"]
@@ -78,6 +78,14 @@ def test_a_preview_is_the_shared_scene_in_the_style_and_replaces_the_old_one(env
     first = f.content
     again = env.c.post("/api/styles/moody-noir/preview", json={}).json()
     assert env.c.get(again["preview"]).content != first and len(list((env.data / "styles").iterdir())) == 1
+
+
+def test_a_preview_draws_the_stored_words_even_when_they_read_like_a_listed_slug(env):
+    env.key()
+    make(env, "Plain", "ink")
+    assert env.c.post("/api/styles/plain/preview", json={}).status_code == 200
+    prompt = env.image.calls[-1]["prompt"]
+    assert art.STYLES["ink"] not in prompt and prompt == " ".join((art.PREVIEW_SCENE, "ink", art.NO_TEXT))
 
 
 def test_changing_the_words_marks_the_preview_stale_and_a_rename_keeps_the_slug(env):
