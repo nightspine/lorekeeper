@@ -121,9 +121,9 @@ def test_portraits_never_go_backwards(monkeypatch):
     real = portraits._windows
     calls = []
 
-    def short(text, hits, lo, hi):   # the second time, the budget leaves out the later passages
+    def short(text, hits, lo, hi, since=None):   # the second time, the budget leaves out the later passages
         calls.append(1)
-        out, last = real(text, hits, lo, hi)
+        out, last = real(text, hits, lo, hi, since)
         return out, (last if len(calls) == 1 else 2)
     monkeypatch.setattr(portraits, "_windows", short)
     portraits.portraits([(d, book)], Fake(["A young woman of the mill.", "A young woman of the mill who keeps secrets."]),
@@ -396,3 +396,15 @@ def test_picks_outside_the_pieces_are_ignored():
     model = Fake([], looks=[[0, 2, 9, "x"]])
     assert portraits.look_pieces(model, "Mira", "a character", FIRST) == ["red hair"]
     assert portraits.kept("dark skin", "A dark-skinned smith.") and not portraits.kept("dark skin", "A dark smith.")
+
+
+def test_mentions_since_the_last_description_get_half_the_windows_and_the_budget_first(monkeypatch):
+    text = {s: f"Mira at the mill, paragraph {s}, " + "word " * 40 for s in range(400)}
+    hits = list(range(0, 400, 4))                       # windows that never touch
+    old, _ = portraits._windows(text, hits, 0, 399)
+    assert sum(f"paragraph {s}," in old for s in range(361, 400)) <= 12     # evenly over the book: few recent ones
+    monkeypatch.setattr(portraits, "BUDGET", 8000)                          # room for 11 windows of 3 paragraphs
+    new, last = portraits._windows(text, hits, 0, 399, since=360)
+    assert all(f"paragraph {s}," in new for h in range(364, 400, 4) for s in (h - 1, h, h + 1))   # every recent window
+    assert last == 397 and "paragraph 0," in new and "paragraph 200," not in new                    # then the oldest first
+    assert [int(x.split(",")[0]) for x in new.split("paragraph ")[1:]] == sorted(int(x.split(",")[0]) for x in new.split("paragraph ")[1:])

@@ -238,25 +238,31 @@ def _sample(seqs: list[int], k: int) -> list[int]:
     return sorted({seqs[round(i * step)] for i in range(k)})
 
 
-def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int) -> tuple[str, int]:
+def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int, since: int | None = None) -> tuple[str, int]:
     """Passages around the sampled hits, merged where they touch, within the budget.
-    Returns (text, last seq used)."""
+    Returns (text, last seq used). With `since` (the mark of the previous description, which the new one builds on), the
+    mentions after it get up to half the windows and the budget first: sampled evenly over the whole book so far they were
+    a few windows among forty, and a character's new look (Baptiste's cropped hair, Empire of the Vampire) was never sent."""
+    new = [s for s in hits if since is not None and s > since]
+    old = [s for s in hits if since is None or s <= since]
+    k = min(len(new), MAX_WINDOWS // 2)
     ranges: list[list[int]] = []
-    for s in _sample(hits, MAX_WINDOWS):
+    for s in sorted(_sample(old, MAX_WINDOWS - k) + _sample(new, k)):
         a, b = max(lo, s - CONTEXT), min(hi, s + CONTEXT)
         if ranges and a <= ranges[-1][1] + 1:
             ranges[-1][1] = max(ranges[-1][1], b)
         else:
             ranges.append([a, b])
+    first = [r for r in ranges if since is not None and r[1] > since] + [r for r in ranges if since is None or r[1] <= since]
     out, used, last = [], 0, lo
-    for a, b in ranges:
+    for a, b in first:
         chunk = "\n".join(text[s] for s in range(a, b + 1) if s in text)
         if used + len(chunk) > BUDGET:
             continue  # skip rather than stop, so later passages still get in
-        out.append(chunk)
+        out.append((a, chunk))
         used += len(chunk)
         last = max(last, b)
-    return "\n…\n".join(out), last
+    return "\n…\n".join(c for _, c in sorted(out)), last
 
 
 def _first(text: str) -> str:
@@ -400,7 +406,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             e = ents[eid]
             visible = [n for n in e["names"] if seq_of.get(n["from"], hi) <= mark]
             names = [n["value"] for n in visible]
-            passages, last = _windows(text, seen, lo, mark)
+            passages, last = _windows(text, seen, lo, mark, upto_mark.get(eid))
             # Never before the entity, or any name the prompt gives it, is itself revealed.
             last = max([last, seq_of.get(e["from"], hi)] + [seq_of.get(n["from"], hi) for n in visible])
             prev = last_text.get(eid)
