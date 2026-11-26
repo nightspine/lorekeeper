@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.25.0](https://github.com/nightspine/lorekeeper/compare/v0.24.0...v0.25.0) (2026-11-26)
+
+
+### Features
+
+* read the book in Lorekeeper, chapter steps instead of the slider, an Overview home and picture-first entries ([#145](https://github.com/nightspine/lorekeeper/issues/145)) ([65e92e4](https://github.com/nightspine/lorekeeper/commit/65e92e481a66c9e5f5e44d73575bd7788330a972))
+
 ## [0.24.0](https://github.com/nightspine/lorekeeper/compare/v0.23.3...v0.24.0) (2026-11-26)
 
 
