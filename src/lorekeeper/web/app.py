@@ -2015,7 +2015,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def art_soften(key: str, request: Request):
         """Rewrite a prompt the image model refused so the same moment can be drawn (one writer call, strong tier, nothing
         drawn): the prompt route's body plus `text` (what was refused) and `reason` (the provider's words). Gated like the
-        prompt route and answered in its shape; never cached as the job's prompt, so a draw of it is a person's own text."""
+        prompt route and answered in its shape. Never cached as the job's prompt. When the refused text was the server's own
+        at the job's anchor (`server_written`), the reply is remembered beside it (`remember_soft`), so a draw of it counts as
+        server text and an entity picture keeps its first-look anchor; a refused text the person wrote is rewritten from the
+        material at the reader's position (`at_position`), answers that anchor, and is not remembered, so its draw is filed
+        there too."""
         body = await json_body(request)
 
         @art_route
