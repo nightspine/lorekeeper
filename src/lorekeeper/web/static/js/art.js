@@ -823,7 +823,7 @@ export async function openPictureSheet(opts) {
     if (st.mode === "through") {
       clear(body, modeSeg,
         h("p.hint", "A portrait at their first look and one at each lasting change in how they look, up to your position. Portraits already drawn are skipped. They are drawn as a run, which you can follow in Runs."),
-        h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
+        h("div.art-field", h("label.label", { for: "art-style-row" }, "Style"), styleChoice, styleNote),
         h("div.art-row",
           h("div.art-field", h("span.label", "Quality"), qualitySeg),
           provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
