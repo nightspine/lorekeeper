@@ -1391,6 +1391,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-writer", str(e)) from e
         return choice
 
+    def art_picker(body: dict):
+        """The text backend that looks at a picture for drawing faults: the request's `picker` ({provider, model}, checked
+        as a writer is), else the first configured cloud model that can see pictures (`JobManager.vision_model`). None
+        when none can."""
+        try:
+            choice = text_choice_config(body.get("picker"), "choosing calls")
+            jobs.check_text_choice(choice, "choosing calls")
+        except ValueError as e:
+            raise ArtRefusal(422, "bad-picker", str(e)) from e
+        return jobs.vision_model(choice)
+
     def art_image_choice(body: dict, kind) -> tuple[str | None, str | None]:
         """(provider, model) of the image model a sheet request draws with: for a portrait, place or thing the request's
         `portraitProvider` / `portraitModel` when it sends either (a model alone is one of `provider`'s), else `provider` /
@@ -1403,12 +1414,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
                     portraits: str | bool | None = "main", tier: str = "cheap", writer: dict | None = None,
-                    cfg: dict | None = None):
+                    cfg: dict | None = None, picker=None, check: bool = False):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over.
         `writer` (checked, `art_writer`) writes every kind's prompt; else the `tier` model does. `cfg`, an entity run's
         checked config (`entity_choice`): the earlier books it draws are given with their EPUB, and the pipeline gets its
-        entries, position and finished books (`jobs.run_limits`)."""
+        entries, position and finished books (`jobs.run_limits`). `picker`, a text backend, makes the choosing calls (the
+        drawing-fault check among them) instead of the cheap tier; `check` has every picture drawn checked and fixed once."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
             raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
         if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
@@ -1438,8 +1450,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # The sheet's writer writes every kind, and the sheet already chose the image model for the kind it draws.
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0,
-                                  cheap_text=jobs.cheap_model(None) if text_needed else None,
-                                  portrait_text=text_model, portrait_image=image, **extra), image, slug_
+                                  cheap_text=picker or (jobs.cheap_model(None) if text_needed else None),
+                                  portrait_text=text_model, portrait_image=image, check=check, **extra), image, slug_
 
     def entity_choice(ctx: dict, cfg: dict) -> tuple[dict, list[str]]:
         """Check a checked art config's entries, position and finished books against the index, as the reader stands:
@@ -1836,7 +1848,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: str = "main",
                      provider: str | None = None, model: str | None = None, quality: str = "standard",
                      chapters: str | None = None, portraitProvider: str | None = None, portraitModel: str | None = None,
-                     entities: str | None = None, until: str | None = None, finished: str | None = None):
+                     entities: str | None = None, until: str | None = None, finished: str | None = None,
+                     check: bool = False):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
         none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
@@ -1849,7 +1862,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         the earlier books the reader finished, without what is drawn. `portraitsMax`, `picturesMax` and `priceMax` are the
         top of the range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
         `art.MAX_VERSIONS` here (the pipeline's `portraits_max`); all three equal the plain numbers when every counted entity
-        is checked."""
+        is checked. With `check`, every price adds the drawing-fault check: one call per picture on the model that would
+        make it (`JobManager.vision_model`, `art.check_price`, else `art.CHECK_FALLBACK`) and a fix for the share of
+        pictures the bench found faults in (`art.FIX_RATE`), answered as `check` {each, fixRate, price, priceMax}."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1918,7 +1933,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
         high = ports + extra_max
         price_max = None if price is None or (high and each[1] is None) else round(price + extra_max * (each[1] or 0), 4)
-        return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
+        check_ = None
+        if check:
+            ref = artmod.model_ref(jobs.vision_model()) or {}
+            one = artmod.check_price(ref.get("provider"), ref.get("model"))
+            one = artmod.CHECK_FALLBACK if one is None else one
+
+            def with_check(total, n_plates: int, n_ports: int):
+                if total is None:
+                    return None
+                return round(total + (n_plates + n_ports) * one
+                             + artmod.FIX_RATE * (n_plates * (each[0] or 0) + n_ports * (each[1] or 0)), 4)
+            check_ = {"each": round(one, 6), "fixRate": artmod.FIX_RATE,
+                      "price": None if price is None else round(with_check(price, plates, ports) - price, 4),
+                      "priceMax": None if price_max is None else round(with_check(price_max, plates, high) - price_max, 4),
+                      **({"provider": ref["provider"], "model": ref["model"]} if ref else {})}
+            price, price_max = with_check(price, plates, ports), with_check(price_max, plates, high)
+        return {**({"check": check_} if check_ else {}),"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
                 "picturesMax": plates + high, "portraitsMax": high, "priceMax": price_max,
                 **({"entities": ecfg["entities"], "until": ecfg["until"], "finished": ecfg["finished"]} if ecfg else {}),
                 "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
@@ -2079,11 +2110,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 raise ArtRefusal(422, "bad-prompt", "Give the prompt to draw, at most 4,000 characters.")
             art_busy(ctx["hash"])
             fin = art_finished(ctx, body)
+            check = body.get("check", False)
+            if not isinstance(check, bool):
+                raise ArtRefusal(422, "bad-config", "check must be true or false.")
+            # with `check`, the picture is looked at for drawing faults by a model that sees pictures (`picker`, else the
+            # first configured one) and fixed once; none that can: drawn unchecked, as the pipeline does
+            picker = art_picker(body) if check else None
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard",
                                                *art_image_choice(body, body.get("kind")), tier="strong",
-                                               writer=art_writer(body))   # a cache miss writes as the sheet does
+                                               writer=art_writer(body),   # a cache miss writes as the sheet does
+                                               picker=picker, check=check and picker is not None)
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
@@ -2140,14 +2178,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
         return rec
 
-    def take_place_of(key: str, h: str, slug_: str, old_rec: dict, new: dict) -> dict:
+    def take_place_of(key: str, h: str, slug_: str, old_rec: dict, new: dict, what: str = "drew a picture again") -> dict:
         """File `new` (already in the set) in the place of `old_rec`: the new record `replaces` it and the old leaves the set
         with its file, both kept in one journal entry (op `redraw`) whose undo puts the old one back. Under the set's lock."""
         pid = old_rec["id"]
         old = arts.path(h, slug_, pid)
         entry = journal_art(key, [old] if old and old.name != new["file"] else [],
                             {"op": "redraw", "textHash": h, "style": slug_, "removed": [old_rec], "added": [new["id"]]},
-                            f"drew a picture again ({old_rec['kind']})")
+                            f"{what} ({old_rec['kind']})")
         try:
             man = arts.manifest(h, slug_)
             for r in man["pictures"]:
@@ -2262,6 +2300,113 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     new.pop("inherits", None)
                 entry = take_place_of(key, ctx["hash"], slug_, rec, new)
             return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"]}
+        return await work()
+
+    def art_gate(ctx: dict, il, rec: dict, body: dict, fin: list[str] | None) -> None:
+        """A picture asked about by the reader must be one they can see: its anchor at or before `p` (when given) and
+        nothing from an earlier book they have not finished (`inherits`, the gate the Reader applies)."""
+        ords = il.books[-1].ord_of
+        if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in ords:
+            raise ArtRefusal(409, "stale", "This picture no longer fits the index.")
+        if body.get("p", body.get("anchor")) is not None:
+            _, at = art_position(ctx, body)
+            if at is None or ords[rec["from"]] > ords[at]:
+                raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
+        unfinished = set(earlier_keys(ctx)) - set(fin) if fin is not None else set()
+        if unfinished & set(rec.get("inherits") or []):
+            raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
+
+    @app.post("/api/library/{key}/art/{pid}/check")
+    async def art_check(key: str, pid: str, request: Request):
+        """Look at one picture for gross drawing faults (an extra hand, a head out of proportion...): one call on a text
+        model that can see pictures (`picker`, else the first configured one), with the picture's stored prompt as
+        context. Answers {faults: [{what, where}], cost}; nothing is written."""
+        body = await json_body(request) if int(request.headers.get("content-length") or 0) else {}
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            slug_, rec = art_record(ctx, pid)
+            art_busy(ctx["hash"])
+            fin = art_finished(ctx, body)
+            picker = art_picker(body)
+            if picker is None:
+                raise ArtRefusal(409, "no-vision", "None of the models set up here can see pictures. Add a Claude, OpenAI "
+                                                   "or Gemini key in Settings to check them.")
+            il, _, slug_ = illustrator(ctx, slug_, text_needed=False, picker=picker)
+            art_gate(ctx, il, rec, body, fin)
+            got = il.check_picture(rec, bi=len(il.books) - 1)
+            if not got.checked:
+                if il.no_vision:
+                    raise ArtRefusal(409, "no-vision", f"The model can't see pictures: {il.no_vision}"[:300])
+                if got.why == "the picture file is missing":
+                    raise ArtRefusal(409, "stale", "The picture file is missing.")
+                raise ArtRefusal(502, "model-failed", (got.why or "The check failed.")[:200])
+            return {"faults": got.faults, "cost": round(got.cost, 6)}
+        return await work()
+
+    def fix_request(body: dict) -> tuple[list[dict], str]:
+        """The faults and note of a fix request, checked: 0 to 8 faults, each {what: 1 to 200 characters, where: 0 to
+        120}, a note of at most 300, and at least one fault or a note. Raises 422 `bad-fix`."""
+        raw = body.get("faults", [])
+        note = body.get("note") or ""
+        if not isinstance(raw, list) or len(raw) > artmod.MAX_FIX_FAULTS or not isinstance(note, str):
+            raise ArtRefusal(422, "bad-fix", "List at most 8 things to fix.")
+        faults = []
+        for f in raw:
+            what = f.get("what") if isinstance(f, dict) else None
+            where = f.get("where", "") if isinstance(f, dict) else None
+            if not isinstance(what, str) or not isinstance(where if where is not None else "", str):
+                raise ArtRefusal(422, "bad-fix", "Each thing to fix needs what is wrong.")
+            what, where = " ".join(what.split()), " ".join((where or "").split())
+            if not 1 <= len(what) <= artmod.FAULT_CHARS or len(where) > artmod.WHERE_CHARS:
+                raise ArtRefusal(422, "bad-fix", "Say what is wrong in at most 200 characters, and where in at most 120.")
+            faults.append({"what": what, "where": where})
+        note = " ".join(note.split())
+        if len(note) > artmod.FIX_NOTE_CHARS:
+            raise ArtRefusal(422, "bad-fix", "Keep the note to 300 characters.")
+        if not faults and not note:
+            raise ArtRefusal(422, "bad-fix", "Say what to fix.")
+        return faults, note
+
+    @app.post("/api/library/{key}/art/{pid}/fix")
+    async def art_fix(key: str, pid: str, request: Request):
+        """Fix the drawing faults of a picture: one edit by the image model that drew it (its provider, model, quality and
+        shape), the picture itself the only reference, everything but the listed faults kept. The new record takes the
+        old one's place as a redraw does (one journal entry, undone like an edit); the stored prompt is unchanged."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            faults, note = fix_request(body)
+            ctx = art_index(key)
+            slug_, rec = art_record(ctx, pid)
+            art_busy(ctx["hash"])
+            fin = art_finished(ctx, body)
+            with arts.lock(ctx["hash"], slug_):
+                slug_, rec = art_record(ctx, pid)       # read again under the lock
+                prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
+                mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
+                qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
+                il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod, text_needed=False)
+                if image is None:
+                    which = llm.PROVIDERS[prov]["label"] if prov else "Gemini or OpenAI"
+                    raise ArtRefusal(409, "no-image-key", f"Add a {which} key in Settings to fix this picture.")
+                art_gate(ctx, il, rec, body, fin)
+                try:
+                    new = il.fix(rec, faults, note, bi=len(il.books) - 1)
+                except images.ImageRefused as e:
+                    raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
+                except ValueError as e:
+                    if "missing" in str(e):
+                        raise ArtRefusal(409, "stale", "The picture file is missing.") from e
+                    raise ArtRefusal(422, "bad-fix", str(e)) from e
+                if "inherits" not in rec:
+                    new.pop("inherits", None)
+                entry = take_place_of(key, ctx["hash"], slug_, rec, new, "fixed a picture")
+            fix_cost = (new.get("fixes") or [{}])[-1].get("cost") or 0
+            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
+                    "fixCost": fix_cost}
         return await work()
 
     @app.put("/api/library/{key}/art/world")

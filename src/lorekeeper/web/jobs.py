@@ -186,7 +186,8 @@ class Job:
 
 
 def art_config(raw) -> dict:
-    """The pictures part of a job config, checked: {style, level, chapters, portraits, quality, provider, model, cap}.
+    """The pictures part of a job config, checked: {style, level, chapters, portraits, quality, provider, model, cap,
+    check}. check (missing: false) has every picture looked at for drawing faults and fixed once (`Illustrator(check=)`).
     level is "main" (missing), "all" or "none" (no chapter pictures); chapters is None (missing: every chapter) or the
     sorted plan chapter numbers `n` whose scenes are drawn (an empty list: none; portraits are never limited by it; that
     each `n` is one of the book's chapters is checked where the index is known, `chapter_choice`); portraits is "main",
@@ -246,6 +247,9 @@ def art_config(raw) -> dict:
         finished = sorted(set(finished))
     if (level == "none" or chapters == []) and not cast and not entities:
         raise ValueError("Choose chapters or portraits.")
+    check = raw.get("check", False)     # look at every picture for drawing faults and fix them once (missing: off)
+    if not isinstance(check, bool):
+        raise ValueError("check must be true or false.")
     writers = {k: text_choice_config(raw.get(k), what) for k, what in TEXT_ROLES.items()}
     portrait_provider = raw.get("portraitProvider")
     if portrait_provider is not None and portrait_provider not in llm.IMAGE_PROVIDERS:
@@ -259,7 +263,7 @@ def art_config(raw) -> dict:
     return {"style": style, "level": level, "chapters": chapters, "portraits": cast, "quality": quality,
             "provider": provider, "model": model, "cap": cap, **writers,
             "portraitProvider": portrait_provider, "portraitModel": portrait_model,
-            "entities": entities, "until": until, "finished": finished}
+            "entities": entities, "until": until, "finished": finished, "check": check}
 
 
 def entity_run(cfg: dict, doc: dict) -> bool:
@@ -550,6 +554,20 @@ class JobManager:
                 return p, name
         return None
 
+    def vision_model(self, choice: dict | None = None):
+        """A text backend that can see pictures, for the drawing-fault check: the chosen {provider, model} (checked by
+        `check_text_choice`) unless its preset is marked as unable to, else the cheap tier of the first configured provider
+        whose cheap model is not (a live or custom model counts: it is tried). None when no configured model can."""
+        if choice:
+            if llm.vision(choice["provider"], choice["model"]) is False or choice["provider"] not in self.configured():
+                return None
+            return self.cloud_model(choice["provider"], choice["model"])
+        for p in self.configured():
+            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["cheap"]
+            if name and llm.vision(p, name) is not False:
+                return self.cloud_model(p, name)
+        return None
+
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Rewrite the finished index's profiles from every passage mentioning each entity
         (portraits.py). Needs a cloud model key; a failure here keeps the index as the run wrote it."""
@@ -713,6 +731,12 @@ class JobManager:
                 if got is None and cfg[key]:    # chosen and accepted, then its key was removed before this stage
                     instead(what, f"{llm.PROVIDERS[cfg[key]['provider']]['label']} {cfg[key]['model']}", text_model)
             portrait_text, picker = portrait_text or text_model, picker or text_model
+            check = cfg["check"]
+            pref = artmod.model_ref(picker) or {}
+            if check and llm.vision(pref.get("provider") or "", pref.get("model")) is False:
+                self._emit(job, {"type": "log", "line": f"pictures: not checked for drawing faults ({pref['model']}, which makes "
+                                                        "the choosing calls, cannot see pictures)"})
+                check = False
             if self.art_store is None:
                 raise RuntimeError("no art store")
             self._emit(job, {"type": "phase", "phase": "art"})
@@ -760,7 +784,8 @@ class JobManager:
                     il = box["il"] = artmod.Illustrator(books, text_model, image, style, **{"portraits": cfg["portraits"], **extra},
                                                         scene_chapters=cfg["chapters"], quality=cfg["quality"],
                                                         cap=cfg["cap"], log=log, progress=progress, cheap_text=picker,
-                                                        portrait_text=portrait_text, portrait_image=portrait_image)
+                                                        portrait_text=portrait_text, portrait_image=portrait_image,
+                                                        check=check)
                     rep = il.run()
                 finally:
                     got = {k: [r["id"] for r in (store.manifest(*k) or {}).get("pictures", []) if r.get("id") not in had[k]]
@@ -776,7 +801,8 @@ class JobManager:
             return {"failed": str(e), "drawn": len(added)}
         out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
                "text_cost_usd": round(rep.text_cost, 4), "text_costs": dict(rep.text_costs), "stopped": rep.stopped,
-               "reasons": rep.reasons[:200], "style": slug, "textHash": h}
+               "reasons": rep.reasons[:200], "style": slug, "textHash": h,
+               "checked": rep.checked, "fixed": rep.fixed, "fix_refused": rep.fix_refused, "checks": dict(rep.checks)}
         self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
         for line in rep.lines()[:40]:
             self._emit(job, {"type": "log", "line": f"pictures: {line.strip()}"})
