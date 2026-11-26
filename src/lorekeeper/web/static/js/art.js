@@ -770,7 +770,7 @@ export async function openPictureSheet(opts) {
    *  reader's position now (`until`, the frontier anchor) with their finished books. */
   function throughAsk() {
     const at = here();
-    return { style: styleText(), level: "none", portraits: "all", entities: [opts.target], until: at.p, finished: at.finished,
+    return { style: styleText(), level: "none", portraits: "none", entities: [opts.target], until: at.p, finished: at.finished,
       quality: st.quality, provider: st.provider.id, ...(st.model ? { model: st.model } : {}) };
   }
   let estGen = 0, estTimer = null;
@@ -798,14 +798,17 @@ export async function openPictureSheet(opts) {
     if (!styleText()) return { text: "Describe the style first.", ok: false };
     if (here().p == null) return { text: "Nothing is revealed at your position yet.", ok: false };
     if (!e || e.busy) return { text: "Counting the portraits…", ok: false };
-    if (e.error) return { text: e.error.code === "not-visible" ? "This isn't revealed at your position yet." : e.error.code === "busy" ? "Pictures are being drawn for this book. Try again once that run has finished." : `Couldn't count the portraits: ${e.error.message}`, ok: false };
+    if (e.error) return { text: runError(e.error, "Couldn't count the portraits"), ok: false };
     const r = e.r || {};
+    // A server that does not know an entry's run counts the whole cast and would draw it: only an answer that says it
+    // counted this entry is a count for it.
+    if (!Array.isArray(r.entities) || !r.entities.includes(opts.target)) return { text: "This server can't draw one character through the book yet.", ok: false };
     const lo = Number.isFinite(+r.portraits) ? +r.portraits : null;
     if (lo == null) return { text: "Couldn't count the portraits.", ok: false };
     const hiRaw = r.portraitsMax ?? r.portraits_max;
     const hi = Number.isFinite(+hiRaw) && +hiRaw > lo ? +hiRaw : lo;
     const noun = (n) => `portrait${n === 1 ? "" : "s"}`;
-    if (hi === 0) return { text: "Every portrait through the book so far is already drawn.", ok: false };
+    if (hi === 0) return { text: opts.title ? `Nothing new to draw for ${opts.title} up to here.` : "Nothing new to draw up to here.", ok: false };
     if (hi > lo) {
       const pmax = r.priceMax ?? r.price_max;
       const cost = r.price != null && pmax != null ? `${money(r.price)} to ${money(pmax).replace(/^about /, "")}` : money(pmax ?? r.price);
@@ -847,10 +850,11 @@ export async function openPictureSheet(opts) {
     // The count shown must be for the position now: a move since it was counted counts again first, and nothing starts.
     if (st.est?.ask !== JSON.stringify(throughAsk())) { estimateThrough(); return; }
     st.starting = true; startBtn.disabled = true;
-    const { until, finished, ...rest } = throughAsk();
+    // The run takes the position as `{p}` (an anchor id here) and portraits off: the entries alone say whose portraits.
+    const { until, finished, portraits: _all, ...rest } = throughAsk();
     const cap = artDefaults().cap;
     try {
-      const job = await api.artRun(opts.key, { ...rest, until, finished, cap });
+      const job = await api.artRun(opts.key, { ...rest, portraits: false, until: { p: until }, finished, cap });
       st.starting = false;
       st.written = st.prompt;   // nothing to ask about on close
       sh.close(true);
@@ -860,8 +864,7 @@ export async function openPictureSheet(opts) {
     } catch (e) {
       st.starting = false;
       if (st.closed) { toast(`Couldn't start the run: ${e.message}`, "error", { host: modalToasts() }); return; }
-      clear(err, h("p", e.code === "busy" ? "Pictures are being drawn for this book. Try again once that run has finished."
-        : e.code === "not-visible" ? "This isn't revealed at your position yet." : `Couldn't start the run: ${e.message}`));
+      clear(err, h("p", runError(e, "Couldn't start the run")));
       paintFoot();
     }
   });
@@ -938,6 +941,15 @@ export async function openPictureSheet(opts) {
   });
   write();
   return sh;
+}
+
+/** One sentence for an entry's run (or its count) the server refused. */
+function runError(e, what) {
+  if (e.code === "not-visible") return "This isn't revealed at your position yet.";
+  if (e.code === "busy") return "Pictures are being drawn for this book. Try again once that run has finished.";
+  if (e.code === "bad-entity") return "Only people and creatures can be drawn through the book.";
+  if (e.code === "bad-position") return "Your position or finished books don't fit this book. Move the position and try again.";
+  return `${what}: ${e.message}`;
 }
 
 /** One sentence for a prompt the server could not write. "dropped" is the pipeline's own check refusing what the model wrote
