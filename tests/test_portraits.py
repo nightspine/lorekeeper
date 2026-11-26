@@ -321,6 +321,11 @@ def test_a_first_sentence_naming_the_dead_is_no_death_to_keep():
     assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.prompts) == 2
 
 
+def test_only_an_opening_death_must_be_kept():
+    assert portraits.opens_with_death("Dead of the fever; a young woman.") and portraits.opens_with_death("Lucy Westenra is dead, killed.")
+    assert not portraits.opens_with_death("Gabriel de León, the Last of the Silversaints, is a hunter of the Dead.")
+
+
 def test_engaged_does_not_stand_in_for_a_death():
     assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
     assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")
