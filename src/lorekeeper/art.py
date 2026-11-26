@@ -386,7 +386,8 @@ Report only these:
 - a hand with clearly wrong fingers (too many, too few, melted together);
 - one person the prompt describes drawn twice.
 
-Never report style, taste, mood, composition or colour, a detail the prompt asks for that is merely small, how well anyone resembles anyone, or text and lettering. The prompt the picture was drawn from comes with it: what the prompt asks for is never a fault (a figure the prompt says has lost an arm is drawn without it). When unsure, it is not a fault.
+Never report style, taste, mood, composition or colour, a detail the prompt asks for that is merely small, how well anyone resembles anyone, or text and lettering. These are not faults either: a pose or a long reach, foreshortening, a limb or hand hidden behind something or cut off by the frame, a hand that is small or rough because the drawing style is loose, a crowd or a team of animals whose legs overlap but can be counted. The prompt the picture was drawn from comes with it: what the prompt asks for is never a fault (a figure the prompt says has lost an arm is drawn without it).
+Report a fault only when you can point to it and are sure of it; when unsure, it is not a fault. Most pictures have none.
 
 For each fault, "what" is a short phrase saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers"), and "where" names the figure by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 5 faults, the most visible first. A picture with none of these faults gets an empty list.
 Return "faults"."""
@@ -402,9 +403,10 @@ FAULT_CHARS = 200          # one fault's "what", and its "where" (the web route'
 WHERE_CHARS = 120
 CHECK_PROMPT_CHARS = 3000  # the stored prompt sent with the picture
 # The fix: an edit of the picture itself (its one reference), with code's words. The stored prompt is never changed.
-FIX = ("Edit this picture. Keep everything in it exactly as it is: the composition and framing, every face, the clothing, the "
-       "colours, the light and the drawing style. Change only these drawing faults, so each figure has natural proportions "
-       "and the right number of limbs, hands and fingers:")
+FIX = ("Correct the drawing faults listed below in this picture: redraw each part named so that it is drawn right, with "
+       "natural proportions and the right number of heads, arms, hands, fingers and legs, attached where they belong. Leave "
+       "everything else exactly as it is: the composition and framing, every face, the clothing, the colours, the light and "
+       "the drawing style. The faults:")
 FIX_NOTE_CHARS = 300
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
 # MEASURE (bench/anatomy_check.py, see the handoff): the share of drawn pictures the check finds a fault in, which the cost cap
