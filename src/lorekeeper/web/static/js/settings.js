@@ -17,6 +17,14 @@ const hostOf = (url) => { try { return new URL(url).host.replace(/^www\./, ""); 
 const listing = (names) => (names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`);
 
 /** One "How this works" disclosure per section, closed by default. */
+/** Why a provider with a key is missing from the writer selects: "Claude's key didn't work, so its models are not offered
+ *  here." (`others`: some other provider still writes). */
+function brokenKeys(broken, others) {
+  const names = broken.map((p) => p.label);
+  const rest = others ? "not offered here" : "not offered, and nothing can write prompts yet";
+  return names.length === 1 ? `${names[0]}'s key didn't work, so its models are ${rest}.`
+    : `The keys for ${listing(names)} didn't work, so their models are ${rest}.`;
+}
 function howItWorks(...paragraphs) {
   return h("details.how", h("summary", icon("chevron"), "How this works"), h("div.how-body", paragraphs.map((p) => h("p", p))));
 }
@@ -377,7 +385,7 @@ export function mountSettings(root) {
   // The defaults new pictures start from (kept in this browser), and the art sets on this server with their size.
   async function paintPictures(focusId = null) {
     const d = artDefaults();
-    const [{ image: provs, text: writers }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
+    const [{ image: provs, text: writers, broken }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
     if (disposed) return;
     lines.pictures.textContent = provs.length ? `${styleLabel(d.style)}, ${d.quality}` : "Needs a Gemini or OpenAI key";
     const save = (patch, what) => { setArtDefaults(patch); toast(`${what} saved`); paintPictures(document.activeElement?.id || null); };
@@ -429,16 +437,19 @@ export function mountSettings(root) {
       h("h3.pic-sets-h#pic-styles-h", "Styles"),
       h("p.set-note", "Every style shows the same scene; the one you choose is where new pictures start."),
       h("div.pic-styles", { role: "region", "aria-labelledby": "pic-styles-h" }, picker.el),
-      writers.length && provs.length ? [
+      // Shown whenever a text provider has a key, working or not, so a key that fails says so here instead of the rows
+      // quietly going away.
+      writers.length || broken.length ? [
         h("h3.pic-sets-h", "Who writes the prompts"),
         h("p.set-note", "Scene prompts are for chapter pictures and moments, portrait prompts for people, places and things, and choosing calls pick what gets drawn."),
-        h("div.set-rows",
+        broken.length ? h("p.set-note.pic-writers-broken", brokenKeys(broken, writers.length > 0), " ", h("a", { href: "#/settings/cloud" }, broken.length > 1 ? "Check the keys in Cloud models" : "Check the key in Cloud models"), ".") : null,
+        writers.length ? h("div.set-rows",
           row(h("label", { for: "pic-writer" }, "Scene prompts written by"), writerSelect({ id: "pic-writer", provs: writers, value: d.writer, tier: "cheap",
             onChange: (c) => save({ writer: c }, "Scene prompt model") })),
           row(h("label", { for: "pic-pwriter" }, "Portrait prompts written by"), writerSelect({ id: "pic-pwriter", provs: writers, value: d.portraitWriter, tier: "strong",
             onChange: (c) => save({ portraitWriter: c }, "Portrait prompt model") })),
           row(h("label", { for: "pic-picker" }, "Choosing calls by"), writerSelect({ id: "pic-picker", provs: writers, value: d.picker, tier: "cheap",
-            onChange: (c) => save({ picker: c }, "Choosing model") }))),
+            onChange: (c) => save({ picker: c }, "Choosing model") }))) : null,
       ] : null,
       h("h3.pic-sets-h", "Pictures on this server"), sets,
       howItWorks(

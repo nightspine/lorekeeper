@@ -85,7 +85,7 @@ export function foldList(nodes, make, { show = 4, fromEnd = false, noun = "", op
 
 /** h("div.card#id", {attrs, on: {click}}, ...children) */
 export function h(spec, props, ...children) {
-  if (props instanceof Node || typeof props === "string" || Array.isArray(props) || props == null) {
+  if (props instanceof Node || typeof props === "string" || typeof props === "function" || Array.isArray(props) || props == null) {
     if (props != null) children.unshift(props);
     props = {};
   }
@@ -108,9 +108,18 @@ export function h(spec, props, ...children) {
   return el;
 }
 
+// A function is never content: passing one (a component instead of what it returns) would print its source as text.
+// It is skipped with a console error; tests set globalThis.LK_STRICT_DOM to make it throw.
+function badChild(fn) {
+  const msg = `h(): a function (${fn.name || "anonymous"}) was passed as a child; it is not rendered`;
+  if (globalThis.LK_STRICT_DOM) throw new TypeError(msg);
+  console.error(msg);
+}
+
 function append(el, children) {
   for (const c of children.flat(Infinity)) {
     if (c == null || c === false) continue;
+    if (typeof c === "function") { badChild(c); continue; }
     el.append(c instanceof Node ? c : document.createTextNode(String(c)));
   }
 }
