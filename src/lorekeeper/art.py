@@ -48,6 +48,9 @@ STYLES: dict[str, str] = {
     "watercolour": "Watercolour painting, translucent washes, soft edges, pale paper showing through.",
     "ink": "Black ink drawing, fine cross-hatching, strong contrast, aged paper.",
 }
+# slug -> sentence of each style a person saved in the web app (`web/styles.py` keeps it in step with styles.json, a
+# deleted one included so its art sets still draw in its words); a style is passed around by its slug like a listed one
+SAVED_STYLES: dict[str, str] = {}
 NO_TEXT = "No text, captions, lettering, titles or signatures anywhere in the picture."
 SHAPE_OF = {"plate": "landscape", "event": "landscape", "portrait": "portrait", "place": "landscape", "thing": "landscape"}
 ENTITY_KINDS = ("portrait", "place", "thing")
@@ -320,7 +323,26 @@ class FileSink:
 
 
 def style_sentence(style: str) -> str:
-    return STYLES.get(style) or " ".join(style.split())
+    return STYLES.get(style) or SAVED_STYLES.get(style) or " ".join(style.split())
+
+
+# The one scene every style preview shows, so styles compare like for like: the Mad Tea-Party of Alice's Adventures in
+# Wonderland (1865, public domain), told in our own words and never after any illustrator, written as a real prompt's body
+# (subject, then setting, then light and mood, no style words) and with no names, as a real prompt has none and a name
+# would pull the image model toward copies of famous illustrations. Faces turned to the viewer, so each style shows on
+# faces. Drawn with `preview_prompt`.
+PREVIEW_SCENE = ("A long table laid for many guests under a large tree in front of a country house, crowded with mismatched "
+                 "teacups, teapots, plates and cakes. At one end a girl of about seven with long hair, in a simple dress, sits "
+                 "in a large armchair and looks on, her face turned toward the viewer. A hare and a man in a very tall hat sit "
+                 "across the table from each other, talking, their faces in three-quarter view. Between them a dormouse is "
+                 "asleep, half inside a teapot. Warm afternoon light through the leaves; a cheerful, slightly absurd mood.")
+PREVIEW_SHAPE = "square"   # the picker's cards are square: a landscape preview would lose its sides in one
+
+
+def preview_prompt(style: str) -> str:
+    """The preview prompt of a style (a listed slug, or a person's own words): `PREVIEW_SCENE`, the style sentence and the
+    no-text line, joined exactly as a real prompt's parts are (`Illustrator._assemble`)."""
+    return Illustrator._assemble(PREVIEW_SCENE, style=style_sentence(style))
 
 
 def style_slug(style: str) -> str:

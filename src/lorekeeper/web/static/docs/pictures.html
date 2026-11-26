@@ -42,7 +42,31 @@
 <p>A chapter with no events gets no picture. The Reader's picture sheet makes no such call: for a chapter not checked yet, it offers every moment that is not a small one. In the Reader, the picture sheet for a chapter says how many moments it has so far and how many are drawn, for example "4 moments in this chapter so far, 1 drawn", and you can draw the rest one at a time.</p>
 
 <h2 id="styles">Styles</h2>
-<p>Nine styles come with Lorekeeper: Digital art, Comic strip, Anime, Realism, Hand-drawn, Oil painting, Epic sci-fi, Watercolour and Ink. Each is one sentence added to every prompt, such as "Black ink drawing, fine cross-hatching, strong contrast, aged paper." for Ink. Choose Custom to write your own sentence, for example "linocut, two colours". Describe the look, never an artist's name.</p>
+<p>Nine styles come with Lorekeeper: Digital art, Comic strip, Anime, Realism, Hand-drawn, Oil painting, Epic sci-fi, Watercolour and Ink. Each is one sentence added to every prompt, such as "Black ink drawing, fine cross-hatching, strong contrast, aged paper." for Ink. You can add your own styles too.</p>
+
+<h3 id="choose-style">Choosing a style</h3>
+<p>You choose a style from a grid of previews. The grid is the same wherever a style is chosen: the picture sheet, the Pictures group of the build form, the book page's Add pictures dialog and Settings.</p>
+<p>Every preview shows the same scene, so you can compare the styles like for like. It is the Mad Tea-Party from <em>Alice's Adventures in Wonderland</em>, a public domain book. A long table is laid under a tree, with a girl in an armchair at one end, a hare and a man in a very tall hat talking, and a dormouse asleep in a teapot. The scene is written in Lorekeeper's own words, with no names and no illustrator, and every preview is drawn from that one description plus the style's sentence. That is how a real prompt is built too.</p>
+<p>In the picture sheet and the dialogs, a row shows the chosen style's thumbnail and name with <strong>Change</strong>. It opens the grid in a sheet titled "Styles". Choosing a card picks the style and closes the sheet. The chosen card has a ring around it. On a phone the grid is three cards across.</p>
+<p>Each card with a preview has a button in its corner that shows the preview larger, with the style's sentence under it. A card with no preview shows its sentence instead.</p>
+<p>In Settings, under <strong>Pictures</strong>, the grid sits in the page as the <strong>Styles</strong> section. Choosing a card there makes it the style new pictures start in.</p>
+
+<h3 id="custom-styles">Your own styles</h3>
+<p>The last card of the grid is <strong>New style</strong>. It opens a form with two fields:</p>
+<ul>
+<li><strong>Name</strong>, up to 40 characters, such as "Linocut".</li>
+<li><strong>Description</strong>, up to 300 characters, such as "a linocut print in two colours, bold carved lines". This is the sentence added after every prompt drawn in the style. Describe how it looks, never an artist's name.</li>
+</ul>
+<p><strong>Draw a preview</strong> draws the same tea-party scene in your style, so it sits beside the built-in ones. Its price is shown beside the button, about 3 cents with Gemini at standard quality. It uses the image provider, model and quality set in Settings, under Pictures, and it needs a Gemini or OpenAI key. If the style is not saved yet, drawing a preview saves it first. If the provider refuses to draw it, the form says so with the provider's reason, and the old preview stays. <strong>Save</strong> keeps the style. A preview is optional: a style without one shows its sentence on its card.</p>
+<p>Saved styles belong to the server, not to one browser, so everyone who uses it sees the same list. A style you made in the picture sheet or a dialog is chosen at once. One made in Settings does not change your default.</p>
+<p>Each style needs its own name. A name is refused when it matches a built-in style or another saved one, ignoring case, spaces and punctuation, so "ink!" counts as Ink and "digital art" as Digital art. "Custom" is kept for the app's own use and cannot be a style's name, and neither can a name with no letters or digits. A refused name says "There is a style with that name already. Choose another name." under the field.</p>
+
+<h3 id="edit-styles">Changing and deleting a style</h3>
+<p>In Settings, each of your own styles has <strong>Edit</strong> and <strong>Delete</strong> on its card. The built-in styles cannot be changed.</p>
+<p>Edit opens the same form. A new name only changes what the style is called. Pictures drawn in it stay in the same set. A new description changes the pictures drawn in the style from then on, in every book. Pictures already drawn stay as they are. If the preview was drawn from the old description, the card says "Preview is of the old wording" until you draw a new one.</p>
+<p>Delete asks first. A deleted style can no longer be chosen for new pictures. Pictures already drawn in it stay, and the Reader still shows them. If it was your default in Settings, the default goes back to Digital art.</p>
+
+<h3 id="style-sets">Styles and prompts</h3>
 <p>Each style is a separate set of pictures. You can draw a book in Ink and again in Watercolour, and the Reader's style menu switches between them.</p>
 <p>The style is not part of what the text model writes. A prompt is the model's description, then the style sentence, then a sentence asking for no text in the picture. So changing the style in the picture sheet is instant: the sheet swaps the style sentence and writes nothing again. If you edited the prompt, the old style sentence is replaced where it still stands at the end. If you took it out, the sheet leaves your text alone and says that the style you chose is not in the prompt. Shape, quality, provider and model are instant too.</p>
 
@@ -166,7 +190,7 @@
 <p>It opens a sheet. The sheet writes a prompt from what you have read, which takes a few seconds to half a minute and costs about a cent. For a chapter, it lists the moments you can draw. You can then:</p>
 <ul>
 <li>change the prompt, or choose <strong>Write it again</strong>. Under the prompt, a line for each figure label tells you who "figure A" is; keep the label to keep that portrait as a reference;</li>
-<li>pick a style, the shape, the quality, the provider and the model, all at once with no new prompt;</li>
+<li>pick a style from its preview (see <a href="#choose-style">Choosing a style</a>), the shape, the quality, the provider and the model, all at once with no new prompt;</li>
 <li>choose which text model writes the prompt under <strong>Prompt written by</strong>. It is used the next time a prompt is written;</li>
 <li>add or change your note on the book's world;</li>
 <li>see the price, then choose <strong>Draw</strong>.</li>
@@ -201,7 +225,7 @@
 
 <h2 id="settings">Settings</h2>
 <p>Under Settings, <strong>Cloud models</strong> has an Images column. It names each provider's image model and its price for one picture, or says "Can't draw".</p>
-<p><strong>Pictures</strong> holds the defaults that new pictures start from: the style, the quality, where a run stops, the image provider and model, the portrait image model, and the three text models that write the prompts and make the choosing calls. They are kept in this browser. Below them is a list of the pictures on this server, by book, with their styles and size, and <strong>Remove pictures</strong>, which asks first and can be undone. A book cannot lose its pictures while a run is drawing for it.</p>
+<p><strong>Pictures</strong> holds the defaults that new pictures start from: the style, the quality, where a run stops, the image provider and model, the portrait image model, and the three text models that write the prompts and make the choosing calls. They are kept in this browser. The style is chosen from the <strong>Styles</strong> grid, which is also where you add, edit and delete your own styles. Below them is a list of the pictures on this server, by book, with their styles and size, and <strong>Remove pictures</strong>, which asks first and can be undone. A book cannot lose its pictures while a run is drawing for it.</p>
 
 <h2 id="cli">From the command line</h2>
 <p><code>lorekeeper illustrate</code> draws a set of pictures for an index into <code>art/&lt;textHash&gt;/&lt;style&gt;/</code> beside it. It never writes the index, and a second run resumes where the first stopped. Pass the EPUB the index was built from:</p>

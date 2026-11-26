@@ -156,4 +156,6 @@ table.data.subt { width: auto; min-width: 520px; margin-bottom: 10px; }
 .pic-cap { display: inline-flex; align-items: center; gap: 6px; }
 .pic-sets-h { margin: 28px 0 8px; font-size: var(--text-md); }
 .pic-table { max-width: 760px; }
+/* The Styles grid keeps to the width of the label / value rows above it (.set-rows). */
+.pic-styles { max-width: 860px; margin: 10px 0 var(--space-4); }
 #sec-pictures .set-val .select { width: auto; min-width: 200px; max-width: 100%; }

@@ -35,6 +35,7 @@ from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
+from . import styles as stylesmod
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
@@ -207,6 +208,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                       distinct_for=lambda job: distinct_for(job))
     arts = artstore.ArtStore(data_dir)
     jobs.art_store = arts
+    style_store = stylesmod.StyleStore(data_dir)     # saved picture styles; also gives art.style_sentence their words
     library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
                        *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
@@ -335,6 +337,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     app.state.auth = accounts
     app.state.jobs = jobs
     app.mount("/static", Revalidated(directory=STATIC), name="static")
+    app.include_router(stylesmod.router(style_store, jobs.image_model))   # /api/styles: the picker's styles and previews
     # The docs site (static/docs) links ../css, ../fonts and ../vendor so that it works unchanged when
     # `lorekeeper docs export` copies it to a static host. Serve those folders at the root to match.
     app.mount("/docs", Revalidated(directory=STATIC / "docs", html=True), name="docs")
@@ -1501,7 +1504,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def style_sentences(il, h: str) -> dict[str, str]:
         """slug -> style sentence for every listed style and every set this edition has (a custom one by its stored text)."""
-        out = {k: il.style_sentence(k) for k in artmod.STYLES}
+        out = {k: il.style_sentence(k) for k in [*artmod.STYLES, *(st["slug"] for st in style_store.all())]}
         for st in arts.styles(h):
             if st.get("style") and st["slug"] not in out:
                 out[st["slug"]] = il.style_sentence(st["style"])

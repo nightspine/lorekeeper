@@ -4,9 +4,12 @@
 // Captions, prompts and notes are untrusted text: they only ever go through h(). Picture files are fetched only from
 // /api/art/... URLs built here from ids the server sent, never from a path or URL found in the manifest.
 import { api } from "./api.js";
-import { composePrompt, promptParts, restyle, sentenceFor, squash } from "./artprompt.js";
+import { choiceSentence, composePrompt, promptParts, restyle, squash } from "./artprompt.js";
 import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
+import { galleryName, gallerySentence, loadStyles, savedStyle, styleRow } from "./styles.js";
+
+export { loadStyles, stylePicker, styleRow, viewStyle } from "./styles.js";
 
 /** The styles the pipeline knows (art.STYLES), in the order the person sees them. Anything else is a custom style. */
 export const STYLES = [
@@ -28,9 +31,16 @@ const modelFact = (r) => [modelLabel(r.provider, r.model), r.provider ? `on ${PR
 /** A style slug as words: the known ones by name, a custom one as the person wrote it (the manifest's `style`). */
 export function styleLabel(slug, text = null) {
   if (STYLE_LABEL[slug]) return STYLE_LABEL[slug];
+  const saved = galleryName(slug);   // a custom style saved on this server, by the name it was saved under
+  if (saved) return saved;
   const t = typeof text === "string" && text.trim() ? text.trim() : String(slug || "").replace(/-/g, " ");
   return t ? t[0].toUpperCase() + t.slice(1) : "Custom";
 }
+/** The picture sheet's mark for a style given as loose words (an art set's own unsaved custom style, an older default
+ *  typed as words): it can never be a slug, so a saved style whose slug is "custom" is still a saved style. */
+const LOOSE = "*words";
+/** The folder slug the server files a style's words under (art.style_slug), for telling one custom style from another. */
+const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
 
@@ -519,7 +529,7 @@ export function modalToasts() {
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
-  const { image: provs, text: writers } = await modelProviders({ fresh: true });
+  const [{ image: provs, text: writers }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
   if (!provs.length) {
     const sh = sheet({ title: "Draw a picture", className: "art-sheet",
       content: h("div.art-sheet-body", h("p", "Pictures need a Gemini or OpenAI key."),
@@ -540,10 +550,12 @@ export async function openPictureSheet(opts) {
     est: null,     // through: { ask, r, error } the estimate for the choices and position in `ask` (a JSON key)
     writer: null,   // the text model that writes the prompt ({ provider, model }); null: the server's default, the strong tier
   };
-  if (!STYLE_LABEL[st.style]) {
+  // A style saved on this server (built-in or custom) is chosen by its slug; anything else is an art set's own custom
+  // style (or an older default typed as words), drawn from its words as before.
+  if (!STYLE_LABEL[st.style] && !savedStyle(st.style)) {
     st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
     st.slug = STYLE_LABEL[st.style] ? null : opts.style;   // the art set's own slug for its custom style
-    st.style = "custom";
+    st.style = LOOSE;
   }
   // The Settings model when it is the Settings provider's, else the provider's default (null: an older server picks).
   st.model = modelFor(st.provider, st.provider.id === d.provider ? d.model : null);
@@ -553,8 +565,21 @@ export async function openPictureSheet(opts) {
   st.quality = fitQuality(st.provider, st.model, st.quality);
   // The style as sent to the server (a known slug, or the person's words), and the folder slug pictures are filed under:
   // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
-  const styleText = () => (st.style === "custom" ? st.custom.trim() : st.style);
-  const folder = () => (st.style === "custom" ? st.slug : st.style);
+  const styleText = () => (st.style === LOOSE ? st.custom.trim() : st.style);
+  const folder = () => (st.style === LOOSE ? st.slug : st.style);
+  /** The style sentence of the choice now: from the reply's table, else a saved style's own words (a custom style saved
+   *  on this server that the prompt route did not list). */
+  const sentenceNow = (parts = st.parts) => choiceSentence(parts, st.style === LOOSE ? null : st.style, st.custom, gallerySentence);
+  /** The styles an art set has that are not saved here (its own custom style): still choosable, by their words. */
+  const setStyles = () => {
+    const out = (opts.styles || []).filter((x) => x && typeof x.slug === "string" && !STYLE_LABEL[x.slug] && !savedStyle(x.slug) && x.text)
+      .map((x) => ({ slug: x.slug, name: styleLabel(x.slug, x.text), text: x.text }));
+    if (st.style === LOOSE && st.custom.trim()) {
+      const slug = st.slug || slugOf(st.custom);
+      if (!out.some((x) => x.slug === slug)) out.push({ slug, name: styleLabel(slug, st.custom), text: st.custom });
+    }
+    return out;
+  };
   // Where the reader is now (asked at every call, never the position the sheet was opened at), and their finished books.
   const here = () => { const at = opts.position ? opts.position() : { p: opts.p, finished: opts.finished }; return { p: at.p ?? null, finished: at.finished || [] }; };
   let ctrl = null, gen = 0;   // the request in flight and its generation: a late reply for a moment left behind is dropped
@@ -639,7 +664,7 @@ export async function openPictureSheet(opts) {
       st.missing = false;
       if (st.parts) {
         // Built here from its parts, in the style chosen now (it may have changed while the prompt was being written).
-        st.sentence = sentenceFor(st.parts, st.style, st.custom) ?? squash(st.parts.style);
+        st.sentence = sentenceNow() ?? squash(st.parts.style);
         st.prompt = st.written = composePrompt(st.parts.body, st.sentence, st.parts.noText);
       } else {
         st.sentence = null;   // an older server: the style is inside its text, so a new style writes the prompt again
@@ -652,7 +677,7 @@ export async function openPictureSheet(opts) {
       st.promptStyle = asked.style;
       st.promptFor = { kind: st.kind, target: st.target };
       clear(err);
-      if (st.style === "custom" && asked.style === styleText()) st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
+      if (st.style === LOOSE && asked.style === styleText()) st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
       st.busy = false; ctrl = null;
       paint();
     } catch (e) {
@@ -690,7 +715,7 @@ export async function openPictureSheet(opts) {
       const parts = promptParts(r);
       if (parts) {
         st.parts = parts;
-        st.sentence = sentenceFor(parts, st.style, st.custom) ?? squash(parts.style);
+        st.sentence = sentenceNow(parts) ?? squash(parts.style);
         st.prompt = st.written = composePrompt(parts.body, st.sentence, parts.noText);
       } else if (typeof r.prompt === "string" && r.prompt) {
         st.parts = null; st.sentence = null;
@@ -722,7 +747,7 @@ export async function openPictureSheet(opts) {
   function applyStyle() {
     if (!st.prompt && !st.parts) return;
     if (!st.parts) { if (st.mode === "now" && styleText() && styleText() !== st.promptStyle) write(); return; }
-    const next = sentenceFor(st.parts, st.style, st.custom);
+    const next = sentenceNow();
     if (next == null) { st.missing = true; return; }   // a known style the server did not list: the text stays as it is
     Object.assign(st, restyle({ prompt: st.prompt, written: st.written, parts: st.parts, old: st.sentence, next }));
     st.promptStyle = styleText();
@@ -744,14 +769,15 @@ export async function openPictureSheet(opts) {
   let momentsOpen = false;
   function paint() {
     textarea.value = st.prompt;
-    const customField = h("input.input.art-custom", { value: st.custom, placeholder: "Describe the style, for example: linocut, two colours", "aria-label": "Custom style",
-      // Swapped into the prompt once, on change (blur or Enter), not on every keystroke; Draw applies a pending one first.
-      on: { input: (e) => { st.custom = e.target.value; st.slug = null; paintFoot(); },
-        change: (e) => { st.custom = e.target.value; applyStyle(); paintFoot(); },
-        keydown: (e) => { if (e.key === "Enter") { e.preventDefault(); st.custom = e.target.value; applyStyle(); paintFoot(); } } } });
-    const styleRow = h("div.art-chips", { role: "group", "aria-label": "Style" },
-      STYLES.map(([slug, label]) => chip(label, st.style === slug, () => { if (st.style !== slug) { st.style = slug; applyStyle(); paint(); } })),
-      chip("Custom…", st.style === "custom", () => { if (st.style !== "custom") { st.style = "custom"; applyStyle(); paint(); } body.querySelector(".art-custom")?.focus(); }));
+    // The chosen style as one row (its preview and name) that opens the gallery as a sheet over this one.
+    const extra = setStyles();
+    const styleChoice = styleRow({ id: "art-style-row", extra, value: st.style === LOOSE ? (st.slug || slugOf(st.custom)) : st.style,
+      onPick: (s) => {
+        const legacy = extra.find((x) => x.slug === s.slug);
+        if (legacy) { if (st.style === LOOSE && st.custom === legacy.text) return; st.style = LOOSE; st.custom = legacy.text; st.slug = legacy.slug; }
+        else { if (st.style === s.slug) return; st.style = s.slug; st.custom = ""; st.slug = null; }
+        applyStyle(); paint(); body.querySelector("#art-style-row")?.focus({ preventScroll: true });
+      } }).el;
     const seg = (label, list, value, set) => h("div.seg", { role: "group", "aria-label": label },
       list.map(([k, l]) => h("button", { type: "button", "aria-pressed": String(value === k), on: { click: () => { set(k); paint(); } } }, l)));
     // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
@@ -814,7 +840,7 @@ export async function openPictureSheet(opts) {
         h("p.hint", "Written from what you have read so far. Change anything; the picture is drawn from this text only. ",
           h("button.linkish", { type: "button", on: { click: write } }, "Write it again")),
         figuresBox),
-      h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null, styleNote),
+      h("div.art-field", h("label.label", { for: "art-style-row" }, "Style"), styleChoice, styleNote),
       h("div.art-row",
         h("div.art-field", h("span.label", "Shape"), seg("Shape", SHAPES, st.shape, (k) => { st.shape = k; })),
         h("div.art-field", h("span.label", "Quality"), qualitySeg),
@@ -1003,7 +1029,7 @@ export async function openPictureSheet(opts) {
   drawBtn.addEventListener("click", async () => {
     if (st.busy) return;
     // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.
-    if (st.parts && sentenceFor(st.parts, st.style, st.custom) !== st.sentence) applyStyle();
+    if (st.parts && sentenceNow() !== st.sentence) applyStyle();
     abort();
     const mine = ++gen;
     st.busy = true; st.drawing = true; drawBtn.disabled = true;
@@ -1018,7 +1044,7 @@ export async function openPictureSheet(opts) {
         prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}), ...here() });
       st.drawing = false;
       const rec = r?.record || r;
-      const slug = st.style === "custom" ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
+      const slug = !STYLE_LABEL[st.style] ? (typeof r?.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : folder()) : folder();
       forgetArt(opts.key);
       opts.onDrawn?.(rec, slug || null);
       const undoId = replacing ? (r?.undo ?? r?.journal ?? null) : null;
@@ -1142,7 +1168,8 @@ export function chapterCount(c) {
 
 export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null, runProvider = null } = {}) {
   const d = artDefaults();
-  const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
+  // The style is a slug (built-in, or custom saved on this server), or an older default typed as words, sent as it is.
+  const st = { on: always, style: d.style, level: "main", cast: "main",
     quality: d.quality, provider: null, model: null, cap: d.cap,
     // The Models group: each responsibility's text model (null: the server's default) and the portraits' image model
     // (null provider: the same as scenes), from the Settings defaults.
@@ -1239,7 +1266,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     pickProvider(p, p && p.id === d.provider ? d.model : null);
     paint();
   });
-  const slug = () => (st.style === "custom" ? st.custom.trim() : st.style);
+  const slug = () => st.style;
+  // A custom style's name and preview come with the styles list: paint again once it is here (a built-in one needs nothing).
+  loadStyles().then(() => { if (provs && !STYLE_LABEL[st.style]) paint(); });
   function paint() {
     sum.textContent = st.on ? `${styleLabel(slug())}, ${LEVEL_SUMMARY[st.level]}${CAST_SUMMARY[st.cast]}` : "Off";
     if (provs && !provs.length) {
@@ -1247,14 +1276,15 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
       line.textContent = "";
       return;
     }
-    const chip = (label, pressed, on) => h("button.filter-chip", { type: "button", "aria-pressed": String(pressed), disabled: !st.on, on: { click: on } }, label);
     const radio = (name, value, label, hint) => {
       const r = h("input", { type: "radio", name: `${idPrefix}-${name}`, value, checked: st[name] === value, disabled: !st.on,
         on: { change: () => { st[name] = value; paint(); } } });
       return h(`label.prow${st[name] === value ? ".on" : ""}`, r, h("span.pr-text", h("span.pr-title", label), hint ? h("span.pr-line", hint) : null));
     };
-    const custom = h("input.input.art-custom", { value: st.custom, disabled: !st.on, placeholder: "Describe the style", "aria-label": "Custom style",
-      on: { change: (e) => { st.custom = e.target.value; refresh(); } } });
+    // An older default typed as words, not saved here: still offered, by its words.
+    const extra = STYLE_LABEL[st.style] || savedStyle(st.style) ? [] : [{ slug: st.style, name: styleLabel(st.style), text: st.style }];
+    const styleChoice = styleRow({ id: `${idPrefix}-style`, value: st.style, extra, disabled: !st.on,
+      onPick: (s) => { if (s.slug === st.style) return; st.style = s.slug; paint(); el.querySelector(`#${idPrefix}-style`)?.focus({ preventScroll: true }); } }).el;
     // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
     const levels = (st.provider ? levelsOf(st.provider, st.model) : QUALITIES).map(([k]) => k);
     if (st.provider) st.quality = fitQuality(st.provider, st.model, st.quality);
@@ -1268,10 +1298,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     clear(body,
       always ? null : h("label.switch", { for: `${idPrefix}-on` }, tick, h("span", h("span.label.label-block", "Draw pictures"),
         h("span.hint", "Chapter pictures and portraits, drawn after the index is written."))),
-      h("div.field", h("span.label", "Style"), h("div.art-chips", { role: "group", "aria-label": "Style" },
-        STYLES.map(([k, l]) => chip(l, st.style === k, () => { st.style = k; paint(); })),
-        chip("Custom…", st.style === "custom", () => { st.style = "custom"; paint(); el.querySelector(".art-custom")?.focus(); })),
-        st.style === "custom" ? custom : null),
+      h("div.field", h("label.label", { for: `${idPrefix}-style` }, "Style"), styleChoice),
       h("div.field", h("span.label", "How many"), h("div.prows", { role: "radiogroup", "aria-label": "How many" },
         radio("level", "main", "The main moment of each chapter"),
         radio("level", "all", "Every moment worth drawing"),

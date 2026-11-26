@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { composePrompt, promptParts, restyle, sentenceFor } = await import(join(here, "../../src/lorekeeper/web/static/js/artprompt.js"));
+const { choiceSentence, composePrompt, promptParts, restyle, sentenceFor } = await import(join(here, "../../src/lorekeeper/web/static/js/artprompt.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -28,6 +28,18 @@ test("a style's sentence: a listed one from the table, a custom one as written, 
   assert.equal(sentenceFor(parts, "custom", "  linocut,\n two colours "), "linocut, two colours");
   assert.equal(sentenceFor(parts, "custom", " "), "");
   assert.equal(sentenceFor(parts, "oil"), null);
+});
+test("a saved style is looked up by slug, even one whose slug is custom", () => {
+  const saved = (slug) => ({ custom: "A custom-named style, cut paper.", linocut: "Linocut, two colours." })[slug] ?? null;
+  // A saved style named "Custom" has the slug "custom": its own words, never the empty loose text.
+  assert.equal(choiceSentence(parts, "custom", "", saved), "A custom-named style, cut paper.");
+  assert.equal(choiceSentence({ ...parts, styles: { ...parts.styles, custom: "From the table." } }, "custom", "", saved), "From the table.");
+  assert.equal(choiceSentence(parts, "linocut", "", saved), "Linocut, two colours.");
+  assert.equal(choiceSentence(parts, "watercolour", "", saved), "Soft watercolour washes.");
+  assert.equal(choiceSentence(parts, "oil", "", saved), null);
+  // Loose words (no slug) are used as written.
+  assert.equal(choiceSentence(parts, null, "  soft pastel\n drawing "), "soft pastel drawing");
+  assert.equal(choiceSentence(parts, null, " "), "");
 });
 test("an unedited prompt is built again from its body", () => {
   const r = restyle({ prompt: reply.prompt, written: reply.prompt, parts, old: parts.style, next: "Soft watercolour washes." });

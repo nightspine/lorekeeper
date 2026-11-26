@@ -204,3 +204,72 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .art-fig-face { display: inline-block; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden; background: var(--pane-2); box-shadow: 0 0 0 1px var(--line-2); }
 .art-fig-img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: 50% 28%; transform: scale(1.6); transform-origin: 50% 32%; }
 .lb-details-body .art-figures { margin: 0; }
+
+/* ---- styles: the gallery of previews (styles.js), the compact row that opens it, the viewer and the custom style form ---- */
+.style-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px 12px; }
+.style-card { position: relative; display: grid; align-content: start; gap: 4px; min-width: 0; }
+.style-pick, .style-new { display: grid; gap: 6px; align-content: start; width: 100%; min-width: 0; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
+.style-pick:focus-visible, .style-new:focus-visible { outline: 2px solid var(--beacon); outline-offset: 4px; }
+.style-prev { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
+.style-prev img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.style-prev.no-pic { display: flex; align-items: center; justify-content: center; padding: 10px; color: var(--text-2); font-size: var(--text-xs); line-height: 1.4; }
+.style-words { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.style-name { font-size: var(--text-s); font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The chosen card: its preview ringed in beacon (a ring, not a glow) and its name in beacon. */
+.style-card.on .style-prev { border-color: var(--beacon); box-shadow: 0 0 0 1px var(--beacon); }
+.style-card.on .style-name { color: var(--beacon); }
+.style-new .style-prev { border-style: dashed; border-color: var(--line-2); background: none; color: var(--text-3); }
+.style-new .style-prev .svg-icon { width: 22px; height: 22px; }
+@media (hover: hover) {
+  .style-pick:hover .style-prev, .style-new:hover .style-prev { border-color: var(--line-2); }
+  .style-card.on .style-pick:hover .style-prev { border-color: var(--beacon); }
+  .style-new:hover .style-prev { color: var(--beacon); }
+}
+.style-expand { position: absolute; top: 6px; right: 6px; width: 28px; height: 28px; min-height: 0; padding: 0; border-radius: 6px; background: color-mix(in srgb, var(--bg) 72%, transparent); color: var(--text); }
+.style-expand .svg-icon { width: 14px; height: 14px; }
+/* A 44px hit area round the small button. */
+.style-expand::after { content: ""; position: absolute; inset: -8px; }
+.style-stale { margin: 0; color: var(--text-3); font-size: var(--text-xs); }
+.style-acts { display: flex; gap: 14px; font-size: var(--text-xs); }
+.style-acts .linkish { min-height: 32px; }
+.style-acts .linkish.danger { color: var(--rose); }
+
+/* The compact row: the chosen style's thumbnail and name; "Change" opens the gallery as a sheet. */
+.style-row { display: flex; align-items: center; gap: 10px; width: 100%; max-width: 360px; min-height: 44px; padding: 5px 10px 5px 5px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--field); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.style-row:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+.style-row:disabled { opacity: .55; cursor: default; }
+@media (hover: hover) { .style-row:not(:disabled):hover { border-color: var(--text-3); } }
+.style-row-prev { flex: none; width: 36px; aspect-ratio: 1; border-radius: 4px; overflow: hidden; background: var(--pane-2); }
+.style-row-prev img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.style-row-prev .style-words { display: none; }
+.style-row-name { flex: 1 1 auto; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.style-row-change { flex: none; display: inline-flex; align-items: center; gap: 4px; color: var(--text-2); font-size: var(--text-xs); }
+.style-row-change .svg-icon { width: 12px; height: 12px; }
+
+/* The viewer: the preview large, the style's sentence under it. */
+.style-view-title { margin: 0; font-size: var(--text-md); font-weight: 600; }
+.style-view-text { margin: 0; max-width: 72ch; color: var(--text-2); }
+.style-view .lb-foot { display: grid; gap: 6px; }
+.style-view-gone { color: var(--text-3); }
+
+/* The custom style form. */
+.style-form { display: grid; gap: var(--space-4); }
+.style-form .field { display: grid; gap: 6px; }
+.style-form textarea { resize: vertical; min-height: 88px; }
+.style-form-prev { display: grid; gap: 6px; }
+.style-form-prev .style-prev { max-width: 240px; }
+.style-form-img { display: block; width: 100%; max-width: 240px; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 6px; }
+.style-form-img:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+.style-form-draw { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.style-form-price { font-size: var(--text-xs); }
+.style-form-foot { display: flex; justify-content: flex-end; width: 100%; }
+
+@media (max-width: 640px) {
+  /* Three across on a phone, as the sheet's full width allows. */
+  .style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+  .style-name { font-size: var(--text-xs); }
+  .style-row { max-width: none; }
+  .style-acts { gap: 10px; }
+  .style-acts .linkish { min-height: 44px; }
+  .style-form-foot .btn { flex: 1; }
+}
