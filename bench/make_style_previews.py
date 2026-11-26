@@ -32,7 +32,7 @@ def main() -> int:
     ap.add_argument("--model", default="gemini-nano-banana-2.1")
     ap.add_argument("--quality", default="standard")
     ap.add_argument("--size", type=int, default=768, help="longest side of the WebP, in pixels")
-    ap.add_argument("--webp-quality", type=int, default=78)
+    ap.add_argument("--webp-quality", type=int, default=70)
     ap.add_argument("--raw", default="/tmp/lk-style-previews", help="folder for the drawn originals")
     ap.add_argument("--cap", type=float, default=1.0, help="stop before spending more than this, in USD")
     a = ap.parse_args()
