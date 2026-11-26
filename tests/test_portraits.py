@@ -312,6 +312,15 @@ def test_a_rewrite_may_not_drop_the_standing_the_last_portrait_opened_with():
     assert all(p["text"].startswith("Dead") for p in ps)
 
 
+def test_a_first_sentence_naming_the_dead_is_no_death_to_keep():
+    # "the Dead" are the book's vampires: no recorded death, so a rewrite that drops them from its opening stands
+    book = _book([("One", CH1 + ["The Dead came down from the hills at night and walked past the mill."]), ("Two", CH2 + CH1)])
+    d = _doc(book, [_mira()])
+    model = Fake(["A young woman of the mill who fights the Dead.", "A young woman of the mill who keeps a secret."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.prompts) == 2
+
+
 def test_engaged_does_not_stand_in_for_a_death():
     assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
     assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")

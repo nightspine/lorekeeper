@@ -531,7 +531,10 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # A rewrite may not quietly drop the standing the last portrait opened with: after the stake, Lucy's
             # went from "Dead, after a long decline" back to "her health has lately failed". One rewrite that keeps
             # it, else the previous portrait stands.
-            if got[0] and prev and DEATH.search(HEDGED.sub(" ", _first(prev))) and not _opens_with(_first(prev), got[0]):
+            # Only for a death the companion records (a checked fact or a turning point up to here): a first sentence that
+            # merely names "the Dead" (Empire of the Vampire's vampires) once froze Dior's description for forty chapters.
+            died = any(q <= mark and DEATH.search(HEDGED.sub(" ", t)) for q, t in standing.get(eid, ()))
+            if got[0] and prev and died and DEATH.search(HEDGED.sub(" ", _first(prev))) and not _opens_with(_first(prev), got[0]):
                 again = ask(prompt + f'\n\nYour first answer was: "{got[0]}"\nYour earlier description '
                                        f'began: "{_first(prev)}" That still holds unless the passages show it changed; '
                                        "open with where things stand now.")
