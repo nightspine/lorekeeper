@@ -1506,7 +1506,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-position", e.detail or e.title) from e
         return True, anchor
 
-    def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None):
+    def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None,
+                looks: str = "make"):
         if kind not in artmod.SHAPE_OF:
             raise ArtRefusal(422, "bad-kind", "kind must be plate, event, portrait, place or thing.")
         if not isinstance(target, str) or not target:
@@ -1516,7 +1517,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if given and at is None:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
         try:
-            return il.job(kind, target, at=at, shape=shape, finished=None if finished is None else set(finished))
+            fin_ = None if finished is None else set(finished)
+            if looks == "make":
+                return il.job(kind, target, at=at, shape=shape, finished=fin_)
+            return il.job(kind, target, at=at, shape=shape, finished=fin_, looks=looks)
         except artmod.NotVisible as e:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
         except artmod.TextFailed as e:      # the on-demand plate's screening call failed twice
@@ -2040,6 +2044,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     # The text drawn is not the prompt just written for this reader, so it may come from one written for a
                     # reader with more books finished: it is hidden until every earlier book is (`partial` is this request's).
                     pr.inherits = sorted(set(pr.inherits) | set(earlier_keys(ctx)))
+                    # and it may come from one written at a later anchor (an entity's picture shows from its first look, and
+                    # whether the look index is at hand can differ between the two requests): it shows from no earlier than
+                    # the latest facet or profile visible at the position, as every such prompt was written up to there
+                    if job.kind in artmod.ENTITY_KINDS and at is not None:
+                        late = art_job(*args, looks="off")
+                        ords = il.books[job.bi].ord_of
+                        if late.bi == job.bi and ords[late.anchor] > ords[pr.anchor]:
+                            pr.anchor = job.anchor = late.anchor
                 old_rec = replaced_record(ctx, il, job, slug_, at, fin, body.get("replaces"))
                 rec = draw_given(il, job, pr, text_)
                 if old_rec is None:

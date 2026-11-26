@@ -1985,3 +1985,38 @@ def test_a_same_prompt_redraw_sends_a_later_reference_only_when_the_reader_has_r
     plain = env.c.post(f"/api/library/{KEY}/art/{again['id']}/redraw", json={"note": ""}).json()   # no p: as before
     assert plain["references"] == [port["id"]] and plain["figures"][0]["ref"]
     assert env.c.post(f"/api/library/{KEY}/art/{plain['id']}/redraw", json={"p": "nowhere"}).json()["code"] == "bad-position"
+
+
+# ---- an on-demand portrait shows from the first point its look is known
+
+
+def promised(env):
+    """Mira's index with a detail of hers at a9 that says nothing about her look (her look is told at a5)."""
+    env.doc["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a9", "basis": "stated", "evidence": ["a9"],
+                                             "text": "Promised to the rider from the hills."})
+    env.index.write_text(json.dumps(env.doc))
+
+
+def test_a_portrait_asked_for_later_answers_and_draws_from_its_first_look(env):
+    env.key()
+    promised(env)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask)
+    assert got.status_code == 200, got.text
+    got = got.json()
+    assert got["anchor"] == "a5" and "Promised" not in got["prompt"]
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a5"
+    # the same anchor from an earlier position: a reader back at a6 still sees it
+    assert env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": "a6"}).json()["anchor"] == "a5"
+
+
+def test_a_drawn_text_no_prompt_was_written_for_here_shows_no_earlier_than_the_latest_detail(env):
+    env.key()
+    promised(env)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    # no prompt route first (a cache that expired): the text may come from a prompt written further on
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": "A young woman in a brown shawl by a mill."})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a9"

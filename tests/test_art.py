@@ -1371,8 +1371,11 @@ def test_an_on_demand_prompt_is_one_writer_call_and_nothing_else_on_a_fresh_set(
         il, t = fresh()
         pr = il.make_prompt(il.job(kind, target, at="a11"))
         system = {"portrait": art.PORTRAIT_WRITER, "place": art.WRITER}.get(kind, art.SCENE_WRITER)
-        assert len(t.prompts) == 1 and t.systems == [system] and pr.body, kind
-        assert il.man[0]["screened"] == {} and il.man[0]["looks"] == {}      # no screening, no look index on this path
+        # an entity with items is classified once on the way (where its picture shows from); the mill has none
+        looked = kind == "portrait"
+        assert len(writer_calls(t)) == 1 and t.systems[-1] == system and pr.body, kind
+        assert len(t.prompts) == 1 + looked and il.man[0]["screened"] == {}       # no screening on this path
+        assert set(il.man[0]["looks"]) == ({"mira"} if looked else set()), kind
 
 
 def test_the_prompt_is_the_writers_text_then_the_style_sentence_then_no_text():
@@ -1635,21 +1638,21 @@ def test_details_a_fresh_look_index_flags_go_first_in_the_entry_and_none_is_clas
                        {"id": "bk.mira.f3", "from": "a6", "basis": "stated", "evidence": ["a6"], "text": "Keeps the mill's books."}]
     entry = lambda w: w.split("<entry_to_draw")[1].split("</entry_to_draw>")[0]   # noqa: E731
     il, t = fresh(d, bk)                       # no look index in the set: the latest details first, and no call to make one
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     e = entry(writer_calls(t)[0])
     assert e.index("Keeps the mill's books") < e.index("Sells eggs") < e.index("freckled face") and t.systems == [art.PORTRAIT_WRITER]
     il, t = fresh(d, bk, text_=Text(look=lambda txt: "freckled" in txt))
     il.classify(0, ["mira"])                   # a bulk run's look index, cached in the set
     t.prompts.clear(), t.systems.clear()
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     e = entry(writer_calls(t)[0])
     assert e.index("freckled face") < e.index("Keeps the mill's books") < e.index("Sells eggs") and t.systems == [art.PORTRAIT_WRITER]
-    il.make_prompt(il.job("portrait", "mira", at="a1"))        # a flagged detail after the anchor is still not there
+    il.make_prompt(il.job("portrait", "mira", at="a1", looks="off"))        # a flagged detail after the anchor is still not there
     assert "freckled" not in entry(writer_calls(t)[-1])
     d["entities"][0]["facets"][-1]["text"] += " She hums."      # a rebuilt entity: the cache is stale, today's order again
     il2 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], Text(), Image(), "ink", portraits="all", workers=1,
                           log=lambda *_: None, pause=0)
-    il2.make_prompt(il2.job("portrait", "mira", at="a11"))
+    il2.make_prompt(il2.job("portrait", "mira", at="a11", looks="off"))
     e = entry(il2.text.scenes()[0])
     assert e.index("Keeps the mill's books") < e.index("freckled face")
 
@@ -1668,11 +1671,11 @@ def test_a_person_joins_a_group_only_by_a_name_the_group_has_at_the_anchor():
     il, t = fresh(d, bk)
     il.make_prompt(il.job("portrait", "oren", at="a5"))
     assert 'name="the Guild"' not in writer_calls(t)[-1]
-    il.make_prompt(il.job("portrait", "oren", at="a11"))       # Oren's anchor is a3 still: the alias is not reached there
+    il.make_prompt(il.job("portrait", "oren", at="a11", looks="off"))       # Oren's anchor is a3 still: the alias is not reached there
     assert 'name="the Guild"' not in writer_calls(t)[-1]
     d["entities"][1]["facets"][-1]["from"] = d["entities"][1]["facets"][-1]["evidence"][0] = "a10"
     il, t = fresh(d, bk)
-    il.make_prompt(il.job("portrait", "oren", at="a11"))       # at a10 the Guild is "the Dawn" too
+    il.make_prompt(il.job("portrait", "oren", at="a11", looks="off"))       # at a10 the Guild is "the Dawn" too
     assert 'name="the Guild"' in writer_calls(t)[-1]
 
 
@@ -2099,7 +2102,7 @@ def test_a_likeness_from_an_earlier_book_needs_that_book_finished():
 
 def test_a_portrait_is_a_likeness_with_the_framing_put_first_by_code():
     il, t = fresh(style="anime")
-    pr = il.make_prompt(il.job("portrait", "mira", at="a11"))
+    pr = il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     assert t.systems == [art.PORTRAIT_WRITER] and pr.text.startswith(art.PORTRAIT_FRAME + " " + PORTRAIT_SCENE)
     assert pr.body.startswith(art.PORTRAIT_FRAME) and pr.text.index(art.PORTRAIT_FRAME) == 0
     for rule in ("framing and the pose are fixed and put before your text", "Their hands and mouth are empty: no action or gesture, nothing held up or in use",
@@ -2180,7 +2183,7 @@ def tag(w, name):
 def test_an_earlier_profile_reaches_a_portraits_material_with_its_paragraph_only_at_or_after_its_anchor():
     bk, d = look_doc()
     il, t = fresh(d, bk)
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     w = writer_calls(t)[-1]
     assert "long dark braided hair" in tag(w, "earlier_look") and "long dark braided hair" not in tag(w, "entry_to_draw")
     assert "single heavy braid" in tag(w, "passage")                  # the paragraph the earlier profile rests on
@@ -2212,19 +2215,19 @@ def test_without_look_sentences_a_fresh_look_index_puts_an_earlier_look_item_fir
                        {"id": "bk.mira.f2", "from": "a6", "basis": "stated", "evidence": ["a6"], "replaces": ["bk.mira.f1"],
                         "text": "Has a sunburnt face."}]
     il, t = fresh(d, bk, text_=Text(picks=False))   # no picks, no look index: the replaced detail is no profile, not sent
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     assert "crooked nose" not in writer_calls(t)[-1] and "braided hair" in tag(writer_calls(t)[-1], "earlier_look")
     il, t = fresh(d, bk, text_=Text(look=lambda txt: "crooked nose" in txt, picks=False))
     il.classify(0, ["mira"])
     monkeypatch.setattr(art, "EARLIER_FALLBACK_CHARS", 45)    # room for one sentence: the flagged one goes first
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert "crooked nose" in got and "braided" not in got
     monkeypatch.setattr(art, "EARLIER_FALLBACK_CHARS", 2000)
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     got = tag(writer_calls(t)[-1], "earlier_look")    # both, printed in reading order
     assert got.index("crooked nose") < got.index("braided hair")
-    il.make_prompt(il.job("portrait", "mira", at="a5"))   # the flagged detail is not replaced yet: it is in the entry
+    il.make_prompt(il.job("portrait", "mira", at="a5", looks="off"))   # the flagged detail is not replaced yet: it is in the entry
     assert "crooked nose" in tag(writer_calls(t)[-1], "entry_to_draw")
 
 
@@ -2247,7 +2250,7 @@ def test_a_later_portrait_takes_the_earlier_one_as_reference_with_a_note_and_a_f
     first = [p for p in pics(sink, "portrait") if p["target"] == "mira"]
     assert [p["from"] for p in first] == ["a4"] and first[0]["references"] == []
     assert all(c["note"] == "" for c in im.calls)                     # first portraits: no reference, no note
-    job = il.job("portrait", "mira", at="a11")                        # on demand, later in the book
+    job = il.job("portrait", "mira", at="a11", looks="off")                        # on demand, later in the book
     pr = il.make_prompt(job)
     assert [r["id"] for _, r in pr.references] == [first[0]["id"]]
     rec = il.draw(job, pr)
@@ -2495,7 +2498,7 @@ def picked_doc():
 def test_earlier_look_holds_only_the_picked_sentences_and_a_second_prompt_makes_no_call():
     bk, d = picked_doc()
     il, t = fresh(d, bk)
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     w = writer_calls(t)[-1]
     assert tag(w, "earlier_look") == "She wears her long dark hair in a braid." and "single heavy braid" in tag(w, "passage")
     assert len(picks_of(t)) == 1 and "Mira (a character)" in picks_of(t)[0]
@@ -2514,7 +2517,7 @@ def test_a_picked_sentence_counts_only_through_its_own_item_at_the_anchor_and_fo
     bk, d = picked_doc()
     d["entities"][0]["facets"].append(portrait("mira", "a10", "A young woman with a scar across her cheek.", 4))
     il, t = fresh(d, bk)
-    il.make_prompt(il.job("portrait", "mira", at="a9"))          # the cache covers the a10 item, the material does not
+    il.make_prompt(il.job("portrait", "mira", at="a9", looks="off"))          # the cache covers the a10 item, the material does not
     assert il.man[0]["lookSentences"]["mira"]["picks"]["bk.mira.portrait-4"] == [0]
     w = writer_calls(t)[-1]
     assert "scar" not in w and tag(w, "earlier_look") == "She wears her long dark hair in a braid."
@@ -2533,7 +2536,7 @@ def test_a_picked_sentence_counts_only_through_its_own_item_at_the_anchor_and_fo
 def test_a_failed_pick_falls_back_and_is_not_cached():
     bk, d = picked_doc()
     il, t = fresh(d, bk, text_=Text(picks=False))
-    il.make_prompt(il.job("portrait", "mira", at="a11"))        # no error: the earlier profiles, whole sentences that add words
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))        # no error: the earlier profiles, whole sentences that add words
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert "long dark hair in a braid" in got and "sells eggs" in got
     assert "mira" not in il.man[0]["lookSentences"] and len(picks_of(t)) == 2     # tried (and retried) once, not stored
@@ -2567,7 +2570,7 @@ def test_a_look_told_once_beats_a_run_of_near_repeats_and_a_long_pick_is_batched
     monkeypatch.setattr(art, "EARLIER_CHARS", 120)      # room for two sentences
     monkeypatch.setattr(art, "LOOK_SENTENCE_BATCH", 3)
     il, t = fresh(d, bk)
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert "copper rings" in got and got.index("shawl") < got.index("copper rings")   # chosen by what it adds, printed in order
     assert len(picks_of(t)) == 3                       # 7 distinct sentences, 3 a call (each numbered from 1)
@@ -2623,7 +2626,7 @@ def test_picked_sentences_of_one_note_print_in_reading_order():
     bk, d = look_doc()
     d["entities"][0]["facets"][1]["text"] = "She has grey eyes. She wears long dark hair braided with copper rings and a brown shawl."
     il, t = fresh(d, bk, text_=Text(picks=lambda s: True))
-    il.make_prompt(il.job("portrait", "mira", at="a11"))
+    il.make_prompt(il.job("portrait", "mira", at="a11", looks="off"))
     got = tag(writer_calls(t)[-1], "earlier_look")
     assert got.index("She has grey eyes.") < got.index("She wears long dark hair")
 
@@ -3224,3 +3227,97 @@ def test_a_stored_later_reference_is_sent_again_only_within_the_readers_frontier
     first = next(it["id"] for it in il.items(0, "mira") if it["from"] == "a4")   # her profile, flagged as a look change
     il.man[0]["looks"] = {"mira": {"key": il._items_key(il.items(0, "mira")), "items": {first: {"look": True, "change": True}}}}
     assert not il.reference_reached(at("a11"), 0, mira)                 # a recorded look change between: never
+
+
+# ---- an on-demand entity picture shows from the first point its look is known
+
+
+LOOK_CALL = "notes a reader's companion keeps on some entries"
+
+
+def first_look_doc(*facets):
+    """Millbrook with Mira's look told at a4 (her profile) and the given facets of hers after it."""
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"] += [{"id": f"bk.mira.f{n}", "from": at, "basis": "stated", "evidence": [at], "text": txt}
+                                   for n, (at, txt) in enumerate(facets, 1)]
+    return bk, d
+
+
+class LookDown(Text):
+    """A scripted model whose look index call fails (every time)."""
+
+    def complete(self, system, prompt, schema, prefix=None):
+        if LOOK_CALL in prompt:
+            self.prompts.append(prompt)
+            raise RuntimeError("the cheap model is down")
+        return super().complete(system, prompt, schema, prefix)
+
+
+def test_an_on_demand_portrait_shows_from_its_last_look_item_not_its_latest_detail():
+    bk, d = first_look_doc(("a7", "Promised to the rider from the hills."))
+    il, t = fresh(d, bk)
+    job = il.job("portrait", "mira", at="a11")
+    assert job.anchor == "a4" and job.reach == (0, 11)             # her look is told at a4; a7 says nothing about it
+    pr = il.make_prompt(job)
+    [w] = writer_calls(t)
+    assert pr.anchor == "a4" and "Promised" not in w and all(il.books[0].ord_of[x] <= 4 for x in pr.sources)
+    assert il.job("portrait", "mira", at="a5").anchor == "a4"          # the same anchor from anywhere after it
+    assert sum(LOOK_CALL in p for p in t.prompts) == 1                    # classified once, then read from the set
+
+
+def test_a_look_change_between_moves_the_anchor_to_the_change():
+    bk, d = first_look_doc(("a6", "Her cheek was scarred by the fire at the mill."), ("a9", "Promised to the rider from the hills."))
+    il, t = fresh(d, bk)
+    assert il.job("portrait", "mira", at="a11").anchor == "a6"
+    assert il.job("portrait", "mira", at="a5").anchor == "a4"           # before the change: her first look
+
+
+def test_with_no_look_item_reached_the_picture_shows_from_the_first_profile_else_the_first_appearance():
+    bk, d = first_look_doc()
+    d["entities"].append(ent("zeph", "Zephyr", frm="a8", facets=[
+        {"id": "bk.zeph.f1", "from": "a9", "basis": "stated", "evidence": ["a9"], "text": "A storm the riders fear."}]))
+    d["entities"].append(ent("ida", "Ida", frm="a1", facets=[
+        {"id": "bk.ida.f1", "from": "a2", "basis": "stated", "evidence": ["a2"], "text": "Keeps the village inn."},
+        portrait("ida", "a5", "The innkeeper of the village, who knows everyone."),
+        portrait("ida", "a9", "The innkeeper of the village, a widow.", n=2)]))
+    il, t = fresh(d, bk)
+    assert il.job("portrait", "zeph", at="a11").anchor == "a8"         # no profile: its first appearance
+    assert il.job("portrait", "ida", at="a11").anchor == "a5"          # who she is: her first profile
+    assert il.job("portrait", "ida", at="a4").anchor == "a1"           # before it: her first appearance
+    # Mira's look comes at a4: drawn at a3 nothing is flagged yet and no profile reached
+    assert il.job("portrait", "mira", at="a3").anchor == "a0"
+
+
+def test_the_look_index_on_a_miss_is_one_picker_call_and_a_failure_keeps_the_old_anchor():
+    bk, d = first_look_doc(("a7", "Promised to the rider from the hills."))
+    cheap = Text()
+    il, t = fresh(d, bk, cheap_text=cheap)
+    assert il.job("portrait", "mira", at="a11").anchor == "a4"
+    assert [LOOK_CALL in p for p in cheap.prompts] == [True] and not t.prompts       # on the picker, never the writer
+    il, t = fresh(d, bk, cheap_text=LookDown())
+    assert il.job("portrait", "mira", at="a11").anchor == "a7"         # later than needed, never unsafe
+    assert il.man[0]["looks"] == {}                                    # nothing cached: the next request tries again
+    il, t = fresh(d, bk)
+    assert il.job("portrait", "mira", at="a11", looks="cached").anchor == "a7" and not t.prompts
+    assert il.job("portrait", "mira", at="a11", looks="off").anchor == "a7" and not t.prompts
+    with pytest.raises(ValueError):
+        il.job("portrait", "mira", at="a11", looks="maybe")
+
+
+def test_the_look_index_of_another_style_set_of_the_edition_is_read_with_no_call():
+    bk, d = first_look_doc(("a7", "Promised to the rider from the hills."))
+    oil = Mem()
+    il, _ = fresh(d, bk, style="oil", books=[art.Book(d, bk, oil)])
+    il.job("portrait", "mira", at="a11")                                # classified into the oil set
+    il, t = fresh(d, bk, books=[art.Book(d, bk, Mem(), likeness={"oil": oil})])
+    assert il.job("portrait", "mira", at="a11", looks="cached").anchor == "a4" and not t.prompts
+
+
+def test_an_entity_after_the_position_is_still_not_visible_and_runs_keep_their_versions():
+    bk, d = first_look_doc(("a7", "Promised to the rider from the hills."))
+    il, t = fresh(d, bk)
+    with pytest.raises(art.NotVisible):
+        il.job("portrait", "stranger", at="a5")
+    assert not t.prompts                                               # not visible: no call at all
+    assert il.job("portrait", "mira").anchor == "a7"                   # no position: the old rule, the whole book
