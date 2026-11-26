@@ -55,9 +55,11 @@ HEDGED = re.compile(r"\b(near|nearly|almost|close to|on the point of|feared|fear
 DEATH = re.compile(r"\b(dead|dies|died|death|killed|murdered|slain|buried|destroyed)\b", re.IGNORECASE)
 
 
-# A death word used as a verb with an object ("buried the silver", "killed Danton") tells someone else's death or none.
 _OBJECT = re.compile(r"\s+(?:(?:the|a|an|his|her|their|its|my|our|your|him|them|it|one|this|that|these|those|some|all|"
                      r"every)\b|[A-Z])")
+# A death verb tells the subject's own death only in the passive or opening a clause: "is killed", "was buried",
+# "Killed by...", "Dead, slain by...".
+_PASSIVE = re.compile(r"(\b(?:is|was|were|are|be|been|being|got|gets|lies|lay)|^|[.!?:;,\u2014(])$", re.IGNORECASE)
 _TRANSITIVE = {"killed", "murdered", "slain", "buried", "destroyed"}
 
 
@@ -71,8 +73,12 @@ def states_death(text: str, at: list[int] | None = None) -> bool:
         w, before = m.group(0), text[:m.start()].rstrip()
         if w[0].isupper() and before and before[-1] not in ".!?:;\"“(":
             continue
-        if w.lower() in _TRANSITIVE and _OBJECT.match(text, m.end()):
-            continue
+        if text[m.start() - 1:m.start()] == "-" or text[m.end():m.end() + 1] == "-":
+            continue                    # a compound: "death-pale", "half-dead"
+        if w.lower() in _TRANSITIVE and not re.match(r"\s+by\b", text[m.end():]):
+            passive = _PASSIVE.search(before)
+            if not passive or (not passive.group(1).strip().isalpha() and _OBJECT.match(text, m.end())):
+                continue                # a deed: "the locals destroyed", "Buried her mother" (a note's subject is its entity)
         found = True
         if at is None:
             return True

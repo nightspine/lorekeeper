@@ -508,8 +508,10 @@ def test_a_turning_point_records_the_death_of_the_one_who_dies():
 
 def test_states_death_reads_who_dies():
     yes = ["Lucy dies.", "Killed by the Count in her bed.", "Was buried in the churchyard.", "Dead of the fever."]
+    yes += ["He was killed by Voss.", "Dead, slain by the wolves."]
     no = ["He buried the silver under the mill.", "A hunter of the Dead.", "The killer awaiting death in a tower cell.",
-          "Destroyed a dozen of them."]
+          "Destroyed a dozen of them.", "A river whose bridge the locals destroyed, so travellers turn back.",
+          "He has death-pale skin and bloody eyes.", "Aaron killed Danton."]
     assert all(portraits.states_death(t) for t in yes) and not any(portraits.states_death(t) for t in no)
 
 
