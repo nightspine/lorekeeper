@@ -879,13 +879,22 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0, cheap_text=None, portrait_text=None, portrait_image=None, place_refs: bool = False) -> None:
+                 pause: float = 1.0, cheap_text=None, portrait_text=None, portrait_image=None,
+                 until: tuple[int, str | int] | None = None, finished: set[str] | frozenset[str] | list[str] | None = None,
+                 place_refs: bool = False) -> None:
         """One model per responsibility. `text` writes the scene prompts (plates and event pictures); `portrait_text` (else
         `text`) the prompts of portraits, places and things; `cheap_text` (else `text`), the picker, makes the choosing calls:
         the chapter screening, the look index and the look sentences (the one choosing call the prompt path may make). A
         softening rewrite is written by the writer of its kind. `image` draws the scenes and `portrait_image` (else `image`)
         the portraits, places and things. `place_refs`: a scene's reference slots its labelled figures leave free take the
-        picture of the place it happens at, then of the things it shows (an experiment, off until measured)."""
+        picture of the place it happens at, then of the things it shows (an experiment, off until measured).
+
+        `portraits` is "main", "all", None, or a collection of entity ids: then only those people and creatures get portraits,
+        whatever the main-cast rule says (the Reader's "Through the book so far" for one entry), with the versions a bulk run
+        would plan for them. `until` is (book index, anchor id or ordinal; -1 for the last book): no picture of this run shows
+        from past it, no book after it is drawn, and the versions of a portrait are planned only from the items up to it.
+        `finished` is the run's reader's finished earlier book keys (None: all, as a bulk run): an earlier book they have not
+        finished is never drawn, every job carries it to its prompt, and what is written for such a reader is `partial`."""
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -898,7 +907,13 @@ class Illustrator:
         self.portrait_text = portrait_text if portrait_text is not None else text
         self.portrait_image = portrait_image if portrait_image is not None else image
         self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
-        self.portraits = portrait_cast(portraits)      # "main", "all" or None
+        if isinstance(portraits, (set, frozenset, list, tuple)):     # chosen entries only, the main-cast rule aside
+            self.entities: frozenset[str] | None = frozenset(str(x) for x in portraits)
+            self.portraits = "chosen" if self.entities else None
+        else:
+            self.entities = None
+            self.portraits = portrait_cast(portraits)      # "main", "all" or None
+        self.reader = None if finished is None else frozenset(str(k) for k in finished)
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
         # `chapters` (the CLI's --chapters) limits scenes to those chapters and portraits to anchors up to the last of them;
         # `scene_chapters` (the web's chapter choice) limits scenes only, by the plan's chapter numbers `n` (the numbers
@@ -965,6 +980,21 @@ class Illustrator:
                     sets.append((slug, sink, lm))
             self.like.append(sets)
         self.names = self._banned_names()
+        self.until: tuple[int, int] | None = None
+        if until is not None:
+            ubi, at = until
+            ubi = len(self.books) - 1 if ubi < 0 else ubi
+            if not 0 <= ubi < len(self.books):
+                raise ValueError("until: no such book in the run")
+            ub = self.books[ubi]
+            if isinstance(at, int) and not isinstance(at, bool):
+                if not 0 <= at < len(ub.anchors):
+                    raise ValueError("until: no such anchor")
+                self.until = (ubi, at)
+            elif at in ub.ord_of:
+                self.until = (ubi, ub.ord_of[at])
+            else:
+                raise ValueError("until: no such anchor")
 
     # ---- small helpers
 
@@ -1305,12 +1335,38 @@ class Illustrator:
                                            -b.ord_of[b.events[x]["from"]]))
 
     def _have(self, bi: int) -> set[tuple]:
-        """(kind, target, from) of what a book's set already holds or will never draw (a final skip)."""
-        return {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")} | \
+        """(kind, target, from) of what a book's set already holds or will never draw (a final skip). A held picture counts when
+        this run's reader could be shown it (`_usable`: for a bulk run every picture that is not partial; for a reader with
+        fewer finished books, one whose prompt used only books they finished, partial or not)."""
+        fin = self._run_finished(bi)
+        return {_key(r) for r in self.man[bi]["pictures"] if self._usable(bi, bi, fin, r)} | \
             {(x.get("kind"), x["target"], x.get("from")) for x in self.man[bi]["skipped"]}
 
     def _is_new(self, bi: int, j: Job, have: set[tuple]) -> bool:
         return (j.kind, j.target, j.anchor) not in have
+
+    def _run_finished(self, bi: int) -> frozenset[str] | None:
+        """The run's reader's finished earlier books as book bi's prompts take them (None: every earlier book)."""
+        return self._finished(bi, self.reader)
+
+    def _limit(self, bi: int) -> int | None:
+        """The last anchor ordinal of book bi this run may draw at: None for no limit, -1 for nothing (a book after `until`'s,
+        or an earlier book the run's reader has not finished)."""
+        last = self.until[0] if self.until else len(self.books) - 1
+        if bi > last or (bi < last and self.reader is not None and self._bkey(bi) not in self.reader):
+            return -1
+        return self.until[1] if self.until and bi == self.until[0] else None
+
+    def _within(self, bi: int, jobs: list[Job]) -> list[Job]:
+        """The jobs this run may draw: up to the CLI's last --chapters chapter (portraits; scenes are chosen by chapter) and
+        never past `until`; each carries the run's reader to its prompt."""
+        b = self.books[bi]
+        lim = self._limit(bi)
+        end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1) if self.chapter_filter else None
+        out = [j for j in jobs if (lim is None or b.ord_of[j.anchor] <= lim) and (end is None or b.seq_of[j.anchor] <= end)]
+        for j in out:
+            j.finished = self._run_finished(bi)
+        return out
 
     def _budget(self) -> int | None:
         """How many more pictures the picture limit and the cost cap leave room for (None: no bound known). With an unknown
@@ -1338,16 +1394,15 @@ class Illustrator:
         level = scene_level(b.b.level)
         have = self._have(bi)
         ports: list[Job] = []
+        if self._limit(bi) == -1:
+            return []
         if self.portraits:
-            ports = self._portrait_jobs(bi)
-            if self.chapter_filter:      # a run limited to some chapters draws portraits only up to the last of them
-                end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
-                ports = [j for j in ports if b.seq_of[j.anchor] <= end]
+            ports = self._within(bi, self._portrait_jobs(bi))
         budget = self._budget()
         room = None if budget is None else max(0, budget - sum(self._is_new(bi, j, have) for j in ports))
         new = 0
         for ch in b.chapters if level else ():
-            if not self._chosen(ch):
+            if not self._chosen(ch) or not self._reaches(bi, ch):
                 continue
             if not ch["events"]:
                 if record:
@@ -1372,11 +1427,17 @@ class Illustrator:
                     if x != main:
                         ev = b.events[x]
                         got.append(Job("event", ev["id"], bi, ev["from"], event=ev, chapter=ch, shape="landscape"))
+            got = self._within(bi, got)
             new += sum(self._is_new(bi, j, have) for j in got)
             jobs += got
         if record and jobs:          # the figures of the scenes: their look sentences now, so no prompt waits on one
             self.pick_looks(bi, [x for j in jobs for x in self._figures(j) if b.ents.get(x, {}).get("type") in PORTRAIT_TYPES])
         return jobs + ports
+
+    def _reaches(self, bi: int, ch: dict) -> bool:
+        """Whether a chapter's plate is at or before this run's `until` (a chapter past it is never screened or drawn)."""
+        lim = self._limit(bi)
+        return lim is None or self.books[bi].ord_of[ch["last"]] <= lim
 
     def _chosen(self, ch: dict) -> bool:
         """Whether a chapter's scenes are drawn in this run: in the CLI's --chapters (when given) and the web's choice."""
@@ -1423,7 +1484,8 @@ class Illustrator:
         bi = len(self.books) - 1 if bi < 0 else bi
         b = self.books[bi]
         level = scene_level(level)
-        held = {_key(r) for r in self.man[bi]["pictures"] if not r.get("partial")}
+        fin = self._run_finished(bi)
+        held = {_key(r) for r in self.man[bi]["pictures"] if self._usable(bi, bi, fin, r)}
         chapters, plates = [], 0
         for ch in b.chapters:
             ids = self.screened(bi, ch) if ch["events"] else []
@@ -1438,14 +1500,11 @@ class Illustrator:
             else:
                 pictures = len(sure) + len(extra)
                 drawn = sum(k in held for k in sure + extra)
-            chosen = bool(level) and self._chosen(ch)
+            chosen = bool(level) and self._chosen(ch) and self._reaches(bi, ch)
             chapters.append({"n": ch["n"], "title": ch["title"], "drawable": None if ids is None else len(ids),
                              "events": len(major), "pictures": pictures, "drawn": drawn, "chosen": chosen})
             plates += pictures if chosen else 0
-        ports = self._portrait_jobs(bi, classify=False) if self.portraits else []
-        if self.chapter_filter:
-            end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1)
-            ports = [j for j in ports if b.seq_of[j.anchor] <= end]
+        ports = self._within(bi, self._portrait_jobs(bi, classify=False)) if self.portraits and self._limit(bi) != -1 else []
         have = self._have(bi)
         return {"plates": plates, "portraits": len(ports), "new_portraits": sum(self._is_new(bi, j, have) for j in ports),
                 "chapters": chapters}
@@ -1480,6 +1539,9 @@ class Illustrator:
         """Who gets a portrait in book bi (the selection, one step): under `portraits="main"` the main cast (`main_cast`),
         else every person and creature with a profile that has a portrait-stage profile or is named by two non-minor events."""
         b = self.books[bi]
+        if self.entities is not None:      # the chosen entries, in index order, the main-cast rule aside
+            return [e for e in b.doc["entities"] if e["id"] in self.entities and e["type"] in PORTRAIT_TYPES
+                    and self._profiles(bi, e["id"])]
         if self.portraits == "main":
             return [b.ents[x] for x in self.main_cast(bi)]
         named = Counter(x for e in b.doc.get("events", []) if e.get("kind") != "minor" for x in e.get("entities", []))
@@ -1512,14 +1574,21 @@ class Illustrator:
         its first profile), then one per look change, within MAX_VERSIONS and MIN_GAP blocks; two versions never share one
         anchor (the later stands for both)."""
         b, eid = self.books[bi], e["id"]
-        mine = [p for p in self._profiles(bi, eid) if p[0] == bi]
+        # under `until` the versions are planned from the items up to it only: the same versions a bulk run plans up to there
+        # (each is chosen going forward), and a first portrait at the first profile when the first look item comes later
+        lim = self._limit(bi)
+        upto = (lambda o: True) if lim is None else (lambda o: o <= lim)     # noqa: E731
+        profiled = any(p[0] == bi for p in self._profiles(bi, eid))      # the bulk rule: a profile in this book, anywhere
+        mine = [p for p in self._profiles(bi, eid) if p[0] == bi and upto(p[1])]
         written = [p for p in mine if ".portrait-" in p[2]["id"]]
-        # only a drawn picture counts: one planned in an earlier book and then skipped does not
-        before = any(r["kind"] == "portrait" and r["target"] == eid and not r.get("partial")
+        # only a drawn picture counts: one planned in an earlier book and then skipped does not (nor one this run's reader
+        # could not be shown)
+        fin = self._run_finished(bi)
+        before = any(r["kind"] == "portrait" and r["target"] == eid and self._usable(j, bi, fin, r)
                      for j in range(bi) for r in self.man[j]["pictures"])
         idx = self.look_index(bi, eid)
         own = [(b.ord_of[it["from"]], it) for it in self.items(bi, eid)
-               if it["from"] in b.ord_of and b.ord_of[it["from"]] >= b.ord_of.get(e["from"], 0)]
+               if it["from"] in b.ord_of and b.ord_of[it["from"]] >= b.ord_of.get(e["from"], 0) and upto(b.ord_of[it["from"]])]
         own.sort(key=lambda t: t[0])
         looks = [it for _, it in own if idx.get(it["id"], {}).get("look") and not it["id"].startswith("event:")]
         # a change's reason is the item's own text (index content at its anchor, which the amended note may quote), never the
@@ -1527,7 +1596,7 @@ class Illustrator:
         changes = [(o, it["from"], it["text"]) for o, it in own if idx.get(it["id"], {}).get("change")]
         if before:
             start = None
-        elif mine:
+        elif profiled and (looks or mine):     # a look in reach starts it even when every profile is past `until`
             start = looks[0]["from"] if looks else (written or mine)[0][2]["from"]
         else:
             return []
@@ -2702,7 +2771,7 @@ class Illustrator:
 
     def _run(self) -> None:
         self.pick_on_demand = False        # the look sentences are made while planning; a prompt that misses one falls back
-        drawn = [bi for bi, b in enumerate(self.books) if b.b.draw and b.epub is not None]
+        drawn = [bi for bi, b in enumerate(self.books) if b.b.draw and b.epub is not None and self._limit(bi) != -1]
         first: dict[int, int] = {}
         for bi in drawn:                   # a first count for the progress total
             first[bi] = len(self.plan(bi, record=False))

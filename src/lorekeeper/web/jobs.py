@@ -8,6 +8,7 @@ resumed, because the generator checkpoints after every chunk.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import queue
@@ -24,6 +25,8 @@ from .. import art as artmod, arcs as book_arcs, bookkind, epub, generate, llm, 
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
+ENTITY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")   # the index schema's slug
+MAX_RUN_ENTITIES = 12      # entries one pictures run draws through the book
 
 
 def _now() -> float:
@@ -219,7 +222,29 @@ def art_config(raw) -> dict:
     if portraits is not False and portraits is not True and portraits not in artmod.CASTS:
         raise ValueError("portraits must be \"main\", \"all\" or false.")
     cast = artmod.portrait_cast(portraits) or False
-    if (level == "none" or chapters == []) and not cast:
+    entities = raw.get("entities")      # one entry's portraits through the book (the picture sheet): only these, no cast rule
+    if entities is not None:
+        if not isinstance(entities, list) or not 1 <= len(entities) <= MAX_RUN_ENTITIES or \
+                any(not isinstance(x, str) or not ENTITY_ID.fullmatch(x) for x in entities):
+            raise ValueError("entities must be a list of entry ids.")
+        entities = list(dict.fromkeys(entities))
+    until = raw.get("until")            # the reader's position: no picture past it (checked against the index where it is known)
+    if until is not None:
+        p = until.get("p") if isinstance(until, dict) else None
+        book = until.get("book") if isinstance(until, dict) else None
+        if isinstance(p, bool) or not (isinstance(p, str) and 0 < len(p) <= 128 or isinstance(p, (int, float)) and 0 <= p <= 1) \
+                or not (book is None or isinstance(book, str) and 0 < len(book) <= 128) or set(until) - {"p", "book"}:
+            raise ValueError("until must be a position: {\"p\": an anchor id or a fraction, \"book\": a series book key}.")
+        if level != "none":
+            raise ValueError("A run up to a position draws portraits only (level \"none\").")
+        until = {"p": p, "book": book}
+    finished = raw.get("finished")      # the reader's finished earlier books (None: every one)
+    if finished is not None:
+        if not isinstance(finished, list) or len(finished) > 200 or \
+                any(not isinstance(k, str) or not 0 < len(k) <= 128 for k in finished):
+            raise ValueError("finished must be a list of book keys.")
+        finished = sorted(set(finished))
+    if (level == "none" or chapters == []) and not cast and not entities:
         raise ValueError("Choose chapters or portraits.")
     writers = {k: text_choice_config(raw.get(k), what) for k, what in TEXT_ROLES.items()}
     portrait_provider = raw.get("portraitProvider")
@@ -233,7 +258,35 @@ def art_config(raw) -> dict:
         raise ValueError(f"Unknown image model {portrait_model!r} for portraits.")
     return {"style": style, "level": level, "chapters": chapters, "portraits": cast, "quality": quality,
             "provider": provider, "model": model, "cap": cap, **writers,
-            "portraitProvider": portrait_provider, "portraitModel": portrait_model}
+            "portraitProvider": portrait_provider, "portraitModel": portrait_model,
+            "entities": entities, "until": until, "finished": finished}
+
+
+def entity_run(cfg: dict, doc: dict) -> bool:
+    """Whether a checked art config draws an earlier series book `doc` too: an entry's portraits through the series, for a
+    reader who finished that book (`finished` None: every earlier book)."""
+    if not cfg.get("entities"):
+        return False
+    key = (doc.get("series") or {}).get("book")
+    return cfg.get("finished") is None or key in cfg["finished"]
+
+
+def run_limits(cfg: dict, doc: dict, bi: int) -> dict:
+    """The Illustrator arguments of an entity run (none for an ordinary one): `portraits` the entries, `until` the reader's
+    position as (book index, anchor ordinal) in `doc`, the run's last book `bi`, and `finished` the reader's books. Raises
+    ValueError when the position is no longer in the index (it was rebuilt since the run was queued): nothing is drawn."""
+    out: dict = {}
+    if cfg.get("entities"):
+        out["portraits"] = frozenset(cfg["entities"])
+    if cfg.get("until"):
+        ids = [a["id"] for a in doc.get("anchors", [])]
+        p = cfg["until"]["p"]
+        if not isinstance(p, str) or p not in ids:
+            raise ValueError("the reader's position is no longer in this index, so nothing was drawn")
+        out["until"] = (bi, ids.index(p))
+    if cfg.get("entities") or cfg.get("until"):
+        out["finished"] = None if cfg.get("finished") is None else frozenset(cfg["finished"])
+    return out
 
 
 # The text responsibilities of a pictures run, by config key: who writes the scene prompts (plates and event pictures),
@@ -281,7 +334,8 @@ class JobManager:
         self.after_run = None   # job → dict, run on a finished index (the app sets editor.reapply)
         self.art_store = None   # web.art.ArtStore, set by the app
         self.art_inputs = None  # job → (index doc, epub.Book, earlier books' docs), set by the app
-        self.art_journal = None  # (job, text hash, slug, ids of the pictures drawn) → journal entry id, set by the app
+        self.art_journal = None  # (job, text hash, slug, ids of the pictures drawn[, also]) → journal entry id, set by the app
+        self.art_epub_for = None  # text hash → epub.Book or None: an earlier book's EPUB, for an entity run, set by the app
         # provider id → the text model ids it lists (presets and live), set by the app; checks a picture writer's choice
         self.text_models = lambda provider: {m["id"] for m in llm.PROVIDERS.get(provider, {}).get("models", [])}
         root.mkdir(parents=True, exist_ok=True)
@@ -348,19 +402,22 @@ class JobManager:
         self.queue.put(job_id)
         return job
 
-    def submit_art(self, key: str, config: dict, *, index_path: str, book_id: str, title: str, text_hash: str) -> Job:
+    def submit_art(self, key: str, config: dict, *, index_path: str, book_id: str, title: str, text_hash: str,
+                   also: list[str] = ()) -> Job:
         """Queue pictures for an existing index (library key `key`): a job of kind "art" on the same queue and events as a
-        build. Refused (RuntimeError) while a run writes that index or pictures are already being drawn for that edition."""
+        build. `also`: the editions of earlier series books it draws into too (an entry's portraits through the series).
+        Refused (RuntimeError) while a run writes that index or pictures are already being drawn for one of those editions."""
         cfg = art_config(config)
         self.check_art_models(cfg)
         if self.writing(index_path):
             raise RuntimeError("A build is writing this index. Add pictures once it has finished.")
-        if self.drawing(text_hash):
+        if any(self.drawing(h) for h in (text_hash, *also)):
             raise RuntimeError("Pictures are already being drawn for this book.")
         job_id = uuid.uuid4().hex[:12]
         image = cfg["provider"] or next((p for p in llm.IMAGE_PROVIDERS if self.keys(p)), None)
         job = Job(id=job_id, book_id=book_id, book_title=title, output=index_path, kind="art",
                   config={"art": cfg, "index_key": key, "text_hash": text_hash,
+                          **({"text_hashes": sorted(set(also) - {text_hash})} if also else {}),
                           "provider": self.text_provider(), "image_provider": image})
         self.jobs[job_id] = job
         self.events[job_id] = []
@@ -379,7 +436,7 @@ class JobManager:
     def drawing(self, text_hash: str) -> bool:
         """Pictures are being drawn, or will be, for this edition: an art run, or a build that ends with the pictures stage."""
         for j in self.active():
-            if j.kind == "art" and j.config.get("text_hash") == text_hash:
+            if j.kind == "art" and (j.config.get("text_hash") == text_hash or text_hash in j.config.get("text_hashes", [])):
                 return True
             if j.kind != "art" and j.config.get("art"):
                 try:
@@ -663,15 +720,22 @@ class JobManager:
                 m.cancel = flag.is_set
             store = self.art_store
             slug, style = store.resolve(h, cfg["style"])    # one set per slug: "Ink" draws into the "ink" set
-            books = []
+            books, sets = [], []    # sets: (text hash, slug) of every set the run draws into, this book's last
             for d in prior:
                 ph = store_mod.text_hash(d)
                 if not store_mod.HASH.fullmatch(ph):
                     title = (d.get("work") or {}).get("title") or "an earlier book"
                     self._emit(job, {"type": "log", "line": f"pictures: {title} names no edition, so its pictures are not read"})
                     continue
-                books.append(store.book(d, None, ph, store.resolve(ph, style)[1], None, draw=False))
+                pslug, pstyle = store.resolve(ph, style)
+                # an entry's portraits through the series: earlier books the reader finished are drawn too (their own sets)
+                pbook = self.art_epub_for(ph) if self.art_epub_for and entity_run(cfg, d) else None
+                books.append(store.book(d, pbook, ph, pstyle, None, draw=pbook is not None))
+                if pbook is not None:
+                    sets.append((ph, pslug))
             books.append(store.book(doc, book, h, style, cfg["level"]))
+            sets.append((h, slug))
+            extra = run_limits(cfg, doc, len(books) - 1)
             box: dict = {}
 
             def progress(done: int, total: int) -> None:
@@ -686,17 +750,24 @@ class JobManager:
                 if flag.is_set() and box.get("il") is not None and not box["il"].stop:
                     box["il"].stop = "stopped by request"
                 self._emit(job, {"type": "log", "line": f"pictures: {line.strip()}"})
-            with store.lock(h, slug):
-                had = {r.get("id") for r in (store.manifest(h, slug) or {}).get("pictures", [])}
+            with contextlib.ExitStack() as held:
+                for k in sorted(set(sets)):        # one order for every run, so two never wait on each other
+                    held.enter_context(store.lock(*k))
+                had = {k: {r.get("id") for r in (store.manifest(*k) or {}).get("pictures", [])} for k in sets}
                 try:
-                    il = box["il"] = artmod.Illustrator(books, text_model, image, style, portraits=cfg["portraits"],
+                    # hook (picture-model-choices): an entity run draws portraits only; once there is a portrait writer and a
+                    # portrait image model, they are the ones to use here
+                    il = box["il"] = artmod.Illustrator(books, text_model, image, style, **{"portraits": cfg["portraits"], **extra},
                                                         scene_chapters=cfg["chapters"], quality=cfg["quality"],
                                                         cap=cfg["cap"], log=log, progress=progress, cheap_text=picker,
                                                         portrait_text=portrait_text, portrait_image=portrait_image)
                     rep = il.run()
                 finally:
-                    added = [r["id"] for r in (store.manifest(h, slug) or {}).get("pictures", []) if r.get("id") not in had]
-                    self._journal_art(job, h, slug, added)
+                    got = {k: [r["id"] for r in (store.manifest(*k) or {}).get("pictures", []) if r.get("id") not in had[k]]
+                           for k in sets}
+                    added = got[(h, slug)]
+                    self._journal_art(job, h, slug, added, [{"textHash": k[0], "style": k[1], "added": v}
+                                                            for k, v in got.items() if k != (h, slug) and v])
         except llm.Cancelled:
             self._emit(job, {"type": "log", "line": "pictures: stopped; the pictures drawn so far are kept"})
             return {"skipped": "stopped", "drawn": len(added), "style": slug, "textHash": h}
@@ -711,11 +782,12 @@ class JobManager:
             self._emit(job, {"type": "log", "line": f"pictures: {line.strip()}"})
         return out
 
-    def _journal_art(self, job: Job, text_hash: str, slug: str, added: list[str]) -> None:
-        if not added or self.art_journal is None:
+    def _journal_art(self, job: Job, text_hash: str, slug: str, added: list[str], also: list[dict] = ()) -> None:
+        """The run's pictures as one journal entry; `also` the pictures it drew into earlier books' sets."""
+        if not (added or also) or self.art_journal is None:
             return
         try:
-            entry = self.art_journal(job, text_hash, slug, added)
+            entry = self.art_journal(job, text_hash, slug, added, *([list(also)] if also else []))
             if entry:
                 job.progress = {**job.progress, "artUndo": entry}
         except Exception as e:  # noqa: BLE001 - the pictures are drawn; only their undo is missing
