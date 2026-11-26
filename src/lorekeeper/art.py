@@ -1112,7 +1112,7 @@ class Illustrator:
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
                  pause: float = 1.0, cheap_text=None, portrait_text=None, portrait_image=None,
                  until: tuple[int, str | int] | None = None, finished: set[str] | frozenset[str] | list[str] | None = None,
-                 place_refs: bool = False, check: bool = False) -> None:
+                 place_refs: bool = False, check: bool = False, checker=None) -> None:
         """One model per responsibility. `text` writes the scene prompts (plates and event pictures); `portrait_text` (else
         `text`) the prompts of portraits, places and things; `cheap_text` (else `text`), the picker, makes the choosing calls:
         the chapter screening, the look index (which an on-demand entity job makes on a miss, to place its anchor) and the look
@@ -1122,6 +1122,8 @@ class Illustrator:
         picture of the place it happens at, then of the things it shows (an experiment, off until measured). `check`: after
         each drawn picture the picker looks for gross drawing faults (`check_picture`) and, on any, the image model fixes the
         picture once (`fix`), never checked again; the picker must see pictures, else checking stops with one log line.
+        `checker` (else the picker) makes the drawing-fault check alone, when the picker cannot see pictures (the web app's
+        sheet: a model that can, every other choosing call left to the picker).
 
         `portraits` is "main", "all", None, or a collection of entity ids: then only those people and creatures get portraits,
         whatever the main-cast rule says (the Reader's "Through the book so far" for one entry), with the versions a bulk run
@@ -1139,6 +1141,7 @@ class Illustrator:
         self.cheap = cheap_text if cheap_text is not None else text
         self.place_refs = place_refs
         self.check = check
+        self.checker = checker if checker is not None else self.cheap
         self.no_vision = ""            # why the picker cannot see pictures, once a call said so: no more checks this run
         self.portrait_text = portrait_text if portrait_text is not None else text
         self.portrait_image = portrait_image if portrait_image is not None else image
@@ -1264,8 +1267,11 @@ class Illustrator:
         """The distinct text models of the run, each with the responsibilities it serves ("scene prompts and portrait
         prompts" when one model writes both), in the order scene prompts, portrait prompts, choosing calls."""
         out: list[tuple[list[str], object]] = []
-        for role, m in (("scene prompts", self.text), ("portrait prompts", self.portrait_text), ("choosing calls", self.cheap)):
+        for role, m in (("scene prompts", self.text), ("portrait prompts", self.portrait_text), ("choosing calls", self.cheap),
+                        ("drawing-fault checks", self.checker)):
             hit = next((x for x in out if x[1] is m), None)
+            if hit and role == "drawing-fault checks":
+                continue        # the picker makes the check too: counted as choosing calls
             if hit:
                 hit[0].append(role)
             else:
@@ -3102,7 +3108,7 @@ class Illustrator:
 
     def _check_estimate(self) -> float:
         """What the cap reserves for one drawing-fault check: CHECK_TOKENS at the picker's price, else CHECK_FALLBACK."""
-        ref = model_ref(self.cheap) or {}
+        ref = model_ref(self.checker) or {}
         price = check_price(ref.get("provider"), ref.get("model"))
         return CHECK_FALLBACK if price is None else price
 
@@ -3131,7 +3137,7 @@ class Illustrator:
         if self.no_vision:
             return Check([], False, 0.0, self.no_vision)
         try:
-            c = check_picture(self.cheap, data, mime or "image/png", prompt or "")
+            c = check_picture(self.checker, data, mime or "image/png", prompt or "")
             names = self.names.get(nb)
             if names is not None:       # the picker's words go on the record and to the image model: no person's name
                 c.faults = [{k: names.strip(v) if v and names.find(v) else v for k, v in f.items()} for f in c.faults]

@@ -1414,13 +1414,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
                     portraits: str | bool | None = "main", tier: str = "cheap", writer: dict | None = None,
-                    cfg: dict | None = None, picker=None, check: bool = False):
+                    cfg: dict | None = None, picker=None, check: bool = False, checker=None):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over.
         `writer` (checked, `art_writer`) writes every kind's prompt; else the `tier` model does. `cfg`, an entity run's
         checked config (`entity_choice`): the earlier books it draws are given with their EPUB, and the pipeline gets its
         entries, position and finished books (`jobs.run_limits`). `picker`, a text backend, makes the choosing calls (the
-        drawing-fault check among them) instead of the cheap tier; `check` has every picture drawn checked and fixed once."""
+        drawing-fault check among them) instead of the cheap tier; `check` has every picture drawn checked and fixed once, by
+        `checker` when given (a model that sees pictures; every other choosing call stays with the picker)."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
             raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
         if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
@@ -1451,7 +1452,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0,
                                   cheap_text=picker or (jobs.cheap_model(None) if text_needed else None),
-                                  portrait_text=text_model, portrait_image=image, check=check, **extra), image, slug_
+                                  portrait_text=text_model, portrait_image=image, check=check, checker=checker,
+                                  **extra), image, slug_
 
     def entity_choice(ctx: dict, cfg: dict) -> tuple[dict, list[str]]:
         """Check a checked art config's entries, position and finished books against the index, as the reader stands:
@@ -1849,7 +1851,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                      provider: str | None = None, model: str | None = None, quality: str = "standard",
                      chapters: str | None = None, portraitProvider: str | None = None, portraitModel: str | None = None,
                      entities: str | None = None, until: str | None = None, finished: str | None = None,
-                     check: bool = False):
+                     check: bool = False, pickerProvider: str | None = None, pickerModel: str | None = None):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
         none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
@@ -1863,8 +1865,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         top of the range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
         `art.MAX_VERSIONS` here (the pipeline's `portraits_max`); all three equal the plain numbers when every counted entity
         is checked. With `check`, every price adds the drawing-fault check: one call per picture on the model that would
-        make it (`JobManager.vision_model`, `art.check_price`, else `art.CHECK_FALLBACK`) and a fix for the share of
-        pictures the bench found faults in (`art.FIX_RATE`), answered as `check` {each, fixRate, price, priceMax}."""
+        make it and a fix for the share of pictures the bench found faults in (`art.FIX_RATE`), answered as `check` {each,
+        fixRate, price, priceMax, provider, model}. The model is the one the run checks with, its choosing-calls model
+        (`pickerProvider` / `pickerModel`, else the cheap tier), priced by `art.check_price`, else `art.CHECK_FALLBACK`; a
+        model that cannot see pictures leaves the run unchecked, so nothing is added and there is no `check` key."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1934,8 +1938,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         high = ports + extra_max
         price_max = None if price is None or (high and each[1] is None) else round(price + extra_max * (each[1] or 0), 4)
         check_ = None
-        if check:
-            ref = artmod.model_ref(jobs.vision_model()) or {}
+        if check and (pickerProvider is None) != (pickerModel is None):
+            raise ArtRefusal(422, "bad-picker", "Give both pickerProvider and pickerModel, or neither.")
+        if check and pickerProvider is not None:
+            try:
+                choice = text_choice_config({"provider": pickerProvider, "model": pickerModel}, "choosing calls")
+                jobs.check_text_choice(choice, "choosing calls")
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-picker", str(e)) from e
+            ref = choice
+        else:
+            got_ = jobs.text_choice("cheap") if check else None    # the run's picker by default (`JobManager._art`)
+            ref = {"provider": got_[0], "model": got_[1]} if got_ else None
+        if check and ref and llm.vision(ref["provider"], ref["model"]) is not False:
             one = artmod.check_price(ref.get("provider"), ref.get("model"))
             one = artmod.CHECK_FALLBACK if one is None else one
 
@@ -1947,9 +1962,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             check_ = {"each": round(one, 6), "fixRate": artmod.FIX_RATE,
                       "price": None if price is None else round(with_check(price, plates, ports) - price, 4),
                       "priceMax": None if price_max is None else round(with_check(price_max, plates, high) - price_max, 4),
-                      **({"provider": ref["provider"], "model": ref["model"]} if ref else {})}
+                      "provider": ref["provider"], "model": ref["model"]}
             price, price_max = with_check(price, plates, ports), with_check(price_max, plates, high)
-        return {**({"check": check_} if check_ else {}),"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
+        return {**({"check": check_} if check_ else {}), "pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
                 "picturesMax": plates + high, "portraitsMax": high, "priceMax": price_max,
                 **({"entities": ecfg["entities"], "until": ecfg["until"], "finished": ecfg["finished"]} if ecfg else {}),
                 "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
@@ -2114,14 +2129,15 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not isinstance(check, bool):
                 raise ArtRefusal(422, "bad-config", "check must be true or false.")
             # with `check`, the picture is looked at for drawing faults by a model that sees pictures (`picker`, else the
-            # first configured one) and fixed once; none that can: drawn unchecked, as the pipeline does
-            picker = art_picker(body) if check else None
+            # first configured one) and fixed once; none that can: drawn unchecked, as the pipeline does. That model makes
+            # the check only: every other choosing call stays with the usual picker.
+            checker = art_picker(body) if check else None
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
                 il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard",
                                                *art_image_choice(body, body.get("kind")), tier="strong",
                                                writer=art_writer(body),   # a cache miss writes as the sheet does
-                                               picker=picker, check=check and picker is not None)
+                                               checker=checker, check=check and checker is not None)
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
@@ -2312,8 +2328,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             _, at = art_position(ctx, body)
             if at is None or ords[rec["from"]] > ords[at]:
                 raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
+        # A record with no `inherits` list (drawn before it existed) in a later series book waits for every earlier book,
+        # as the Reader's `unfinishedSources` has it.
+        inh = rec.get("inherits")
+        need = {k for k in inh if isinstance(k, str)} if isinstance(inh, list) else set(earlier_keys(ctx))
         unfinished = set(earlier_keys(ctx)) - set(fin) if fin is not None else set()
-        if unfinished & set(rec.get("inherits") or []):
+        if unfinished & need:
             raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
 
     @app.post("/api/library/{key}/art/{pid}/check")
