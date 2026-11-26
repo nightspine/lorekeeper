@@ -185,7 +185,10 @@ class ArtStore:
         style whose slug is a stored set's uses that set's stored text, so the pipeline reuses the set and never starts it over."""
         slug = art.style_slug(style)
         m = self.manifest(text_hash, slug)
-        return slug, (m.get("style") if m and m.get("style") else style)
+        if m and m.get("style"):
+            return slug, m["style"]
+        # a saved style (web/styles.py) is passed by its slug, which `art.style_sentence` turns into its words
+        return slug, (slug if slug in art.SAVED_STYLES else style)
 
     def editions(self) -> list[str]:
         """Text hashes that have at least one art set."""
