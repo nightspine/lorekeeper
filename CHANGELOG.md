@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.3](https://github.com/nightspine/lorekeeper/compare/v0.23.2...v0.23.3) (2026-11-26)
+
+
+### Bug Fixes
+
+* picture prompts keep ordinary period and style words the name check used to drop ([#139](https://github.com/nightspine/lorekeeper/issues/139)) ([2826e81](https://github.com/nightspine/lorekeeper/commit/2826e81c2d4764b0e8bedc64c8f805ef3c89d0bf))
+
 ## [0.23.2](https://github.com/nightspine/lorekeeper/compare/v0.23.1...v0.23.2) (2026-11-26)
 
 
