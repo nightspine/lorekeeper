@@ -43,7 +43,7 @@ def test_the_check_answers_the_faults_and_their_cost_and_writes_nothing(env, eye
     assert r.status_code == 200, r.text
     assert r.json() == {"faults": [HEAD], "cost": pytest.approx(0.001)}
     prompt, data = eye.looked[-1]
-    assert old["prompt"] in prompt and data == env.c.get(old["url"]).content    # the stored prompt goes as context
+    assert old["prompt"][:120] in prompt and data == [env.c.get(old["url"]).content]    # the stored prompt goes as context
     assert pictures(env) == before
     eye.faults = []
     assert env.c.post(f"/api/library/{KEY}/art/{old['id']}/check").json()["faults"] == []
@@ -108,6 +108,7 @@ def test_the_check_and_fix_keep_the_redraw_gates(env, eye):
 
 def test_fix_edits_the_picture_in_its_place_and_undo_brings_it_back(env):
     old = one_picture(env)
+    old_bytes = env.c.get(old["url"]).content
     env.image.calls.clear()
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix",
                    json={"faults": [HEAD], "note": "keep the lantern", "p": env.doc["anchors"][-1]["id"]})
@@ -115,7 +116,7 @@ def test_fix_edits_the_picture_in_its_place_and_undo_brings_it_back(env):
     new = r.json()
     call = env.image.calls[-1]
     assert call["prompt"] == art.fix_prompt([HEAD], "keep the lantern")
-    assert len(call["references"]) == 1 and call["references"][0][0] == env.c.get(old["url"]).content
+    assert len(call["references"]) == 1 and call["references"][0] == old_bytes
     assert new["replaces"] == old["id"] and new["prompt"] == old["prompt"] and new["from"] == old["from"]
     assert new["provider"] == old["provider"] and new["quality"] == old["quality"] and new["shape"] == old["shape"]
     assert new["fixes"][-1]["faults"] == [HEAD] and new["fixes"][-1]["note"] == "keep the lantern"
@@ -194,15 +195,13 @@ def test_the_job_config_carries_check(env):
 def test_a_run_with_check_checks_every_picture_and_reports_it(env, monkeypatch):
     eye = Seeing(faults=[HEAD])
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: eye)
-    done = run_set(env.__class__ and env, portraits=False, check=True) if env.key() is None else None
+    env.key()
+    done = run_set(env, portraits=False, check=True)
     assert done["status"] == "done", done["error"]
     rep = done["report"]["art"]
     assert rep["checked"] == rep["drawn"] > 0 and rep["fixed"] == rep["drawn"] and rep["fix_refused"] == 0
     assert all(p["check"]["fixed"] for p in pictures(env))
-    log = [e.get("line", "") for e in env.c.get(f"/api/jobs/{done['id']}/events").json()] \
-        if env.c.get(f"/api/jobs/{done['id']}/events").status_code == 200 else None
-    if log is not None:
-        assert any("checked:" in x for x in log)
+    assert "pictures: checked:" in (env.data / "jobs" / f"{done['id']}.events.jsonl").read_text()
 
 
 def test_a_run_whose_picker_cannot_see_pictures_is_drawn_unchecked_with_a_line(env, monkeypatch):
