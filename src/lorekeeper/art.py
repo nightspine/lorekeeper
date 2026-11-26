@@ -359,6 +359,20 @@ def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
+def _cost_of(model) -> float:
+    return float(getattr(getattr(model, "usage", None), "cost_usd", 0.0) or 0.0)
+
+
+def model_ref(model) -> dict | None:
+    """{"provider", "model"} for a text model, as a picture record's `writer` stores it; None for a model with no name. The
+    Claude and Ollama backends carry no provider id of their own."""
+    name = getattr(model, "name", None)
+    if not isinstance(name, str) or not name:
+        return None
+    provider = getattr(model, "provider", None) or {"Claude": "claude", "Ollama": "ollama"}.get(type(model).__name__, "")
+    return {"provider": provider, "model": name}
+
+
 def _words(text: str) -> int:
     return len(text.split())
 
@@ -465,6 +479,8 @@ class Prompt:
     # a scene's labelled figures, [{"label", "entity"}] in label order: the labels its checked text uses, each a figure that
     # has a reference picture; the reference of label n is sent as the n-th picture. None: an older prompt (no labels).
     figures: list[dict] | None = None
+    # the text model that wrote it, {"provider", "model"} (None: not known, an older prompt or a model with no name)
+    written_by: dict | None = None
 
 
 @dataclass
@@ -476,6 +492,8 @@ class Report:
     cost: float = 0.0           # image calls
     at_risk: float = 0.0        # the price of image calls that failed after they were sent (maybe billed; counted in the cap)
     text_cost: float = 0.0
+    text_costs: dict = field(default_factory=dict)   # the text cost by responsibility ("scene prompts", "portrait prompts",
+                                                     # "choosing calls", or two joined by "and" when one model serves both)
     stopped: str = ""           # why the run stopped early ("" = it did not)
     held: int = 0               # no longer used (pictures were once held to an automatic world note's anchor); always 0
     reasons: list[dict] = field(default_factory=list)
@@ -485,6 +503,8 @@ class Report:
         out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}"
                + (f" ({self.softened} drawn quieter after a refusal)" if self.softened else "") + f"; images ${self.cost:.2f}"
                + (f", text ${self.text_cost:.4f}" if self.text_cost else "")
+               + (" (" + ", ".join(f"{k} ${v:.4f}" for k, v in self.text_costs.items()) + ")"
+                  if self.text_cost and len(self.text_costs) > 1 else "")
                + (f", up to ${self.at_risk:.2f} for calls that failed after sending" if self.at_risk else "")]
         if self.stopped:
             out.append(f"stopped: {self.stopped}")
@@ -837,9 +857,12 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0, cheap_text=None) -> None:
-        """`text` writes the prompts; `cheap_text` (else `text`) makes the look sentences, the one choosing call the prompt
-        path may make (the Reader's sheet writes with a strong model and should pick with the cheap one)."""
+                 pause: float = 1.0, cheap_text=None, portrait_text=None, portrait_image=None) -> None:
+        """One model per responsibility. `text` writes the scene prompts (plates and event pictures); `portrait_text` (else
+        `text`) the prompts of portraits, places and things; `cheap_text` (else `text`), the picker, makes the choosing calls:
+        the chapter screening, the look index and the look sentences (the one choosing call the prompt path may make). A
+        softening rewrite is written by the writer of its kind. `image` draws the scenes and `portrait_image` (else `image`)
+        the portraits, places and things."""
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -848,6 +871,8 @@ class Illustrator:
                                  "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
         self.cheap = cheap_text if cheap_text is not None else text
+        self.portrait_text = portrait_text if portrait_text is not None else text
+        self.portrait_image = portrait_image if portrait_image is not None else image
         self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
         self.portraits = portrait_cast(portraits)      # "main", "all" or None
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
@@ -861,6 +886,8 @@ class Illustrator:
         self.log, self.progress, self.pause = log, progress, pause
         self.provider = getattr(image, "provider", "") or ""
         self.model = getattr(image, "name", "") or ""
+        self.portrait_provider = getattr(self.portrait_image, "provider", "") or ""
+        self.portrait_model = getattr(self.portrait_image, "name", "") or ""
         self.report = Report()
         self.lock = threading.RLock()
         self.stop = ""
@@ -868,7 +895,7 @@ class Illustrator:
         self.in_flight = 0
         self.last_cost = 0.0         # the last picture's cost: the estimate when a price is unknown
         self.done = self.total = 0
-        self._usage0 = self._usage()
+        self._usage0 = {id(m): _cost_of(m) for _, m in self._text_models()}
         self._views: dict[tuple, dict] = {}
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._class_lock = threading.Lock()
@@ -928,10 +955,11 @@ class Illustrator:
             self.books[bi].b.sink.save(self.man[bi])
 
     def _complete(self, prompt: str, schema: dict = SCHEMA, system: str = SYSTEM, model=None) -> dict:
-        """One text call; a failure (provider error, timeout, a reply that is not JSON) is retried once, then TextFailed."""
+        """One text call (`model`, else the picker: every call that names no model is a choosing call); a failure (provider
+        error, timeout, a reply that is not JSON) is retried once, then TextFailed."""
         for attempt in (0, 1):
             try:
-                out = (model or self.text).complete(system, prompt, schema)
+                out = (model or self.cheap).complete(system, prompt, schema)
                 return out if isinstance(out, dict) else {}
             except llm.Cancelled:
                 raise
@@ -941,12 +969,36 @@ class Illustrator:
                 time.sleep(self.pause)
         return {}
 
-    def _usage(self) -> float:
-        models = [self.text] + ([self.cheap] if self.cheap is not self.text else [])
-        return sum(float(getattr(getattr(m, "usage", None), "cost_usd", 0.0) or 0.0) for m in models)
+    def _text_models(self) -> list[tuple[str, object]]:
+        """The distinct text models of the run, each with the responsibilities it serves ("scene prompts and portrait
+        prompts" when one model writes both), in the order scene prompts, portrait prompts, choosing calls."""
+        out: list[tuple[list[str], object]] = []
+        for role, m in (("scene prompts", self.text), ("portrait prompts", self.portrait_text), ("choosing calls", self.cheap)):
+            hit = next((x for x in out if x[1] is m), None)
+            if hit:
+                hit[0].append(role)
+            else:
+                out.append(([role], m))
+        return [(" and ".join(roles), m) for roles, m in out]
 
     def text_spent(self) -> float:
-        return self._usage() - self._usage0
+        return sum(self.text_costs().values())
+
+    def text_costs(self) -> dict[str, float]:
+        """What each text model has cost since the run began, by the responsibilities it serves."""
+        return {role: _cost_of(m) - self._usage0.get(id(m), 0.0) for role, m in self._text_models()}
+
+    def writer_for(self, kind: str):
+        """The text model that writes the prompt of a picture of `kind`: the portrait writer for a portrait, place or thing,
+        else the scene writer."""
+        return self.portrait_text if kind in ENTITY_KINDS else self.text
+
+    def image_for(self, kind: str) -> tuple[object, str, str]:
+        """(the image model, its provider, its model id) that draws a picture of `kind`: the portrait image model for a
+        portrait, place or thing, else the scene image model."""
+        if kind in ENTITY_KINDS:
+            return self.portrait_image, self.portrait_provider, self.portrait_model
+        return self.image, self.provider, self.model
 
     def style_sentence(self, style_text: str | None = None) -> str:
         """The sentence a style adds after the writer's text: a listed style's own sentence, else the person's words (for
@@ -1022,14 +1074,17 @@ class Illustrator:
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
                     schema: dict = SCHEMA, finished: frozenset[str] | None = None,
-                    system: str = WRITER, check: Callable[[str], str] | None = None) -> tuple[str | None, str, dict]:
-        """One writer call, one rewrite naming what a check caught, then, when only a name is wrong, code replaces it by a
-        role (`_Names.strip`) and checks the text again. (text, "", the reply) or (None, reason, the reply)."""
-        out = self._complete(prompt, schema, system)
+                    system: str = WRITER, check: Callable[[str], str] | None = None,
+                    model=None) -> tuple[str | None, str, dict]:
+        """One writer call (`model`, else the scene writer), one rewrite naming what a check caught, then, when only a name is
+        wrong, code replaces it by a role (`_Names.strip`) and checks the text again. (text, "", the reply) or (None, reason,
+        the reply)."""
+        model = model or self.text
+        out = self._complete(prompt, schema, system, model)
         got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, check)
         if got is None and why != "empty":
             tries = [(str(out.get("text") or ""), why, out)]
-            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, system)
+            out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=why), schema, system, model)
             got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, check)
             if got is None:
                 for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
@@ -1055,8 +1110,9 @@ class Illustrator:
 
     def _write(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
                finished: frozenset[str] | None = None, system: str = WRITER,
-               check: Callable[[str], str] | None = None) -> tuple[str | None, str]:
-        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system, check=check)
+               check: Callable[[str], str] | None = None, model=None) -> tuple[str | None, str]:
+        got, why, _ = self._write_full(prompt, bi, anchor, source, words, finished=finished, system=system, check=check,
+                                       model=model)
         return got, why
 
     @staticmethod
@@ -1233,7 +1289,10 @@ class Illustrator:
         with self.lock:
             if self.max_pictures is not None:
                 room = max(0, self.max_pictures - self.report.drawn - self.in_flight)
-            price = llm.image_price(self.provider, self.model, self.quality, "landscape") or self.last_cost
+            # the cheaper of the two image models, so the room is never underestimated when they differ
+            prices = [p for p in (llm.image_price(self.provider, self.model, self.quality, "landscape"),
+                                  llm.image_price(self.portrait_provider, self.portrait_model, self.quality, "portrait")) if p]
+            price = min(prices) if prices else self.last_cost
             if self.cap is not None and price > 0:
                 n = max(0, int((self.cap - self._spent() - self.reserved) / price + 1e-9))
                 room = n if room is None else min(room, n)
@@ -1595,7 +1654,7 @@ class Illustrator:
                 lines = "\n".join(f"{n}. {sent[:LOOK_SENTENCE_CHARS]}" for n, sent in enumerate(batch, 1))
                 try:
                     out = self._complete(LOOK_SENTENCES.format(name=name, kind=P.KINDS.get(e["type"], e["type"]),
-                                                               sentences=lines), LOOK_SENTENCES_SCHEMA, model=self.cheap)
+                                                               sentences=lines), LOOK_SENTENCES_SCHEMA)
                 except TextFailed as err:      # all or nothing: a partial pick would look like a full one
                     self.log(f"  look sentences of {eid}: text model failed ({err.detail})")
                     return None
@@ -2268,8 +2327,9 @@ class Illustrator:
             raise Dropped("dropped: written from content after its anchor")   # by construction never; the rule's last guard
         system, words = self._form(job.kind)
         labels = self._label_check(set(label_of.values()), keep) if scene else None
+        model = self.writer_for(job.kind)
         body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system,
-                                          labels)
+                                          labels, model)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         body = self._framed(job.kind, body)
@@ -2287,7 +2347,7 @@ class Illustrator:
         return Prompt(self._assemble(body, bi, style), body, anchor, job.shape or SHAPE_OF[job.kind], [], refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
                       sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, NO_TEXT, list(ids),
-                      figures)
+                      figures, model_ref(model))
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
         """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
@@ -2411,8 +2471,11 @@ class Illustrator:
             rec["figures"] = figures
         if pr.partial:
             rec["partial"] = True
-        rec.update({"provider": self.provider, "model": pic.model or self.model, "quality": self.quality, "shape": pr.shape,
+        _, provider, model = self.image_for(job.kind)
+        rec.update({"provider": provider, "model": pic.model or model, "quality": self.quality, "shape": pr.shape,
                     "cost": round(pic.cost, 6), "created": _now()})
+        if pr.written_by:
+            rec["writer"] = dict(pr.written_by)
         return rec
 
     def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None, soften: bool | None = None) -> dict | None:
@@ -2425,7 +2488,8 @@ class Illustrator:
         bi = job.bi
         soften = text is None if soften is None else soften
         if self._budget() == 0:            # the limit or the cap leaves no room: no prompt is written for it
-            why, _ = self._reserve(llm.image_price(self.provider, self.model, self.quality, job.shape or SHAPE_OF[job.kind]) or 0.0)
+            _im, prov, name = self.image_for(job.kind)
+            why, _ = self._reserve(llm.image_price(prov, name, self.quality, job.shape or SHAPE_OF[job.kind]) or 0.0)
             if why:
                 with self.lock:
                     self.report.skipped[f"stopped: {why}"] += 1
@@ -2440,7 +2504,8 @@ class Illustrator:
             return None
         if text:
             pr.text = text
-        price = llm.image_price(self.provider, self.model, self.quality, pr.shape) or 0.0
+        image, prov, name = self.image_for(job.kind)
+        price = llm.image_price(prov, name, self.quality, pr.shape) or 0.0
         softened = retried = False
         while True:
             got, labels, figures = self._attach(job, pr)
@@ -2452,7 +2517,7 @@ class Illustrator:
                     self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
-                pic = self.image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs,
+                pic = image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs,
                                       **({"note": note} if note else {}))
             except images.ImageRefused as e:
                 self._release(amount)
@@ -2471,7 +2536,8 @@ class Illustrator:
                         keep = set(labels_in(refused)) & given
                         soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
                                               self._finished(bi, job.finished), system,
-                                              self._label_check(given, keep) if pr.figures is not None else None)
+                                              self._label_check(given, keep) if pr.figures is not None else None,
+                                              self.writer_for(job.kind))
                         soft = self._framed(job.kind, soft) if soft else soft
                     except TextFailed:
                         soft = None
@@ -2485,6 +2551,7 @@ class Illustrator:
                                detail=f"name in the text: {hit}")
                     return None
                 pr.scene, pr.body, pr.text = soft, soft, text_
+                pr.written_by = model_ref(self.writer_for(job.kind)) or pr.written_by
                 continue
             except llm.ProviderError as e:
                 self._release(amount)
@@ -2529,6 +2596,7 @@ class Illustrator:
             self._run()
         finally:
             self.report.text_cost = self.text_spent()
+            self.report.text_costs = {k: round(v, 6) for k, v in self.text_costs().items()}
             if self.stop:
                 self.report.stopped = self.stop
             for bi in range(len(self.books)):
