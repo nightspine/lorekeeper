@@ -44,6 +44,7 @@ class Block:
     spine: int        # spine item index
     words: list[str]
     raw: str          # display text, for tooling only; never published
+    tag: str = field(default="", compare=False)   # the HTML element it came from ("p", "h2"...), for display only
 
     @property
     def fingerprint(self) -> str:
@@ -93,6 +94,7 @@ class _BlockParser(HTMLParser):
         self._order = 0
         self.blocks: list[tuple[int, str]] = []
         self.ids: dict[str, int] = {}   # element id → order of the block it starts or sits in
+        self.tags: dict[int, str] = {}  # block order → its element name
 
     def handle_starttag(self, tag, attrs):
         if tag in SKIP_TAGS:
@@ -100,6 +102,7 @@ class _BlockParser(HTMLParser):
             return
         if tag in self._block_tags:
             self._stack.append((self._order, []))
+            self.tags[self._order] = tag
             self._order += 1
         elif tag == "br" and self._stack:
             self._stack[-1][1].append(" ")
@@ -245,7 +248,7 @@ def read(path: str | Path) -> Book:
                 if w:
                     kept.append((order, len(blocks)))
                     blocks.append(Block(seq=len(blocks), spine=spine_idx, words=w,
-                                        raw=" ".join(raw.split())))
+                                        raw=" ".join(raw.split()), tag=parser.tags.get(order, "")))
             ids = {}
             for el_id, order in parser.ids.items():
                 seq = next((s for o, s in kept if o >= order), None)
