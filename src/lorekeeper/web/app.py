@@ -1985,7 +1985,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 else:
                     entry = take_place_of(key, ctx["hash"], slug_, old_rec, rec)
                     rec = {**rec, "replaces": old_rec["id"]}
-            return {**picture_json(ctx, slug_, rec), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, rec), "slug": slug_, "undo": entry["id"]}
         return await work()
 
     def replaced_record(ctx: dict, il, job, slug_: str, at: str | None, fin, pid) -> dict | None:
@@ -2121,7 +2121,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if "inherits" not in rec:
                     new.pop("inherits", None)
                 entry = take_place_of(key, ctx["hash"], slug_, rec, new)
-            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "undo": entry["id"]}
+            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"]}
         return await work()
 
     @app.put("/api/library/{key}/art/world")
