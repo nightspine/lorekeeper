@@ -839,7 +839,7 @@ def test_counts_need_no_model_call():
     il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     c = il.counts()
     row = {"drawable": None, "pictures": 1, "drawn": 0, "chosen": True}
-    assert c == {"plates": 2, "portraits": 4, "new_portraits": 4, "chapters": [{"n": 1, "title": "One", "events": 2, **row},
+    assert c == {"plates": 2, "portraits": 4, "new_portraits": 4, "portraits_max": 4 * art.MAX_VERSIONS, "chapters": [{"n": 1, "title": "One", "events": 2, **row},
                                                            {"n": 2, "title": "Two", "events": 3, **row}]}
     assert not t.prompts
     il.run()
@@ -939,6 +939,26 @@ def test_counts_say_how_many_portraits_a_run_would_still_draw():
                          log=lambda *_: None, pause=0)
     again = il.counts(level="none")
     assert again["new_portraits"] == 1 and again["portraits"] == c["portraits"]
+
+
+def test_counts_give_the_most_portraits_a_run_could_draw_before_looks_are_checked():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    mk = lambda sink: art.Illustrator([art.Book(d, bk, sink, None)], Text(), Image(), "ink", portraits="all", workers=1,  # noqa: E731
+                                      log=lambda *_: None, pause=0)
+    c = mk(Mem()).counts(level="none")
+    assert c["new_portraits"] == c["portraits"] and c["portraits_max"] == c["portraits"] * art.MAX_VERSIONS
+    _, _, sink, _, _ = run(d, bk, level=None, portraits="all")       # a run checks every look, and draws
+    c = mk(sink).counts(level="none")
+    assert c["new_portraits"] == c["portraits_max"] == 0
+    first = next(p for p in sink.m["pictures"] if p["kind"] == "portrait")
+    sink.m["pictures"] = [p for p in sink.m["pictures"] if p is not first]
+    c = mk(sink).counts(level="none")
+    assert c["new_portraits"] == c["portraits_max"] == 1             # checked: the plan is the most
+    sink.m["looks"].pop(first["target"])                             # unchecked again: up to MAX_VERSIONS, less what it holds
+    c = mk(sink).counts(level="none")
+    held = sum(p["kind"] == "portrait" and p["target"] == first["target"] for p in sink.m["pictures"])
+    assert c["portraits_max"] == art.MAX_VERSIONS - held and c["new_portraits"] == 1
 
 
 def test_illustrate_command_level_none_draws_portraits_only(tmp_path, monkeypatch):
