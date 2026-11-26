@@ -245,7 +245,7 @@ export function createReading(ctx) {
     });
     c.rest = drip ? c.blocks.splice(SLICE) : [];
     c.el = h("section.read-ch", { "aria-label": title, dataset: { n: String(c.n) } },
-      h("div.read-divider", h("span", title)), c.plates, c.blocks.map((b) => b.el));
+      h("div.read-divider", h("span", title)), c.blocks.map((b) => b.el), c.plates);
     return c;
   }
   const place = timed("place", placeNow);
@@ -260,7 +260,7 @@ export function createReading(ctx) {
   function drip(c, all = false) {
     if (!c.rest.length || !c.el.isConnected) return;
     const next = c.rest.splice(0, all ? c.rest.length : SLICE);
-    c.el.append(...next.map((b) => b.el));
+    c.plates.before(...next.map((b) => b.el));
     c.blocks.push(...next);
     lightBlocks(next);
     if (c.rest.length) requestAnimationFrame(() => drip(c));
@@ -453,13 +453,15 @@ export function createReading(ctx) {
       }
       if (at < b.text.length) parts.push(b.text.slice(at));
       // A card opened from a name in this block keeps its name to return focus to; it may be a new element now.
-      const had = st.card?.from && b.el.contains(st.card.from);
       clear(b.el, parts);
-      if (had) st.card.from = b.el.querySelector(`.rd-name[data-ids="${CSS.escape(st.card.ids.join(" "))}"]`) || b.el;
     }
   }
 
   // ---- chapter plates ----------------------------------------------------------------------------
+  // A chapter's plate sits at its end, before the next chapter: a generated plate is revealed at the chapter's last anchor,
+  // so it comes in as the reader crosses into the next chapter, and scrolling up a little to look at it does not move the
+  // position back (it is not a paragraph). At the chapter's start it could only be seen by going back into the chapter,
+  // which takes it away again.
   /** `fresh`: the chapter was just put in the page (a chapter put above the reader is kept in place by its caller). */
   function paintPlates(c, { fresh = false } = {}) {
     const m = map();
@@ -490,11 +492,21 @@ export function createReading(ctx) {
         h("div.rd-card-head", img, h("div.rd-card-names", h("h3.rd-card-name", { tabindex: "-1" }, e.name), typeTag(e.type))),
         line ? h("p.rd-card-line", line) : null,
         h("div.rd-card-actions",
-          h("button.btn.primary", { type: "button", on: { click: () => { const from = st.card?.from; closeCard(false); ctx.openEntry(e.id, from); } } }, "Open entry"),
+          h("button.btn.primary", { type: "button", on: { click: () => { const from = st.card ? cardFrom(st.card) : null; closeCard(false); ctx.openEntry(e.id, from); } } }, "Open entry"),
           ctx.canAsk() ? h("button.btn.quiet", { type: "button", on: { click: () => { closeCard(false); ctx.ask(`What do I know about ${e.name} so far?`); } } }, `Ask about ${e.name}`) : null));
     });
   }
+  /** The name a card was opened from, found again when a relight has rebuilt its paragraph (by block and place in it). */
+  function cardFrom(c) {
+    if (c.from?.isConnected) return c.from;
+    const block = flow.querySelector(`[data-seq="${c.seq}"]`);
+    const same = block ? [...block.querySelectorAll(".rd-name")].filter((n) => n.dataset.ids === c.ids.join(" ")) : [];
+    c.from = same[Math.min(c.nth, same.length - 1)] || block || null;
+    return c.from;
+  }
   function openCard(nameEl) {
+    const seq = +nameEl.closest("[data-seq]")?.dataset.seq;
+    const nth = [...(nameEl.closest("[data-seq]")?.querySelectorAll(".rd-name") || [])].filter((n) => n.dataset.ids === nameEl.dataset.ids).indexOf(nameEl);
     const ids = (nameEl.dataset.ids || "").split(" ").filter(Boolean);
     const body = cardBody(ids);
     if (!body) return;
@@ -502,13 +514,13 @@ export function createReading(ctx) {
     const title = ctx.entity(ids[0])?.name || nameEl.textContent;
     if (phone()) {
       const sh = sheet({ title, content: h("div.rd-card.in-sheet", body), className: "rd-card-sheet", onClose: () => { if (st.card?.sheet === sh) st.card = null; } });
-      st.card = { ids, from: nameEl, sheet: sh };
+      st.card = { ids, from: nameEl, seq, nth, sheet: sh };
       return;
     }
     const pop = h("div.rd-card.pop", { role: "dialog", "aria-label": title },
       h("button.icon-btn.rd-card-close", { type: "button", "aria-label": "Close", title: "Close", on: { click: () => closeCard(true) } }, icon("x")), body);
     root.append(pop);
-    st.card = { ids, from: nameEl, pop };
+    st.card = { ids, from: nameEl, seq, nth, pop };
     placeCard();
     pop.querySelector(".rd-card-name")?.focus({ preventScroll: true });
   }
@@ -517,7 +529,7 @@ export function createReading(ctx) {
     const c = st.card;
     if (!c?.pop) return;
     const box = root.getBoundingClientRect();
-    const r = (c.from?.isConnected ? c.from : flow).getBoundingClientRect();
+    const r = (cardFrom(c) || flow).getBoundingClientRect();
     const w = Math.min(340, box.width - 16);
     c.pop.style.width = `${w}px`;
     const left = Math.max(8, Math.min(r.left - box.left, box.width - w - 8));
@@ -532,7 +544,7 @@ export function createReading(ctx) {
     st.card = null;
     if (c.sheet) c.sheet.close(true);
     c.pop?.remove();
-    if (focus && c.from?.isConnected) c.from.focus({ preventScroll: true });
+    if (focus) cardFrom(c)?.focus({ preventScroll: true });
   }
   /** The position moved: the card shows the entry as it is now, or closes when the entry is no longer revealed. */
   function refreshCard() {
