@@ -1886,7 +1886,9 @@ def test_a_likeness_is_never_past_the_anchor_older_partial_or_another_edition():
     pr = il.make_prompt(il.job("event", "e6", at="a11"))    # e6 shows from a9: the a10 portrait is after it
     assert [r["id"] for _, r in pr.references] == ["pok00001"]
     il = comic(d, bk, {"digital-art": likeness_set(d, *later)})
-    assert il.make_prompt(il.job("event", "e6", at="a11")).references == []
+    assert il.make_prompt(il.job("event", "e6", at="a9")).references == []        # the reader is at the event: a10 not reached
+    # read past it, the a10 portrait is the figure's earliest available one (the older, unversioned and partial ones never)
+    assert [r["id"] for _, r in il.make_prompt(il.job("event", "e6", at="a11")).references] == ["plate001"]
 
 
 def test_the_latest_likeness_wins_then_the_most_recently_drawn():
@@ -2145,8 +2147,11 @@ def test_only_figures_with_a_picture_get_a_label_most_tied_first():
     assert 'name="Mira" type="person" figure="A"' in w and 'name="Oren" type="person" figure="B"' in w
     assert pr.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "oren"}]
     assert [r["id"] for _, r in pr.references] == ["pmira001", "poren001"]
-    il.make_prompt(il.job("event", "e2", at="a11"))      # e2 shows from a1: neither portrait is reached, no label
+    il.make_prompt(il.job("event", "e2", at="a2"))       # e2 shows from a1, the reader at a2: neither portrait reached, no label
     assert "figure=" not in writer_calls(t)[-1]
+    pr = il.make_prompt(il.job("event", "e2", at="a11"))  # read past both: each takes its earliest portrait, after the scene
+    # (no tie is visible at a1, so the event's own order: Oren, then Mira)
+    assert 'figure="A"' in writer_calls(t)[-1] and [r["id"] for _, r in pr.references] == ["poren001", "pmira001"]
     for rule in ('call them by the label the first time', '"figure A, a tidewarden in a dark travelling coat"',
                  "Do not describe their face, hair, eyes, skin or build", "Never write the label of a figure you do not draw"):
         assert rule in art.SCENE_WRITER and rule not in art.WRITER and rule not in art.PORTRAIT_WRITER
@@ -2987,3 +2992,45 @@ def test_builtin_previews_ship_for_every_style():
         assert data[:4] == b"RIFF" and data[8:12] == b"WEBP", slug
         total += len(data)
     assert total < 1.5 * 1024 * 1024
+
+
+# ---- a scene figure with no picture at or before the scene takes its earliest available one
+
+def test_a_runs_early_scene_takes_the_figures_earliest_portrait_drawn_after_it():
+    il, rep, sink, t, im = run(level="all")
+    mira = next(p for p in pics(sink, "portrait") if p["target"] == "mira")
+    assert ordinal(il.books[0].doc)[mira["from"]] > ordinal(il.books[0].doc)["a0"]
+    e1 = next(p for p in pics(sink, "event") if p["target"] == "e1")     # at a0, before her only portrait (a4)
+    assert mira["id"] in e1["references"] and {"label": "A", "entity": "mira", "ref": mira["id"]} in e1["figures"]
+    assert il.latest_picture("mira", (0, 0)) is None                    # the at-or-before rule itself is unchanged
+
+
+def test_a_look_change_recorded_between_the_scene_and_the_later_portrait_keeps_it_out():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["entities"][0]["facets"].insert(0, {"id": "bk.mira.f0", "from": "a2", "basis": "stated", "evidence": ["a2"],
+                                          "text": "Walks with a limp since the fall."})
+    limp = lambda t: "limp" if "limp" in t else ""     # noqa: E731
+    il, rep, sink, t, im = run(d, bk, level="all", text_=Text(change=limp))
+    assert sink.m["looks"]["mira"]["items"]["bk.mira.f0"]["change"]
+    e1 = next(p for p in pics(sink, "event") if p["target"] == "e1")     # a0; the limp at a2; her first portrait at a4
+    assert not any(r["entity"] == "mira" for r in e1["figures"] or []) and not e1["references"]
+    # with no look index cached the later portrait is allowed
+    sink.m["looks"] = {}
+    il2 = art.Illustrator([art.Book(d, bk, sink)], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    pr = il2.make_prompt(il2.job("event", "e1", at="a11"))
+    assert [r["target"] for _, r in pr.references] == ["mira"]
+
+
+def test_the_later_portrait_must_be_within_the_runs_until():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], "ink"), "pictures": [pic("pmira001", "mira", "a4")]}
+    sink.files["pmira001.png"] = b"mira"
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None,
+                         pause=0, until=(0, "a3"))
+    job = art.Job("event", "e1", 0, "a0", event=il.books[0].events["e1"], chapter=il.books[0].chapter_of("a0"))
+    assert il.references(job, ["mira"]) == []                             # a4 is past the run's until
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert [r["id"] for _, r in il.references(job, ["mira"])] == ["pmira001"]
