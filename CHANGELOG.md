@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.2](https://github.com/nightspine/lorekeeper/compare/v0.23.1...v0.23.2) (2026-11-26)
+
+
+### Bug Fixes
+
+* the Reader's slider no longer jumps while it is dragged, and a touch drag on it stays a drag ([#136](https://github.com/nightspine/lorekeeper/issues/136)) ([eb10ab4](https://github.com/nightspine/lorekeeper/commit/eb10ab408e4d112f1792bafe2eb6f50983a5aab1))
+
 ## [0.23.1](https://github.com/nightspine/lorekeeper/compare/v0.23.0...v0.23.1) (2026-11-26)
 
 
