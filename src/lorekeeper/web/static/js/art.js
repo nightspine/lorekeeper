@@ -139,9 +139,9 @@ export function modelProviders(opts = {}) {
 /** Text model names by "provider\nid", and provider names by id (the lightbox names the model that wrote a prompt). */
 const TEXT_LABEL = new Map();
 const PROVIDER_NAME = new Map();
-/** A provider's text models: presets, then live ones the presets lack that the server marks as able to write text
- *  (`text: false` is a music, image or other model; absent means it can); a custom server's configured model when it
- *  lists none. [{ id, label, price: [in, out] per million tokens | null, tier }] */
+/** A provider's text models: presets, then live ones the presets lack (the server lists only text models under
+ *  `liveModels`, music and image ones under `otherModels`, never read here; an entry marked `text: false` is skipped
+ *  as well); a custom server's configured model when it lists none. [{ id, label, price: [in, out] per million tokens | null, tier }] */
 export function textModels(p) {
   if (!p) return [];
   const seen = new Set(), out = [];
