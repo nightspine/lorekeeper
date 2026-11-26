@@ -166,14 +166,23 @@ export function textChoice(provs, want) {
   const p = provs.find((x) => x.id === want.provider);
   return p && textModels(p).some((m) => m.id === want.model) ? { provider: p.id, model: want.model } : null;
 }
-/** The text model the server uses when none is chosen: the `tier` model of the first working provider. */
-function tierDefault(provs, tier) {
-  for (const p of provs) {
+/** The text model the server uses when none is chosen: the `tier` model of `prefer` (a run's own cloud provider) when it
+ *  works, else of the first working provider. */
+function tierDefault(provs, tier, prefer = null) {
+  const first = provs.find((p) => p.id === prefer);
+  for (const p of first ? [first, ...provs.filter((x) => x !== first)] : provs) {
     const id = typeof p[tier] === "string" && p[tier] ? p[tier] : null;
     const m = id ? textModels(p).find((x) => x.id === id) : textModels(p)[0];
     if (m) return { p, m };
   }
   return null;
+}
+/** The first option of a writer select: "Default: Claude Haiku 5.5, $0.10 in and ...". */
+const defaultLine = (provs, tier, prefer = null) => { const def = tierDefault(provs, tier, prefer); return def ? `Default: ${textModelLine(def.m)}` : "Default"; };
+/** Say again which model Default stands for in a writer select made by `writerSelect` (the run's provider changed). */
+export function setWriterDefault(sel, provs, tier, prefer = null) {
+  const opt = sel?.querySelector("option[value='']");
+  if (opt) opt.textContent = defaultLine(provs, tier, prefer);
 }
 const SEP = "|";   // provider ids are slugs, so "provider|model" splits at its first bar whatever the model id holds
 const splitChoice = (v) => { const i = String(v || "").indexOf(SEP); return i > 0 ? { provider: v.slice(0, i), model: v.slice(i + 1) } : null; };
@@ -182,20 +191,21 @@ const splitChoice = (v) => { const i = String(v || "").indexOf(SEP); return i > 
  * the first option is the server's default for `tier` ("Default: Claude Haiku 5.5"). `value` is { provider, model } or
  * null; `onChange(choice)` gets the same.
  */
-export function writerSelect({ id, provs, value = null, tier = "cheap", disabled = false, onChange, label = null }) {
+export function writerSelect({ id, provs, value = null, tier = "cheap", prefer = null, disabled = false, onChange, label = null }) {
   const cur = textChoice(provs, value);
-  const def = tierDefault(provs, tier);
   return h(`select.select.art-writer#${id}`, { disabled, ...(label ? { "aria-label": label } : {}), on: { change: (e) => onChange?.(splitChoice(e.target.value)) } },
-    h("option", { value: "", selected: !cur }, def ? `Default: ${textModelLine(def.m)}` : "Default"),
+    h("option", { value: "", selected: !cur }, defaultLine(provs, tier, prefer)),
     provs.map((p) => h("optgroup", { label: p.label }, textModels(p).map((m) =>
       h("option", { value: `${p.id}${SEP}${m.id}`, selected: Boolean(cur && cur.provider === p.id && cur.model === m.id) }, textModelLine(m))))));
 }
-/** The portrait image model chosen ({ provider, model } of a provider that draws and lists it), else null: same as scenes. */
+/** The portrait image model chosen ({ provider, model } of a provider that draws and lists it), else null: same as scenes.
+ *  A saved model the provider no longer lists is never swapped for its default: it falls back to the same as scenes. */
 export function portraitImageChoice(provs, provider, model) {
   const p = typeof provider === "string" ? provs.find((x) => x.id === provider) : null;
   if (!p) return null;
-  const id = modelFor(p, model);
-  return { provider: p.id, model: id };
+  const ms = imageModels(p);
+  if (!ms.length) return { provider: p.id, model: null };   // an older server with no image table: it picks the model itself
+  return typeof model === "string" && ms.some((m) => m.id === model) ? { provider: p.id, model } : null;
 }
 /** "Portraits drawn with": "Same as scenes" first, then every image model grouped by provider, priced at `quality`. */
 export function portraitImageSelect({ id, provs, provider = null, model = null, quality = "standard", disabled = false, onChange }) {
@@ -973,7 +983,7 @@ export function chapterCount(c) {
   return `${n} picture${n === 1 ? "" : "s"}${done ? `, ${done} already drawn` : ""}`;
 }
 
-export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null } = {}) {
+export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null, runProvider = null } = {}) {
   const d = artDefaults();
   const st = { on: always, style: STYLE_LABEL[d.style] ? d.style : "custom", custom: STYLE_LABEL[d.style] ? "" : d.style, level: "main", cast: "main",
     quality: d.quality, provider: null, model: null, cap: d.cap,
@@ -1128,7 +1138,9 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
    *  models draw scenes and portraits. Its open state survives the repaint every choice makes. */
   function modelsGroup(modelSel) {
     const field = (id, label, control) => h("div.field", h("label", { for: id }, label), control);
-    const w = (key, id, tier) => writerSelect({ id, provs: writers, value: st[key], tier, disabled: !st.on, onChange: (c) => { st[key] = c; onChange?.(); } });
+    // Default is what the server would use: the cheap or strong model of the run's own cloud provider (the build form's
+    // "Where should it run?"), else of the first working provider.
+    const w = (key, id, tier) => writerSelect({ id, provs: writers, value: st[key], tier, prefer: runProvider?.() || null, disabled: !st.on, onChange: (c) => { st[key] = c; onChange?.(); } });
     const sceneModel = st.provider ? (imageModels(st.provider).find((m) => m.id === st.model)?.label || st.provider.label) : "";
     const pc = provs ? portraitImageChoice(provs, st.pProvider, st.pModel) : null;
     const pp = pc ? provs.find((p) => p.id === pc.provider) : null;
@@ -1202,9 +1214,16 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     if (pc) { out.portraitProvider = pc.provider; if (pc.model) out.portraitModel = pc.model; }
     return out;
   }
+  /** The run's provider changed: the Default options name that provider's models now (nothing else is repainted). */
+  function runProviderChanged() {
+    const prefer = runProvider?.() || null;
+    for (const [suffix, tier] of [["writer", "cheap"], ["pwriter", "strong"], ["picker", "cheap"]])
+      setWriterDefault(el.querySelector(`#${idPrefix}-${suffix}`), writers, tier, prefer);
+  }
   paint();
   return {
     el,
+    runProviderChanged,
     config: () => (st.on && st.provider && slug() ? { style: slug(), level: st.level, portraits: st.cast === "none" ? false : st.cast, quality: st.quality,
       provider: st.provider.id, model: st.model || null, cap: st.cap, ...(listChapters && chapterParam() ? { chapters: chapterParam() } : {}), ...models() } : null),
     refresh,
