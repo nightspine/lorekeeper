@@ -192,6 +192,13 @@ export const api = {
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
   artRedraw: (key, id, note, p = null) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`,
     typeof p === "string" && p ? { note, p } : { note }),
+  /** Look at a picture for drawing faults: { faults: [{ what, where }], cost }. `at` is { p, finished }; `picker` an
+   *  optional { provider, model }. 409 "no-vision" when no model here can see pictures. */
+  artCheck: (key, id, at = {}, picker = null, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/check`,
+    { ...at, ...(picker ? { picker } : {}) }, { signal }),
+  /** Fix a picture's drawing faults with one edit by the model that drew it: { faults, note? } plus { p, finished };
+   *  answers like a redraw (the new record, `replaces`, `undo`, `cost`). */
+  artFix: (key, id, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/fix`, body),
   /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
   artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
   /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */

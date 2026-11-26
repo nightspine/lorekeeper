@@ -97,6 +97,21 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .lb-redraw { display: grid; gap: 8px; width: 100%; max-width: 560px; }
 .lb-redraw .btns { display: flex; gap: 8px; justify-content: flex-end; }
 .lb-choice .btns { flex-wrap: wrap; justify-content: flex-start; }
+/* Fix: the faults a check found (or the person typed), one field each with where it is as a quiet second line. */
+.lb-fix { display: grid; gap: 8px; width: 100%; max-width: 560px; min-width: 0; }
+.lb-fix > p { margin: 0; }
+.lb-fix .btns { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.lb-faults { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.lb-fault-row { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.lb-fault-text { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.lb-fault { width: 100%; min-width: 0; resize: vertical; line-height: 1.4; }
+.lb-where { font-size: var(--text-sm); line-height: 1.4; overflow-wrap: anywhere; }
+.lb-fault-del { flex: none; }
+.lb-add { justify-self: start; }
+.lb-add[hidden] { display: none; }
+.lb-fix-price { color: var(--text-3); }
+.lb-fixes { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
+.art-done .art-fixed { margin: 0; }
 .lb-details > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); min-height: 32px; }
 .lb-details > summary::-webkit-details-marker { display: none; }
 .lb-details > summary .svg-icon { width: 14px; height: 14px; transition: transform var(--dur-fast); }
@@ -187,7 +202,9 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .lb-prev { left: 6px; } .lb-next { right: 6px; }
   .lb-img { max-height: min(56dvh, calc(100dvh - 240px)); border-radius: 0; }
   .lb-foot { padding: 12px 16px 16px; }
-  .art-prompt, .lb-note, .art-custom, .art-world-edit textarea { font-size: 16px; }
+  .art-prompt, .lb-note, .lb-fault, .art-custom, .art-world-edit textarea { font-size: 16px; }
+  .lb-fix .btn, .lb-fault { min-height: 44px; }
+  .lb-fault-del { width: 44px; height: 44px; }
   .art-row { gap: 12px 20px; }
   .art-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px 14px; }
   .art-chips::-webkit-scrollbar { display: none; }
