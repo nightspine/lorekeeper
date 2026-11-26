@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/nightspine/lorekeeper/compare/v0.23.0...v0.23.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* only text models write picture prompts, Settings says when a key fails, and the through-the-book style picker renders ([#133](https://github.com/nightspine/lorekeeper/issues/133)) ([9b44d71](https://github.com/nightspine/lorekeeper/commit/9b44d71c7ddb50b25cedfe302453618720dca3be))
+
 ## [0.23.0](https://github.com/nightspine/lorekeeper/compare/v0.22.0...v0.23.0) (2026-11-26)
 
 
