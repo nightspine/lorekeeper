@@ -475,14 +475,15 @@ class Known:
 _OPENING = re.compile(r"(?:^|[.!?:;]\s+)[\"“‘'(]*([A-Z][a-z]{2,})\b")
 
 
-def _opening_unknown(text: str, known: Known, source: str = "") -> str:
+def _opening_unknown(text: str, known: Known, source: str = "", skip: frozenset[str] | set[str] = frozenset()) -> str:
     """The first word opening a sentence that is a name the book has not used by this point: capitalised, no ordinary
     sentence word (`common_words.SENTENCE_FIRST`), not among the known capitalised words, and never written by the book (or
-    the material) in any case by then ("Zephyr gathers over the mill", "Moonlight" passes when the book has "moonlight")."""
+    the material) in any case by then ("Zephyr gathers over the mill", "Moonlight" passes when the book has "moonlight").
+    `skip`: words passed over exactly as written, as `portraits._checked` takes them."""
     mat = None
     for m in _OPENING.finditer(text):
         w = m.group(1)
-        if w.lower() in SENTENCE_FIRST or w in known or w.removesuffix("s") in known or known.used(w):
+        if w in skip or w.lower() in SENTENCE_FIRST or w in known or w.removesuffix("s") in known or known.used(w):
             continue
         if mat is None:
             mat = set(re.findall(r"[a-z]+", source.lower()))
@@ -1164,41 +1165,59 @@ class Illustrator:
     def _unknown_words(text: str, known: Known, source: str, limit: int) -> tuple[str | None, str, list[str]]:
         """`portraits._checked` and `_opening_unknown` as they are, but every word they catch as an unknown name is gathered
         instead of failing the text: (text, "", the words caught, in the order caught) when nothing else fails, else (None,
-        the reason, []). Each caught word is let through the next pass, so the checks themselves decide what is caught."""
+        the reason, []). Each caught word is passed over in the next pass exactly as written (`skip`), never added to the
+        known words, so its plural or stem ("Highlands" after "Highland") is still caught on its own."""
         flagged: list[str] = []
-        k = known
         for _ in range(MAX_FLAGGED + 1):
-            got, why = P._checked(text, k, source or None, None, limit=limit)
+            skip = frozenset(flagged)
+            got, why = P._checked(text, known, source or None, None, limit=limit, skip=skip)
             if got is None:
                 if not why.startswith("unknown name: "):
                     return None, why, []
                 w = why[len("unknown name: "):]
             else:
-                w = _opening_unknown(got, k, source)
+                w = _opening_unknown(got, known, source, skip)
                 if not w:
                     return got, "", flagged
             if w in flagged or len(flagged) >= MAX_FLAGGED:
                 return None, f"unknown name: {flagged[0] if flagged else w}", []
             flagged.append(w)
-            k = Known(known.first, known.at, known.earlier | set(flagged), known.lower, known.earlier_lower)
         return None, f"unknown name: {flagged[0]}", []
 
     @staticmethod
-    def _sentence_of(text: str, word: str) -> str:
-        """The sentence of `text` the word first stands in (as a whole word, case as written)."""
+    def _excerpts(text: str, word: str) -> list[str]:
+        """Every place the word stands in the text (as a whole word, case as written), each as its sentence, or, for a
+        sentence over `NAME_SENTENCE_CHARS`, a window of whole words around that use: the chooser judges each use on its
+        own, and every excerpt holds the word."""
         rx = re.compile(r"(?<![\w-])" + re.escape(word) + r"(?!\w)")
-        for s in re.split(r"(?<=[.!?])\s+", text):
-            if rx.search(s):
-                return s[:NAME_SENTENCE_CHARS]
-        return text[:NAME_SENTENCE_CHARS]
+        ends = [m.start() for m in re.finditer(r"(?<=[.!?])\s+", text)] + [len(text)]
+        starts = [0] + [m.end() for m in re.finditer(r"(?<=[.!?])\s+", text)]
+        out: list[str] = []
+        for m in rx.finditer(text):
+            k = bisect_left(ends, m.start())
+            lo, hi = starts[k], ends[k]
+            if hi - lo > NAME_SENTENCE_CHARS:
+                half = max(0, (NAME_SENTENCE_CHARS - len(word)) // 2)
+                lo, hi = max(lo, m.start() - half), min(hi, m.end() + half)
+                if lo > starts[k] and text[lo - 1] != " ":          # whole words: cut a word broken at either end
+                    lo = min(text.find(" ", lo) + 1 or m.start(), m.start())
+                if hi < ends[k] and text[hi] != " ":
+                    sp = text.rfind(" ", m.end(), hi)
+                    hi = sp if sp != -1 else m.end()
+            piece = text[lo:hi].strip()
+            assert rx.search(piece), (word, piece)
+            if piece not in out:
+                out.append(piece)
+        return out or [text[:NAME_SENTENCE_CHARS]]
 
     def _names_among(self, text: str, flagged: list[str]) -> list[str]:
         """Which of the words the name check caught the text uses as names (`NAMES`, one choosing call on the picker for the
-        words not answered yet, cached per word and sentence), in the order caught. Every word without an answer counts as
-        a name: when the call fails or its reply holds no usable answer nothing is cached, and the old rule holds (the
-        first word caught is the one dropped). A word answered "not a name" is let through and counted ("kept: a flagged
-        word was not a name")."""
-        items = [(w, self._sentence_of(text, w)) for w in flagged]
+        uses not answered yet, each use of a word its own numbered item, cached per word and excerpt), in the order caught.
+        A word is a name when any of its uses is answered a name or has no answer: when the call fails or its reply holds
+        no usable answer nothing is cached, and the old rule holds (the first word caught is the one dropped). An answer
+        "name" is never replaced by a later "not a name" from another thread. A use answered "not a name" the first time
+        is counted ("kept: a flagged word was not a name")."""
+        items = [(w, x) for w in flagged for x in self._excerpts(text, w)]
         with self.lock:
             ask = list(dict.fromkeys(it for it in items if it not in self._name_answers))
         if ask:
@@ -1213,14 +1232,17 @@ class Illustrator:
                 if (isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(ask)
                         and isinstance(x.get("name"), bool)):
                     got[n] = got.get(n, False) or x["name"]        # two answers for one number: a name if either says so
-            with self.lock:
-                for n, it in enumerate(ask, 1):
-                    if n in got:
-                        self._name_answers[it] = got[n]
-                        if not got[n]:
-                            self.report.dropped["kept: a flagged word was not a name"] += 1
         with self.lock:
-            return [w for w, s in items if self._name_answers.get((w, s), True)]
+            if ask:
+                for n, it in enumerate(ask, 1):
+                    if n not in got:
+                        continue
+                    prev = self._name_answers.get(it)
+                    if prev is None and not got[n]:
+                        self.report.dropped["kept: a flagged word was not a name"] += 1
+                    self._name_answers[it] = bool(prev) or got[n]
+            named = {w for w, x in items if self._name_answers.get((w, x), True)}
+        return [w for w in flagged if w in named]
 
     @staticmethod
     def _label_check(given: set[str], keep: set[str] | None = None) -> Callable[[str], str]:

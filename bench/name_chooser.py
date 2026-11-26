@@ -28,7 +28,7 @@ bad = 0
 for run in range(3):
     il = art.Illustrator([art.Book(d, None, art.FileSink(Path(tempfile.mkdtemp()) / "a"), None)], cheap, None, "ink",
                          portraits=None, cheap_text=cheap, log=lambda *_: None)
-    il._sentence_of = staticmethod(lambda text, w: dict((c[0], c[1]) for c in CASES)[w])
+    il._excerpts = staticmethod(lambda text, w: [dict((c[0], c[1]) for c in CASES)[w]])
     names = il._names_among("", [c[0] for c in CASES])
     for w, s, want in CASES:
         if (w in names) != want:
