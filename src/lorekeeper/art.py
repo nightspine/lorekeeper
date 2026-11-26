@@ -275,12 +275,13 @@ REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write 
 # call, or a reply with no answer for a word, keeps the word caught, as before the call existed.
 NAMES = """A text written for an image model was checked for names. The capitalised words below were caught because the book it
 illustrates has not used them by this point. Each is numbered, with the sentence of the text it stands in.
-For each word, say whether that sentence uses it as a name: the name of a particular person, creature, place, group, people,
-house, order, ship or thing in a story, real or invented, or a word made from such a name. A name counts as a name even where
-it describes something else or opens a sentence.
-A word is not a name when it is an ordinary describing word of the real world: a historical period or era, an art,
-architecture or dress style, a real nationality, region or language used to describe someone or something, or an ordinary
-word that is capitalised only because it opens the sentence. A word made up for the story's own world is a name.
+For each word, say whether that sentence uses it as a name: the name of a particular person, creature, place, group,
+house, order, ship or thing, real or invented. The name of a place itself (a country, region, city, river, mountain or
+building), real or not, is a name. A name counts as a name even where it opens a sentence.
+A word is not a name when it is an ordinary describing word: a historical period or era, an art, architecture or dress
+style, a word for a real nationality, people or language, or an adjective made from a real country or region, used to say
+what someone or something is like; or an ordinary word that is capitalised only because it opens the sentence. A word made
+up for the story's own world is a name, even used as an adjective.
 When you are unsure, answer that it is a name.
 Return "words": one object {{"n", "name"}} for each number, "name" true when the sentence uses the word as a name.
 
