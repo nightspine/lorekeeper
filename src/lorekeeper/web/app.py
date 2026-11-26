@@ -35,6 +35,7 @@ from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
+from . import read as readmod
 from . import styles as stylesmod
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
@@ -1198,6 +1199,54 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if entity not in names:
             raise HTTPException(404, "no such entry at this position")
         return mentions_body(book, sections_story(p, book), mentions.count(book.blocks, book.chapters, names, seq), entity)
+
+    # ---- reading view: the book's own text by chapter (web/read.py) ---------------------------------------------
+
+    def read_book(key: str):
+        """The EPUB an index was built from, parsed, with its path; a JSONResponse refusal otherwise."""
+        item = library.get(key)
+        if item is None or item["doc"].get("kind") != "index":
+            return None, None, JSONResponse({"detail": "no such index", "code": "not-found"}, status_code=404)
+        p = next((q for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
+                  for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
+        if p is None:
+            return None, None, JSONResponse({"detail": "The book file for this index is not here.",
+                                             "code": "no-book-file"}, status_code=404)
+        return p, parsed(p), None
+
+    @app.get("/api/library/{key}/read/toc")
+    def read_toc(key: str):
+        """Every chapter of the index's own edition, numbered as the Reader's chapter map (`n`), with the blocks it
+        spans and its words. `story` is the build form's front and back matter rule (absent for a book read with no
+        table of contents)."""
+        p, book, refusal = read_book(key)
+        if refusal:
+            return refusal
+        spans = readmod.chapter_spans(book)
+        if book.chapters:
+            for c, flag in zip(spans, sections_story(p, book)):
+                c["story"] = flag
+        return {"chapters": spans, "blocks": len(book.blocks), "words": sum(c["words"] for c in spans)}
+
+    @app.get("/api/library/{key}/read")
+    def read_chapter(key: str, chapter: int | None = None, seq: int | None = None):
+        """One chapter's blocks in order, short ones included: by `chapter` (n of the toc) or by the `seq` of a block
+        in it. Book text only, nothing from the index."""
+        p, book, refusal = read_book(key)
+        if refusal:
+            return refusal
+        spans = readmod.chapter_spans(book)
+        if chapter is not None:
+            c = spans[chapter - 1] if 1 <= chapter <= len(spans) else None
+        elif seq is not None:
+            if not 0 <= seq < len(book.blocks):
+                return JSONResponse({"detail": "seq is outside the book", "code": "bad-seq"}, status_code=422)
+            c = readmod.chapter_of(spans, seq)
+        else:
+            return JSONResponse({"detail": "chapter or seq is needed", "code": "bad-request"}, status_code=422)
+        if c is None:
+            return JSONResponse({"detail": "no such chapter", "code": "no-chapter"}, status_code=404)
+        return readmod.chapter_body(book, spans, c)
 
     # ---- pictures: art sets in the art store, never in the index (art.py, web/art.py, CLAUDE.md §8f) ----------------
 
