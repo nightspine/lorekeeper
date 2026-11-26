@@ -69,12 +69,18 @@ def main() -> int:
     ap.add_argument("--scene-writers", default="current",
                     help="old (main's SCENE_WRITER), new (this branch's) or current (whatever the module has), comma separated")
     ap.add_argument("--name", default="", help="suffix of results-NAME.json and contact-sheet-NAME.png")
+    ap.add_argument("--sheet-only", action="store_true",
+                    help="draw nothing: contact-sheet.png from every results*.json in --out, plus portraits of any set there "
+                         "they do not list (a run that stopped before writing its results)")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    if a.sheet_only:
+        sheet(out, gathered(out))
+        return 0
     old = old_art()
     new = {k: getattr(art, k) for k in ("PORTRAIT_FRAME", "PORTRAIT_WRITER", "PORTRAIT_WORDS")}
-    new_framed = art.Illustrator._framed
+    new_framed = art.Illustrator.__dict__["_framed"]      # the staticmethod itself, so it can be put back
     old_framed = staticmethod(lambda kind, text: f"{old.PORTRAIT_FRAME} {text}" if kind == "portrait" else text)
 
     strong = llm.make("claude", llm.PROVIDERS["claude"]["strong"], api_key=llm.env_key("claude"))
@@ -137,7 +143,8 @@ def main() -> int:
                        "prompt": rec["prompt"] if rec else pr.text, "note": call.get("note", ""),
                        "references": call.get("references", 0)})
         print(f"scene {evid}: {scenes[-1]['file']}  (spent ${spent:.3f})", file=sys.stderr)
-    text = sum(il.text_spent() for il in ils.values())
+    # every Illustrator shares the two text models, so any one of them counts their whole spend
+    text = next(iter(ils.values())).text_spent() if ils else 0.0
     pics = sum(il.report.cost for il in ils.values())
     result = {"style": a.style, "quality": a.quality, "image_model": image.name, "writer": strong.name,
               "cost": {"pictures": round(pics, 4), "text": round(text, 4), "total": round(pics + text, 4)},
@@ -153,7 +160,30 @@ def main() -> int:
     return 0
 
 
-def sheet(out: Path, result: dict, name: str = "contact-sheet.png") -> None:
+def gathered(out: Path) -> dict:
+    """Every results*.json in `out` joined, plus the portraits of each set folder (sets/<book>/<variant>) none of them lists."""
+    res = {"portraits": [], "scenes": []}
+    for f in sorted(out.glob("results*.json")):
+        r = json.loads(f.read_text())
+        res["portraits"] += [x for x in r["portraits"] if x.get("file")]
+        res["scenes"] += r["scenes"]
+    have = {x["file"] for x in res["portraits"]}
+    for man in sorted(out.glob("sets/*/*/art.json")):
+        book, variant = man.parent.parent.name, man.parent.name
+        for p in json.loads(man.read_text())["pictures"]:
+            path = str(Path("sets") / book / variant / p["file"])
+            if p["kind"] == "portrait" and path not in have:
+                res["portraits"].append({"book": book, "entity": p["target"], "name": p["target"], "variant": variant,
+                                         "file": path, "prompt": p["prompt"]})
+    names = {(x["book"], x["entity"]): x["name"] for x in res["portraits"] if x["name"] != x["entity"]}
+    for x in res["portraits"]:
+        x["name"] = names.get((x["book"], x["entity"]), x["name"])
+    order = ["old-tall", "new-tall", "new-square"]
+    res["portraits"].sort(key=lambda x: order.index(x["variant"]) if x["variant"] in order else 9)
+    return res
+
+
+def sheet(out: Path, result: dict, file: str = "contact-sheet.png") -> None:
     """contact-sheet.png: one row per portrait entity (a column per variant), then the scenes."""
     from PIL import Image, ImageDraw, ImageFont
     try:
@@ -163,9 +193,11 @@ def sheet(out: Path, result: dict, name: str = "contact-sheet.png") -> None:
     variants = list(dict.fromkeys(r["variant"] for r in result["portraits"]))
     ents = list(dict.fromkeys((r["book"], r["entity"], r["name"]) for r in result["portraits"]))
     cell, head, label = 360, 40, 220
-    rows = len(ents) + (1 if result["scenes"] else 0)
-    width = label + cell * max(len(variants), len(result["scenes"]) * 2 if result["scenes"] else 1)
-    img = Image.new("RGB", (width, head + rows * (cell + 10)), "white")
+    events = list(dict.fromkeys((x["book"], x["event"]) for x in result["scenes"]))
+    writers = list(dict.fromkeys(x.get("writer", "current") for x in result["scenes"]))
+    width = label + cell * max(len(variants), 2 * len(writers), 1)
+    img = Image.new("RGB", (width, head + len(ents) * (cell + 10) + (head + len(events) * (cell + 10) if events else 0)),
+                    "white")
     d = ImageDraw.Draw(img)
     for i, v in enumerate(variants):
         d.text((label + i * cell + 8, 8), v, fill="black", font=font)
@@ -185,12 +217,19 @@ def sheet(out: Path, result: dict, name: str = "contact-sheet.png") -> None:
         for i, v in enumerate(variants):
             row = by.get((book, eid, v))
             paste(row and row["file"], label + i * cell, y, cell, cell)
-    if result["scenes"]:
-        y = head + len(ents) * (cell + 10)
-        d.text((8, y + 8), "scenes with\nnew-tall\nreferences", fill="black", font=font)
-        for i, s in enumerate(result["scenes"]):
-            paste(s["file"], label + i * 2 * cell, y, 2 * cell, cell)
-    img.save(out / name)
+    if events:
+        top = head + len(ents) * (cell + 10)
+        for i, w in enumerate(writers):
+            d.text((label + i * 2 * cell + 8, top + 8), f"scene, {w} scene writer (new-tall portraits as references)",
+                   fill="black", font=font)
+        sc = {(x["book"], x["event"], x.get("writer", "current")): x for x in result["scenes"]}
+        for r, (book, ev) in enumerate(events):
+            y = top + head + r * (cell + 10)
+            d.text((8, y + 8), f"{ev.split('.')[-1]}\n({book})", fill="black", font=font)
+            for i, w in enumerate(writers):
+                x = sc.get((book, ev, w))
+                paste(x and x["file"], label + i * 2 * cell, y, 2 * cell, cell)
+    img.save(out / file)
 
 
 if __name__ == "__main__":
