@@ -706,7 +706,7 @@ def cmd_illustrate(args) -> int:
     # portraits are few and every scene takes them as references: by default the strong tier of the text provider writes them
     wp, wm = writers["--portrait-writer"] or (tp, tier(tp, "strong") or args.text_model or tier(tp, "cheap"))
     portrait_text = text_model(wp, wm or tier(wp, "strong") or tier(wp, "cheap"))
-    kp, km = writers["--picker"] or (tp, tier(tp, "cheap") or args.text_model)
+    kp, km = writers["--picker"] or (tp, args.text_model or tier(tp, "cheap"))
     picker = text_model(kp, km or tier(kp, "cheap"))
     def likeness(folder: Path) -> dict:
         """The other style folders beside a set (same edition): a figure with no picture in this style takes its likeness
@@ -969,7 +969,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--backup", default="lorekeeper-data/backups", help="where originals are copied first")
     s.set_defaults(fn=cmd_arcs)
 
-    s = sub.add_parser("illustrate", help="draw chapter pictures and portraits for an index (Gemini or OpenAI for the pictures, a cheap text model for the prompts)")
+    s = sub.add_parser("illustrate", help="draw chapter pictures and portraits for an index (Gemini or OpenAI for the pictures; a cheap text model writes the scene prompts and makes the choosing calls, a strong one the portrait prompts)")
     s.add_argument("index", nargs="+", help="index files of the run, in series reading order")
     s.add_argument("--epub", action="append", help="each index's EPUB, in the same order (required)")
     s.add_argument("--series", help="the series manifest, when the indexes are series books")
@@ -986,8 +986,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--model", default=None, help="image model (default: the provider's own default)")
     s.add_argument("--quality", choices=["draft", "standard", "best"], default="standard")
     s.add_argument("--api-key-file", metavar="PATH", help="file holding the image provider's key (default: its environment variable)")
-    s.add_argument("--text-provider", default=None, help="provider of the model that writes the prompts (default: claude when a key exists, else the image provider)")
-    s.add_argument("--text-model", default=None, help="that model (default: the provider's cheap model)")
+    s.add_argument("--text-provider", default=None, help="provider of the text models (default: claude when a key exists, else the image provider): its cheap model writes the scene prompts and makes the choosing calls, its strong model the portrait prompts, unless --writer, --picker or --portrait-writer say otherwise")
+    s.add_argument("--text-model", default=None, help="the model that writes the scene prompts and makes the choosing calls (default: the provider's cheap model); portrait prompts stay with the strong model unless --portrait-writer is given")
     s.add_argument("--writer", metavar="PROVIDER:MODEL", default=None,
                    help="the model that writes the scene prompts (chapter and moment pictures; default: --text-provider's cheap model, or --text-model)")
     s.add_argument("--portrait-writer", metavar="PROVIDER:MODEL", default=None,

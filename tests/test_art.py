@@ -2590,6 +2590,10 @@ def test_illustrate_command_takes_a_model_per_responsibility(tmp_path, monkeypat
     assert (il.portrait_text.provider, il.portrait_text.name) == ("gemini", "g-pro")
     assert (il.cheap.provider, il.cheap.name) == ("gemini", cheap)
     assert il.portrait_provider == "openai" and il.provider == "gemini"
+    # --text-model alone keeps one model for the scene prompts and the choosing calls, as before; portraits go strong
+    assert cli.main(base + ["--text-provider", "gemini", "--text-model", "gemini-x"]) == 0
+    il = seen[-1]
+    assert il.text.name == "gemini-x" and il.cheap is il.text and il.portrait_text.name == strong
     with pytest.raises(SystemExit, match="no provider"):
         cli.main(base + ["--writer", "nobody:x"])
     with pytest.raises(SystemExit, match="Claude cannot draw"):
