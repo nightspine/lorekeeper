@@ -1,0 +1,98 @@
+/* ---------- Reader: the reading view (read.js) ----------
+   The book's own text in one column, the position following the scroll. Names already met are lit as a quiet underline
+   in their type colour and open a small card. The book text may use a reading serif (system faces only: nothing is
+   fetched), or Manrope from the Aa menu; everything around it stays in the app's type. */
+html.lk-reading { overflow-anchor: none; }   /* read.js keeps the place itself, the same way in every browser */
+/* Reading in Lorekeeper, the scroll is the position: the chapter steps (for books read elsewhere) step aside. */
+.reader.reading-tab .steps { display: none; }
+.read-view {
+  --read-size: 18px; --read-lh: 1.65; --read-width: 38em; --read-f: 0;
+  --font-book: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  position: relative; padding-top: 8px; overflow-anchor: none;
+}
+.read-flow { max-width: var(--read-width); margin: 0 auto; font-family: var(--font-book); font-size: var(--read-size); line-height: var(--read-lh); color: var(--text); }
+.read-view[data-font="sans"] .read-flow { font-family: var(--font-ui); }
+.read-p { margin: 0 0 .85em; overflow-wrap: break-word; hyphens: auto; -webkit-hyphens: auto; font-variant-numeric: oldstyle-nums; }
+.read-view[data-font="sans"] .read-p { font-variant-numeric: normal; }
+.read-h { margin: 1.6em 0 .7em; font-family: inherit; font-size: 1.12em; font-weight: 650; line-height: 1.3; letter-spacing: 0; text-wrap: balance; hyphens: manual; -webkit-hyphens: manual; color: var(--text); }
+.read-ch:first-child .read-h:first-of-type { margin-top: .6em; }
+
+/* Between chapters: one quiet line with the chapter's title, the app's type. */
+.read-divider { display: flex; align-items: center; gap: 12px; margin: 56px 0 20px; font: 600 12px/1.3 var(--font-ui); color: var(--text-3); }
+.read-divider::before, .read-divider::after { content: ""; flex: 1 1 0; height: 1px; background: var(--line); }
+.read-divider span { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.read-ch:first-child .read-divider { margin-top: 16px; }
+.read-plates:empty { display: none; }
+.read-plates { margin: 24px 0 0; }
+.read-plates .art-plates { max-width: none; }
+.read-plate-note { margin: 6px 0 0; font: 500 12px/1.4 var(--font-ui); color: var(--text-3); }
+.read-end { min-height: 70vh; padding-top: 32px; font: 500 13px/1.5 var(--font-ui); color: var(--text-3); text-align: center; }
+.read-status:empty { display: none; }
+.read-status { max-width: var(--read-width); margin: 16px auto; }
+.read-loading { color: var(--text-3); font-size: var(--text-s); }
+
+/* A name the reader has met: the type colour as a quiet underline, the text itself as the book has it. The vertical
+   padding widens the tap area without moving the lines (an inline box's padding takes no room). */
+.rd-name { --tc: var(--t-person); padding: .3em 0; border-radius: 3px; cursor: pointer; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .22em; text-decoration-color: color-mix(in srgb, var(--tc) 75%, transparent); -webkit-tap-highlight-color: transparent; }
+.rd-name.t-creature { --tc: var(--t-creature); }
+.rd-name.t-place { --tc: var(--t-place); }
+.rd-name.t-group { --tc: var(--t-group); }
+.rd-name.t-object { --tc: var(--t-object); }
+@media (hover: hover) { .rd-name:hover { color: var(--tc); text-decoration-color: var(--tc); } }
+.rd-name:focus-visible { outline: 2px solid var(--beacon); outline-offset: 1px; }
+
+/* The progress line: pinned to the foot of the screen while the text is in view. */
+.read-bar { position: sticky; bottom: 0; z-index: 20; margin-top: 24px; background: var(--bg); border-top: 1px solid var(--line); }
+.read-track { display: block; height: 2px; background: var(--line-2); }
+.read-fill { display: block; width: calc(var(--read-f) * 100%); height: 100%; background: var(--beacon); }
+.read-bar-row { display: flex; align-items: center; gap: 8px; max-width: var(--read-width); margin: 0 auto; padding: 4px 0; }
+.read-progress { display: flex; flex-wrap: wrap; gap: 2px 16px; flex: 1 1 auto; min-width: 0; margin: 0; font-size: var(--text-xs); color: var(--text-3); font-variant-numeric: tabular-nums; }
+.read-left:empty { display: none; }
+.read-aa-glyph { font: 700 14px/1 var(--font-ui); letter-spacing: -.01em; }
+
+/* The card for a name, and the Aa menu: a popover beside the text above 640px, a bottom sheet on a phone. */
+.rd-card.pop { position: absolute; z-index: 35; padding: 16px; background: var(--pane); border: 1px solid var(--line-2); border-radius: 10px; box-shadow: var(--shadow); font: 400 var(--text-base)/1.5 var(--font-ui); }
+.rd-card-close { position: absolute; top: 6px; right: 6px; }
+.rd-card-ent + .rd-card-ent { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rd-card-head { display: flex; align-items: center; gap: 12px; padding-right: 28px; }
+.rd-card-face { flex: none; width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--tc, var(--line-2)); background: var(--pane-2); }
+.rd-card-ent { --tc: var(--t-person); }
+.rd-card-ent.t-creature { --tc: var(--t-creature); }
+.rd-card-ent.t-place { --tc: var(--t-place); }
+.rd-card-ent.t-group { --tc: var(--t-group); }
+.rd-card-ent.t-object { --tc: var(--t-object); }
+.rd-card-names { display: grid; gap: 2px; min-width: 0; }
+.rd-card-name { margin: 0; font: 700 16px/1.3 var(--font-ui); overflow-wrap: anywhere; outline: none; }
+.rd-card-line { margin: 10px 0 0; color: var(--text-2); font-size: var(--text-s); line-height: 1.45; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+.rd-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.rd-card.in-sheet .rd-card-head { padding-right: 0; }
+.read-prefs-pop .rd-card-name { margin-bottom: 4px; }
+.read-prefs { display: grid; }
+.read-pref { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; border-top: 1px solid var(--line); }
+.read-pref:first-child { border-top: 0; }
+.read-pref-label { font-size: var(--text-s); color: var(--text-2); white-space: nowrap; }
+.read-seg { display: inline-flex; padding: 2px; border: 1px solid var(--line-2); border-radius: var(--radius); }
+.read-seg-btn { min-height: 28px; padding: 0 10px; border: 0; border-radius: 4px; background: none; color: var(--text-2); font: 600 12px/1 var(--font-ui); cursor: pointer; }
+.read-seg-btn[aria-pressed="true"] { background: var(--pane-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-2); }
+.read-seg-btn:focus-visible { outline: 2px solid var(--beacon); outline-offset: 1px; }
+.read-size { display: inline-flex; align-items: center; gap: 6px; }
+.read-size-out { min-width: 4ch; text-align: center; font-size: var(--text-s); font-variant-numeric: tabular-nums; }
+.read-check { justify-content: flex-start; cursor: pointer; }
+.read-check input { width: 16px; height: 16px; margin: 0; accent-color: var(--beacon); }
+
+@media (max-width: 640px) {
+  /* Reading on a phone: the scroll is the position, so the ruler gives the text its room; Jump and the percentage are
+     in the progress line. The tabs stay pinned under the app bar, the bottom tab bar stays. */
+  .reader.reading-tab .ruler, .reader.reading-tab .ruler-sub, .reader.reading-tab .pos-series { display: none; }
+  .reader.reading-tab .rd-list > .view-tabs { top: var(--topbar-h); }
+  .read-view { padding-top: 4px; }
+  .read-bar { bottom: var(--tabbar-h); margin-left: -16px; margin-right: -16px; padding: 0 16px; }
+  .read-bar .btn { min-height: 44px; }
+  .rd-name { padding: .45em 0; }
+  .read-seg-btn { min-height: 40px; padding: 0 12px; }
+  .read-size-btn { min-width: 44px; }
+  .read-divider { margin-top: 44px; }
+  .read-end { min-height: 60vh; }
+}
+/* In a sheet the sheet's title already names the entry. */
+.rd-card.in-sheet .rd-card-ent:only-child .rd-card-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
