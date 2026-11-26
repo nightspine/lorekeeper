@@ -4,6 +4,7 @@ Anything with `complete()` works. `PROVIDERS` is the one table of cloud provider
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -12,7 +13,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Protocol, Sequence
 
 DEFAULT_MODEL = "gemma4:12b-it-qat"
 MAX_OUTPUT_TOKENS = 4096   # per call; extraction deltas are far smaller, so hitting this means a runaway
@@ -22,11 +23,20 @@ class Cancelled(Exception):
     """Raised when the caller's cancel check fires mid-request."""
 
 
+class NoVision(ValueError):
+    """The model cannot take pictures as input: Ollama here, or a server that answered 400 naming the image input."""
+
+    def __init__(self, message: str = "cannot see pictures") -> None:
+        super().__init__(message)
+
+
 class LLM(Protocol):
     name: str
 
-    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None) -> dict:
-        """prefix: shared leading text (the passage) that backends may cache across calls."""
+    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None,
+                 images: Sequence[tuple[bytes, str]] = ()) -> dict:
+        """prefix: shared leading text (the passage) that backends may cache across calls. images: (bytes, mime) pairs
+        sent before the prompt, for a model that can see them (`vision`); their tokens are billed as input."""
         ...
 
 
@@ -53,14 +63,18 @@ class Ollama:
     usage: Usage = field(default_factory=Usage)
     cancel: object = None          # optional () -> bool, polled while tokens stream in
 
-    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None) -> dict:
+    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None,
+                 images: Sequence[tuple[bytes, str]] = ()) -> dict:
         """One schema-constrained chat call. Thinking is off: it costs time and did not help extraction.
 
         A shared prefix goes first in the user message, so Ollama reuses its cached computation for
         the passage on the follow-up call. num_ctx stays fixed: changing it forces a model reload.
         The reply is streamed so a cancel request takes effect immediately; closing the connection
         makes Ollama stop generating. A reply cut off at max_output is skipped (returns {}), not retried.
+        Pictures are not sent to a local model: `images` raises NoVision.
         """
+        if images:
+            raise NoVision()
         body = json.dumps({
             "model": self.name,
             "messages": [{"role": "system", "content": system},
@@ -161,12 +175,16 @@ class Claude:
             return {"thinking": {"type": "disabled"}}
         return {}
 
-    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None) -> dict:
+    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None,
+                 images: Sequence[tuple[bytes, str]] = ()) -> dict:
         if self.cancel and self.cancel():
             raise Cancelled()
         p = self._model_params()
-        # The passage is cached, so the fact-check call over the same passage reads it at a tenth of the price.
-        content = ([{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}] if prefix else []) \
+        # Pictures go first, as base64 image blocks (their tokens are input tokens in `usage`). The passage is cached, so
+        # the fact-check call over the same passage reads it at a tenth of the price.
+        content = [{"type": "image", "source": {"type": "base64", "media_type": mime, "data": base64.b64encode(data).decode()}}
+                   for data, mime in images] \
+            + ([{"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}}] if prefix else []) \
             + [{"type": "text", "text": prompt}]
         kwargs = {
             "model": self.name,
@@ -256,6 +274,15 @@ def _error_text(data) -> str:
     return str(data)[:300]
 
 
+_IMAGE_INPUT = re.compile(r"image|vision|multimodal|modalit")
+
+
+def _names_image_input(low: str) -> bool:
+    """Whether a 400's message is about the picture sent ("image_url is only supported by certain models", "unknown variant
+    `image_url`", "this model does not support vision")."""
+    return bool(_IMAGE_INPUT.search(low))
+
+
 def _parse_json(text: str) -> dict:
     """Model JSON, tolerating a code fence or chatter around the object."""
     text = text.strip()
@@ -321,31 +348,40 @@ class OpenAICompatible:
                 time.sleep(self.backoff * 2 ** attempt)
         raise ProviderError(f"{self.name}: {last}")
 
-    def _body(self, system: str, prompt: str, schema: dict, prefix: str | None) -> dict:
+    def _body(self, system: str, prompt: str, schema: dict, prefix: str | None,
+              images: Sequence[tuple[bytes, str]] = ()) -> dict:
         if self._mode == "json_schema":
             fmt = {"type": "json_schema", "json_schema": {"name": "lorekeeper", "schema": schema, "strict": False}}
             sys_text = system
         else:
             fmt = {"type": "json_object"}
             sys_text = f"{system}\n\nAnswer with JSON matching this schema:\n{json.dumps(schema)}"
+        user: str | list = (prefix or "") + prompt
+        if images:      # data-URL parts before the text: OpenAI, Gemini's and OpenRouter's compatible APIs all take them
+            user = [{"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(data).decode()}"}}
+                    for data, mime in images] + [{"type": "text", "text": user}]
         body = {"model": self.name,
                 "messages": [{"role": "system", "content": sys_text},
-                             {"role": "user", "content": (prefix or "") + prompt}],
+                             {"role": "user", "content": user}],
                 "response_format": fmt}
         if "temperature" not in self._drop:
             body["temperature"] = 0
         body["max_completion_tokens" if "max_tokens" in self._drop else "max_tokens"] = self.max_output
         return body
 
-    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None) -> dict:
+    def complete(self, system: str, prompt: str, schema: dict, prefix: str | None = None,
+                 images: Sequence[tuple[bytes, str]] = ()) -> dict:
         t = time.time()
         try:
             for _ in range(5):
-                status, data = self._post(self._body(system, prompt, schema, prefix))
+                status, data = self._post(self._body(system, prompt, schema, prefix, images))
                 if status == 200:
                     break
                 msg = _error_text(data)
                 low = msg.lower()
+                if status == 400 and images and _names_image_input(low):
+                    self.usage.failures += 1
+                    raise NoVision(f"{self.name} cannot see pictures: {msg}")
                 if status == 400 and "max_tokens" in low and "max_completion_tokens" in low and "max_tokens" not in self._drop:
                     self._drop.add("max_tokens")
                 elif status == 400 and "temperature" in low and "temperature" not in self._drop:
@@ -391,8 +427,13 @@ class OpenAICompatible:
 # estimate, never $0).
 
 def _models(*rows) -> list[dict]:
-    return [{"id": i, "label": label, "price": price, "tier": tier} for i, label, price, tier in rows]
+    """(id, label, price, tier[, extra]) rows; `extra` is a dict such as {"vision": False} for a text-only model."""
+    return [{"id": r[0], "label": r[1], "price": r[2], "tier": r[3], **(r[4] if len(r) > 4 else {})} for r in rows]
 
+
+# `vision: False` marks a preset that takes no picture input (the drawing-fault check needs one that does); every other
+# preset sees pictures, and a live or custom model is tried (a 400 naming the image input raises NoVision).
+_TEXT_ONLY = {"vision": False}
 
 PROVIDERS: dict[str, dict] = {
     "claude": {
@@ -428,7 +469,7 @@ PROVIDERS: dict[str, dict] = {
         "models": _models(("google/gemini-2.5-flash", "Gemini 2.5 Flash", (0.30, 2.50), "cheap"),
                           ("openai/gpt-5-mini", "GPT-5 mini", (0.25, 2.00), "cheap"),
                           ("anthropic/claude-sonnet-5-5", "Claude Sonnet 5.5", (2.00, 10.00), "strong"),
-                          ("deepseek/deepseek-chat", "DeepSeek chat", (0.28, 0.42), "cheap")),
+                          ("deepseek/deepseek-chat", "DeepSeek chat", (0.28, 0.42), "cheap", _TEXT_ONLY)),
         "default": "google/gemini-2.5-flash", "cheap": "google/gemini-2.5-flash",
         "strong": "anthropic/claude-sonnet-5-5",
     },
@@ -442,8 +483,8 @@ PROVIDERS: dict[str, dict] = {
     "groq": {
         "label": "Groq", "kind": "openai", "base_url": "https://api.groq.com/openai/v1", "key_env": "GROQ_API_KEY",
         "key_url": "https://console.groq.com/keys",
-        "models": _models(("llama-3.1-8b-instant", "Llama 3.1 8B", (0.05, 0.08), "cheap"),
-                          ("llama-3.3-70b-versatile", "Llama 3.3 70B", (0.59, 0.79), "strong")),
+        "models": _models(("llama-3.1-8b-instant", "Llama 3.1 8B", (0.05, 0.08), "cheap", _TEXT_ONLY),
+                          ("llama-3.3-70b-versatile", "Llama 3.3 70B", (0.59, 0.79), "strong", _TEXT_ONLY)),
         "default": "llama-3.3-70b-versatile", "cheap": "llama-3.1-8b-instant", "strong": "llama-3.3-70b-versatile",
     },
     "xai": {
@@ -456,8 +497,8 @@ PROVIDERS: dict[str, dict] = {
     "deepseek": {
         "label": "DeepSeek", "kind": "openai", "base_url": "https://api.deepseek.com/v1", "key_env": "DEEPSEEK_API_KEY",
         "key_url": "https://platform.deepseek.com/api_keys",
-        "models": _models(("deepseek-chat", "DeepSeek chat", (0.28, 0.42), "cheap"),
-                          ("deepseek-reasoner", "DeepSeek reasoner", (0.28, 0.42), "strong")),
+        "models": _models(("deepseek-chat", "DeepSeek chat", (0.28, 0.42), "cheap", _TEXT_ONLY),
+                          ("deepseek-reasoner", "DeepSeek reasoner", (0.28, 0.42), "strong", _TEXT_ONLY)),
         "default": "deepseek-chat", "cheap": "deepseek-chat", "strong": "deepseek-reasoner",
     },
     # Any OpenAI-compatible server (LM Studio, vLLM, llama.cpp server, a proxy): the user types the
@@ -467,6 +508,17 @@ PROVIDERS: dict[str, dict] = {
         "models": [], "default": None, "cheap": None, "strong": None,
     },
 }
+
+
+def vision(provider: str, model: str | None) -> bool | None:
+    """Whether a text model can see pictures: False for Ollama and for a preset marked `vision: False`, True for any other
+    preset, None for a model not in the table (a live or custom one: tried, and NoVision ends the check if it cannot)."""
+    if provider == "ollama":
+        return False
+    for m in PROVIDERS.get(provider, {}).get("models", []):
+        if m["id"] == model:
+            return m.get("vision", True)
+    return None
 
 
 def model_price(provider: str, model: str) -> tuple | None:
