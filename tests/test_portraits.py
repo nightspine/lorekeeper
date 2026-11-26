@@ -27,14 +27,17 @@ class Fake:
     """Scripted replies: a string is a description's text, a dict the whole reply. The look-picking call answers from
     `looks` (a list of number lists, one per call; none picked when it runs out) and is logged in `picks`."""
 
-    def __init__(self, replies, looks=(), lost=()):
+    def __init__(self, replies, looks=(), lost=(), dead=()):
         self.replies, self.prompts, self.looks, self.picks = list(replies), [], list(looks), []
-        self.lost, self.confirms = list(lost), []
+        self.lost, self.confirms, self.dead, self.asked_dead = list(lost), [], list(dead), []
 
     def complete(self, system, prompt, schema, prefix=None):
         if schema is portraits.LOOKS_SCHEMA:
             self.picks.append(prompt)
             return {"looks": self.looks.pop(0) if self.looks else []}
+        if schema is portraits.OWN_DEATH_SCHEMA:     # by default: yes, it says so
+            self.asked_dead.append(prompt)
+            return {"dead": self.dead.pop(0) if self.dead else True}
         if schema is portraits.LOST_SCHEMA:          # by default every look shown is confirmed lost, by the number shown
             self.confirms.append(prompt)
             shown = [int(n) for n in re.findall(r"^(\d+)\. ", prompt.split("New description:")[1], re.M)]
@@ -522,3 +525,11 @@ def test_looks_over_the_cap_are_counted():
     model = Fake([many, many], looks=[list(range(1, 16))])
     stats = portraits.portraits([(d, book)], model, log=lambda m: None)
     assert stats["looks over the cap"] == 15 - portraits.MAX_LOOKS
+
+
+def test_a_death_the_first_sentence_gives_someone_else_need_not_be_kept():
+    book, d = _dead_mira()
+    model = Fake(["Mira is a young woman of the village and the mill who fears her rival wants her dead.",
+                  "Mira is a young woman of the village."], dead=[False])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and len(model.asked_dead) == 1 and "dropped: lost the change in standing" not in stats

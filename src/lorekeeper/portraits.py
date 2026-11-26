@@ -98,6 +98,28 @@ def opens_with_death(text: str) -> bool:
     return states_death(_first(text))
 
 
+# Whose death a first sentence states is grammar ("suspects Aaron wants him dead", "named among the dead"), so when code sees
+# a death word there a cheap call answers one yes or no, cached per text; nothing it writes is kept.
+OWN_DEATH = """Below is the first sentence of a description of {name} ({kind}) from a reader's companion to a novel. Does it say
+that {name} is dead (died, was killed, slain or destroyed)? Answer "dead": true only when it says {name} itself is dead;
+false when it speaks of others' deaths, of the dead or the undead as a group, of danger, wishes, fears or rumours.
+
+{sentence}"""
+OWN_DEATH_SCHEMA = {"type": "object", "required": ["dead"], "properties": {"dead": {"type": "boolean"}}}
+
+
+def own_death(model, name: str, kind: str, text: str) -> bool:
+    """Whether a description's first sentence says the entity itself is dead: code first (`opens_with_death`), then one
+    cheap yes or no. A failed call keeps the death (the rule as it was)."""
+    if not opens_with_death(text):
+        return False
+    try:
+        out = model.complete(LOOKS_SYSTEM, OWN_DEATH.format(name=name, kind=kind, sentence=_first(text)), OWN_DEATH_SCHEMA) or {}
+    except Exception:   # noqa: BLE001
+        return True
+    return out.get("dead") is not False
+
+
 def changes_standing(text: str) -> bool:
     """Whether a fact or turning point records a lasting change in standing (not a hedged "near death")."""
     return bool(STATUS.search(HEDGED.sub(" ", text)))
@@ -476,6 +498,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                     deaths.setdefault(x, []).append(seq_of[ev["from"]])
     last_text: dict[str, str] = {}
     look_cache: dict[str, list[str]] = {}    # description → its look pieces
+    dead_cache: dict[str, bool] = {}         # description → whether its first sentence says the entity is dead
     written: dict[str, list[dict]] = {}
     marks = sorted(set(marks))
     for step, mark in enumerate(marks, 1):
@@ -613,10 +636,13 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # One rewrite naming every fault, then the previous description stands.
             died = any(q <= mark for q in deaths.get(eid, ()))
             who, kind = name_of(e, names), KINDS.get(e["type"], e["type"])
+            if prev and died and prev not in dead_cache:
+                dead_cache[prev] = own_death(model, who, kind, prev)
+            opened_dead = bool(prev and died and dead_cache.get(prev))
             cleared = [False]
 
             def faults(t: str) -> tuple[bool, list[int]]:
-                standing_lost = bool(prev and died and opens_with_death(prev) and not _opens_with(_first(prev), t))
+                standing_lost = opened_dead and not _opens_with(_first(prev), t)
                 flagged = lost_looks(looks, t, changed.get(t, set())) if looks else []
                 gone = confirm_lost(model, who, kind, looks, t, flagged)
                 if flagged and not gone and not cleared[0]:
