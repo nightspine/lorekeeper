@@ -65,6 +65,13 @@ SAME_FIGURE = ("Reference picture 1 is this same figure earlier in the story: ke
                "where the prompt describes a change.")
 # sent with a scene's references when its figures are labelled ("figure A" in the prompt): after one line per reference
 FIGURE_NOTE = "Draw each labelled figure with the face, hair, colouring and build of their reference picture."
+# a scene's spare reference slots after its labelled figures (`Illustrator(place_refs=True)`, off by default until measured):
+# the picture of the place it happens at, then of the things it shows, each with what to take from it (never in the prompt)
+PLACE_NOTE = ("Reference picture {n} is the place where the scene happens: take from it only its architecture, materials and "
+              "light, never its framing, viewpoint or composition.")
+THING_NOTE = "Reference picture {n} is {name}, a thing in the scene: take from it only its design, never its size or placement."
+OTHER_STYLE = " It is drawn in another style: never take its drawing style, medium, line or colour treatment."
+SETTING_KINDS = ("place", "thing")     # the picture kinds a spare slot takes, in this order
 MAX_VERSIONS = 3       # portraits per entity per book (first one and look changes)
 MIN_GAP = 30           # blocks between two portraits of one entity
 MAIN_CAST_MIN = 3      # main cast: named by at least this many non-minor events of the book...
@@ -852,9 +859,11 @@ class Illustrator:
     def __init__(self, books: list[Book], text, image, style: str, *, portraits: str | bool | None = "main", quality: str = "standard",
                  cap: float | None = None, max_pictures: int | None = None, chapters: set[int] | None = None,
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
-                 pause: float = 1.0, cheap_text=None) -> None:
+                 pause: float = 1.0, cheap_text=None, place_refs: bool = False) -> None:
         """`text` writes the prompts; `cheap_text` (else `text`) makes the look sentences, the one choosing call the prompt
-        path may make (the Reader's sheet writes with a strong model and should pick with the cheap one)."""
+        path may make (the Reader's sheet writes with a strong model and should pick with the cheap one). `place_refs`: a
+        scene's reference slots its labelled figures leave free take the picture of the place it happens at, then of the
+        things it shows (an experiment, off until measured)."""
         self.books = [_B(i, b) for i, b in enumerate(books)]
         if len(self.books) > 1:
             ids = {(b.doc.get("series") or {}).get("id") for b in self.books}
@@ -863,6 +872,7 @@ class Illustrator:
                                  "`series.id` and its own `series.book`); draw standalone books one at a time")
         self.text, self.image, self.style = text, image, style
         self.cheap = cheap_text if cheap_text is not None else text
+        self.place_refs = place_refs
         self.pick_on_demand = True     # a run turns it off: its prompts read the picks it made while planning, never wait on one
         self.portraits = portrait_cast(portraits)      # "main", "all" or None
         self.quality, self.cap, self.max_pictures = quality, cap, max_pictures
@@ -1723,12 +1733,16 @@ class Illustrator:
         return LIKENESS.format(which=which, them=them)
 
     @staticmethod
-    def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None) -> str:
+    def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None,
+                       names: dict[str, str] | None = None) -> str:
         """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
         portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
         labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
         references drawn in another style, the likeness words (LIKENESS), numbered the same. A scene without labels (an older
-        prompt) gets the likeness words alone, as `likeness_note` words them. "" when there are no references."""
+        prompt) gets the likeness words alone, as `likeness_note` words them. A scene's place or thing picture in a spare slot
+        (no label, the record's kind "place" or "thing") says what to take from it (PLACE_NOTE, THING_NOTE with its name from
+        `names`, entity id to the name visible at the anchor) and, from another style's set, never its style. "" when there
+        are no references."""
         if not refs:
             return ""
         out = []
@@ -1738,9 +1752,17 @@ class Illustrator:
             out += [f"Reference picture {n} is figure {lab}." for n, lab in enumerate(labels, 1) if lab]
             if any(labels):
                 out.append(FIGURE_NOTE)
+            for n, ((_, r), lab) in enumerate(zip(refs, labels), 1):
+                if lab or r.get("kind") not in SETTING_KINDS:
+                    continue
+                name = (names or {}).get(r.get("target"), "") or "an object"
+                out.append((PLACE_NOTE.format(n=n) if r["kind"] == "place" else THING_NOTE.format(n=n, name=name))
+                           + (OTHER_STYLE if r.get("set") else ""))
         else:
             return Illustrator.likeness_note(refs)
-        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
+        # the likeness words are for figures: a place or thing in a spare slot has its own words above
+        other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set") and not (
+            labels is not None and n <= len(labels) and not labels[n - 1] and r.get("kind") in SETTING_KINDS)]
         if other:
             if len(other) == 1:
                 which, them = f"Reference picture {other[0]} is", "it"
@@ -1773,19 +1795,33 @@ class Illustrator:
         record carrying `set`). `finished` (else the job's): the earlier book keys the reader finished; a picture of one outside it, or
         drawn for fewer books, is never attached. `figures` (a scene's `Prompt.figures`, its labelled figures): the current
         picture of each labelled figure's entity in label order and no others, whatever `shows` says (a figure with none in
-        this set is left out; `draw` pairs pictures with labels by entity)."""
+        this set is left out; `draw` pairs pictures with labels by entity). With `place_refs`, the slots the labelled figures
+        leave free (up to MAX_REFERENCES) take the current picture of the place the scene happens at (its event's linked
+        setting, visible at the anchor), then those of the things among `shows`, after every figure."""
         bi = job.bi
         fin = self._finished(bi, finished if finished is not None else job.finished)
         pos = self._pos(bi, job.anchor)
         if job.kind in ("plate", "event"):
             if figures is not None:
-                return [hit for f in figures if (hit := self._picture(f["entity"], pos, finished=fin))]
+                hits = [hit for f in figures if (hit := self._picture(f["entity"], pos, finished=fin))]
+                return hits + (self._setting_refs(job, shows, fin, MAX_REFERENCES - len(hits)) if self.place_refs else [])
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
         if job.kind == "portrait":
             # the same figure earlier in the story, so a later portrait keeps the face (a look change: the one before it)
             prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
             return [prev] if prev else []
         return []
+
+    def _setting_refs(self, job: Job, shows: list[str], finished: frozenset[str] | None, room: int) -> list[tuple[int, dict]]:
+        """Up to `room` pictures for a scene's spare slots: its linked place's current picture (kind "place"), then each thing
+        among `shows` that is visible at the anchor (kind "thing"), from this set, else a likeness from another style's."""
+        if room <= 0:
+            return []
+        pos = self._pos(job.bi, job.anchor)
+        vis = {x["id"]: x for x in self.view(job.bi, job.anchor, finished)["entities"]}
+        want = [(pid, "place")] if (pid := self._setting_place(job, vis)) else []
+        want += [(x, "thing") for x in dict.fromkeys(shows) if x in vis and vis[x]["type"] == "object"]
+        return [hit for eid, kind in want if (hit := self._picture(eid, pos, (kind,), finished=finished))][:room]
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
                     finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
@@ -2424,8 +2460,23 @@ class Illustrator:
                     got.append((hit[0], hit[1], data))
                     labels.append(f["label"])
                 figures.append({"label": f["label"], "entity": f["entity"], "ref": self.ref_id(hit[1]) if data else None})
+            # then the place and things in the slots the figures leave free (`references` put them there with place_refs)
+            taken = {f["entity"] for f in pr.figures}
+            for j, r in pr.references:
+                if len(got) >= MAX_REFERENCES:
+                    break
+                if r.get("kind") in SETTING_KINDS and r.get("target") not in taken and (data := self.reference_bytes(j, r)):
+                    got.append((j, r, data))
+                    labels.append(None)
             return got, labels, figures
         return [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES], None, None
+
+    def _ref_names(self, job: Job, got: list[tuple[int, dict, bytes]]) -> dict[str, str]:
+        """The names, as the view at the picture's anchor gives them, of the things whose pictures fill a scene's spare slots."""
+        if not any(r.get("kind") == "thing" for _, r, _ in got):
+            return {}
+        vis = {x["id"]: x["name"] for x in self.view(job.bi, job.anchor, job.finished)["entities"]}
+        return {r["target"]: vis[r["target"]] for _, r, _ in got if r.get("kind") == "thing" and r.get("target") in vis}
 
     def _record(self, job: Job, pr: Prompt, pic: images.Drawn, sent: list[tuple[int, dict, bytes]] | None = None,
                 figures: list[dict] | None = None) -> dict:
@@ -2477,7 +2528,7 @@ class Illustrator:
         while True:
             got, labels, figures = self._attach(job, pr)
             refs = [(d, r["mime"]) for _, r, d in got]
-            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels)
+            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels, self._ref_names(job, got))
             why, amount = self._reserve(price)
             if why:
                 with self.lock:

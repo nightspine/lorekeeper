@@ -2554,3 +2554,92 @@ def test_the_place_rule_is_the_scene_writers_and_a_portrait_never_gets_a_setting
     for kind, target in (("portrait", "stranger"), ("place", "mill"), ("thing", "coin")):
         w, _, _ = scene_writer(d, bk, kind, target)
         assert "<setting_entry" not in w, kind
+
+
+def place_sink(d, *extra):
+    sink = labelled_sink(d)
+    for r in (pic("pmill001", "mill", "a0", kind="place"), pic("pcoin001", "coin", "a7", kind="thing")) + extra:
+        sink.m["pictures"].append(r)
+        sink.files[r["file"]] = r["id"].encode()
+    return sink
+
+
+def test_place_and_thing_pictures_are_no_reference_unless_the_flag_is_on():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    assert il.place_refs is False
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]
+    il.draw(job, pr)
+    assert im.calls[-1]["references"] == [b"mira", b"stranger"] and "place where the scene happens" not in im.calls[-1]["note"]
+
+
+def test_with_place_refs_the_place_then_the_things_take_the_slots_after_the_figures():
+    bk, d = place_doc()
+    sink = place_sink(d)
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), im, "ink", portraits="all", workers=1, log=lambda *_: None, pause=0,
+                         place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert pr.figures == [{"label": "A", "entity": "mira"}, {"label": "B", "entity": "stranger"}]      # figures unchanged
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert il.references(job, pr.shows, figures=pr.figures) == pr.references
+    rec = il.draw(job, pr)
+    call = im.calls[-1]
+    assert call["references"] == [b"mira", b"stranger", b"pmill001", b"pcoin001"]
+    assert call["note"] == " ".join([
+        "Reference picture 1 is figure A.", "Reference picture 2 is figure B.", art.FIGURE_NOTE,
+        art.PLACE_NOTE.format(n=3), art.THING_NOTE.format(n=4, name="the silver coin")])
+    assert "never its framing, viewpoint or composition" in call["note"] and "never its size or placement" in call["note"]
+    assert call["note"] not in call["prompt"]
+    assert rec["references"] == ["pmira001", "pstra001", "pmill001", "pcoin001"]
+    assert rec["figures"] == [{"label": "A", "entity": "mira", "ref": "pmira001"},
+                              {"label": "B", "entity": "stranger", "ref": "pstra001"}]
+    # a person's text that drops a label: that figure's picture goes, the place and thing stay after the others
+    im.calls.clear()
+    il.draw(job, pr, text="A grey stone mill yard at dusk. Figure B, a hooded traveller, waits at the gate by the wheel.")
+    assert im.calls[-1]["references"] == [b"stranger", b"pmill001", b"pcoin001"]
+    assert im.calls[-1]["note"].startswith("Reference picture 1 is figure B. ") and art.PLACE_NOTE.format(n=2) in im.calls[-1]["note"]
+
+
+def test_the_place_and_things_only_fill_slots_the_figures_leave(monkeypatch):
+    bk, d = place_doc()
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    monkeypatch.setattr(art, "MAX_REFERENCES", 3)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmill001"]          # the place before the thing
+    monkeypatch.setattr(art, "MAX_REFERENCES", 2)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001"]                       # no room: figures only
+
+
+def test_a_place_reference_is_never_past_the_anchor_and_one_in_another_style_keeps_only_what_it_should():
+    bk, d = place_doc()
+    sink = labelled_sink(d)
+    sink.m["pictures"].append(pic("pmill009", "mill", "a10", kind="place"))     # drawn from after the moment
+    sink.files["pmill009.png"] = b"late mill"
+    digital = likeness_set(d, pic("pmilldig", "mill", "a0", kind="place"))
+    im = Image()
+    il = art.Illustrator([art.Book(d, bk, sink, likeness={"digital-art": digital})], Text(), im, "ink", portraits="all",
+                         workers=1, log=lambda *_: None, pause=0, place_refs=True)
+    job = il.job("event", "e6", at="a11")
+    pr = il.make_prompt(job)
+    assert [r["id"] for _, r in pr.references] == ["pmira001", "pstra001", "pmilldig"]
+    il.draw(job, pr)
+    note = im.calls[-1]["note"]
+    assert art.PLACE_NOTE.format(n=3) + art.OTHER_STYLE in note and "likeness of the figure" not in note
+    # a place the reader has not reached is never a reference: its entity is not in the view
+    bk, d = place_doc()
+    for e in d["entities"]:
+        if e["id"] == "mill":
+            e["from"] = e["names"][0]["from"] = "a10"
+            e["facets"] = [portrait("mill", "a10", MILL_THEN, 1)]
+    il = art.Illustrator([art.Book(d, bk, place_sink(d))], Text(), Image(), "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, place_refs=True)
+    pr = il.make_prompt(il.job("event", "e6", at="a11"))
+    assert "pmill001" not in [r["id"] for _, r in pr.references]
