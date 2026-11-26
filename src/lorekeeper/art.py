@@ -2264,6 +2264,11 @@ class Illustrator:
             cited = ev["evidence"] if ev else [a for e2 in ch.get("events", [])[:6] for a in e2["evidence"]]
             passage, blocks = self.passage(bi, [b.seq_of[a] for a in cited if a in b.seq_of and b.seq_of[a] <= upto], upto)
             ids = [x for x in self._figures(job) if x in vis]
+            # a thing the moment's summary names as written, by a name it has at the anchor, is in the scene too: events
+            # seldom list things among their entities ("Darrow fights with his slingBlade")
+            if ev:
+                ids += [x["id"] for x in view["entities"] if x["type"] == "object" and x["id"] not in ids
+                        and self._names_in(self._visible_names(x), ev["summary"])]
             setting_id = self._setting_place(job, vis)
             # the figures (people and creatures) first, then the other entries the event names, then the figures' groups: an
             # entry past MAX_ENTRIES is cut, and the place the moment happens at has its own <setting_entry>

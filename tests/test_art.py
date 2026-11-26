@@ -2643,3 +2643,24 @@ def test_a_place_reference_is_never_past_the_anchor_and_one_in_another_style_kee
                          log=lambda *_: None, pause=0, place_refs=True)
     pr = il.make_prompt(il.job("event", "e6", at="a11"))
     assert "pmill001" not in [r["id"] for _, r in pr.references]
+
+
+def test_a_thing_the_moments_summary_names_is_in_the_scene_and_one_not_reached_is_not():
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][5]["summary"] = "Mira finds the silver coin the stranger left behind."
+    w, pr, _ = scene_writer(d, bk)
+    assert '<entry name="the silver coin" type="thing">' in w and "coin" in pr.shows and "crowned wolf" in w
+    d["events"][5]["summary"] = "Mira finds the silvery coins the stranger left behind."        # as written, or no match
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="the silver coin"' not in w
+    bk, d = place_doc()
+    d["events"][5]["entities"].remove("coin")
+    d["events"][4]["summary"] = "Gabriel rides in with the silver coin and news of a storm."     # e5 at a8: coin is from a7
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["from"] = e["names"][0]["from"] = "a9"
+            for f in e["facets"]:
+                f["from"] = f["evidence"][0] = "a9"
+    w, _, _ = scene_writer(d, bk, target="e5", at="a11")
+    assert '<entry name="the silver coin"' not in w and "crowned wolf" not in w          # not reached at a8
