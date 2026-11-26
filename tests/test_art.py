@@ -2612,8 +2612,15 @@ def test_preview_prompt_is_the_parts_a_real_prompt_has():
     assert art.preview_prompt(own) == f"{art.PREVIEW_SCENE} Pastel crayon on brown paper. {art.NO_TEXT}"
 
 
-def test_preview_scene_is_generic_and_has_no_style_words():
+def test_preview_scene_has_no_style_words_and_no_names():
+    # a real prompt names nobody and no illustrator; the only capitals are sentence openings
+    words = art.PREVIEW_SCENE.split()
+    for i, w in enumerate(words):
+        if w[:1].isupper():
+            assert i == 0 or words[i - 1].endswith((".", ";")), w
     scene = art.PREVIEW_SCENE.lower()
+    for word in ("alice", "hatter", "tenniel", "carroll", "disney", "wonderland"):
+        assert word not in scene, word
     for word in ("painting", "drawing", "illustration", "ink", "watercolour", "anime", "comic", "style", "text"):
         assert not re.search(rf"\b{word}\b", scene), word
     assert 30 <= len(art.PREVIEW_SCENE.split()) <= art.SCENE_WORDS[1]
