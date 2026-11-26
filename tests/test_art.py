@@ -3404,3 +3404,171 @@ def test_the_scene_writer_asks_for_no_more_than_two_hands_can_do_and_figures_kep
     il, t = fresh()
     il.make_prompt(il.job("event", "e5", at="a11"))
     assert t.systems[-1] == art.SCENE_WRITER
+
+
+# ---- drawing faults: the check, the fix and the automatic path --------------------------------
+
+class Seeing(Text):
+    """The scripted text model with eyes: the drawing-fault check answers `faults` (a list, or a function of the check's
+    prompt and the picture's bytes), or fails (`fail`), or cannot see pictures (`blind`). Each check costs `cost`."""
+
+    def __init__(self, faults=(), fail=False, blind=False, cost=0.001, **kw):
+        super().__init__(**kw)
+        self.faults, self.fail, self.blind, self.cost = faults, fail, blind, cost
+        self.looked = []
+        self.usage = llm.Usage()
+
+    def complete(self, system, prompt, schema, prefix=None, images=()):
+        if system != art.ANATOMY:
+            return super().complete(system, prompt, schema, prefix)
+        self.looked.append((prompt, [d for d, _ in images]))
+        if self.blind:
+            raise llm.NoVision("fake-picker cannot see pictures")
+        self.usage.cost_usd += self.cost
+        if self.fail:
+            raise RuntimeError("the picker is down")
+        got = self.faults(prompt, images[0][0]) if callable(self.faults) else self.faults
+        return {"faults": list(got)}
+
+
+HEAD = {"what": "the head is far too small for the body and robe", "where": "the woman at the gate"}
+
+
+def fixes(im):
+    return [c for c in im.calls if c["prompt"].startswith(art.FIX)]
+
+
+def test_a_clean_picture_is_checked_and_kept_as_it_is():
+    eye = Seeing()
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    assert rep.drawn == 2 and rep.checked == 2 and len(eye.looked) == 2 and not fixes(im)
+    assert all("check" not in p and "fixes" not in p for p in pics(sink))
+    assert [d for _, (d,) in eye.looked] == [sink.files[p["file"]] for p in pics(sink)]    # the picture itself was looked at
+    assert rep.text_costs["choosing calls"] == pytest.approx(0.002)           # counted as choosing calls
+    assert "checked: 2 pictures" in rep.lines()
+
+
+def test_a_faulty_picture_is_fixed_once_and_never_checked_again():
+    eye = Seeing(faults=[HEAD])
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    plates = pics(sink)
+    assert rep.drawn == 2 and rep.fixed == 2 and len(eye.looked) == 2 and len(fixes(im)) == 2 and len(im.calls) == 4
+    for p in plates:
+        first = next(c for c in im.calls if c["prompt"] == p["prompt"])
+        fix = next(c for c in fixes(im) if c["references"] == [eye.looked[plates.index(p)][1][0]])
+        assert first["references"] == [] and fix["shape"] == p["shape"] and fix["quality"] == p["quality"]
+        assert "- the woman at the gate: the head is far too small for the body and robe." in fix["prompt"]
+        assert fix["prompt"].endswith(art.NO_TEXT) and fix["note"] == ""
+        assert p["prompt"].startswith(SCENE) and p["check"] == {"faults": [HEAD], "fixed": True}   # the prompt is unchanged
+        assert [f["faults"] for f in p["fixes"]] == [[HEAD]] and p["fixes"][0]["cost"] == 0.05
+        first_bytes = eye.looked[plates.index(p)][1][0]
+        assert p["cost"] == pytest.approx(0.10) and sink.files[p["file"]] != first_bytes      # the fixed picture is filed
+        assert p["id"] == "p" + __import__("hashlib").sha256(sink.files[p["file"]]).hexdigest()[:8]
+    assert sink.m["cost"] == pytest.approx(0.20) and rep.cost == pytest.approx(0.20)
+    assert "  2 x fixed: drawing fault" in rep.lines()
+
+
+def test_a_failed_or_blind_check_leaves_the_picture_as_it_is():
+    eye = Seeing(faults=[HEAD], fail=True)
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    assert rep.drawn == 2 and not fixes(im) and rep.checked == 0 and rep.checks["not checked: check failed"] == 2
+    assert all("check" not in p for p in pics(sink))
+    logs = []
+    eye = Seeing(faults=[HEAD], blind=True)
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", portraits=False, workers=1,
+                         log=logs.append, pause=0, cheap_text=eye, check=True)
+    rep = il.run()
+    assert rep.drawn == 2 and len(eye.looked) == 1 and il.no_vision          # asked once, then no more checks this run
+    assert sum("not checked for drawing faults" in m for m in logs) == 1
+    assert rep.checks["not checked: the model cannot see pictures"] == 1 and len(il.image.calls) == 2
+
+
+def test_the_check_is_sent_the_prompt_so_a_maimed_figure_it_describes_is_no_fault():
+    maimed = SCENE.replace("A woman with a basket on her arm", "A one-armed woman with a basket on her back")
+    # the scripted picker only calls a missing arm a fault when the prompt does not describe it
+    eye = Seeing(faults=lambda prompt, data: [] if "one-armed" in prompt else [{"what": "an arm is missing", "where": "the woman"}])
+    il, rep, sink, t, im = run(text_=Text(scene=maimed), cheap_text=eye, check=True, portraits=False)
+    assert rep.drawn == 2 and not fixes(im)
+    prompt, _ = eye.looked[0]
+    assert "<prompt>A one-armed woman" in prompt and "what it asks for is not a fault" in prompt
+    assert "a figure the prompt says has lost an arm is drawn without it" in art.ANATOMY
+
+
+def test_the_cap_reserves_the_check_and_skips_a_fix_it_has_no_room_for(monkeypatch):
+    monkeypatch.setattr(art, "CHECK_FALLBACK", 0.002)
+    eye = Seeing(faults=[HEAD], cost=0.002)
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.07)
+    assert rep.drawn == 1 and not fixes(im) and rep.checks["skipped: fix, cap reached"] == 1
+    assert pics(sink)[0]["check"] == {"faults": [HEAD], "fixed": False} and "fixes" not in pics(sink)[0]
+    assert rep.cost + rep.text_cost <= 0.07 + 1e-9
+    # room for a fix: one picture, its check and its fix, then the cap stops the run
+    eye = Seeing(faults=[HEAD], cost=0.002)
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.11)
+    assert rep.drawn == 1 and rep.fixed == 1 and rep.cost + rep.text_cost <= 0.11 + 1e-9
+    # the budget counts the check and the expected fixes: 0.1 leaves room for one picture with them, not two
+    il, rep, sink, t, im = run(cheap_text=Seeing(), check=True, portraits=False, cap=0.10)
+    assert rep.drawn == 1
+
+
+def test_the_persons_own_text_is_checked_and_fixed_but_never_rewritten():
+    eye = Seeing(faults=[HEAD])
+    bk = book(("One", CH1), ("Two", CH2))
+    im = Image()
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), im, "ink", portraits=False, workers=1,
+                         log=lambda *_: None, pause=0, cheap_text=eye, check=True)
+    mine = "My own words: a woman with a basket waits at a mill gate in morning light, a miller in the doorway."
+    rec = il.draw(il.job("event", "e1", at="a11"), text=mine)
+    assert rec["prompt"] == mine and im.calls[0]["prompt"] == mine and f"<prompt>{mine}</prompt>" in eye.looked[0][0]
+    assert im.calls[1]["prompt"].startswith(art.FIX) and mine not in im.calls[1]["prompt"]
+    assert rec["check"]["fixed"] is True and len(im.calls) == 2
+
+
+def test_check_off_makes_no_check():
+    eye = Seeing(faults=[HEAD])
+    il, rep, sink, t, im = run(cheap_text=eye, portraits=False)
+    assert not eye.looked and not fixes(im) and "checked:" not in " ".join(rep.lines())
+
+
+def test_fix_on_demand_keeps_the_record_and_adds_to_its_fixes():
+    eye = Seeing()
+    il, rep, sink, t, im = run(cheap_text=eye, level="all")
+    scene = next(p for p in pics(sink) if p["kind"] == "event" and p.get("figures"))
+    found = il.check_picture(scene)
+    assert found.checked and found.faults == [] and eye.looked[-1][1] == [sink.files[scene["file"]]]
+    assert scene["prompt"] in eye.looked[-1][0]
+    new = il.fix(scene, [HEAD, {"what": "  an extra   hand  ", "where": ""}], note="the cloak should stay red")
+    call = im.calls[-1]
+    assert call["references"] == [sink.files[scene["file"]]] and call["shape"] == scene["shape"]
+    assert call["prompt"] == "\n".join([art.FIX, "- the woman at the gate: the head is far too small for the body and robe.",
+                                        "- an extra hand.", "Also: the cloak should stay red.", art.NO_TEXT])
+    assert new["id"] != scene["id"] and sink.files[new["file"]] and new["prompt"] == scene["prompt"]
+    for k in ("figures", "references", "sources", "from", "kind", "target", "inherits", "notes"):
+        assert new[k] == scene[k], k
+    assert new["fixes"][-1]["faults"][1] == {"what": "an extra hand", "where": ""}
+    assert new["fixes"][-1]["note"] == "the cloak should stay red" and new["cost"] == pytest.approx(scene["cost"] + 0.05)
+    assert any(r["id"] == scene["id"] for r in sink.m["pictures"]) and sink.m["pictures"][-1]["id"] == new["id"]
+    again = il.fix(new, [], note="the left eye open")                 # a second fix by hand adds to the list, newest last
+    assert [f["note"] for f in again["fixes"]] == ["the cloak should stay red", "the left eye open"]
+    with pytest.raises(ValueError):
+        il.fix(scene, [{"what": " ", "where": "x"}], note="  ")
+    im.refuse.append(lambda prompt, n: prompt.startswith(art.FIX))
+    with pytest.raises(images.ImageRefused):
+        il.fix(scene, [HEAD])
+
+
+def test_fault_lists_are_cleaned_and_priced():
+    raw = [{"what": "x" * 300, "where": "y" * 200}, {"what": "", "where": "z"}, "junk"] + [{"what": f"f{i}", "where": ""} for i in range(9)]
+    got = art.clean_faults(raw)
+    assert len(got) == art.MAX_FAULTS and len(got[0]["what"]) == art.FAULT_CHARS and len(got[0]["where"]) == art.WHERE_CHARS
+    assert art.check_price("claude", "claude-haiku-5-5") == pytest.approx(
+        (art.CHECK_TOKENS[0] * 0.10 + art.CHECK_TOKENS[1] * 0.50) / 1e6)
+    assert art.check_price("custom", "mine") is None
+
+
+def test_the_writers_ask_for_no_visible_writing_and_no_detail_too_small_once():
+    for w in art.WRITERS if hasattr(art, "WRITERS") else (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER):
+        assert w.count("Never ask for writing, words, letters, numbers or runes to be visible") == 1
+        assert w.count("say it is marked or inscribed, with no words shown") == 1
+        assert w.count("Leave out details too small to show at the picture's framing.") == 1
+    assert art.SCENE_WRITER.count("Two hands each") == 1
