@@ -4,7 +4,7 @@
 // Captions, prompts and notes are untrusted text: they only ever go through h(). Picture files are fetched only from
 // /api/art/... URLs built here from ids the server sent, never from a path or URL found in the manifest.
 import { api } from "./api.js";
-import { composePrompt, promptParts, restyle, sentenceFor, squash } from "./artprompt.js";
+import { choiceSentence, composePrompt, promptParts, restyle, squash } from "./artprompt.js";
 import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 import { galleryName, gallerySentence, loadStyles, savedStyle, styleRow } from "./styles.js";
@@ -36,6 +36,9 @@ export function styleLabel(slug, text = null) {
   const t = typeof text === "string" && text.trim() ? text.trim() : String(slug || "").replace(/-/g, " ");
   return t ? t[0].toUpperCase() + t.slice(1) : "Custom";
 }
+/** The picture sheet's mark for a style given as loose words (an art set's own unsaved custom style, an older default
+ *  typed as words): it can never be a slug, so a saved style whose slug is "custom" is still a saved style. */
+const LOOSE = "*words";
 /** The folder slug the server files a style's words under (art.style_slug), for telling one custom style from another. */
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 /** "about 3 cents", "about $1.75", "price unknown" (never a made-up number). */
@@ -552,7 +555,7 @@ export async function openPictureSheet(opts) {
   if (!STYLE_LABEL[st.style] && !savedStyle(st.style)) {
     st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
     st.slug = STYLE_LABEL[st.style] ? null : opts.style;   // the art set's own slug for its custom style
-    st.style = "custom";
+    st.style = LOOSE;
   }
   // The Settings model when it is the Settings provider's, else the provider's default (null: an older server picks).
   st.model = modelFor(st.provider, st.provider.id === d.provider ? d.model : null);
@@ -562,16 +565,16 @@ export async function openPictureSheet(opts) {
   st.quality = fitQuality(st.provider, st.model, st.quality);
   // The style as sent to the server (a known slug, or the person's words), and the folder slug pictures are filed under:
   // a known style is its own slug, a custom one only what the server answered (never a folder made from raw text here).
-  const styleText = () => (st.style === "custom" ? st.custom.trim() : st.style);
-  const folder = () => (st.style === "custom" ? st.slug : st.style);
+  const styleText = () => (st.style === LOOSE ? st.custom.trim() : st.style);
+  const folder = () => (st.style === LOOSE ? st.slug : st.style);
   /** The style sentence of the choice now: from the reply's table, else a saved style's own words (a custom style saved
    *  on this server that the prompt route did not list). */
-  const sentenceNow = (parts = st.parts) => sentenceFor(parts, st.style, st.custom) ?? (st.style !== "custom" ? gallerySentence(st.style) : null);
+  const sentenceNow = (parts = st.parts) => choiceSentence(parts, st.style === LOOSE ? null : st.style, st.custom, gallerySentence);
   /** The styles an art set has that are not saved here (its own custom style): still choosable, by their words. */
   const setStyles = () => {
     const out = (opts.styles || []).filter((x) => x && typeof x.slug === "string" && !STYLE_LABEL[x.slug] && !savedStyle(x.slug) && x.text)
       .map((x) => ({ slug: x.slug, name: styleLabel(x.slug, x.text), text: x.text }));
-    if (st.style === "custom" && st.custom.trim()) {
+    if (st.style === LOOSE && st.custom.trim()) {
       const slug = st.slug || slugOf(st.custom);
       if (!out.some((x) => x.slug === slug)) out.push({ slug, name: styleLabel(slug, st.custom), text: st.custom });
     }
@@ -669,7 +672,7 @@ export async function openPictureSheet(opts) {
       st.promptStyle = asked.style;
       st.promptFor = { kind: st.kind, target: st.target };
       clear(err);
-      if (st.style === "custom" && asked.style === styleText()) st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
+      if (st.style === LOOSE && asked.style === styleText()) st.slug = typeof r.slug === "string" && /^[a-z0-9-]{1,64}$/.test(r.slug) ? r.slug : null;
       st.busy = false; ctrl = null;
       paint();
     } catch (e) {
@@ -763,10 +766,10 @@ export async function openPictureSheet(opts) {
     textarea.value = st.prompt;
     // The chosen style as one row (its preview and name) that opens the gallery as a sheet over this one.
     const extra = setStyles();
-    const styleChoice = styleRow({ id: "art-style-row", extra, value: st.style === "custom" ? (st.slug || slugOf(st.custom)) : st.style,
+    const styleChoice = styleRow({ id: "art-style-row", extra, value: st.style === LOOSE ? (st.slug || slugOf(st.custom)) : st.style,
       onPick: (s) => {
         const legacy = extra.find((x) => x.slug === s.slug);
-        if (legacy) { if (st.style === "custom" && st.custom === legacy.text) return; st.style = "custom"; st.custom = legacy.text; st.slug = legacy.slug; }
+        if (legacy) { if (st.style === LOOSE && st.custom === legacy.text) return; st.style = LOOSE; st.custom = legacy.text; st.slug = legacy.slug; }
         else { if (st.style === s.slug) return; st.style = s.slug; st.custom = ""; st.slug = null; }
         applyStyle(); paint(); body.querySelector("#art-style-row")?.focus({ preventScroll: true });
       } }).el;
