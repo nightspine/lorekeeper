@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.27.1](https://github.com/nightspine/lorekeeper/compare/v0.27.0...v0.27.1) (2026-11-26)
+
+
+### Bug Fixes
+
+* phone Reader bars follow the app bar, and the last control clears the tab bar ([#154](https://github.com/nightspine/lorekeeper/issues/154)) ([8209778](https://github.com/nightspine/lorekeeper/commit/82097785ae1fb919a044582eeaf313c3cd72f959))
+
 ## [0.27.0](https://github.com/nightspine/lorekeeper/compare/v0.26.0...v0.27.0) (2026-11-26)
 
 
