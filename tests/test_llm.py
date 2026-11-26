@@ -391,3 +391,58 @@ def test_live_models_read_what_openai_compatible_lists_say(monkeypatch):
     reply([{"id": "gpt-5-mini"}, {"id": "gpt-image-2"}, {"id": "whisper-x"}])            # nothing said: only listed images out
     assert llm.live_models("openai", "k") == [{"id": "gpt-5-mini", "text": True}, {"id": "gpt-image-2", "text": False},
                                               {"id": "whisper-x", "text": True}]
+
+
+# ---- pictures as input (the drawing-fault check) ----------------------------------------------
+
+PIC = (b"\x89PNG fake picture", "image/png")
+
+
+def test_claude_sends_pictures_as_base64_blocks_before_the_prompt():
+    import base64
+    client, msgs = stub_client(tokens=(2600, 100))
+    c = llm.Claude(name="claude-haiku-5-5", client=client)
+    assert c.complete("sys", "look", SCHEMA, images=[PIC]) == {"a": []}
+    content = msgs.calls[0]["messages"][0]["content"]
+    assert content[0] == {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                      "data": base64.b64encode(PIC[0]).decode()}}
+    assert content[-1] == {"type": "text", "text": "look"} and len(content) == 2
+    assert c.usage.prompt_tokens == 2600        # the picture's tokens are input tokens, priced as such
+    assert c.usage.cost_usd == pytest.approx((2600 * 0.10 + 100 * 0.50) / 1e6)
+    client, msgs = stub_client()
+    llm.Claude(name="claude-haiku-5-5", client=client).complete("sys", "look", SCHEMA)
+    assert msgs.calls[0]["messages"][0]["content"] == [{"type": "text", "text": "look"}]   # no pictures: as before
+
+
+def test_openai_compatible_sends_pictures_as_data_url_parts(openai_server):
+    import base64
+    m = compat(openai_server)
+    assert m.complete("sys", "look", SCHEMA, images=[PIC]) == {"a": []}
+    user = FakeOpenAI.requests[0][1]["messages"][1]["content"]
+    assert user == [{"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(PIC[0]).decode()}},
+                    {"type": "text", "text": "look"}]
+    assert m.usage.prompt_tokens == 1000        # what the server counted, the picture included
+    m.complete("sys", "plain", SCHEMA)
+    assert FakeOpenAI.requests[1][1]["messages"][1]["content"] == "plain"
+
+
+def test_a_model_that_cannot_see_pictures_fails_cleanly(openai_server):
+    FakeOpenAI.script = [(400, {"error": {"message": "Invalid content type. image_url is only supported by certain models."}})]
+    m = compat(openai_server)
+    with pytest.raises(llm.NoVision):
+        m.complete("sys", "look", SCHEMA, images=[PIC])
+    assert len(FakeOpenAI.requests) == 1 and m._mode == "json_schema"    # not mistaken for a json_schema refusal
+    FakeOpenAI.script = [(400, {"error": {"message": "response_format json_schema is not supported"}}), ok()]
+    assert m.complete("sys", "plain", SCHEMA) == {"a": []}             # the same 400 rule as before without pictures
+    with pytest.raises(llm.NoVision):
+        llm.Ollama().complete("sys", "look", SCHEMA, images=[PIC])     # no request at all
+
+
+def test_vision_flags_in_the_registry():
+    for provider in ("claude", "openai", "gemini"):          # every cheap preset of these three sees pictures
+        for m in llm.PROVIDERS[provider]["models"]:
+            if m["tier"] == "cheap":
+                assert llm.vision(provider, m["id"]) is True, m["id"]
+    assert llm.vision("groq", "llama-3.1-8b-instant") is False and llm.vision("deepseek", "deepseek-chat") is False
+    assert llm.vision("custom", "my-model") is None and llm.vision("openai", "a-live-model") is None
+    assert llm.vision("ollama", "gemma4:12b-it-qat") is False
