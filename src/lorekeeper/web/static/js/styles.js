@@ -116,9 +116,10 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
     const pick = h("button.style-pick", { type: "button", "aria-pressed": String(on), on: { click: () => { chosen = s.slug; paint(); onPick?.(s); } } },
       previewOf(s), h("span.style-name", s.name));
     const expand = s.preview ? h("button.icon-btn.style-expand", { type: "button", "aria-label": `Show ${s.name} larger`, title: "Show larger",
-      on: { click: () => viewStyle(s) } }, icon("expand")) : null;
+      // Focused first: Safari does not focus a button on click, and the viewer gives focus back to it.
+      on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); viewStyle(s); } } }, icon("expand")) : null;
     const acts = manage && !s.builtin && !s.legacy ? h("div.style-acts",
-      h("button.linkish", { type: "button", "aria-label": `Edit ${s.name}`, on: { click: () => editStyle(s) } }, "Edit"),
+      h("button.linkish", { type: "button", "aria-label": `Edit ${s.name}`, on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); editStyle(s); } } }, "Edit"),
       h("button.linkish.danger", { type: "button", "aria-label": `Delete ${s.name}`, on: { click: () => removeStyle(s) } }, "Delete")) : null;
     return h(`div.style-card${on ? ".on" : ""}`, { dataset: { slug: s.slug } }, pick, expand,
       s.stale ? h("p.style-stale", "Preview is of the old wording") : null, acts);
@@ -128,7 +129,7 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
     const focusSlug = el.contains(document.activeElement) ? document.activeElement.closest(".style-card")?.dataset.slug : null;
     const focusNew = el.contains(document.activeElement) && document.activeElement.classList.contains("style-new");
     clear(el, [...list, ...extras()].map(card),
-      h("button.style-card.style-new", { type: "button", on: { click: () => newStyle() } },
+      h("button.style-card.style-new", { type: "button", on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); newStyle(); } } },
         h("span.style-prev.no-pic", icon("plus")), h("span.style-name", "New style")));
     if (focusSlug) el.querySelector(`.style-card[data-slug="${CSS.escape(focusSlug)}"] .style-pick`)?.focus({ preventScroll: true });
     else if (focusNew) el.querySelector(".style-new")?.focus({ preventScroll: true });
@@ -167,6 +168,7 @@ export function styleRow({ value = null, extra = [], onPick = null, disabled = f
     clear(btn, previewOf(s, "style-row-prev"), h("span.style-row-name", h("span.sr-only", "Style: "), s.name), h("span.style-row-change", "Change", icon("chevron")));
   }
   btn.addEventListener("click", () => {
+    btn.focus({ preventScroll: true });   // Safari does not focus a button on click; the sheet gives focus back to it
     let sh = null;
     const picker = stylePicker({ value: chosen, extra, onPick: (s) => { chosen = s.slug; paint(); onPick?.(s); sh?.close(true); } });
     sh = sheet({ title: "Styles", content: picker.el, className: "style-sheet", stack: true });

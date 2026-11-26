@@ -246,8 +246,8 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .style-form .field { display: grid; gap: 6px; }
 .style-form textarea { resize: vertical; min-height: 88px; }
 .style-form-prev { display: grid; gap: 6px; }
-.style-form-prev .style-prev { max-width: 320px; }
-.style-form-img { display: block; width: 100%; max-width: 320px; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 6px; }
+.style-form-prev .style-prev { max-width: 240px; }
+.style-form-img { display: block; width: 100%; max-width: 240px; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 6px; }
 .style-form-img:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
 .style-form-draw { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .style-form-price { font-size: var(--text-xs); }
