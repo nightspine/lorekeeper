@@ -1000,6 +1000,12 @@ class Illustrator:
             return self.portrait_image, self.portrait_provider, self.portrait_model
         return self.image, self.provider, self.model
 
+    def quality_for(self, kind: str) -> str:
+        """The quality level a picture of `kind` is drawn, priced and recorded at: the run's, else the nearest level its image
+        model offers (`llm.nearest_quality`), so a portrait model without the run's level still draws."""
+        _, provider, model = self.image_for(kind)
+        return llm.nearest_quality(provider, model, self.quality)
+
     def style_sentence(self, style_text: str | None = None) -> str:
         """The sentence a style adds after the writer's text: a listed style's own sentence, else the person's words (for
         `None`, the style of the set being drawn into). The prompt route hands these to the sheet so a style change is one
@@ -1290,8 +1296,9 @@ class Illustrator:
             if self.max_pictures is not None:
                 room = max(0, self.max_pictures - self.report.drawn - self.in_flight)
             # the cheaper of the two image models, so the room is never underestimated when they differ
-            prices = [p for p in (llm.image_price(self.provider, self.model, self.quality, "landscape"),
-                                  llm.image_price(self.portrait_provider, self.portrait_model, self.quality, "portrait")) if p]
+            prices = [p for p in (llm.image_price(self.provider, self.model, self.quality_for("plate"), "landscape"),
+                                  llm.image_price(self.portrait_provider, self.portrait_model, self.quality_for("portrait"),
+                                                  "portrait")) if p]
             price = min(prices) if prices else self.last_cost
             if self.cap is not None and price > 0:
                 n = max(0, int((self.cap - self._spent() - self.reserved) / price + 1e-9))
@@ -2472,7 +2479,7 @@ class Illustrator:
         if pr.partial:
             rec["partial"] = True
         _, provider, model = self.image_for(job.kind)
-        rec.update({"provider": provider, "model": pic.model or model, "quality": self.quality, "shape": pr.shape,
+        rec.update({"provider": provider, "model": pic.model or model, "quality": self.quality_for(job.kind), "shape": pr.shape,
                     "cost": round(pic.cost, 6), "created": _now()})
         if pr.written_by:
             rec["writer"] = dict(pr.written_by)
@@ -2489,7 +2496,7 @@ class Illustrator:
         soften = text is None if soften is None else soften
         if self._budget() == 0:            # the limit or the cap leaves no room: no prompt is written for it
             _im, prov, name = self.image_for(job.kind)
-            why, _ = self._reserve(llm.image_price(prov, name, self.quality, job.shape or SHAPE_OF[job.kind]) or 0.0)
+            why, _ = self._reserve(llm.image_price(prov, name, self.quality_for(job.kind), job.shape or SHAPE_OF[job.kind]) or 0.0)
             if why:
                 with self.lock:
                     self.report.skipped[f"stopped: {why}"] += 1
@@ -2505,7 +2512,8 @@ class Illustrator:
         if text:
             pr.text = text
         image, prov, name = self.image_for(job.kind)
-        price = llm.image_price(prov, name, self.quality, pr.shape) or 0.0
+        quality = self.quality_for(job.kind)
+        price = llm.image_price(prov, name, quality, pr.shape) or 0.0
         softened = retried = False
         while True:
             got, labels, figures = self._attach(job, pr)
@@ -2517,7 +2525,7 @@ class Illustrator:
                     self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
-                pic = image.draw(pr.text, shape=pr.shape, quality=self.quality, references=refs,
+                pic = image.draw(pr.text, shape=pr.shape, quality=quality, references=refs,
                                       **({"note": note} if note else {}))
             except images.ImageRefused as e:
                 self._release(amount)

@@ -39,7 +39,7 @@ from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, illustrator_models, is_story,
+from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, is_story,
                    text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
@@ -1362,8 +1362,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # The sheet's writer writes every kind, and the sheet already chose the image model for the kind it draws.
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0,
-                                  **illustrator_models(cheap_text=jobs.cheap_model(None) if text_needed else None,
-                                                       portrait_text=text_model, portrait_image=image)), image, slug_
+                                  cheap_text=jobs.cheap_model(None) if text_needed else None,
+                                  portrait_text=text_model, portrait_image=image), image, slug_
 
     def art_style(raw) -> str:
         style = " ".join(str(raw or "").split())
@@ -1721,11 +1721,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             (name if pprov == prov else llm.IMAGE_PROVIDERS[pprov]["default"])
         if not llm.image_model(pprov, pname):
             raise ArtRefusal(422, "bad-model", f"Unknown image model {pname!r} for portraits.")
-        each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(pprov, pname, quality, "portrait")]
+        # each at the level its model is drawn at: the one asked for, else the nearest it offers (`llm.nearest_quality`)
+        squal, pqual = llm.nearest_quality(prov, name, quality), llm.nearest_quality(pprov, pname, quality)
+        each = [llm.image_price(prov, name, squal, "landscape"), llm.image_price(pprov, pname, pqual, "portrait")]
         price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
-                "model": name, "portraitProvider": pprov, "portraitModel": pname, "level": level, "chapters": chapters_,
+                "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual, "level": level, "chapters": chapters_,
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
@@ -1803,10 +1805,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # sent); `writer` names the text model that wrote the prompt: the request's choice, else the strong tier
         chosen = text_choice_config(body.get("writer")) if body.get("writer") is not None else None
         wp, wn = (chosen["provider"], chosen["model"]) if chosen else (jobs.text_choice("strong") or (None, None))
+        if isinstance(getattr(pr, "written_by", None), dict):     # the model that did write it, when it has a name
+            wp, wn = pr.written_by.get("provider"), pr.written_by.get("model")
         out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
                "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
-               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "quality": llm.nearest_quality(prov, name, quality),
+               "price": llm.image_price(prov, name, llm.nearest_quality(prov, name, quality), pr.shape), "slug": slug_,
                "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
         return out
 
@@ -2026,7 +2031,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
-                                   version=rec.get("notes"), body=text_, figures=figures)
+                                   version=rec.get("notes"), body=text_, figures=figures,
+                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None)
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)

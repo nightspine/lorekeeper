@@ -617,6 +617,23 @@ def image_price(provider: str, model: str, quality: str = "standard", shape: str
     return price
 
 
+def nearest_quality(provider: str, model: str, quality: str) -> str:
+    """The quality level an image model is drawn at when `quality` is asked for: `quality` when the model offers it (or the
+    model is not in the table), else the nearest level it offers, a tie going up (draft becomes standard), and "best" the
+    highest it has."""
+    m = image_model(provider, model)
+    order = ("draft", "standard", "best")
+    if not m or quality not in order:
+        return quality
+    levels = [lv for lv in order if lv in (m.get("levels") or IMAGE_PROVIDERS[provider]["quality"])]
+    if not levels or quality in levels:
+        return quality
+    if quality == "best":
+        return levels[-1]
+    i = order.index(quality)
+    return min(levels, key=lambda lv: (abs(order.index(lv) - i), -order.index(lv)))
+
+
 def make_image(provider: str, model: str | None = None, api_key: str | None = None, base_url: str | None = None):
     """An image backend (`images.ImageModel`) by provider id: a key of IMAGE_PROVIDERS."""
     if provider == "claude":

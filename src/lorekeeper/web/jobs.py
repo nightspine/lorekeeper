@@ -9,7 +9,6 @@ resumed, because the generator checkpoints after every chunk.
 from __future__ import annotations
 
 import hashlib
-import inspect
 import json
 import queue
 import re
@@ -260,15 +259,6 @@ def text_choice_config(raw, what: str = "prompts") -> dict | None:
     if not isinstance(model, str) or not model.strip() or len(model) > 200:
         raise ValueError(f"Name the model for the {what}.")
     return {"provider": provider, "model": model.strip()}
-
-
-def illustrator_models(**models) -> dict:
-    """The model keywords `art.Illustrator` takes (`cheap_text`, `portrait_text`, `portrait_image`), keeping only those
-    this pipeline knows, so the web layer and the pipeline can land in either order."""
-    return {k: v for k, v in models.items() if k == "cheap_text" or k in _ILLUSTRATOR_TAKES}
-
-
-_ILLUSTRATOR_TAKES = set(inspect.signature(artmod.Illustrator.__init__).parameters)   # read once, before any test spies on it
 
 
 def chapter_choice(cfg: dict, plan: list[dict]) -> None:
@@ -690,9 +680,8 @@ class JobManager:
                 try:
                     il = box["il"] = artmod.Illustrator(books, text_model, image, style, portraits=cfg["portraits"],
                                                         scene_chapters=cfg["chapters"], quality=cfg["quality"],
-                                                        cap=cfg["cap"], log=log, progress=progress,
-                                                        **illustrator_models(cheap_text=picker, portrait_text=portrait_text,
-                                                                            portrait_image=portrait_image))
+                                                        cap=cfg["cap"], log=log, progress=progress, cheap_text=picker,
+                                                        portrait_text=portrait_text, portrait_image=portrait_image)
                     rep = il.run()
                 finally:
                     added = [r["id"] for r in (store.manifest(h, slug) or {}).get("pictures", []) if r.get("id") not in had]
@@ -704,7 +693,7 @@ class JobManager:
             self._emit(job, {"type": "log", "line": f"pictures: failed ({type(e).__name__}: {e}); the pictures drawn so far are kept"})
             return {"failed": str(e), "drawn": len(added)}
         out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
-               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, 
+               "text_cost_usd": round(rep.text_cost, 4), "text_costs": dict(rep.text_costs), "stopped": rep.stopped,
                "reasons": rep.reasons[:200], "style": slug, "textHash": h}
         self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
         for line in rep.lines()[:40]:

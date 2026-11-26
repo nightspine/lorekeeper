@@ -237,6 +237,7 @@ def test_the_build_ends_with_the_pictures_stage_after_the_arcs(tmp_path, monkeyp
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t, im = Text(), GeminiFake()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
@@ -872,6 +873,7 @@ def test_a_stop_in_the_pictures_stage_leaves_the_build_resumable(tmp_path, monke
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t = Text()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(art, "WORKERS", 1)
     builds = []
@@ -1492,6 +1494,7 @@ def test_a_builds_pictures_stage_honours_level_none(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t, im = Text(), GeminiFake()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
@@ -1703,17 +1706,11 @@ def models_env(env, monkeypatch, live=()):
     monkeypatch.setattr(llm, "make_image", lambda provider, model=None, api_key=None, base_url=None:
                         images_made.append((provider, model)) or env.image)
     seen = {}
-    real_models, real_init = jobs_mod.illustrator_models, art.Illustrator.__init__
-
-    def spy_models(**kw):
-        seen.update(kw)
-        return real_models(**kw)
+    real_init = art.Illustrator.__init__
 
     def spy_init(self, books, text_, image, *a, **kw):
-        seen.update(text=text_, image=image)
+        seen.update(kw, text=text_, image=image)
         real_init(self, books, text_, image, *a, **kw)
-    monkeypatch.setattr(jobs_mod, "illustrator_models", spy_models)
-    monkeypatch.setattr(web_app, "illustrator_models", spy_models)
     monkeypatch.setattr(art.Illustrator, "__init__", spy_init)
     return made, images_made, seen
 
@@ -1761,7 +1758,6 @@ def test_a_build_config_with_a_model_choice_is_checked_too(env, monkeypatch):
     assert r.status_code == 422 and "Claude" in r.text
 
 
-@pytest.mark.skipif("portrait_text" not in jobs_mod._ILLUSTRATOR_TAKES, reason="the pipeline's portrait writer is not in yet")
 def test_the_portrait_writer_writes_the_portraits_and_the_scene_writer_never_does(env, monkeypatch):
     made, _, _ = models_env(env, monkeypatch)
     run_set(env, level="none", portraits="all", writer={"provider": "gemini", "model": "gemini-2.5-flash-lite"},
@@ -1810,3 +1806,50 @@ def test_the_sheet_writes_with_the_chosen_writer_and_draws_portraits_with_the_po
                 {"provider": "ollama", "model": "gemma4:12b-it-qat"}, "gemini"):
         r = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "writer": bad})
         assert r.status_code == 422 and r.json()["code"] == "bad-writer", (bad, r.text)
+
+
+def test_a_same_prompt_redraw_keeps_who_wrote_the_prompt(env):
+    env.key()
+    ask = {"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."}
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json=ask).json()
+    slug, man = "ink", env.jobs.art_store.manifest(env.hash, "ink")
+    for r in man["pictures"]:
+        if r["id"] == rec["id"]:
+            r["writer"] = {"provider": "claude", "model": "claude-sonnet-5-5"}
+    env.jobs.art_store.save(env.hash, slug, man)
+    new = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).json()
+    assert new["writer"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
+
+
+def test_a_portrait_model_without_the_runs_quality_draws_at_its_nearest_level(env, monkeypatch):
+    lite = "gemini-3.1-flash-lite-image"                    # draft and standard only
+    assert llm.nearest_quality("gemini", lite, "best") == "standard"
+    assert llm.nearest_quality("gemini", lite, "draft") == "draft"
+    assert llm.nearest_quality("gemini", GEMINI, "best") == "best"
+    monkeypatch.setitem(llm.IMAGE_PROVIDERS["gemini"]["models"][0], "levels", ("standard", "best"))
+    assert llm.nearest_quality("gemini", GEMINI, "draft") == "standard"     # a tie goes up
+    monkeypatch.setitem(llm.IMAGE_PROVIDERS["gemini"]["models"][0], "levels", ("draft", "standard", "best"))
+    assert llm.nearest_quality("nobody", "x", "best") == "best"            # not in the table: as asked
+    q = f"/api/art/estimate?key={KEY}&style=ink&level=none&portraits=all&provider=gemini&model={GEMINI}&quality=best"
+    got = env.c.get(q + f"&portraitModel={lite}").json()
+    assert got["quality"] == "best" and got["portraitQuality"] == "standard"
+    assert got["price"] == pytest.approx(got["portraits"] * 0.0336, abs=1e-4)
+    models_env(env, monkeypatch)
+    made = {}
+
+    def make(provider, model=None, api_key=None, base_url=None):
+        im = made.setdefault(model, GeminiFake())
+        im.name = model or GEMINI
+        return im
+    monkeypatch.setattr(llm, "make_image", make)
+    job = run_set(env, level="none", portraits="all", quality="best", provider="gemini", portraitModel=lite)
+    assert job["status"] == "done", job
+    recs = pictures(env)
+    assert recs and all(r["quality"] == "standard" for r in recs)
+    assert made[lite].calls and {c["quality"] for c in made[lite].calls} == {"standard"}
+
+
+def test_the_run_report_splits_the_text_cost_by_responsibility(env, monkeypatch):
+    models_env(env, monkeypatch)
+    job = run_set(env)
+    assert isinstance(job["report"]["art"]["text_costs"], dict)
