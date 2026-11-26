@@ -59,7 +59,22 @@ def sets() -> dict:
     castle = [pic(6, "place", "castle-dracula", "toc06.para39"), pic(7, "place", "castle-dracula", "toc10.para41")]
     holmes1 = [pic(11, "portrait", "holmes", sc["anchors"][10]["id"]), pic(12, "portrait", "holmes", sc["anchors"][40]["id"])]
     holmes2 = [pic(13, "portrait", "holmes", sg["anchors"][3]["id"]), pic(14, "portrait", "holmes", sg["anchors"][-1]["id"])]
-    return {DRACULA: art_set(dr, vh + mina + castle), SCARLET: art_set(sc, holmes1), SIGN: art_set(sg, holmes2)}
+    # Lestrade: two portraits in The Sign of the Four, where (with his one detail there taken out, see `strip`) he has nothing else.
+    lestrade = [pic(15, "portrait", "lestrade", sg["anchors"][5]["id"]), pic(16, "portrait", "lestrade", sg["anchors"][8]["id"])]
+    return {DRACULA: art_set(dr, vh + mina + castle), SCARLET: art_set(sc, holmes1), SIGN: art_set(sg, holmes2 + lestrade)}
+
+
+def strip(node):
+    """The Sign of the Four as served, with Lestrade's details there taken out (his name stays), wherever the reply holds it."""
+    if isinstance(node, dict):
+        if node.get("id") == "lestrade" and isinstance(node.get("facets"), list):
+            node["facets"] = []
+        for v in node.values():
+            strip(v)
+    elif isinstance(node, list):
+        for v in node:
+            strip(v)
+    return node
 
 
 PROVIDERS = {"providers": [{"id": "gemini", "label": "Gemini", "ok": True, "configured": True,
@@ -94,6 +109,8 @@ def run(base: str, out: Path) -> int:
                     return r.fulfill(body=PNG, content_type="image/png")
                 if u.path == "/api/providers":
                     return r.fulfill(json=PROVIDERS)
+                if u.path == f"/api/library/{SIGN}":
+                    return r.fulfill(json=strip(r.fetch().json()))
                 if len(parts) == 5 and parts[1:3] == ["api", "library"] and parts[4] == "art":
                     got = art.get(parts[3])
                     return r.fulfill(json=got) if got else r.fulfill(status=404, json={"detail": "none"})
@@ -175,6 +192,14 @@ def run(base: str, out: Path) -> int:
             check(page.evaluate("document.documentElement.scrollWidth <= window.innerWidth"), f"{tag}: series, nothing scrolls sideways")
             sec.scroll_into_view_if_needed(); page.wait_for_timeout(400)
             page.screenshot(path=str(out / f"{tag}-series-entry.png"))
+            # A book whose only new things are portraits does not say "nothing new yet".
+            if width <= 1100:
+                page.keyboard.press("Escape"); page.wait_for_timeout(500)
+            open_entry("lestrade")
+            quiet = page.locator(f"{box} .arc-card.quiet").all_inner_texts()
+            check(page.locator(f"{box} .art-portraits .portrait-tile").count() == 2, f"{tag}: Lestrade's two portraits in this book")
+            check(any("2 portraits, shown above" in q for q in quiet) and not any("nothing new" in q for q in quiet),
+                  f"{tag}: the current book's card points to the portraits ({quiet})")
             ctx.close()
         browser.close()
     return 1 if fails else 0
