@@ -1661,10 +1661,12 @@ class Illustrator:
         return out
 
     @staticmethod
-    def _names_in(names: list[str], text: str) -> bool:
+    def _names_in(names: list[str], text: str, whole: bool = False) -> bool:
         """Whether a text uses one of a group's names, as written (case kept, so "golden" is not "Gold"), plural or as the
-        head of a hyphenated word ("Gold-class", "Golds")."""
-        return any(re.search(r"(?<![\w-])" + re.escape(n) + r"(?:s|es)?(?![\w])", text) for n in names)
+        head of a hyphenated word ("Gold-class", "Golds"). `whole` (a thing's name): never as part of a hyphenated word, since
+        "a slingBlade-shaped fire" is no slingBlade."""
+        end = r"(?![\w-])" if whole else r"(?![\w])"
+        return any(re.search(r"(?<![\w-])" + re.escape(n) + r"(?:s|es)?" + end, text) for n in names)
 
     # ---- notes, pictures and references (a later book reads the earlier books' manifests)
 
@@ -2268,7 +2270,7 @@ class Illustrator:
             # seldom list things among their entities ("Darrow fights with his slingBlade")
             if ev:
                 ids += [x["id"] for x in view["entities"] if x["type"] == "object" and x["id"] not in ids
-                        and self._names_in(self._visible_names(x), ev["summary"])]
+                        and self._names_in(self._visible_names(x), ev["summary"], whole=True)]
             setting_id = self._setting_place(job, vis)
             # the figures (people and creatures) first, then the other entries the event names, then the figures' groups: an
             # entry past MAX_ENTRIES is cut, and the place the moment happens at has its own <setting_entry>
