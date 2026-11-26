@@ -3,6 +3,8 @@
    in their type colour and open a small card. The book text may use a reading serif (system faces only: nothing is
    fetched), or Manrope from the Aa menu; everything around it stays in the app's type. */
 html.lk-reading { overflow-anchor: none; }   /* read.js keeps the place itself, the same way in every browser */
+/* Reading in Lorekeeper, the scroll is the position: the chapter steps (for books read elsewhere) step aside. */
+.reader.reading-tab .steps { display: none; }
 .read-view {
   --read-size: 18px; --read-lh: 1.65; --read-width: 38em; --read-f: 0;
   --font-book: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
