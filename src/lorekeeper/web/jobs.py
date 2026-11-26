@@ -631,11 +631,18 @@ class JobManager:
                 which = llm.PROVIDERS[cfg["provider"]]["label"] if cfg["provider"] else "Gemini or OpenAI"
                 self._emit(job, {"type": "log", "line": f"pictures: skipped (add a {which} key in Settings to draw them)"})
                 return {"skipped": "no image key"}
+            def instead(what: str, chosen: str, used) -> None:
+                """One log line when a chosen model is no longer available and another stands in for it."""
+                ref = artmod.model_ref(used)
+                by = f"{llm.PROVIDERS.get(ref['provider'], {}).get('label', ref['provider'])} {ref['model']}" if ref else "the scene model"
+                self._emit(job, {"type": "log", "line": f"pictures: {chosen} for the {what} is no longer set up; using {by} instead"})
+
             portrait_image = self.portrait_image_model(cfg, image)
-            if portrait_image is None:
-                which = llm.PROVIDERS.get(cfg["portraitProvider"] or cfg["provider"] or "", {}).get("label") or "Gemini or OpenAI"
-                self._emit(job, {"type": "log", "line": f"pictures: skipped (add a {which} key in Settings to draw the portraits)"})
-                return {"skipped": "no image key"}
+            if portrait_image is None:      # its key was removed after the run was accepted: the scenes' model draws them
+                pp = cfg["portraitProvider"] or cfg["provider"] or ""
+                instead("portraits", " ".join(x for x in (llm.PROVIDERS.get(pp, {}).get("label"), cfg["portraitModel"]) if x)
+                        or "The portrait model", image)
+                portrait_image = image
             jp = job.config.get("provider")
             # Each responsibility its own model (TEXT_ROLES): scene prompts and choosing calls default to the cheap tier,
             # portrait prompts to the strong one (portraits are few, and every scene draws on them as references).
@@ -643,8 +650,12 @@ class JobManager:
             if text_model is None:
                 self._emit(job, {"type": "log", "line": "pictures: skipped (add a cloud model key in Settings to write the prompts)"})
                 return {"skipped": "no cloud key"}
-            portrait_text = self.writer_model(cfg["portraitWriter"], "strong", jp) or text_model
-            picker = self.writer_model(cfg["picker"], "cheap", jp) or text_model
+            portrait_text = self.writer_model(cfg["portraitWriter"], "strong", jp)
+            picker = self.writer_model(cfg["picker"], "cheap", jp)
+            for key, what, got in (("portraitWriter", "portrait prompts", portrait_text), ("picker", "choosing calls", picker)):
+                if got is None and cfg[key]:    # chosen and accepted, then its key was removed before this stage
+                    instead(what, f"{llm.PROVIDERS[cfg[key]['provider']]['label']} {cfg[key]['model']}", text_model)
+            portrait_text, picker = portrait_text or text_model, picker or text_model
             if self.art_store is None:
                 raise RuntimeError("no art store")
             self._emit(job, {"type": "phase", "phase": "art"})
