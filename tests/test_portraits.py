@@ -27,13 +27,17 @@ class Fake:
     """Scripted replies: a string is a description's text, a dict the whole reply. The look-picking call answers from
     `looks` (a list of number lists, one per call; none picked when it runs out) and is logged in `picks`."""
 
-    def __init__(self, replies, looks=()):
+    def __init__(self, replies, looks=(), lost=()):
         self.replies, self.prompts, self.looks, self.picks = list(replies), [], list(looks), []
+        self.lost, self.confirms = list(lost), []
 
     def complete(self, system, prompt, schema, prefix=None):
         if schema is portraits.LOOKS_SCHEMA:
             self.picks.append(prompt)
             return {"looks": self.looks.pop(0) if self.looks else []}
+        if schema is portraits.LOST_SCHEMA:          # by default every flagged look is confirmed lost
+            self.confirms.append(prompt)
+            return {"lost": self.lost.pop(0) if self.lost else list(range(1, 20))}
         self.prompts.append(prompt)
         r = self.replies.pop(0)
         return r if isinstance(r, dict) else {"text": r}
@@ -366,7 +370,7 @@ def test_a_look_lost_twice_leaves_the_previous_description_standing():
     model = Fake([FIRST, "A woman of the mill who keeps a secret.", "A tall woman of the mill who keeps a secret."],
                  looks=[[1, 2]])
     stats = portraits.portraits([(d, book)], model, log=lambda m: None)
-    assert stats["dropped: lost a stated look"] == 1 and stats["portraits"] == 1
+    assert stats["dropped: lost a stated look"] == 1 and stats["portraits"] == 1 and len(model.confirms) == 2
     assert [f["text"] for f in d["entities"][0]["facets"] if f["kind"] == "profile"] == [FIRST]
 
 
@@ -408,3 +412,18 @@ def test_mentions_since_the_last_description_get_half_the_windows_and_the_budget
     assert all(f"paragraph {s}," in new for h in range(364, 400, 4) for s in (h - 1, h, h + 1))   # every recent window
     assert last == 397 and "paragraph 0," in new and "paragraph 200," not in new                    # then the oldest first
     assert [int(x.split(",")[0]) for x in new.split("paragraph ")[1:]] == sorted(int(x.split(",")[0]) for x in new.split("paragraph ")[1:])
+
+
+def test_a_look_kept_in_other_words_is_not_lost():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A long-legged woman of the mill with red hair who keeps a secret."], looks=[[1, 2]], lost=[[]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert len(model.prompts) == 2 and stats["kept: look in other words"] == 1 and stats["portraits"] == 2
+    assert "1. A tall woman" in model.confirms[0] and "red hair" not in model.confirms[0].split("New description:")[1].split("\n\n")[1]
+
+
+def test_the_confirming_call_can_only_clear_what_code_flagged():
+    model = Fake([], lost=[[2, 5]])
+    assert portraits.confirm_lost(model, "Mira", "a character", ["a", "b", "c"], "text", [1, 3]) == [3]
+    assert portraits.confirm_lost(model, "Mira", "a character", ["a"], "text", []) == [] and len(model.confirms) == 1

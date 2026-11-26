@@ -84,6 +84,18 @@ LOOKS_SYSTEM = "You sort the sentences of a reader's companion. Answer only with
 # The portrait's own reply when it is given looks to keep: the text, and the numbers of the looks the passages show changed.
 LOOK_SCHEMA = {"type": "object", "required": ["text"],
                "properties": {"text": {"type": "string"}, "changed": {"type": "array", "items": {"type": "integer"}}}}
+# Code reads words, so "bent-backed" for "stooped" looks like a loss: a loss code finds is confirmed by a second cheap call
+# that only picks numbers among the ones code flagged, so it can clear a flag and never add one.
+LOST = """Below is a new description of {name} ({kind}) from a reader's companion to a novel, and a numbered list of details an
+earlier description gave of how {name} looks. Which numbered details does the new description not carry at all? One it
+states in other words is carried, and so is one it states as changed. Return "lost": those numbers (an empty list when it
+carries every one).
+
+New description: {text}
+
+{looks}"""
+LOST_SCHEMA = {"type": "object", "required": ["lost"],
+               "properties": {"lost": {"type": "array", "items": {"type": "integer"}}}}
 _JOINS = re.compile(r"(?<=[.!?])\s+|\s*[,;:()\u2014\u2013]\s*|\s+(?:and|with|but|while|who|whose|which)\s+", re.IGNORECASE)
 MAX_LOOKS = 12       # pieces of the previous description kept as looks, at most
 
@@ -139,6 +151,31 @@ def lost_looks(looks: list[str], text: str, changed: set[int] = frozenset()) -> 
     return out
 
 
+def _numbers(out: dict, key: str, top: int) -> list[int]:
+    got = []
+    for x in out.get(key) or [] if isinstance(out.get(key), list) else []:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= top and n not in got:
+            got.append(n)
+    return got
+
+
+def confirm_lost(model, name: str, kind: str, looks: list[str], text: str, flagged: list[int]) -> list[int]:
+    """Of the looks code flagged as gone from `text`, those a cheap call confirms are not carried in any wording. A failed
+    call confirms them all."""
+    if not flagged:
+        return []
+    try:
+        out = model.complete(LOOKS_SYSTEM, LOST.format(name=name, kind=kind, text=text, looks="\n".join(
+            f"{n}. {looks[n - 1]}" for n in flagged)), LOST_SCHEMA) or {}
+    except Exception:   # noqa: BLE001 - no answer: what code found stands
+        return flagged
+    return [flagged[i - 1] for i in _numbers(out, "lost", len(flagged))]
+
+
 def look_pieces(model, name: str, kind: str, text: str) -> list[str]:
     """The pieces of a description that tell a lasting look, picked by one cheap call (numbers only)."""
     pieces = list(dict.fromkeys(_pieces(text)))
@@ -146,15 +183,7 @@ def look_pieces(model, name: str, kind: str, text: str) -> list[str]:
         return []
     out = model.complete(LOOKS_SYSTEM, LOOKS.format(name=name, kind=kind, pieces="\n".join(
         f"{n}. {x}" for n, x in enumerate(pieces, 1))), LOOKS_SCHEMA) or {}
-    got = []
-    for x in out.get("looks") or [] if isinstance(out.get("looks"), list) else []:
-        try:
-            n = int(x)
-        except (TypeError, ValueError):
-            continue
-        if 1 <= n <= len(pieces) and pieces[n - 1] not in got:
-            got.append(pieces[n - 1])
-    return got[:MAX_LOOKS]
+    return [pieces[n - 1] for n in _numbers(out, "looks", len(pieces))][:MAX_LOOKS]
 
 
 BUDGET = 24000       # characters of passage text per portrait
@@ -442,7 +471,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
                 looks=("\nHow earlier descriptions said " + name_of(e, names) + " looks, numbered:\n"
                        + "\n".join(f"{n}. {x}" for n, x in enumerate(looks, 1))
-                       + "\nKeep every one of these in your description, in your own words, unless these passages show it "
+                       + "\nKeep every one of these in your description (their words are yours to reuse) unless these passages show it "
                        "changed; then say how it is now and give its number in \"changed\". Shorten other things first.\n")
                 if looks else "",
                 passages=passages)
@@ -465,6 +494,7 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # portrait), not only on the sampled passages: Lucy's "engaged" sits in letters the sample can miss.
             source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"]
                                                     if f.get("kind") != "arc" and seq_of.get(f["from"], hi) <= mark])
+            stats_one: Counter = Counter()
             schema = LOOK_SCHEMA if looks else SCHEMA
             changed: dict[str, set[int]] = {}    # reply text → the looks it names as changed
 
@@ -511,21 +541,27 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # A rewrite keeps the look the previous description stated unless the passages show it changed: one rewrite naming
             # what went, else the previous description stands.
             if got[0] and looks:
-                gone = lost_looks(looks, got[0], changed.get(got[0], set()))
+                who, kind = name_of(e, names), KINDS.get(e["type"], e["type"])
+                flagged = lost_looks(looks, got[0], changed.get(got[0], set()))
+                gone = confirm_lost(model, who, kind, looks, got[0], flagged)
+                if flagged and not gone:
+                    stats_one["kept: look in other words"] += 1
                 if gone:
                     again = ask(prompt + f'\n\nYour first answer was: "{got[0]}"\nIt no longer says how {name_of(e, names)} '
-                                "looks: " + "; ".join(f'{n}. "{looks[n - 1]}"' for n in gone) + ". Keep each of these, in "
-                                "your own words, unless the passages show it changed; then say how it is now and give its "
-                                'number in "changed".')
+                                "looks: " + "; ".join(f'{n}. "{looks[n - 1]}"' for n in gone) + ". Keep each of these (their "
+                                "words are yours to reuse) unless the passages show it changed; then say how it is now and give "
+                                'its number in "changed".')
                     retry = _checked(str(again.get("text", "")), known, source, shingles)
-                    got = (retry[0], "rewritten: kept a stated look") \
-                        if retry[0] and not lost_looks(looks, retry[0], changed.get(retry[0], set())) \
-                        else (None, "lost a stated look")
-            return eid, seen, last, got
+                    left = confirm_lost(model, who, kind, looks, retry[0],
+                                        lost_looks(looks, retry[0], changed.get(retry[0], set()))) if retry[0] else gone
+                    got = (retry[0], "rewritten: kept a stated look") if retry[0] and not left \
+                        else (None, "lost a stated look: " + "; ".join(looks[n - 1] for n in left))
+            return eid, seen, last, got, stats_one
 
         with ThreadPoolExecutor(WORKERS) as pool:
             results = list(pool.map(one, due))
-        for eid, seen, last, (t, why) in results:
+        for eid, seen, last, (t, why), more in results:
+            stats += more
             if t is not None and why:
                 stats[why] += 1
             if t is None:
