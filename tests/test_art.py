@@ -3287,3 +3287,16 @@ def test_a_stored_later_reference_is_sent_again_only_within_the_readers_frontier
     first = next(it["id"] for it in il.items(0, "mira") if it["from"] == "a4")   # her profile, flagged as a look change
     il.man[0]["looks"] = {"mira": {"key": il._items_key(il.items(0, "mira")), "items": {first: {"look": True, "change": True}}}}
     assert not il.reference_reached(at("a11"), 0, mira)                 # a recorded look change between: never
+
+
+def test_the_scene_writer_asks_for_no_more_than_two_hands_can_do_and_figures_kept_apart():
+    for words in ("a figure holds or uses at most two things in all, one in each hand",
+                  "A thing they are not using is worn, stowed or set down, never held",
+                  "Say which hand does what only when the moment turns on it",
+                  "far enough apart to read as separate whole bodies, unless the moment is about their touching"):
+        assert words in art.SCENE_WRITER, words
+        assert words not in art.WRITER and words not in art.PORTRAIT_WRITER     # scenes only: places, things, portraits keep theirs
+    assert art.SCENE_WRITER.index(art.SCENE_HANDS) < art.SCENE_WRITER.index("- No text, letters, titles")
+    il, t = fresh()
+    il.make_prompt(il.job("event", "e5", at="a11"))
+    assert t.systems[-1] == art.SCENE_WRITER

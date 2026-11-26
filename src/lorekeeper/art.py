@@ -269,6 +269,13 @@ SCENE_WRITER = SCENE_WRITER.replace(_EARLIER_LINE, (
     _NO_TEXT_RULE, """- When there is a <setting_entry>, the moment happens there: draw the setting as it and its <earlier_look> describe it (what it is built of, its size and shape, how it is lit, its period), so the place looks the same in every picture of it. A thing that has an <entry> and is in the picture is drawn as its entry describes it. The passages win where they say more about this moment.
 """ + _NO_TEXT_RULE)
 assert SCENE_WRITER.count("<setting_entry>: the place") == 1
+# ...and no more for hands to do than two hands can: image models draw a third hand for a third thing held, and merge figures
+# that overlap into one body with too many arms
+SCENE_HANDS = """- Two hands each: a figure holds or uses at most two things in all, one in each hand. A thing they are not using is worn, stowed or set down, never held. Say which hand does what only when the moment turns on it.
+- Keep the figures far enough apart to read as separate whole bodies, unless the moment is about their touching; where two touch, say plainly where and how (a hand on the other's shoulder), and no more than that.
+"""
+SCENE_WRITER = SCENE_WRITER.replace(_NO_TEXT_RULE, SCENE_HANDS + _NO_TEXT_RULE)
+assert SCENE_WRITER.count("Two hands each") == 1
 
 
 def unframed(text: str) -> str:
