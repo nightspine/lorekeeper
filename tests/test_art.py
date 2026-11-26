@@ -3497,6 +3497,7 @@ def test_the_check_is_sent_the_prompt_so_a_maimed_figure_it_describes_is_no_faul
 
 def test_the_cap_reserves_the_check_and_skips_a_fix_it_has_no_room_for(monkeypatch):
     monkeypatch.setattr(art, "CHECK_FALLBACK", 0.002)
+    monkeypatch.setattr(art, "FIX_RATE", 0.25)
     eye = Seeing(faults=[HEAD], cost=0.002)
     il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.07)
     assert rep.drawn == 1 and not fixes(im) and rep.checks["skipped: fix, cap reached"] == 1

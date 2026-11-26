@@ -409,11 +409,13 @@ FIX = ("Correct the drawing faults listed below in this picture: redraw each par
        "the drawing style. The faults:")
 FIX_NOTE_CHARS = 300
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
-# MEASURE (bench/anatomy_check.py, see the handoff): the share of drawn pictures the check finds a fault in, which the cost cap
-# reserves a fix for, and the tokens of one check call (a picture and its prompt in, a short list out), which `check_price`
-# prices for the estimate and the cap reserves before each check.
-FIX_RATE = 0.25
-CHECK_TOKENS = (2600, 120)
+# Measured by bench/anatomy_check.py on 2026-11-26 (20 Gemini draft scenes of Dracula and Empire of the Vampire, Claude Haiku
+# 5.5 as the picker): it flagged 11 of 20 (0.55), the share of drawn pictures the cost cap reserves a fix for; one check took
+# 2,629 tokens in and 72 out on average, about $0.03 per 100 pictures. CHECK_TOKENS (with a margin) is what `check_price`
+# prices for the estimate and the cap reserves before each check. An edit kept the picture (9 of 10 by the picker) where a
+# redraw with the faults to avoid made another picture (4.4 of 10), at about the same rate of faults left, so a fix is an edit.
+FIX_RATE = 0.55
+CHECK_TOKENS = (2800, 120)
 CHECK_FALLBACK = 0.002     # USD for one check when the picker's price is unknown, so the cap still reserves something
 
 
