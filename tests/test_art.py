@@ -2654,6 +2654,15 @@ def test_a_thing_the_moments_summary_names_is_in_the_scene_and_one_not_reached_i
     d["events"][5]["summary"] = "Mira finds the silvery coins the stranger left behind."        # as written, or no match
     w, _, _ = scene_writer(d, bk)
     assert 'name="the silver coin"' not in w
+    d["events"][5]["summary"] = "Mira finds a silver coin-shaped stone the stranger left behind."   # a compound is no coin
+    for e in d["entities"]:
+        if e["id"] == "coin":
+            e["names"][0]["value"] = "coin"
+    w, _, _ = scene_writer(d, bk)
+    assert 'name="coin"' not in w and "crowned wolf" not in w
+    d["events"][5]["summary"] = "Mira finds the coin the stranger left behind."                  # the whole word is
+    w, _, _ = scene_writer(d, bk)
+    assert '<entry name="coin" type="thing">' in w
     bk, d = place_doc()
     d["events"][5]["entities"].remove("coin")
     d["events"][4]["summary"] = "Gabriel rides in with the silver coin and news of a storm."     # e5 at a8: coin is from a7
