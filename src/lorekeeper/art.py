@@ -1487,6 +1487,7 @@ class Illustrator:
         # (each is chosen going forward), and a first portrait at the first profile when the first look item comes later
         lim = self._limit(bi)
         upto = (lambda o: True) if lim is None else (lambda o: o <= lim)     # noqa: E731
+        profiled = any(p[0] == bi for p in self._profiles(bi, eid))      # the bulk rule: a profile in this book, anywhere
         mine = [p for p in self._profiles(bi, eid) if p[0] == bi and upto(p[1])]
         written = [p for p in mine if ".portrait-" in p[2]["id"]]
         # only a drawn picture counts: one planned in an earlier book and then skipped does not (nor one this run's reader
@@ -1504,7 +1505,7 @@ class Illustrator:
         changes = [(o, it["from"], it["text"]) for o, it in own if idx.get(it["id"], {}).get("change")]
         if before:
             start = None
-        elif mine:
+        elif profiled and (looks or mine):     # a look in reach starts it even when every profile is past `until`
             start = looks[0]["from"] if looks else (written or mine)[0][2]["from"]
         else:
             return []
