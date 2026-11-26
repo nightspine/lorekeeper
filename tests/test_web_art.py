@@ -1944,3 +1944,44 @@ def test_a_chosen_model_that_lost_its_key_is_replaced_with_a_log_line(env, monke
     assert any("Claude claude-sonnet-5-5 for the portrait prompts" in x and "Gemini gemini-2.5-flash-lite" in x for x in lines)
     assert any("Claude claude-haiku-5-5 for the choosing calls" in x for x in lines)
     assert any("OpenAI gpt-image-2 for the portraits" in x for x in lines)
+
+
+def test_an_early_scene_takes_a_later_portrait_only_once_the_reader_has_reached_it(env):
+    env.key()
+    mira = {"kind": "portrait", "target": "mira", "style": "ink"}       # her portrait shows from her profile, after e1
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=mira).json()
+    assert env.c.post(f"/api/library/{KEY}/art/draw", json={**mira, "prompt": got["prompt"]}).status_code == 200
+    e1 = next(e for e in env.doc["events"] if e["id"] == "e1")
+    ask = {"kind": "event", "target": "e1", "style": "ink"}
+    far = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": 1.0}).json()
+    assert [f["entity"] for f in far["figures"]] == ["mira"] and far["figures"][0]["ref"]
+    near = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": e1["from"]}).json()
+    assert near["figures"] == [] and near["references"] == []
+    # a draw at the early position never reuses the prompt written further on (the frontier is part of the cache key)
+    drawn = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "p": e1["from"], "prompt": far["prompt"]}).json()
+    assert drawn["references"] == []
+    drawn = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "p": 1.0, "prompt": far["prompt"]}).json()
+    assert drawn["references"] == [x["id"] for x in far["references"]] and len(drawn["references"]) == 1
+    assert drawn["figures"][0]["entity"] == "mira" and drawn["figures"][0]["ref"]
+
+
+def test_a_same_prompt_redraw_sends_a_later_reference_only_when_the_reader_has_reached_it(env):
+    env.key()
+    mira = {"kind": "portrait", "target": "mira", "style": "ink"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=mira).json()
+    port = env.c.post(f"/api/library/{KEY}/art/draw", json={**mira, "prompt": got["prompt"]}).json()
+    e1 = next(e for e in env.doc["events"] if e["id"] == "e1")
+    ask = {"kind": "event", "target": "e1", "style": "ink", "p": 1.0}
+    far = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": far["prompt"]}).json()
+    assert rec["references"] == [port["id"]]
+    early = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={"note": "", "p": e1["from"]})
+    assert early.status_code == 200, early.text
+    assert early.json()["references"] == [] and early.json()["figures"][0]["ref"] is None
+    assert env.image.calls[-1]["references"] == []
+    late = env.c.post(f"/api/library/{KEY}/art/{early.json()['id']}/redraw", json={"note": "", "p": 1.0}).json()
+    assert late["references"] == []           # the redraw before had none: a same prompt sends what the record holds
+    again = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": far["prompt"]}).json()
+    plain = env.c.post(f"/api/library/{KEY}/art/{again['id']}/redraw", json={"note": ""}).json()   # no p: as before
+    assert plain["references"] == [port["id"]] and plain["figures"][0]["ref"]
+    assert env.c.post(f"/api/library/{KEY}/art/{plain['id']}/redraw", json={"p": "nowhere"}).json()["code"] == "bad-position"

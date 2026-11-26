@@ -68,3 +68,25 @@ export function sheetWorld(world, gate = {}) {
   const shown = seen && own ? seen : null;
   return { world: shown, canEditWorld: shown ? shown.own === true : !own };
 }
+
+const REF_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const REF_URL = /^\/api\/art\/([A-Za-z0-9:_-]{1,128})\/([a-z0-9-]{1,64})\/([A-Za-z0-9_-]{1,64})$/;
+
+/**
+ * A figure's reference in any of the shapes it comes in, checked: a plain id of the picture's own set or `{ set, id }` (as a
+ * record stores it), the reference's URL (as the server answers `figures[].ref` on the prompt reply and on each picture), or
+ * `{ id, set?, url }`. Gives `{ id, set, url }` (`set` null for a plain id; a URL's set is the one it is served from; `url`
+ * null unless a URL was given, and then only an /api/art/<hash>/<set>/<id> address), or null for anything else.
+ */
+export function refParts(ref) {
+  if (typeof ref === "string") {
+    if (REF_ID.test(ref)) return { id: ref, set: null, url: null };
+    const m = REF_URL.exec(ref);
+    return m ? { id: m[3], set: m[2], url: ref } : null;
+  }
+  if (!ref || typeof ref !== "object") return null;
+  const m = typeof ref.url === "string" ? REF_URL.exec(ref.url) : null;
+  const id = typeof ref.id === "string" && REF_ID.test(ref.id) ? ref.id : (m ? m[3] : null);
+  if (!id) return null;
+  return { id, set: typeof ref.set === "string" ? ref.set : (m ? m[2] : null), url: m ? ref.url : null };
+}

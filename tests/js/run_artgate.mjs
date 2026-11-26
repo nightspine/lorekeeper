@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -118,6 +118,21 @@ test("the picture sheet's note: an inherited own note is shown once its book is 
     { ords: book2, position: 0, book: "b2", finished: ["b1"], earlier: ["b1"] });
   assert.equal(r.world?.text, "A walled city.");
   assert.equal(r.canEditWorld, false);
+});
+
+test("a figure's reference in every shape the server and the records give it", () => {
+  const url = "/api/art/6211b79150ee/ink/pddfbb1ef";
+  assert.deepEqual(refParts(url), { id: "pddfbb1ef", set: "ink", url });                  // the prompt reply and each picture
+  assert.deepEqual(refParts({ url }), { id: "pddfbb1ef", set: "ink", url });
+  assert.deepEqual(refParts({ id: "pddfbb1ef", set: "anime", url }), { id: "pddfbb1ef", set: "anime", url });
+  assert.deepEqual(refParts("pddfbb1ef"), { id: "pddfbb1ef", set: null, url: null });     // as a record stores it
+  assert.deepEqual(refParts({ set: "anime", id: "p1" }), { id: "p1", set: "anime", url: null });
+  for (const bad of [null, 3, "", "https://evil.example/api/art/h/ink/p1", "/api/art/h/ink/p1?x=1", "/api/art/h/../p1",
+    "/api/art/h/Ink/p1", "javascript:alert(1)", { url: "https://evil.example/x.png" }, { id: "../x" }, ["p1"]]) {
+    const got = refParts(bad);
+    assert.ok(got === null || (got.url === null && /^[A-Za-z0-9_-]{1,64}$/.test(got.id)), JSON.stringify(bad));
+  }
+  assert.equal(refParts({ id: "p1", url: "https://evil.example/x.png" }).url, null);       // an id kept, a foreign URL never
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

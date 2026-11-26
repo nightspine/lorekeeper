@@ -270,6 +270,26 @@ TASKS = {
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
+# The name check's second look: code catches every capitalised word the book has not used by the anchor (`_unknown_words`),
+# and this choosing call only says which of them the prompt uses as a name. Code drops or rewrites for those alone; a failed
+# call, or a reply with no answer for a word, keeps the word caught, as before the call existed.
+NAMES = """A text written for an image model was checked for names. The capitalised words below were caught because the book it
+illustrates has not used them by this point. Each is numbered, with the sentence of the text it stands in.
+For each word, say whether that sentence uses it as a name: the name of a particular person, creature, place, group,
+house, order, ship or thing, real or invented. The name of a place itself (a country, region, city, river, mountain or
+building), real or not, is a name. A name counts as a name even where it opens a sentence.
+A word is not a name when it is an ordinary describing word: a historical period or era, an art, architecture or dress
+style, a word for a real nationality, people or language, or an adjective made from a real country or region, used to say
+what someone or something is like; or an ordinary word that is capitalised only because it opens the sentence. A word made
+up for the story's own world is a name, even used as an adjective.
+When you are unsure, answer that it is a name.
+Return "words": one object {{"n", "name"}} for each number, "name" true when the sentence uses the word as a name.
+
+{words}"""
+NAMES_SCHEMA = {"type": "object", "required": ["words"], "properties": {"words": {"type": "array", "items": {
+    "type": "object", "required": ["n", "name"], "properties": {"n": {"type": "integer"}, "name": {"type": "boolean"}}}}}}
+MAX_FLAGGED = 20           # caught words asked about in one prompt's check; past it the text is dropped as before
+NAME_SENTENCE_CHARS = 300
 # A refused prompt, written again from the same material: by a run once on its own, on the Reader's sheet when the person asks
 # (`Illustrator.soften`). A quieter picture of the same moment, never a trick to slip past the image model's filter.
 SOFTEN = """\n\nThe image model refused to draw this prompt: "{text}"{reason}. Write a quieter composition of the same subject, one an
@@ -455,14 +475,15 @@ class Known:
 _OPENING = re.compile(r"(?:^|[.!?:;]\s+)[\"“‘'(]*([A-Z][a-z]{2,})\b")
 
 
-def _opening_unknown(text: str, known: Known, source: str = "") -> str:
+def _opening_unknown(text: str, known: Known, source: str = "", skip: frozenset[str] | set[str] = frozenset()) -> str:
     """The first word opening a sentence that is a name the book has not used by this point: capitalised, no ordinary
     sentence word (`common_words.SENTENCE_FIRST`), not among the known capitalised words, and never written by the book (or
-    the material) in any case by then ("Zephyr gathers over the mill", "Moonlight" passes when the book has "moonlight")."""
+    the material) in any case by then ("Zephyr gathers over the mill", "Moonlight" passes when the book has "moonlight").
+    `skip`: words passed over exactly as written, as `portraits._checked` takes them."""
     mat = None
     for m in _OPENING.finditer(text):
         w = m.group(1)
-        if w.lower() in SENTENCE_FIRST or w in known or w.removesuffix("s") in known or known.used(w):
+        if w in skip or w.lower() in SENTENCE_FIRST or w in known or w.removesuffix("s") in known or known.used(w):
             continue
         if mat is None:
             mat = set(re.findall(r"[a-z]+", source.lower()))
@@ -497,6 +518,9 @@ class Job:
     change: str = ""          # a portrait's reason for a new version (what changed), "" for the first
     shape: str = ""
     finished: frozenset[str] | None = None   # earlier book keys the reader finished (None: all, as a run)
+    # the reader's frontier (book index, anchor ordinal) when the job was asked for at a position (`Illustrator.job` with `at`);
+    # None: no reader (a run, whose limit is its `until`), or no position given
+    reach: tuple[int, int] | None = None
 
 
 @dataclass
@@ -960,6 +984,7 @@ class Illustrator:
         self._views: dict[tuple, dict] = {}
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._class_lock = threading.Lock()
+        self._name_answers: dict[tuple[str, str], bool] = {}   # (word caught, the excerpt of one use) -> used as a name (`_names_among`)
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
@@ -1124,11 +1149,12 @@ class Illustrator:
         if n > words[1]:
             return None, "too long"
         known = self._known(bi, anchor, finished)
-        got, why = P._checked(text, known, source or None, None, limit=words[1] * 9)
+        got, why, flagged = self._unknown_words(text, known, source, words[1] * 9)
         if got is None:
             return None, why
-        if w := _opening_unknown(got, known, source):
-            return None, f"unknown name: {w}"
+        # a caught word fails the text only when it is used as a name there (`_names_among`)
+        if flagged and (names := self._names_among(got, flagged)):
+            return None, f"unknown name: {names[0]}"
         if ABOUT_THE_TEXT.search(got):
             return None, "wording: about the passage"
         hit = self.names[bi].find(got)
@@ -1137,6 +1163,89 @@ class Illustrator:
         if check is not None and (why := check(got)):
             return None, why
         return got, ""
+
+    @staticmethod
+    def _unknown_words(text: str, known: Known, source: str, limit: int) -> tuple[str | None, str, list[str]]:
+        """`portraits._checked` and `_opening_unknown` as they are, but every word they catch as an unknown name is gathered
+        instead of failing the text: (text, "", the words caught, in the order caught) when nothing else fails, else (None,
+        the reason, []). Each caught word is passed over in the next pass exactly as written (`skip`), never added to the
+        known words, so its plural or stem ("Highlands" after "Highland") is still caught on its own."""
+        flagged: list[str] = []
+        for _ in range(MAX_FLAGGED + 1):
+            skip = frozenset(flagged)
+            got, why = P._checked(text, known, source or None, None, limit=limit, skip=skip)
+            if got is None:
+                if not why.startswith("unknown name: "):
+                    return None, why, []
+                w = why[len("unknown name: "):]
+            else:
+                w = _opening_unknown(got, known, source, skip)
+                if not w:
+                    return got, "", flagged
+            if w in flagged or len(flagged) >= MAX_FLAGGED:
+                return None, f"unknown name: {flagged[0] if flagged else w}", []
+            flagged.append(w)
+        return None, f"unknown name: {flagged[0]}", []
+
+    @staticmethod
+    def _excerpts(text: str, word: str) -> list[str]:
+        """Every place the word stands in the text (as a whole word, case as written), each as its sentence, or, for a
+        sentence over `NAME_SENTENCE_CHARS`, a window of whole words around that use: the chooser judges each use on its
+        own, and every excerpt holds the word."""
+        rx = re.compile(r"(?<![\w-])" + re.escape(word) + r"(?!\w)")
+        ends = [m.start() for m in re.finditer(r"(?<=[.!?])\s+", text)] + [len(text)]
+        starts = [0] + [m.end() for m in re.finditer(r"(?<=[.!?])\s+", text)]
+        out: list[str] = []
+        for m in rx.finditer(text):
+            k = bisect_left(ends, m.start())
+            lo, hi = starts[k], ends[k]
+            if hi - lo > NAME_SENTENCE_CHARS:
+                half = max(0, (NAME_SENTENCE_CHARS - len(word)) // 2)
+                lo, hi = max(lo, m.start() - half), min(hi, m.end() + half)
+                if lo > starts[k] and text[lo - 1] != " ":          # whole words: cut a word broken at either end
+                    lo = min(text.find(" ", lo) + 1 or m.start(), m.start())
+                if hi < ends[k] and text[hi] != " ":
+                    sp = text.rfind(" ", m.end(), hi)
+                    hi = sp if sp != -1 else m.end()
+            piece = text[lo:hi].strip()
+            assert rx.search(piece), (word, piece)
+            if piece not in out:
+                out.append(piece)
+        return out or [text[:NAME_SENTENCE_CHARS]]
+
+    def _names_among(self, text: str, flagged: list[str]) -> list[str]:
+        """Which of the words the name check caught the text uses as names (`NAMES`, one choosing call on the picker for the
+        uses not answered yet, each use of a word its own numbered item, cached per word and excerpt), in the order caught.
+        A word is a name when any of its uses is answered a name or has no answer: when the call fails or its reply holds
+        no usable answer nothing is cached, and the old rule holds (the first word caught is the one dropped). An answer
+        "name" is never replaced by a later "not a name" from another thread. A use answered "not a name" the first time
+        is counted ("kept: a flagged word was not a name")."""
+        items = [(w, x) for w in flagged for x in self._excerpts(text, w)]
+        with self.lock:
+            ask = list(dict.fromkeys(it for it in items if it not in self._name_answers))
+        if ask:
+            lines = "\n".join(f'{n}. {w}: "{s}"' for n, (w, s) in enumerate(ask, 1))
+            try:
+                out = self._complete(NAMES.format(words=lines), NAMES_SCHEMA)
+            except TextFailed:
+                out = {}
+            got: dict[int, bool] = {}
+            for x in out.get("words") if isinstance(out.get("words"), list) else ():
+                n = x.get("n") if isinstance(x, dict) else None
+                if (isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(ask)
+                        and isinstance(x.get("name"), bool)):
+                    got[n] = got.get(n, False) or x["name"]        # two answers for one number: a name if either says so
+        with self.lock:
+            if ask:
+                for n, it in enumerate(ask, 1):
+                    if n not in got:
+                        continue
+                    prev = self._name_answers.get(it)
+                    if prev is None and not got[n]:
+                        self.report.dropped["kept: a flagged word was not a name"] += 1
+                    self._name_answers[it] = bool(prev) or got[n]
+            named = {w for w, x in items if self._name_answers.get((w, x), True)}
+        return [w for w in flagged if w in named]
 
     @staticmethod
     def _label_check(given: set[str], keep: set[str] | None = None) -> Callable[[str], str]:
@@ -1884,6 +1993,88 @@ class Illustrator:
         return (self.latest_picture(eid, pos, kinds, strict, finished, current=True)
                 or self.likeness_picture(eid, pos, kinds, strict, finished))
 
+    def _reach(self, job: Job) -> int | None:
+        """The last anchor ordinal of the job's book a scene's figure picture may show from: the reader's frontier when the
+        job was asked for at a position (a later book's reader has reached the whole of it), else the run's `until` (None: no
+        limit, -1: nothing)."""
+        if job.reach is not None:
+            rbi, at = job.reach
+            return at if rbi == job.bi else (None if rbi > job.bi else -1)
+        return self._limit(job.bi)
+
+    def _changes_after(self, bi: int, eid: str, lo: int, hi: int) -> bool:
+        """Whether a cached look index of the entity (this set's, else a fresh one in another style's set of the edition;
+        never classified here) flags a look change of one of its items with `from` after ordinal `lo` and at or before `hi`.
+        No look index cached: False."""
+        b = self.books[bi]
+        items = self.items(bi, eid)
+        if not items:
+            return False
+        key = self._items_key(items)
+        got = self.man[bi]["looks"].get(eid)
+        if not (isinstance(got, dict) and got.get("key") == key):
+            got = next((lm["looks"][eid] for _, _, lm in self.like[bi] if isinstance((lm.get("looks") or {}).get(eid), dict)
+                        and lm["looks"][eid].get("key") == key), None)
+        if not got:
+            return False
+        flags = got.get("items") or {}
+        return any((flags.get(it["id"]) or {}).get("change") and lo < b.ord_of[it["from"]] <= hi for it in items)
+
+    def earliest_later_picture(self, eid: str, pos: tuple[int, int], upto: int | None, kinds=ENTITY_KINDS,
+                               finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, record) of the entity's earliest current picture after `pos` in the same book and at or before ordinal
+        `upto` (None: the end of the book): this set's (NOTE_VERSION, `_usable` under `finished`), else a likeness from
+        another style's set (never partial), the earliest anchor first (a likeness: then the most recently drawn). None when
+        the cached look index records a look change of the entity between `pos` and that picture: it shows a look the
+        scene's moment does not have yet."""
+        bi, at = pos
+        b = self.books[bi]
+        hi = len(b.anchors) - 1 if upto is None else upto
+        if hi <= at:
+            return None
+        best = None
+        for r in self.man[bi]["pictures"]:
+            o = b.ord_of.get(r["from"], -1)
+            if r["kind"] in kinds and r["target"] == eid and at < o <= hi and r.get("notes") == NOTE_VERSION \
+                    and self._usable(bi, bi, finished, r) and (best is None or o < best[0]):
+                best = (o, (bi, r), "")
+        if best is None:
+            for slug, _, lm in self.like[bi]:
+                for r in lm.get("pictures", []):
+                    o = b.ord_of.get(r.get("from"), -1)
+                    if r.get("kind") in kinds and r.get("target") == eid and at < o <= hi and r.get("notes") == NOTE_VERSION \
+                            and not r.get("partial") and r.get("file") and self._usable(bi, bi, finished, r):
+                        made = str(r.get("created") or "")
+                        if best is None or o < best[0] or (o == best[0] and made > best[2]):
+                            best = (o, (bi, {**r, "set": slug}), made)
+        if best is None:
+            return None
+        return None if self._changes_after(bi, eid, at, best[0]) else best[1]
+
+    def _figure_picture(self, eid: str, pos: tuple[int, int], upto: int | None,
+                        finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """A scene figure's reference: its picture at or before the scene (`_picture`), else its earliest one after it that
+        the reader has reached (`earliest_later_picture`, up to `upto`), so a figure drawn later still has a face from the
+        moment it appears."""
+        return self._picture(eid, pos, finished=finished) or (
+            None if upto == -1 else self.earliest_later_picture(eid, pos, upto, finished=finished))
+
+    def reference_reached(self, job: Job, j: int, rec: dict) -> bool:
+        """Whether a scene's stored reference (book j, its record) may be sent again for the job's reader (a same-prompt
+        redraw): one at or before the scene, as always; one after it only within the reader's frontier (`_reach`: `job.reach`,
+        else the run's limit) and with no look change of its entity recorded between the scene and it (`_changes_after`), as
+        `earliest_later_picture` chose it. Anything but a plate or event keeps its references."""
+        if job.kind not in ("plate", "event"):
+            return True
+        pos = self._pos(job.bi, job.anchor)
+        k = (j, self.books[j].ord_of.get(rec.get("from"), -1))
+        if k <= pos:
+            return True
+        upto = self._reach(job)
+        if j != job.bi or upto == -1 or (upto is not None and k[1] > upto):
+            return False
+        return not self._changes_after(j, str(rec.get("target")), pos[1], k[1])
+
     def reference_bytes(self, j: int, rec: dict) -> bytes | None:
         """A reference picture's file, from the set it belongs to (this book's, or the other style's set it came from)."""
         if rec.get("set"):
@@ -1977,9 +2168,10 @@ class Illustrator:
         pos = self._pos(bi, job.anchor)
         if job.kind in ("plate", "event"):
             if figures is not None:
-                hits = [hit for f in figures if (hit := self._picture(f["entity"], pos, finished=fin))]
+                upto = self._reach(job)
+                hits = [hit for f in figures if (hit := self._figure_picture(f["entity"], pos, upto, fin))]
                 return hits + (self._setting_refs(job, shows, fin, MAX_REFERENCES - len(hits)) if self.place_refs else [])
-            return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
+            return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin, self._reach(job))
         if job.kind == "portrait":
             # the same figure earlier in the story, so a later portrait keeps the face (a look change: the one before it)
             prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
@@ -1998,20 +2190,21 @@ class Illustrator:
         return [hit for eid, kind in want if (hit := self._picture(eid, pos, (kind,), finished=finished))][:room]
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
-                    finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
+                    finished: frozenset[str] | None = None, upto: int | None = -1) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES; a picture
         drawn from a note of an older version is no reference."""
-        return [h for _, h in self._pictured(ids, pos, view, finished)]
+        return [h for _, h in self._pictured(ids, pos, view, finished, upto)]
 
     def _pictured(self, ids: list[str], pos: tuple[int, int], view: dict,
-                  finished: frozenset[str] | None = None) -> list[tuple[str, tuple[int, dict]]]:
+                  finished: frozenset[str] | None = None, upto: int | None = -1) -> list[tuple[str, tuple[int, dict]]]:
         """(entity, its reference picture) for the entities among `ids` that have one, most tied in the view first, at most
-        MAX_REFERENCES: the figures a scene may label, in label order."""
+        MAX_REFERENCES: the figures a scene may label, in label order. A figure with no picture at or before `pos` takes its
+        earliest one after it up to ordinal `upto` (`_figure_picture`; -1: none after it, None: the end of the book)."""
         deg = Counter()
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._picture(eid, pos, finished=finished))]
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._figure_picture(eid, pos, upto, finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return found[:MAX_REFERENCES]
@@ -2256,6 +2449,8 @@ class Illustrator:
                     anchor = f["from"]
             job = Job(kind, target, bi, anchor, shape=shape)
         job.finished = fin if bi == at_bi else (None if fin is None else frozenset(fin))
+        if at is not None:
+            job.reach = (at_bi, self.books[at_bi].ord_of[at])
         if at is not None and bi == at_bi and b.ord_of[job.anchor] > b.ord_of[at]:
             raise NotVisible(target)
         return job
@@ -2461,7 +2656,7 @@ class Illustrator:
         label_of: dict[str, str] = {}
         if scene:
             pictured = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
-            found = self._pictured(pictured, self._pos(bi, anchor), view, fin)
+            found = self._pictured(pictured, self._pos(bi, anchor), view, fin, self._reach(job))
             label_of = {eid: LABELS[n] for n, (eid, _) in enumerate(found)}
         def entry(eid: str, tag: str, budget: int, look: bool, figure: str = "") -> None:
             """An entry of the scene (or the entity's group) in `tag`, with its look told earlier (`look`) within `budget`."""

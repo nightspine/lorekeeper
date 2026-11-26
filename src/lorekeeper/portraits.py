@@ -348,12 +348,14 @@ def name_of(e: dict, names: list[str]) -> str:
 
 
 def _checked(text: str, known: set[str], source: str | None = None,
-             book: set[tuple[str, ...]] | None = None, limit: int = MAX_CHARS) -> tuple[str | None, str]:
+             book: set[tuple[str, ...]] | None = None, limit: int = MAX_CHARS,
+             skip: frozenset[str] | set[str] = frozenset()) -> tuple[str | None, str]:
     """(text, "") if the portrait is usable, else (None, reason). `known` holds the capitalised
     words of the book up to this point; `source` is the passage text the portrait was written
     from, when given, and a tie word (wife, brother...) must occur in it; `book` is the book's
     word shingles, and a portrait may not copy more than 8 consecutive words of it (SPEC §6.3,
-    the rule the validator enforces)."""
+    the rule the validator enforces). `skip`: words the unknown-name check passes over, exactly as written (a picture
+    prompt's words already judged by `art.Illustrator._names_among`; "Highlands" is still caught after "Highland")."""
     text = " ".join(text.split())
     if not text:
         return None, "empty"
@@ -373,6 +375,8 @@ def _checked(text: str, known: set[str], source: str | None = None,
     # A proper name the book hasn't used yet came from the model's memory of it.
     for m in _PROPER.finditer(text):
         w = m.group(0)
+        if w in skip:
+            continue
         if w not in known and w + "s" not in known and w.removesuffix("s") not in known:
             return None, f"unknown name: {w}"
     return text, ""

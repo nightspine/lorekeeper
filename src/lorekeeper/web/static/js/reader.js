@@ -2096,6 +2096,8 @@ export function mountReader(root) {
         style: p.set.slug, styleText: p.set.manifest.style, canEdit, canRedraw: Boolean(s.art.hasProvider),
         newPrompt: canEdit && s.art.hasProvider && canRewrite(p.rec) ? (rec) => redrawPicture(rec, caption(p), p.set.slug) : null,
         promptHiddenUntil: (rec) => promptHiddenUntil(rec, p.book),
+        // the reader's frontier for a same-prompt redraw (a picture of the book being read; an earlier book's is whole)
+        position: p.set.key === s.key ? () => s.map.frontier(s.p) : null,
         figureName: figureName, figureThumb: (rec, f) => figureThumb(p, f) };
     });
   }
