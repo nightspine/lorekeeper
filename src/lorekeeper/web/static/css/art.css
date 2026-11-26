@@ -61,7 +61,17 @@
 .drawer .profile .art-face-btn { width: 140px; aspect-ratio: 3 / 4; }
 .art-earlier { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: var(--space-2); }
 .art-thumb.small { width: 56px; aspect-ratio: 3 / 4; }
-.art-thumb.card-face { width: 72px; aspect-ratio: 3 / 4; }
+/* "Portraits" under "Who they are": every visible version, oldest to newest, the current one marked; a row per book in a series. */
+.art-portraits { display: grid; gap: 8px; }
+.portrait-row { display: flex; flex-wrap: wrap; gap: 10px 8px; margin: 0; padding: 0; list-style: none; }
+.portrait-tile { display: grid; gap: 3px; width: 72px; align-content: start; }
+.art-thumb.portrait-thumb { width: 72px; aspect-ratio: 3 / 4; }
+.portrait-tile.current .art-thumb { border-color: var(--beacon); }
+.portrait-cap { font-size: 12px; line-height: 1.3; color: var(--text-2); overflow-wrap: anywhere; }
+.portrait-now { font-size: 12px; line-height: 1.3; color: var(--beacon); }
+.portrait-book { display: grid; gap: 6px; }
+.portrait-book + .portrait-book { margin-top: 4px; }
+.portrait-book-title { margin: 0; font-size: 12px; font-weight: 600; color: var(--text-2); }
 .d-art { margin: 0; }
 .g-face { margin-bottom: var(--space-3); }
 .g-face .art-face-btn { width: 120px; aspect-ratio: 3 / 4; }
@@ -158,6 +168,8 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .drawer .profile.has-face { grid-template-columns: 96px minmax(0, 1fr); column-gap: 12px; }
   .drawer .profile.has-face.face-only { grid-template-columns: 96px; }
   .drawer .profile .art-face-btn { width: 96px; }
+  .portrait-tile, .art-thumb.portrait-thumb { width: 76px; }
+  .art-thumb.portrait-thumb { min-height: 44px; }
   .art-draw, .art-error > .btn, .lb-choice .btn { min-height: 44px; }
   .tl-thumb { width: 56px; height: 56px; }
   .tl-draw { position: relative; }

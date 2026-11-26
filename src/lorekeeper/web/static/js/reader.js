@@ -955,6 +955,7 @@ export function mountReader(root) {
     // Names and thumbnails on an open lightbox or sheet follow the view now, not the one they were painted from.
     s.art.lightbox?.refresh?.();
     s.art.sheet?.sh?.refreshFigures?.();
+    s.art.sheet?.sh?.moved?.();   // "Through the book so far" counts again up to the position now
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1733,7 +1734,7 @@ export function mountReader(root) {
       // An entry with typed text is not rebuilt: its pictures (another style, or Pictures off) leave it instead, and stop
       // counting as something it shows, so the safety net never reads a picture change as the position moving back.
       const box = host();
-      box?.querySelectorAll(".art-face-btn, .art-earlier, .tl-thumb, .profile.face-only").forEach((n) => n.remove());
+      box?.querySelectorAll(".art-face-btn, .art-earlier, .art-portraits, .tl-thumb, .profile.face-only").forEach((n) => n.remove());
       box?.querySelectorAll(".has-face, .has-pic").forEach((n) => n.classList.remove("has-face", "has-pic"));
       s.drawerShows = (s.drawerShows || []).filter((x) => !x.startsWith("pic:"));
     }
@@ -1908,11 +1909,11 @@ export function mountReader(root) {
     return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
-  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null }) {
+  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
       reached: anchorReached,
@@ -1929,10 +1930,39 @@ export function mountReader(root) {
         if (slug && slug !== s.art.slug) { s.art.style = slug; setArtStyle(slug); }
         refreshPictures();
       },
-      onUndone: () => refreshPictures({ forget: s.key }) });
+      onUndone: () => refreshPictures({ forget: s.key }),
+      onStarted: (job) => watchArtRun(job, s.key) });
     const entry = { kind, target, opened, sh: null };
     s.art.sheet = entry;
     opened.then((sh) => { entry.sh = sh; sh?.closed?.then(() => { if (s.art.sheet === entry) s.art.sheet = null; }); });
+  }
+  /** A pictures run started from the sheet ("Through the book so far"): the art set is fetched again as its pictures come
+   *  in and once it ends, so the entry and the scene references pick the new portraits up. Gated as every picture is. */
+  function watchArtRun(job, key) {
+    if (!job?.id || preview) return;
+    const EVERY = 15000, MOST = 120000;
+    let seen = 0, wait = EVERY;
+    const tick = async () => {
+      if (disposed || s.key !== key) return;
+      let j = null;
+      try { j = await api.job(job.id); } catch (e) {
+        // The run was removed: nothing more will come. Anything else (a blip, a restart): ask again, less often each time.
+        if (e?.status === 404) { refreshPictures({ forget: key }); return; }
+        wait = Math.min(MOST, wait * 2);
+        setTimeout(tick, wait);
+        return;
+      }
+      wait = EVERY;
+      if (disposed || s.key !== key) return;
+      // A pictures job keeps its progress as `art: [done, total, cost]` (the Runs monitor reads it the same way).
+      const art = j?.progress?.art;
+      const done = Array.isArray(art) ? +art[0] || 0 : 0;
+      const live = ["queued", "running", "stopping"].includes(j?.status);
+      if (done !== seen || !live) refreshPictures({ forget: key });
+      seen = done;
+      if (live) setTimeout(tick, EVERY);
+    };
+    setTimeout(tick, EVERY);
   }
   /** Everything an open picture sheet names (the moment selected now and every moment listed) is still revealed. */
   function sheetVisible(entry) {
@@ -1986,12 +2016,67 @@ export function mountReader(root) {
     const cap = () => e.name;
     return pictureButton(pics, pics.length - 1, cap, "art-face-btn", { thumb: false });
   }
-  /** Earlier versions of the portrait as small thumbnails (each opens the lightbox on it). */
-  function earlierFaces(e, book = undefined) {
+  /** The chapter a picture of a book is from, worded as the Chapters tab words its row ("Chapter 3", or the title when it
+   *  carries its own number or kind); null when no listed row holds it. Rows are only chapters the position has reached,
+   *  and a visible picture's anchor is at or before the position, so nothing ahead is named. */
+  function pictureChapter(p) {
+    const memo = (s.art.chMemo && s.art.chMemo.view === s.view && s.art.chMemo.map === s.map) ? s.art.chMemo : (s.art.chMemo = { view: s.view, map: s.map, rows: new Map() });
+    const current = !s.series || p.book == null || p.book === s.book;
+    const k = current ? "\u0000now" : p.book;
+    if (!memo.rows.has(k)) {
+      const groups = chapterGroups();
+      memo.rows.set(k, current ? currentRows(groups.filter((g) => !s.series || !g.book || g.book === s.book)) : earlierRows(p.book, groups.filter((g) => g.book === p.book)));
+    }
+    const rows = memo.rows.get(k);
+    let i = -1;
+    if (current && s.map.exact) {
+      const at = s.map.anchorPos(p.rec.from);
+      const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+      i = ch ? rows.findIndex((r) => r.ch && r.ch.start === ch.start) : -1;
+    }
+    if (i < 0) {
+      // By the recaps' anchors: the first row whose recap is revealed at or after the picture.
+      const ords = ordsOf(docOf(p.book));
+      const recapOrd = new Map((docOf(p.book)?.recaps || []).filter((r) => r.scope === "chapter").map((r) => [r.id, ords.get(r.from) ?? Infinity]));
+      i = rows.findIndex((r) => r.group && Math.max(...r.group.ids.map((id) => recapOrd.get(id) ?? -1)) >= p.ord);
+    }
+    // No listed row (the chapter being read, without the book file): the chapter the picture was filed under. It holds the
+    // picture's own anchor, which is at or before the position.
+    const title = i >= 0 ? rows[i].title : typeof p.rec.chapter === "string" ? p.rec.chapter : null;
+    const full = tidyTitle(title) || null;
+    if (!full) return null;
+    const short = (i >= 0 ? chapterLabel(title, i + 1) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
+    return { short, full };
+  }
+  /** "Chapter XIV" out of "Chapter XIV Mina Harker's Journal", "Prologue" out of "Prologue: The Road". */
+  const SELF_NAMED_SHORT = /^\s*(chapter|part|book|section|letter)\s+[\p{L}\p{N}]+|^\s*(prologue|epilogue|preface|introduction|foreword|afterword)\b/iu;
+  /** "Portraits" under "Who they are": every visible picture of the entry, oldest to newest, each captioned with its
+   *  chapter, the latest marked as the current one; in a series one row per book. Only with two or more. */
+  function portraitsSection(e) {
     const pics = entityPictures(e.id);
-    const older = pics.slice(0, -1).filter((p) => book === undefined || p.book === book);
-    if (!older.length) return null;
-    return h("div.art-earlier", { role: "group", "aria-label": "Earlier pictures" }, older.map((p) => pictureButton(pics, pics.indexOf(p), () => e.name, "art-thumb.small")));
+    if (pics.length < 2) return null;
+    const order = s.series ? s.series.orders[s.order] || [] : [];
+    const caption = (p) => { const ch = pictureChapter(p); return ch ? `${e.name}, ${ch.full}` : e.name; };
+    const last = pics.at(-1);
+    const tile = (p) => {
+      const i = pics.indexOf(p);
+      const ch = pictureChapter(p);
+      const btn = pictureButton(pics, i, caption, "art-thumb.portrait-thumb");
+      if (!btn) return null;
+      if (p === last) btn.setAttribute("aria-current", "true");
+      return h(`li.portrait-tile${p === last ? ".current" : ""}`, btn,
+        ch ? h("span.portrait-cap", { title: ch.short !== ch.full ? ch.full : null }, ch.short) : null, p === last ? h("span.portrait-now", "Current") : null);
+    };
+    const row = (list, label) => h("ol.portrait-row", { "aria-label": label }, list.map(tile));
+    const books = s.series ? [...new Set(pics.map((p) => p.book))] : [null];
+    const label = ["person", "creature", "group"].includes(e.type) ? "Portraits" : "Pictures";
+    const groups = books.length > 1
+      ? books.map((b) => {
+        const full = s.series.books.find((x) => x.key === b)?.title || b;
+        return h("div.portrait-book", h("h3.portrait-book-title", `${bookNumber(b, order)}${full}`), row(pics.filter((p) => p.book === b), `${label} from ${full}`));
+      })
+      : [row(pics, label)];
+    return h("div.d-sec.art-portraits", { dataset: { jump: "portraits" } }, h("span.eyebrow", label, h("span.n", String(pics.length))), groups);
   }
 
   // ---- the entry: a pane beside the list, or the modal drawer ----------------------------------
@@ -2220,7 +2305,13 @@ export function mountReader(root) {
     const quiet = (text) => h("section.book-block.arc-card.current.quiet", { "aria-label": title }, h("div.book-head", h("span.book-title", { title }, text)));
     const nodes = [...real];
     if (asleep) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}: not in this book yet.`));
-    else if (inThisBook(e.id) && !real.some((c) => c.classList.contains("current"))) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}, so far: appears, nothing new yet.`));
+    else if (inThisBook(e.id) && !real.some((c) => c.classList.contains("current"))) {
+      // This book's pictures of the entry sit in "Portraits" above; a card with nothing else says so rather than "nothing new".
+      const n = entityPictures(e.id).filter((p) => p.book === s.book).length;
+      const noun = ["person", "creature", "group"].includes(e.type) ? "portrait" : "picture";
+      nodes.unshift(quiet(n ? `${bookNumber(s.book, order)}${title}, so far: ${n} ${noun}${n === 1 ? "" : "s"}, shown above.`
+        : `${bookNumber(s.book, order)}${title}, so far: appears, nothing new yet.`));
+    }
     return { nodes, count: real.length };
   }
   const bookNumber = (b, order) => (order.indexOf(b) >= 0 ? `Book ${order.indexOf(b) + 1}, ` : "");
@@ -2251,15 +2342,11 @@ export function mountReader(root) {
     const rows = bookEvents.map((ev) => eventRow(ev, { chips: false, book: false }));
     const eventsNode = bookEvents.length ? eventFold(rows, bookEvents.map((ev) => shownEv.has(ev)), `Show all ${bookEvents.length} events in ${full}`) : null;
 
-    // That book's pictures of the entry, every version, oldest first, except the one shown at the top of the entry.
-    const pics = entityPictures(e.id);
-    const mine = pics.filter((p) => p.book === b && p !== pics.at(-1));
-    const face = mine.length ? h("div.art-earlier.card-faces", { role: "group", "aria-label": `Pictures from ${full}` },
-      mine.map((p) => pictureButton(pics, pics.indexOf(p), () => `${e.name}, ${full}`, "art-thumb.card-face"))) : null;
-    if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length && !face) return null;
+    // The book's pictures of the entry are in "Portraits" under "Who they are", grouped by book there.
+    if (!arcNode && !desc && !bookEvents.length && !details.length && !impressions.length) return null;
     return h(`section.book-block.arc-card.${now ? "current" : "earlier"}`, { "aria-label": full, dataset: { book: b } },
       h("div.book-head", h("h3.book-title", { title: full }, heading)),
-      face, arcNode, desc, eventsNode,
+      arcNode, desc, eventsNode,
       details.length ? h("details.arc-details", h("summary", `${details.length} detail${details.length === 1 ? "" : "s"} from ${full}`), list(details)) : null,
       impressions.length ? h("details.history", h("summary", `Earlier impressions (${impressions.length})`), list(impressions)) : null);
   }
@@ -2306,19 +2393,19 @@ export function mountReader(root) {
       foldList(rels.map(relationRow), (nodes) => h("ul.relations", nodes), { show: 3, noun: "connections" }),
       currentFamilies().some((f) => f.members.includes(id)) ? h("p.d-kin", h("button.linkish", { type: "button", on: { click: () => showFamilyTree(id) } }, "See the family tree")) : null) : null;
     const face = s.edit ? null : entryFace(e);
-    const olderFaces = s.edit || cards ? null : earlierFaces(e);
+    const portraits = s.edit ? null : portraitsSection(e);
     const body = s.edit ? editor.drawerBody({ ...e, history: impressionsOf(e) }, rels, evs, { entityChip, bookLabel }) : h("div.body",
       e.profile ? h(`div.profile${face ? ".has-face" : ""}`, face, h("div.profile-text", h("span.eyebrow", e.type === "person" ? "Who they are" : e.type === "group" ? "Who they are" : "What it is"),
         h("p", e.profile.text, e.profile.basis === "inferred" ? h("span.inferred", "inferred") : null),
         cards && e.profile.book ? h("span.book-label", `From ${s.series.books.find((x) => x.key === e.profile.book)?.title || e.profile.book}`) : bookLabel(e.profile.book))) : face ? h("div.profile.has-face.face-only", face) : null,
+      portraits,
       inThisBookArc ? h("div.d-sec", { dataset: { jump: "arc" } }, arcParagraph(inThisBookArc.text, arcLabel(inThisBookArc))) : null,
       e.aliases.length ? h("div.d-sec", h("span.eyebrow", "Also known as"), h("p.aka-line", e.aliases.join(", "))) : null,
       cards ? h("div.d-sec", { dataset: { jump: "books" } }, h("span.eyebrow", "Through the series", cards.count ? h("span.n", String(cards.count)) : null),
         h("div.series-rail.newest.arc-rail", cards.nodes))
         : [h("div.d-sec", { dataset: { jump: "facts" } }, eyebrow("What you know so far", e.facets.length),
           e.facets.length ? facts(e.facets) : h("p.muted", "Nothing beyond the name yet.")),
-        impressionsOf(e).length || olderFaces ? h("details.history", h("summary", `Earlier impressions (${impressionsOf(e).length + (olderFaces ? olderFaces.childElementCount : 0)})`),
-          olderFaces, impressionsOf(e).length ? facts(impressionsOf(e), 6) : null) : null],
+        impressionsOf(e).length ? h("details.history", h("summary", `Earlier impressions (${impressionsOf(e).length})`), facts(impressionsOf(e), 6)) : null],
       connections,
       cards ? null : evs.length ? h("div.d-sec", { dataset: { jump: "events" } }, eyebrow("Appears in", evs.length),
         foldList(evs.map((ev) => eventRow(ev, { chips: false })), (nodes) => h("ol.timeline", nodes), { show: 3, fromEnd: true, noun: "events" })) : null,
@@ -2349,7 +2436,9 @@ export function mountReader(root) {
     // "Draw a picture", also when the entry has one (the new one is another version beside it; Redraw in the lightbox
     // replaces one). Only for an entry of the book being read (the prompt is written from this book's passages).
     const drawLink = !s.edit && s.art.canDraw && KIND_OF_TYPE[e.type] && (!s.series || inThisBook(e.id))
-      ? h("p.d-art", h("button.linkish.art-draw", { type: "button", on: { click: () => drawPicture({ kind: KIND_OF_TYPE[e.type], target: e.id, title: e.name }) } }, icon("sparkle"), "Draw a picture")) : null;
+      ? h("p.d-art", h("button.linkish.art-draw", { type: "button", on: { click: () => drawPicture({ kind: KIND_OF_TYPE[e.type], target: e.id, title: e.name,
+        // a person or creature can also be drawn through the book so far: every look up to the position, as a run
+        through: e.type === "person" || e.type === "creature" }) } }, icon("sparkle"), "Draw a picture")) : null;
     const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin, askLink)
       : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav, drawLink, askLink);
     const content = [h("header", title, closeBtn), body];
