@@ -28,7 +28,7 @@
   .input, .select, .textarea, .palette-input { font-size: 16px; }
 
   /* App bar: one compact row under the status bar (black-translucent, so the bar pads for the notch). */
-  .appbar { height: calc(48px + env(safe-area-inset-top, 0px)); padding: env(safe-area-inset-top, 0px) max(4px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
+  .appbar { height: var(--topbar-h); padding: env(safe-area-inset-top, 0px) max(4px, env(safe-area-inset-right, 0px)) 0 max(16px, env(safe-area-inset-left, 0px)); }
   .appbar-title { font-size: 17px; line-height: 48px; }
   .appbar-slot { display: flex; align-items: center; flex: none; }
   .appbar-slot:empty { display: none; }
@@ -42,6 +42,8 @@
   .tab-busy { top: 7px; }
   main { padding-left: max(var(--main-px), env(safe-area-inset-left, 0px)); padding-right: max(var(--main-px), env(safe-area-inset-right, 0px)); padding-bottom: calc(var(--tabbar-h) + 28px); }
   main[data-route="settings"], main[data-route="library"] { padding-left: 0; padding-right: 0; }
+  /* These pages zero main's padding in their own files (more specific than `main` above); keep the tab bar's clearance. */
+  main[data-route="reader"], main[data-route="preview"], main[data-route="library"], main[data-route="studio"] { padding-bottom: calc(var(--tabbar-h) + 28px); }
   .toasts { bottom: calc(var(--tabbar-h) + 12px); }
 
   /* Sheets and dialogs: the same bottom sheet look for the older modal dialogs. */

@@ -112,7 +112,7 @@
 /* Phone shell (640px and below): the rail gives way to a one-row app bar (page title, search, theme) and a bottom tab bar
    (Library, the open book, Runs, Settings). Content keeps clear of the tab bar and the home indicator. */
 @media (max-width: 640px) {
-  :root { --topbar-h: 52px; }   /* fallback; app.js sets the measured height */
+  :root { --topbar-h: 52px; }   /* fallback; phone.css sets the real value */
   .shell { display: block; background: none; }
   .app-rail { display: none; }
   .appbar { display: flex; position: sticky; top: 0; z-index: 40; align-items: center; gap: 0; height: 52px; padding: 0 4px 0 16px; background: var(--pane); border-bottom: 1px solid var(--line); }
