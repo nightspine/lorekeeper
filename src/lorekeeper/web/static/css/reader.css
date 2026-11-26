@@ -21,9 +21,10 @@ main[data-route="reader"], main[data-route="preview"] { padding: 0; }
   background: var(--pane); border-bottom: 1px solid var(--line);
 }
 .ruler .step-btns { display: inline-flex; gap: 2px; }
-.ruler .pct { flex: none; min-width: 40px; font: 750 15px/1 var(--font-ui); font-variant-numeric: lining-nums tabular-nums; }
+.ruler .pct { flex: none; width: 48px; font: 750 15px/1 var(--font-ui); font-variant-numeric: lining-nums tabular-nums; }
 .ruler .pct-unit { margin-left: 1px; font-size: var(--text-xs); font-weight: 600; color: var(--text-3); }
-.ruler .chap { flex: 0 1 auto; max-width: 26ch; min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* a fixed width: the track beside it must never move or resize while it is dragged or hovered (the chapter text changes) */
+.ruler .chap { flex: none; width: clamp(12ch, 16vw, 26ch); min-width: 0; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ruler .chap.hovering { color: var(--text-3); }
 .ruler .jump-group { display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .ruler .chsel { width: 190px; min-height: 30px; padding-top: 3px; padding-bottom: 3px; }
@@ -336,7 +337,7 @@ details.history .fact-list { padding-bottom: var(--space-3); }
      buttons, then the track full width with a thumb-sized hit area. */
   .ruler { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "pct chap act" "track track track"; align-items: center; gap: 0 10px;
     height: var(--ruler-h); min-height: 0; padding: 4px 6px 0 16px; }
-  .ruler .pct { grid-area: pct; font-size: 18px; min-width: 0; }
+  .ruler .pct { grid-area: pct; font-size: 18px; width: auto; min-width: 0; }
   .ruler .chap, .ruler .jump-group { display: none; }
   .jump-btn { grid-area: chap; display: flex; align-items: center; gap: 4px; justify-self: start; max-width: 100%; min-width: 0; height: 44px; padding: 0 4px; border: 0; background: none; color: var(--text-2); font: 500 var(--text-base)/1.2 var(--font-ui); text-align: left; cursor: pointer; }
   .jump-btn .jt-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -346,7 +347,8 @@ details.history .fact-list { padding-bottom: var(--space-3); }
   .ruler .step-btns { grid-area: act; order: 0; gap: 0; }
   .ruler .rbtn { width: 40px; height: 44px; }
   .track { grid-area: track; min-width: 0; height: 40px; flex: none; margin: 0 10px 0 0; }
-  .ruler input[type="range"].range { touch-action: pan-y; }
+  /* a drag that starts on the track stays a drag: a slightly diagonal swipe must not hand it to the page scroll */
+  .track, .ruler input[type="range"].range { touch-action: none; }
   .ruler-sub { padding: 6px 16px; gap: 2px 14px; }
   .pos-hint, .pos-setting { display: none; }
   /* The series is one line; the books and the reading order are in its sheet. */

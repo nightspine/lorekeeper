@@ -135,9 +135,11 @@ class Text:
     `look(text)` and `change(text)` say how it classifies an entity's item (default: the FAKE_ regexes above); `scene` is the
     writer's text (a string, or a function of the writer's prompt), `shows` the figures it says it drew."""
 
-    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None, picks=None):
+    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None, picks=None, names=None):
         # `picks`: how it picks look sentences (a function of the sentence; default `look`), False: that call fails
-        self.scene, self.shows, self.screen, self.picks = scene, shows, screen, picks
+        # `names`: whether a word the name check caught is used as a name (a function of word and sentence; default: every
+        # one is, the old rule), False: that call fails
+        self.scene, self.shows, self.screen, self.picks, self.names = scene, shows, screen, picks, names
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
         self.change = change or (lambda t: (m.group(0) if (m := FAKE_CHANGE.search(t)) else ""))
         self.prompts, self.systems = [], []
@@ -160,6 +162,11 @@ class Text:
             ns = [int(n) for n in re.findall(r"^(\d+)\. ", prompt, re.M)]
             keep = self.screen(ns, prompt) if self.screen else ns
             return {"moments": keep}
+        if "was checked for names" in prompt:
+            if self.names is False:
+                raise RuntimeError("the cheap model is down")
+            lines = re.findall(r'^(\d+)\. (\w+): "(.*)"$', prompt.split("\n\n", 1)[1], re.M)
+            return {"words": [{"n": int(n), "name": bool(self.names(w, s)) if self.names else True} for n, w, s in lines]}
         if "Which sentences tell how" in prompt:
             if self.picks is False:
                 raise RuntimeError("the cheap model is down")
@@ -1706,6 +1713,171 @@ def test_a_word_the_book_has_not_used_is_caught_when_it_opens_a_sentence():
     flour = "Sacks of flour lie in the cart. " + SCENE      # an ordinary word the book uses, capitalised only by the sentence
     il, t = fresh(text_=Text(scene=lambda p: flour))
     assert il.make_prompt(il.job("event", "e2", at="a5")).body.startswith("Sacks of flour") and len(writer_calls(t)) == 1
+
+
+# Words the name check catches that are not names: a period, styles, nationalities, a region used as an adjective, and an
+# ordinary word opening a sentence (the drops measured on Dracula); the scripted chooser's own idea of a name is `NAMES_ARE`.
+PERIOD = ("A woman in Victorian dress stands under Gothic arches beside an English coach, a Transylvanian road behind her and "
+          "an Eastern European inn on the hill. Lamplit windows glow along the street.")
+NAMES_ARE = {"Vlad", "Lucy"}
+
+
+def chooser(**kw):
+    return Text(names=lambda w, s: w in NAMES_ARE, **kw)
+
+
+def name_calls(t):
+    return [p for p in t.prompts if "was checked for names" in p]
+
+
+def test_a_caught_word_that_is_not_a_name_is_let_through_after_one_choosing_call():
+    il, t = fresh(text_=chooser(scene=lambda p: f"{SCENE} {PERIOD}"))
+    pr = il.make_prompt(il.job("event", "e2", at="a5"))
+    assert PERIOD in pr.body and len(writer_calls(t)) == 1
+    [ask] = name_calls(t)
+    for w in ("Victorian", "Gothic", "English", "Transylvanian", "Eastern", "European", "Lamplit"):
+        assert f'. {w}: "' in ask
+    assert '. Lamplit: "Lamplit windows glow along the street."' in ask        # each word with the sentence it stands in
+    assert il.report.dropped["kept: a flagged word was not a name"] == 7
+    # the chooser is told that any name in a story counts, and to call it a name when unsure
+    assert "real or invented" in art.NAMES and "When you are unsure, answer that it is a name." in art.NAMES
+    assert "The name of a place itself" in art.NAMES and "made\nup for the story's own world is a name" in art.NAMES
+
+
+def test_a_caught_word_used_as_a_name_is_dropped_as_before():
+    for name in ("Vlad", "Lucy"):
+        il, t = fresh(text_=chooser(scene=lambda p, n=name: f"{SCENE} {PERIOD} A man called {n} waits by the coach."))
+        with pytest.raises(art.Dropped, match="unknown name") as e:
+            il.make_prompt(il.job("event", "e2", at="a5"))
+        assert e.value.detail == f"unknown name: {name}"               # the confirmed name, not the first word caught
+        assert f"It was rejected: unknown name: {name}" in writer_calls(t)[1]
+        assert e.value.say == "a name the book has not used by this point"
+
+
+def test_the_old_rule_holds_when_the_choosing_call_fails_or_says_nothing():
+    il, t = fresh(text_=Text(scene=lambda p: f"{SCENE} {PERIOD}", names=False))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Victorian" and not il.report.dropped["kept: a flagged word was not a name"]
+
+    class Silent(Text):
+        def complete(self, system, prompt, schema, prefix=None):
+            if "was checked for names" in prompt:
+                self.prompts.append(prompt)
+                self.systems.append(system)
+                return self.reply(prompt) if callable(self.reply) else self.reply
+            return super().complete(system, prompt, schema, prefix)
+
+    for reply in ({}, {"words": []}, {"words": "none"}, {"words": [{"n": 99, "name": False}, {"n": 1, "name": "no"}]}):
+        t = Silent(scene=lambda p: f"{SCENE} {PERIOD}")
+        t.reply = reply
+        il, _ = fresh(text_=t)
+        with pytest.raises(art.Dropped, match="unknown name"):
+            il.make_prompt(il.job("event", "e2", at="a5"))
+        assert len(name_calls(t)) == 2 and not il._name_answers           # nothing cached, so the rewrite asks again
+    # a word left unanswered counts as a name
+    t = Silent(scene=lambda p: f"{SCENE} {PERIOD}")
+    t.reply = lambda p: {"words": [{"n": int(n), "name": False}                # every word answered but Lamplit
+                                   for n, w in re.findall(r'^(\d+)\. (\w+): ', p, re.M) if w != "Lamplit"]}
+    il, _ = fresh(text_=t)
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Lamplit" and il.report.dropped["kept: a flagged word was not a name"] == 6
+
+
+def test_the_choosing_call_is_cached_per_word_and_sentence_and_made_by_the_picker():
+    writer, picker = Text(scene=lambda p: f"{SCENE} {PERIOD}"), chooser()
+    il, _ = fresh(text_=writer, cheap_text=picker)
+    il.make_prompt(il.job("event", "e2", at="a5"))
+    il.make_prompt(il.job("event", "e1", at="a5"))
+    assert len(name_calls(picker)) == 1 and not name_calls(writer)        # the same sentences: asked once
+    # another sentence for the same word is asked about on its own
+    writer.scene = lambda p: f"{SCENE} A Victorian lamp hangs over the door."
+    il.make_prompt(il.job("event", "e1", at="a5"))
+    assert len(name_calls(picker)) == 2 and name_calls(picker)[1].count(": \"") == 1
+
+
+def test_every_use_of_a_caught_word_is_judged_and_one_name_is_enough():
+    two = f"{SCENE} Gothic arches fill the chapel. She holds the Gothic against her chest."
+    il, t = fresh(text_=Text(scene=lambda p: two, names=lambda w, s: "holds the Gothic" in s))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Gothic"
+    ask = name_calls(t)[0]
+    assert '1. Gothic: "Gothic arches fill the chapel."' in ask and '2. Gothic: "She holds the Gothic against her chest."' in ask
+
+
+def test_a_long_sentence_is_sent_as_a_window_that_holds_the_word():
+    long = ("A woman with a basket on her arm stands at a wooden gate beside a grey stone mill, while a miller watches her "
+            "from the doorway with his arms folded, soft morning light falling across the packed earth of the yard, a path "
+            "leading off toward low green hills, the river bright beyond the mill wheel, a cart of sacks by the wall, and "
+            "far behind them all the pale towers of Kesterholm rise above the mist on the farthest hill")
+    assert long.index("Kesterholm") > art.NAME_SENTENCE_CHARS and "." not in long
+    il, t = fresh(text_=Text(scene=lambda p: long + ".", names=lambda w, s: w == "Kesterholm" and "Kesterholm" in s))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Kesterholm"
+    [piece] = re.findall(r'^\d+\. Kesterholm: "(.*)"$', name_calls(t)[0], re.M)
+    assert "Kesterholm" in piece and len(piece) <= art.NAME_SENTENCE_CHARS and long.endswith(piece.rstrip("."))
+    assert piece.split()[0] in long.split()                         # whole words at the cut
+    for w in ("Gothic", "Kesterholm", "Lucy"):                       # every excerpt holds its word, whatever the length
+        for x in art.Illustrator._excerpts(" ".join([long] * 3).replace(" the ", f" the {w} ", 2), w):
+            assert w in x and len(x) <= art.NAME_SENTENCE_CHARS
+
+
+def test_a_plural_or_stem_of_a_word_judged_not_a_name_is_still_caught():
+    hl = f"{SCENE} A Highland cow stands in the heather. The road climbs into the Highlands."
+    il, t = fresh(text_=Text(scene=lambda p: hl, names=lambda w, s: w == "Highlands"))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Highlands"
+    assert '. Highland: "' in name_calls(t)[0] and '. Highlands: "' in name_calls(t)[0]
+
+
+def test_a_name_answer_from_another_thread_is_never_replaced_and_kept_is_counted_once():
+    il, _ = fresh()
+    text_ = "A coach waits below Whitby on the quay."
+    key = ("Whitby", text_)
+
+    class Racing:
+        def __init__(self, other):
+            self.other = other
+
+        def complete(self, system, prompt, schema, prefix=None):
+            il._name_answers[key] = self.other          # another thread's answer lands while this call is in flight
+            return {"words": [{"n": 1, "name": False}]}
+
+    il.cheap = Racing(True)
+    assert il._names_among(text_, ["Whitby"]) == ["Whitby"] and il._name_answers[key] is True
+    assert not il.report.dropped["kept: a flagged word was not a name"]
+    il._name_answers.clear()
+    il.cheap = Racing(False)          # the other thread already answered and counted "not a name": not counted again
+    assert il._names_among(text_, ["Whitby"]) == [] and il.report.dropped["kept: a flagged word was not a name"] == 0
+    il._name_answers.clear()
+
+    class Plain:
+        def complete(self, system, prompt, schema, prefix=None):
+            return {"words": [{"n": 1, "name": False}]}
+    il.cheap = Plain()
+    assert il._names_among(text_, ["Whitby"]) == [] and il.report.dropped["kept: a flagged word was not a name"] == 1
+
+
+def test_a_word_the_book_already_uses_is_never_asked_about():
+    il, t = fresh(text_=chooser(scene=lambda p: f"{SCENE} Oren's mill stands by the river."))
+    il.make_prompt(il.job("event", "e2", at="a5"))
+    assert not name_calls(t)
+
+
+def test_a_run_and_soften_let_through_words_that_are_not_names():
+    il, rep, sink, t, im = run(text_=chooser(scene=lambda p: (PORTRAIT_SCENE if is_portrait(p) else SCENE) + " " + PERIOD),
+                               portraits=False)
+    assert pics(sink, "plate") and not rep.skipped["dropped: unknown name in prompt"]
+    assert rep.dropped["kept: a flagged word was not a name"] == 7
+    assert "kept: a flagged word was not a name" not in json.dumps(sink.m)           # the detail stays out of the manifest
+    bk = book(("One", CH1), ("Two", CH2))
+    t = chooser(scene=lambda p: f"{QUIET} {PERIOD}")
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], t, Image(), "ink", workers=1, log=lambda *_: None, pause=0)
+    assert PERIOD in il.soften(il.job("event", "e2", at="a3"), SCENE, "safety").body
 
 
 def test_an_old_final_skip_for_no_look_described_is_tried_again():
