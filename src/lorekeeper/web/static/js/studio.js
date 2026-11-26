@@ -157,6 +157,7 @@ function configure(target, book, ctx, fromJob = null) {
       if (!modeChosen) { cfg.chunk_mode = defaultMode(pv); wholeBox.checked = cfg.chunk_mode === "chapter"; }
       ctxField.hidden = pv !== "ollama";
       fillModels(); update();
+      pics?.runProviderChanged?.();   // the picture models' Default follows the run's provider
     });
     return { pv, radio, body, meta, card };
   };
@@ -385,6 +386,7 @@ function configure(target, book, ctx, fromJob = null) {
     // No chapter list here (the index the pictures follow is not written yet), so no `chapters`: every chapter it ends up with.
     estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", ...q }),
     onChange: () => { if (pics) update(); },   // the form paints once while it is made, before `pics` is set
+    runProvider: () => cfg.provider,   // "ollama" matches no picture writer, so Default is then the first working provider's
     fallback: (st) => {
       const n = [...picked].filter((n) => storySet.has(n)).length;
       if (st.level === "none") return `${st.cast === "main" ? "Portraits of the main characters" : "Portraits of everyone with a part"}, no chapter pictures; the count is set once the index is written.`;

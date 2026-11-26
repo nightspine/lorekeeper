@@ -2445,3 +2445,156 @@ def test_the_writer_states_the_worlds_period_and_technology_wherever_it_draws_a_
     for word in ("Red Rising", "Mars", "Gold", "silversaint", "Dracula", "Transylvania", "Carpathian", "Sherlock", "Holmes", "London",
                  "Empire of the Vampire", "Victorian", "far-future"):
         assert word not in told, word
+
+
+# ---- one model per responsibility
+
+
+class Named(Text):
+    """A scripted text model with a provider, a name and a usage counter that costs `each` dollars a call."""
+
+    def __init__(self, provider, name, each=0.001, **kw):
+        super().__init__(**kw)
+        self.provider, self.name, self.each = provider, name, each
+        self.usage = llm.Usage()
+
+    def complete(self, system, prompt, schema, prefix=None):
+        self.usage.cost_usd += self.each
+        return super().complete(system, prompt, schema, prefix)
+
+    def choosing(self):
+        return [p for p, s in zip(self.prompts, self.systems) if s not in WRITERS]
+
+
+class NamedImage(Image):
+    def __init__(self, provider, name, **kw):
+        super().__init__(**kw)
+        self.provider, self.name = provider, name
+
+    def draw(self, prompt, *, shape="landscape", quality="standard", references=(), **kw):
+        got = super().draw(prompt, shape=shape, quality=quality, references=references, **kw)
+        return images.Drawn(got.data, got.mime, self.name, got.cost)
+
+
+def test_each_responsibility_uses_its_own_model():
+    scene, portrait, picker = Named("claude", "haiku"), Named("claude", "sonnet"), Named("gemini", "flash-lite")
+    il, rep, sink, _, im = run(text_=scene, portrait_text=portrait, cheap_text=picker)
+    assert pics(sink, "plate") and pics(sink, "portrait")
+    # the scene writer writes scene prompts only, the portrait writer portrait prompts only, the picker only chooses
+    assert scene.scenes() and not any(is_portrait(p) for p in scene.scenes()) and not scene.choosing()
+    assert portrait.scenes() and all(is_portrait(p) for p in portrait.scenes()) and not portrait.choosing()
+    assert not picker.scenes() and any("Which of them are a visible moment" in p for p in picker.choosing())
+    assert any("notes a reader's companion keeps" in p for p in picker.choosing())
+    for r in pics(sink, "plate"):
+        assert r["writer"] == {"provider": "claude", "model": "haiku"}
+    for r in pics(sink, "portrait"):
+        assert r["writer"] == {"provider": "claude", "model": "sonnet"}
+    # the text cost is split by responsibility
+    assert rep.text_costs == {"scene prompts": pytest.approx(scene.usage.cost_usd),
+                              "portrait prompts": pytest.approx(portrait.usage.cost_usd),
+                              "choosing calls": pytest.approx(picker.usage.cost_usd)}
+    assert rep.text_cost == pytest.approx(scene.usage.cost_usd + portrait.usage.cost_usd + picker.usage.cost_usd)
+    assert "portrait prompts $" in rep.lines()[0]
+
+
+def test_the_look_sentences_are_picked_by_the_picker():
+    scene, picker = Named("claude", "haiku"), Named("gemini", "flash-lite")
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         scene, Image(), "ink", portraits="all", cheap_text=picker, workers=1, log=lambda *_: None, pause=0)
+    il.look_sentences(0, "mira", make=True)
+    assert any("Which sentences tell how" in p for p in picker.prompts) and not scene.prompts
+
+
+def test_one_model_for_every_text_responsibility_behaves_as_before():
+    t = Named("claude", "haiku")
+    il, rep, sink, _, _ = run(text_=t)
+    assert any(is_portrait(p) for p in t.scenes()) and any(not is_portrait(p) for p in t.scenes()) and t.choosing()
+    assert rep.text_costs == {"scene prompts and portrait prompts and choosing calls": pytest.approx(t.usage.cost_usd)}
+    assert "(" not in rep.lines()[0].split("text $")[1]       # no split shown for one model
+    assert all(r["writer"] == {"provider": "claude", "model": "haiku"} for r in pics(sink))
+
+
+def test_a_model_with_no_name_writes_no_writer_on_the_record():
+    il, rep, sink, _, _ = run()
+    assert pics(sink) and not any("writer" in r for r in pics(sink))
+
+
+def test_the_portrait_image_model_draws_portraits_only():
+    scenes, portraits = NamedImage("gemini", "nano-banana"), NamedImage("openai", "gpt-image")
+    il, rep, sink, _, _ = run(image=scenes, portrait_image=portraits)
+    assert scenes.calls and portraits.calls
+    assert all(c["shape"] == "portrait" for c in portraits.calls) and all(c["shape"] != "portrait" for c in scenes.calls)
+    assert all((r["provider"], r["model"]) == ("openai", "gpt-image") for r in pics(sink, "portrait"))
+    assert all((r["provider"], r["model"]) == ("gemini", "nano-banana") for r in pics(sink, "plate"))
+    assert il.image_for("place")[0] is portraits and il.image_for("thing")[0] is portraits
+    assert il.image_for("event")[0] is scenes
+
+
+def test_a_refused_portrait_is_rewritten_by_the_portrait_writer():
+    quiet = ("A woman of middle height in a plain grey dress and a dark shawl, her hair pinned back, a calm and steady look "
+             "on her face, against a plain pale wall lit by soft daylight from one side, quiet and still.")
+    scene = Named("claude", "haiku")
+    portrait = Named("claude", "sonnet", scene=lambda p: quiet if "quieter composition" in p else PORTRAIT_SCENE)
+    im = Image(refuse=[lambda prompt, n: prompt.startswith(art.PORTRAIT_FRAME) and quiet not in prompt and n <= 1])
+    il, rep, sink, _, _ = run(text_=scene, portrait_text=portrait, image=im)
+    assert rep.softened == 1
+    assert any("quieter composition" in p for p in portrait.prompts)
+    assert not any("quieter composition" in p for p in scene.prompts)
+
+
+def test_the_cheaper_image_model_bounds_the_room_left(monkeypatch):
+    prices = {("gemini", "dear"): 1.0, ("gemini", "cheap"): 0.1}
+    monkeypatch.setattr(llm, "image_price", lambda p, m, q="standard", s=None: prices.get((p, m)))
+    il = art.Illustrator([art.Book(base_doc(book(("One", CH1), ("Two", CH2))), book(("One", CH1), ("Two", CH2)), Mem())],
+                         Text(), NamedImage("gemini", "dear"), "ink", portrait_image=NamedImage("gemini", "cheap"), cap=1.0,
+                         log=lambda *_: None, pause=0)
+    assert il._budget() == 10
+
+
+def test_illustrate_command_takes_a_model_per_responsibility(tmp_path, monkeypatch):
+    from lorekeeper import cli
+    bk = book(("One", CH1), ("Two", CH2))
+    i1 = _cli_index(tmp_path, base_doc(bk), bk, "mill.lore.json")
+    made, drew = {}, []
+
+    def make_model(args, model=None, provider=None):
+        return made.setdefault((provider, model), Named(provider, model))
+
+    def make_image(provider, model=None, **k):
+        drew.append((provider, model))
+        return NamedImage(provider, model or llm.image_spec(provider)["default"])
+    monkeypatch.setattr(cli, "_make_model", make_model)
+    monkeypatch.setattr(llm, "make_image", make_image)
+    monkeypatch.setattr(epub, "read", lambda p: bk)
+    monkeypatch.setenv("GEMINI_API_KEY", "x")
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    seen = []
+    real = art.Illustrator
+
+    def spy(*a, **k):
+        il = real(*a, **k)
+        seen.append(il)
+        return il
+    monkeypatch.setattr(art, "Illustrator", spy)
+    base = ["illustrate", str(i1), "--epub", "1.epub", "--out", str(tmp_path / "o"), "--limit", "0", "--quality", "standard"]
+    assert cli.main(base) == 0                              # defaults: cheap scene writer and picker, strong portrait writer
+    il = seen[-1]
+    cheap, strong = llm.PROVIDERS["gemini"]["cheap"], llm.PROVIDERS["gemini"]["strong"]
+    assert (il.text.name, il.portrait_text.name, il.cheap.name) == (cheap, strong, cheap) and il.cheap is il.text
+    assert il.portrait_image is il.image
+    assert cli.main(base + ["--writer", "openai:gpt-x", "--portrait-writer", "gemini:g-pro", "--picker", "gemini",
+                            "--portrait-model", "openai:" + llm.image_spec("openai")["default"]]) == 0
+    il = seen[-1]
+    assert (il.text.provider, il.text.name) == ("openai", "gpt-x")
+    assert (il.portrait_text.provider, il.portrait_text.name) == ("gemini", "g-pro")
+    assert (il.cheap.provider, il.cheap.name) == ("gemini", cheap)
+    assert il.portrait_provider == "openai" and il.provider == "gemini"
+    # --text-model alone keeps one model for the scene prompts and the choosing calls, as before; portraits go strong
+    assert cli.main(base + ["--text-provider", "gemini", "--text-model", "gemini-x"]) == 0
+    il = seen[-1]
+    assert il.text.name == "gemini-x" and il.cheap is il.text and il.portrait_text.name == strong
+    with pytest.raises(SystemExit, match="no provider"):
+        cli.main(base + ["--writer", "nobody:x"])
+    with pytest.raises(SystemExit, match="Claude cannot draw"):
+        cli.main(base + ["--portrait-model", "claude:x"])
