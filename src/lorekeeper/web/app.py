@@ -1715,6 +1715,51 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     app.state.art_prompts = (remember_prompt, recall_prompt, prompts)   # for tests
 
+    # The soften replies written for a job (by `prompt_key`) from a refused text the server itself wrote at that job's
+    # anchor, with the prompt cache's lifetime: a draw of one of them is server text written at that anchor too.
+    softs: OrderedDict[tuple, tuple[float, list]] = OrderedDict()
+
+    def remember_soft(k: tuple, pr) -> None:
+        with prompts_lock:
+            old = softs.get(k)
+            kept = [x for x in (old[1] if old and time.time() - old[0] < 3600 else [])][-7:]
+            softs[k] = (time.time(), [*kept, copy.copy(pr)])
+            softs.move_to_end(k)
+            while len(softs) > 32:
+                softs.popitem(last=False)
+
+    def recall_softs(k: tuple) -> list:
+        with prompts_lock:
+            hit = softs.get(k)
+        return list(hit[1]) if hit and time.time() - hit[0] < 3600 else []
+
+    def written_as(il, h: str, style: str, pr, text_: str) -> bool:
+        """Whether `text_` is the server's own text of Prompt `pr`: its body, a style sentence (the request's, the prompt's
+        own, any listed style or set of the edition) and its no-text line, joined as the sheet joins them, so a style change
+        alone keeps it the server's."""
+        if pr is None or not getattr(pr, "body", None):
+            return pr is not None and " ".join(text_.split()) == " ".join(pr.text.split())
+        sentences = {il.style_sentence(style), pr.style, *style_sentences(il, h).values()}
+        squash = lambda x: " ".join(str(x or "").split())    # noqa: E731
+        want = squash(text_)
+        return any(want == " ".join(p for p in (squash(pr.body), squash(st), squash(pr.no_text)) if p) for st in sentences)
+
+    def server_written(il, h: str, style: str, k: tuple, text_: str, fresh=None) -> bool:
+        """Whether `text_` was written by the server from the material at the job's anchor (`k` its `prompt_key`): the
+        prompt cached for it (or `fresh`, the one just written), or one of its remembered soften replies."""
+        return any(written_as(il, h, style, pr, text_) for pr in [fresh or recall_prompt(k), *recall_softs(k)] if pr)
+
+    def at_position(il, job, at: str | None) -> bool:
+        """File an entity picture of the book being read at the reader's position `at` (text the server did not write at
+        the job's anchor is bounded only by what the reader has read). True when the anchor moved."""
+        if job.kind not in artmod.ENTITY_KINDS or at is None or job.bi != len(il.books) - 1:
+            return False
+        ords = il.books[job.bi].ord_of
+        if ords[at] <= ords[job.anchor]:
+            return False
+        job.anchor = at
+        return True
+
     @app.get("/api/art")
     def art_sets():
         """Every art set on this server, per book, for Settings: the index it belongs to, its styles and their size."""
@@ -1994,6 +2039,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 if not hasattr(il, "soften"):
                     raise ArtRefusal(501, "unavailable", "This server can't rewrite a refused prompt yet.")
+                # An entity's picture shows from its first look only for text the server wrote from there; a refused text
+                # it did not write (the person's edit) may use anything read up to the position, so the rewrite is written
+                # from the material at the position and answers that anchor.
+                k = prompt_key(key, job, fin)
+                own = server_written(il, ctx["hash"], style, k, refused)
+                if not own:
+                    at_position(il, job, at)
                 try:
                     pr = il.soften(job, refused, reason, finished=None if fin is None else set(fin))
                 except artmod.NotVisible as e:
@@ -2004,6 +2056,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(422, "dropped", str(e), e.say) from e
                 except ValueError as e:
                     raise ArtRefusal(422, "dropped", str(e)) from e
+                if own:
+                    remember_soft(k, pr)
             return prompt_answer(ctx, il, image, job, pr, style, quality, body, fin)
         return await work()
 
@@ -2039,19 +2093,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     job, pr = prompt_for(il, args)
                     remember_prompt(prompt_key(key, job, fin), copy.copy(pr), slug_)
                     made_in = slug_
+                k = prompt_key(key, job, fin)
+                own = server_written(il, ctx["hash"], style, k, text_, fresh=copy.copy(pr))
                 pr = restyled(il, job, pr, slug_, made_in)
                 if missed and text_ != " ".join(pr.text.split()):
                     # The text drawn is not the prompt just written for this reader, so it may come from one written for a
                     # reader with more books finished: it is hidden until every earlier book is (`partial` is this request's).
                     pr.inherits = sorted(set(pr.inherits) | set(earlier_keys(ctx)))
-                    # and it may come from one written at a later anchor (an entity's picture shows from its first look, and
-                    # whether the look index is at hand can differ between the two requests): it shows from no earlier than
-                    # the latest facet or profile visible at the position, as every such prompt was written up to there
-                    if job.kind in artmod.ENTITY_KINDS and at is not None:
-                        late = art_job(*args, looks="off")
-                        ords = il.books[job.bi].ord_of
-                        if late.bi == job.bi and ords[late.anchor] > ords[pr.anchor]:
-                            pr.anchor = job.anchor = late.anchor
+                # An entity's picture shows from its first look only when the text drawn is the server's own, written from
+                # the material there (the prompt, in any style, or a soften reply of it); any other text (the person's
+                # edit) may use whatever the reader has read, so it is filed at the reader's position.
+                if not own and at_position(il, job, at):
+                    pr.anchor = job.anchor
                 old_rec = replaced_record(ctx, il, job, slug_, at, fin, body.get("replaces"))
                 rec = draw_given(il, job, pr, text_)
                 if old_rec is None:
