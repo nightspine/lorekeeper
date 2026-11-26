@@ -17,7 +17,7 @@ from lorekeeper.web import app as web_app  # noqa: E402
 from lorekeeper.web import art as store_mod  # noqa: E402
 from lorekeeper.web import jobs as jobs_mod  # noqa: E402
 
-from .test_art import CH1, CH2, Image, Text, base_doc, book, png  # noqa: E402
+from .test_art import CH1, CH2, WRITERS, Image, Text, base_doc, book, is_portrait, png  # noqa: E402
 from .test_generate import make_epub  # noqa: E402
 
 KEY = "examples--mill"
@@ -237,6 +237,7 @@ def test_the_build_ends_with_the_pictures_stage_after_the_arcs(tmp_path, monkeyp
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t, im = Text(), GeminiFake()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
@@ -872,6 +873,7 @@ def test_a_stop_in_the_pictures_stage_leaves_the_build_resumable(tmp_path, monke
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t = Text()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(art, "WORKERS", 1)
     builds = []
@@ -1492,6 +1494,7 @@ def test_a_builds_pictures_stage_honours_level_none(tmp_path, monkeypatch):
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())
     t, im = Text(), GeminiFake()
     monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: t)   # the portrait writer
     monkeypatch.setattr(jobs_mod.JobManager, "_portraits", lambda self, *a: {"skipped": "test"})
     monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
     monkeypatch.setenv("GEMINI_API_KEY", "g-test")
@@ -1658,3 +1661,195 @@ def test_the_sheets_writer_gets_the_cheap_model_for_the_look_sentence_pick(env, 
     r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e6", "style": "ink"})
     assert r.status_code == 200, r.text
     assert seen["text"] is strong and seen["cheap"] is cheap and strong.prompts
+
+
+# ---- a model for each responsibility (picture-model-choices)
+
+
+def test_the_art_config_takes_a_model_for_each_responsibility():
+    from lorekeeper.web.jobs import art_config
+    base = {"style": "ink", "cap": 1}
+    got = art_config(base)                      # an older config: every choice absent, the defaults apply
+    assert all(got[k] is None for k in ("writer", "portraitWriter", "picker", "portraitProvider", "portraitModel"))
+    full = {**base, "writer": {"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+            "portraitWriter": {"provider": "anthropic", "model": "claude-sonnet-5-5"},
+            "picker": {"provider": "gemini", "model": "gemini-2.5-flash"},
+            "portraitProvider": "gemini", "portraitModel": "gemini-3-pro-image"}
+    got = art_config(full)
+    assert got["portraitWriter"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
+    assert got["portraitModel"] == "gemini-3-pro-image" and art_config(got) == got       # a resume reads it back
+    for bad in ({"writer": {"provider": "ollama", "model": "gemma4:12b-it-qat"}},      # Ollama never writes picture prompts
+                {"picker": {"provider": "nobody", "model": "x"}}, {"writer": "claude"},
+                {"portraitWriter": {"provider": "claude"}},
+                {"portraitProvider": "claude"},                                        # Claude cannot draw
+                {"portraitProvider": "gemini", "portraitModel": "gpt-image-2"},
+                {"provider": "openai", "portraitModel": "gemini-3-pro-image"}):
+        with pytest.raises(ValueError):
+            art_config({**base, **bad})
+
+
+class Named(Text):
+    def __init__(self, label):
+        super().__init__()
+        self.label = label
+
+
+def models_env(env, monkeypatch, live=()):
+    """Gemini set up for text and pictures (its live models `live`), every cloud model a scripted one named by its id; the
+    keywords and text model the run hands the pipeline are kept in `seen`."""
+    env.key()
+    made = {}
+    monkeypatch.setattr(jobs_mod.JobManager, "cloud_model",
+                        lambda self, p, m=None: made.setdefault((p, m), Named(f"{p}:{m}")))
+    monkeypatch.setattr(llm, "list_models", lambda *a, **kw: list(live))
+    images_made = []
+    monkeypatch.setattr(llm, "make_image", lambda provider, model=None, api_key=None, base_url=None:
+                        images_made.append((provider, model)) or env.image)
+    seen = {}
+    real_init = art.Illustrator.__init__
+
+    def spy_init(self, books, text_, image, *a, **kw):
+        seen.update(kw, text=text_, image=image)
+        real_init(self, books, text_, image, *a, **kw)
+    monkeypatch.setattr(art.Illustrator, "__init__", spy_init)
+    return made, images_made, seen
+
+
+def test_a_run_hands_each_responsibility_its_chosen_model(env, monkeypatch):
+    made, images_made, seen = models_env(env, monkeypatch, live=["gemini-live-x"])
+    job = run_set(env, portraits="all", writer={"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+                  portraitWriter={"provider": "gemini", "model": "gemini-3.1-pro-preview"},
+                  picker={"provider": "gemini", "model": "gemini-live-x"},          # a live model counts as listed
+                  provider="gemini", model=GEMINI, portraitModel="gemini-3-pro-image")
+    assert job["status"] == "done", job
+    assert seen["text"].label == "gemini:gemini-2.5-flash-lite"
+    assert seen["portrait_text"].label == "gemini:gemini-3.1-pro-preview"
+    assert seen["cheap_text"].label == "gemini:gemini-live-x"
+    assert ("gemini", GEMINI) in images_made and ("gemini", "gemini-3-pro-image") in images_made
+
+
+def test_a_run_without_choices_writes_portraits_with_the_strong_tier(env, monkeypatch):
+    _, images_made, seen = models_env(env, monkeypatch)
+    cheap, strong = Named("cheap"), Named("strong")
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: cheap)
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: strong)
+    assert run_set(env)["status"] == "done"
+    assert seen["text"] is cheap and seen["cheap_text"] is cheap and seen["portrait_text"] is strong
+    assert seen["portrait_image"] is seen["image"] and len(images_made) == 1   # portraits draw with the scenes' model
+
+
+def test_a_choice_of_a_provider_not_set_up_or_a_model_it_does_not_list_is_refused(env, monkeypatch):
+    models_env(env, monkeypatch, live=["gemini-live-x"])
+    base = {"style": "ink", "cap": 1}
+    for bad in ({"writer": {"provider": "claude", "model": "claude-haiku-5-5"}},       # no Claude key
+                {"picker": {"provider": "gemini", "model": "gemini-9-ultra"}},          # neither a preset nor live
+                {"portraitWriter": {"provider": "ollama", "model": "gemma4:12b-it-qat"}},
+                {"portraitProvider": "openai"},                                         # no OpenAI key
+                {"portraitModel": "gpt-image-2"}):                                      # not a model of Gemini
+        r = env.c.post(f"/api/library/{KEY}/art/run", json={"art": {**base, **bad}})
+        assert r.status_code == 422 and r.json()["code"] == "bad-config", (bad, r.text)
+    assert env.c.get("/api/jobs").json() == [] or all(j["kind"] != "art" for j in env.c.get("/api/jobs").json())
+
+
+def test_a_build_config_with_a_model_choice_is_checked_too(env, monkeypatch):
+    models_env(env, monkeypatch)
+    r = env.c.post("/api/jobs", json={"book_id": "nope", "config": {"provider": "gemini", "art": {
+        "style": "ink", "cap": 1, "writer": {"provider": "claude", "model": "claude-haiku-5-5"}}}})
+    assert r.status_code == 422 and "Claude" in r.text
+
+
+def test_the_portrait_writer_writes_the_portraits_and_the_scene_writer_never_does(env, monkeypatch):
+    made, _, _ = models_env(env, monkeypatch)
+    run_set(env, level="none", portraits="all", writer={"provider": "gemini", "model": "gemini-2.5-flash-lite"},
+            portraitWriter={"provider": "gemini", "model": "gemini-3.1-pro-preview"},
+            picker={"provider": "gemini", "model": "gemini-2.5-flash"})
+    scene, port = made.get(("gemini", "gemini-2.5-flash-lite")), made[("gemini", "gemini-3.1-pro-preview")]
+    wrote = [p for p, s in zip(port.prompts, port.systems) if s in WRITERS]
+    assert wrote and all(is_portrait(p) or "place" in p or "thing" in p for p in wrote)
+    assert scene is None or not any(s in WRITERS and is_portrait(p) for p, s in zip(scene.prompts, scene.systems))
+
+
+def test_the_estimate_prices_portraits_with_their_own_image_model(env):
+    q = f"/api/art/estimate?key={KEY}&style=ink&portraits=all&provider=gemini&model={GEMINI}"
+    same = env.c.get(q).json()
+    assert same["portraitProvider"] == "gemini" and same["portraitModel"] == GEMINI
+    pro = env.c.get(q + "&portraitModel=gemini-3-pro-image").json()
+    assert pro["portraitModel"] == "gemini-3-pro-image" and pro["portraits"] == same["portraits"] > 0
+    assert pro["price"] == pytest.approx(same["plates"] * 0.0336 + same["portraits"] * 0.134, abs=1e-4)
+    other = env.c.get(q + "&portraitProvider=openai").json()      # another provider: its default model
+    assert other["portraitModel"] == llm.IMAGE_PROVIDERS["openai"]["default"]
+    assert env.c.get(q + "&portraitModel=gpt-image-2").status_code == 422
+    assert env.c.get(q + "&portraitProvider=claude").status_code == 422
+
+
+def test_the_sheet_writes_with_the_chosen_writer_and_draws_portraits_with_the_portrait_model(env, monkeypatch):
+    made, images_made, _ = models_env(env, monkeypatch)
+    strong = Named("strong")
+    monkeypatch.setattr(jobs_mod.JobManager, "strong_model", lambda self, provider=None: strong)
+    writer = {"provider": "gemini", "model": "gemini-2.5-flash"}
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "provider": "gemini", "model": GEMINI,
+           "portraitModel": "gemini-3-pro-image", "writer": writer}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask)
+    assert got.status_code == 200, got.text
+    got = got.json()
+    assert got["writer"] == writer and made[("gemini", "gemini-2.5-flash")].prompts and not strong.prompts
+    assert got["model"] == "gemini-3-pro-image" and got["price"] == 0.134
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
+    assert rec.status_code == 200, rec.text
+    assert images_made[-1] == ("gemini", "gemini-3-pro-image")
+    scene = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "kind": "event", "target": "e5"}).json()
+    assert scene["model"] == GEMINI                                # a scene keeps the scene model
+    assert images_made[-1] == ("gemini", GEMINI)
+    plain = env.c.post(f"/api/library/{KEY}/art/prompt", json={k: v for k, v in ask.items() if k != "writer"}).json()
+    assert strong.prompts and plain["writer"]["model"] != "gemini-2.5-flash"   # no choice: the strong tier
+    for bad in ({"provider": "claude", "model": "claude-haiku-5-5"}, {"provider": "gemini", "model": "nope"},
+                {"provider": "ollama", "model": "gemma4:12b-it-qat"}, "gemini"):
+        r = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "writer": bad})
+        assert r.status_code == 422 and r.json()["code"] == "bad-writer", (bad, r.text)
+
+
+def test_a_same_prompt_redraw_keeps_who_wrote_the_prompt(env):
+    env.key()
+    ask = {"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."}
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json=ask).json()
+    slug, man = "ink", env.jobs.art_store.manifest(env.hash, "ink")
+    for r in man["pictures"]:
+        if r["id"] == rec["id"]:
+            r["writer"] = {"provider": "claude", "model": "claude-sonnet-5-5"}
+    env.jobs.art_store.save(env.hash, slug, man)
+    new = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).json()
+    assert new["writer"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
+
+
+def test_a_portrait_model_without_the_runs_quality_draws_at_its_nearest_level(env, monkeypatch):
+    lite = "gemini-3.1-flash-lite-image"                    # draft and standard only
+    assert llm.nearest_quality("gemini", lite, "best") == "standard"
+    assert llm.nearest_quality("gemini", lite, "draft") == "draft"
+    assert llm.nearest_quality("gemini", GEMINI, "best") == "best"
+    monkeypatch.setitem(llm.IMAGE_PROVIDERS["gemini"]["models"][0], "levels", ("standard", "best"))
+    assert llm.nearest_quality("gemini", GEMINI, "draft") == "standard"     # a tie goes up
+    monkeypatch.setitem(llm.IMAGE_PROVIDERS["gemini"]["models"][0], "levels", ("draft", "standard", "best"))
+    assert llm.nearest_quality("nobody", "x", "best") == "best"            # not in the table: as asked
+    q = f"/api/art/estimate?key={KEY}&style=ink&level=none&portraits=all&provider=gemini&model={GEMINI}&quality=best"
+    got = env.c.get(q + f"&portraitModel={lite}").json()
+    assert got["quality"] == "best" and got["portraitQuality"] == "standard"
+    assert got["price"] == pytest.approx(got["portraits"] * 0.0336, abs=1e-4)
+    models_env(env, monkeypatch)
+    made = {}
+
+    def make(provider, model=None, api_key=None, base_url=None):
+        im = made.setdefault(model, GeminiFake())
+        im.name = model or GEMINI
+        return im
+    monkeypatch.setattr(llm, "make_image", make)
+    job = run_set(env, level="none", portraits="all", quality="best", provider="gemini", portraitModel=lite)
+    assert job["status"] == "done", job
+    recs = pictures(env)
+    assert recs and all(r["quality"] == "standard" for r in recs)
+    assert made[lite].calls and {c["quality"] for c in made[lite].calls} == {"standard"}
+
+
+def test_the_run_report_splits_the_text_cost_by_responsibility(env, monkeypatch):
+    models_env(env, monkeypatch)
+    job = run_set(env)
+    assert isinstance(job["report"]["art"]["text_costs"], dict)
