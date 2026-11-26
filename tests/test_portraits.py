@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from lorekeeper import epub, portraits, text
 
 
@@ -606,5 +608,37 @@ def test_death_answers_are_cached_per_entity_and_text():
         {"Lucy dies.": True, "Arthur weeps.": False}
     portraits.own_deaths(model, "Miss Lucy", "a character", ["Lucy dies."], cache, "lucy")
     assert len(model.asked_dead) == 1 and "about Lucy (a character)" in model.asked_dead[0]
+    portraits.own_deaths(model, "Lucy", "a character", ["Lucy dies."], cache, "mina")     # another entity asks again
+    assert len(model.asked_dead) == 2 and cache[("mina", "Lucy dies.")] is True
     assert "numbers" in portraits.DEATHS_SYSTEM and portraits.DEATHS_SCHEMA["properties"]["dead"]["type"] == "array"
+
+
+class _Replies:
+    """A model whose death call returns a fixed reply (a refusal or a cut-off reply comes back as {})."""
+
+    def __init__(self, reply):
+        self.reply = reply
+
+    def complete(self, system, prompt, schema, prefix=None):
+        return self.reply
+
+
+@pytest.mark.parametrize("reply", [{}, {"dead": "x"}, {"other": [1]}, None])
+def test_a_death_reply_without_a_list_is_a_failed_call(reply):
+    cache = {}
+    assert portraits.own_deaths(_Replies(reply), "Lucy", "a character", ["Dead, after a long decline.", "Lucy dies."],
+                                cache, "lucy") is None and cache == {}
+
+
+def test_a_refused_death_call_keeps_the_opening():
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman whose health has failed.",
+                  "Mira is a young woman whose health has failed."])
+    real = model.complete
+
+    def refuse(system, prompt, schema, prefix=None):
+        return {} if schema is portraits.DEATHS_SCHEMA else real(system, prompt, schema, prefix)
+    model.complete = refuse
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
 

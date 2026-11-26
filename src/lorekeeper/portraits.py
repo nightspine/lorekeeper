@@ -84,7 +84,8 @@ DEATH_BATCH = 40
 
 def own_deaths(model, name: str, kind: str, texts: list[str], cache: dict, key: str | None = None) -> dict[str, bool] | None:
     """{text: whether it states the entity's own death} for `texts`, asking only for those not in `cache` (keyed
-    (key or name, text)), DEATH_BATCH at a time. None when a call fails (nothing is cached from it)."""
+    (key or name, text)), DEATH_BATCH at a time. None when a call fails or its reply has no list of numbers (nothing is
+    cached from it)."""
     key = key or name
     todo = [t for t in dict.fromkeys(texts) if (key, t) not in cache]
     for at in range(0, len(todo), DEATH_BATCH):
@@ -94,6 +95,8 @@ def own_deaths(model, name: str, kind: str, texts: list[str], cache: dict, key: 
                 f"{n}. {t}" for n, t in enumerate(batch, 1))), DEATHS_SCHEMA) or {}
         except Exception:   # noqa: BLE001 - no answer: the caller keeps the safe default
             return None
+        if not isinstance(out, dict) or not isinstance(out.get("dead"), list):
+            return None     # a refusal or a cut-off reply comes back as {}: a failed call, never a "no"
         yes = set(_numbers(out, "dead", len(batch)))
         for n, t in enumerate(batch, 1):
             cache[(key, t)] = n in yes
