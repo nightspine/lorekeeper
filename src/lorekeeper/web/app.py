@@ -2094,7 +2094,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @app.post("/api/library/{key}/art/{pid}/redraw")
     async def art_redraw(key: str, pid: str, request: Request):
         """Draw a picture again, with the person's note put first in its prompt; the new record `replaces` the old,
-        which leaves the set and is kept for undo."""
+        which leaves the set and is kept for undo. An optional `p` is the reader's position (as the prompt route's): a scene's
+        reference from after the scene is sent again only when the reader has reached it with no recorded look change
+        between (`Illustrator.reference_reached`); one left out is drawn without, as a reference that is gone. No `p`: every
+        stored reference, as before."""
         body = await json_body(request) if int(request.headers.get("content-length") or 0) else {}
         note = " ".join(str(body.get("note") or "").split())
 
@@ -2116,6 +2119,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
                 job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
                 refs = redraw_references(il, rec, pid)
+                if body.get("p", body.get("anchor")) is not None:
+                    given, at = art_position(ctx, body)
+                    job.reach = (job.bi, il.books[job.bi].ord_of[at] if at is not None else -1)
+                    refs = [(j, r) for j, r in refs if il.reference_reached(job, j, r)]
                 figures = None      # older records and non-scenes: no labels, drawn as before
                 if rec.get("kind") in ("plate", "event") and isinstance(rec.get("figures"), list):
                     figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]

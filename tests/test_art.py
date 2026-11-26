@@ -3034,3 +3034,21 @@ def test_the_later_portrait_must_be_within_the_runs_until():
     assert il.references(job, ["mira"]) == []                             # a4 is past the run's until
     il = art.Illustrator([art.Book(d, bk, sink)], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
     assert [r["id"] for _, r in il.references(job, ["mira"])] == ["pmira001"]
+
+
+def test_a_stored_later_reference_is_sent_again_only_within_the_readers_frontier():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    sink = Mem()
+    sink.m = {**art.blank(d["editions"][0]["textHash"], "ink"),
+              "pictures": [pic("pmira001", "mira", "a4"), pic("poren001", "oren", "a0")]}
+    il = art.Illustrator([art.Book(d, bk, sink)], Text(), Image(), "ink", portraits="all", workers=1, log=lambda *_: None, pause=0)
+    mira, oren = sink.m["pictures"]
+    at = lambda p: il.job("event", "e2", at=p)       # noqa: E731  (e2 shows from a1)
+    assert il.reference_reached(at("a11"), 0, mira) and il.reference_reached(at("a4"), 0, mira)
+    assert not il.reference_reached(at("a3"), 0, mira)                  # her portrait (a4) not reached yet
+    assert il.reference_reached(at("a1"), 0, oren)                      # at or before the scene: always
+    assert il.reference_reached(il.job("portrait", "mira", at="a11"), 0, mira)
+    first = next(it["id"] for it in il.items(0, "mira") if it["from"] == "a4")   # her profile, flagged as a look change
+    il.man[0]["looks"] = {"mira": {"key": il._items_key(il.items(0, "mira")), "items": {first: {"look": True, "change": True}}}}
+    assert not il.reference_reached(at("a11"), 0, mira)                 # a recorded look change between: never
