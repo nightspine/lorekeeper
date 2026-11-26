@@ -24,12 +24,19 @@ CH2 = ["Mira learned that the miller Oren was her father all along, said the old
 
 
 class Fake:
-    def __init__(self, replies):
-        self.replies, self.prompts = list(replies), []
+    """Scripted replies: a string is a description's text, a dict the whole reply. The look-picking call answers from
+    `looks` (a list of number lists, one per call; none picked when it runs out) and is logged in `picks`."""
+
+    def __init__(self, replies, looks=()):
+        self.replies, self.prompts, self.looks, self.picks = list(replies), [], list(looks), []
 
     def complete(self, system, prompt, schema, prefix=None):
+        if schema is portraits.LOOKS_SCHEMA:
+            self.picks.append(prompt)
+            return {"looks": self.looks.pop(0) if self.looks else []}
         self.prompts.append(prompt)
-        return {"text": self.replies.pop(0)}
+        r = self.replies.pop(0)
+        return r if isinstance(r, dict) else {"text": r}
 
 
 def _mira(**kw):
@@ -305,3 +312,87 @@ def test_engaged_does_not_stand_in_for_a_death():
     assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
     assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")
     assert portraits._opens_with("Captured by the Count.", "Escaped from the castle; a solicitor.")
+
+
+# ---- stated looks are kept
+
+LOOK_BOOK = [("One", CH1), ("Two", CH2 + CH1)]
+FIRST = "A tall woman with red hair who carries baskets to the mill."
+
+
+def test_a_rewrite_is_told_the_looks_the_last_description_stated_and_keeps_them():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A tall red-haired woman of the mill who keeps a secret."], looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert len(model.picks) == 1 and "1. A tall woman\n2. red hair\n3. carries baskets" in model.picks[0]
+    assert '1. A tall woman\n2. red hair\nKeep every one' in model.prompts[1] and len(model.prompts) == 2
+    assert stats["portraits"] == 2 and not any(k.endswith("stated look") for k in stats)
+
+
+def test_a_look_the_passages_changed_may_go_when_the_reply_says_so():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, {"text": "A tall woman of the mill with grey hair who keeps a secret.", "changed": [2]}],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and len(model.prompts) == 2
+    assert d["entities"][0]["facets"][-1]["text"].endswith("grey hair who keeps a secret.")
+
+
+def test_a_change_claimed_for_something_else_entirely_does_not_count():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, {"text": "A tall woman of the mill who keeps a secret.", "changed": [2]},
+                  {"text": "A tall woman of the mill who keeps a secret.", "changed": [2]}], looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost a stated look"] == 1 and len(model.prompts) == 3
+
+
+def test_a_lost_look_gets_one_rewrite():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret.", "A tall woman of the mill with red hair who keeps a secret."],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert 'It no longer says how Mira looks: 1. "A tall woman"; 2. "red hair"' in model.prompts[2]
+    assert stats["rewritten: kept a stated look"] == 1 and stats["portraits"] == 2
+    assert d["entities"][0]["facets"][-1]["text"] == "A tall woman of the mill with red hair who keeps a secret."
+
+
+def test_a_look_lost_twice_leaves_the_previous_description_standing():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret.", "A tall woman of the mill who keeps a secret."],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost a stated look"] == 1 and stats["portraits"] == 1
+    assert [f["text"] for f in d["entities"][0]["facets"] if f["kind"] == "profile"] == [FIRST]
+
+
+def test_a_first_portrait_keeps_the_looks_of_the_extraction_profile_and_is_not_revealed_before_it():
+    quiet = ["The rain fell on the long road past the old mill all through the night.",
+             "By morning the river had risen over the stones of the ford below the bridge."]
+    book = _book([("One", CH1 + quiet)])
+    early = {"id": "x.p1", "kind": "profile", "from": "b6", "basis": "stated", "evidence": ["b6"], "text": FIRST}
+    d = _doc(book, [_mira(facets=[early])])
+    d["entities"][0]["names"].append({"value": "Mira of the mill", "kind": "alias", "from": "b0"})
+    model = Fake(["A tall woman with red hair from the mill."], looks=[[2]])
+    portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert "1. red hair\nKeep every one" in model.prompts[0]
+    p = d["entities"][0]["facets"][-1]
+    assert p["id"] == "bk.mira.portrait-1" and p["from"] == "b6"      # the passages end at b5, the profile it kept is at b6
+
+
+def test_no_looks_picked_means_nothing_to_keep():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret."], looks=[[]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "Keep every one" not in model.prompts[1] and len(model.picks) == 1
+
+
+def test_picks_outside_the_pieces_are_ignored():
+    model = Fake([], looks=[[0, 2, 9, "x"]])
+    assert portraits.look_pieces(model, "Mira", "a character", FIRST) == ["red hair"]
+    assert portraits.kept("dark skin", "A dark-skinned smith.") and not portraits.kept("dark skin", "A dark smith.")
