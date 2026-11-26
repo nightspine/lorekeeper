@@ -87,8 +87,7 @@ class StyleStore:
     def _sync(data: dict) -> None:
         """Give `art.style_sentence` the saved styles' words (a deleted one's too, for its art sets)."""
         words = {**data["retired"], **{s["slug"]: s["text"] for s in data["styles"]}}
-        art.SAVED_STYLES.clear()
-        art.SAVED_STYLES.update(words)
+        art.SAVED_STYLES = words     # one assignment: a run reading it in another thread never sees it half filled
 
     # ---- reading
 
@@ -168,14 +167,27 @@ class StyleStore:
             store = self._read()
             row = self._row(store, slug)
             self.dir.mkdir(parents=True, exist_ok=True)
+            target = self.dir / f"{slug}.{ext}"
             tmp = self.dir / f".{slug}.{uuid.uuid4().hex}.tmp"
+            keep = self.dir / f".{slug}.{uuid.uuid4().hex}.old"
             tmp.write_bytes(data)
-            tmp.replace(self.dir / f"{slug}.{ext}")
-            for f in self.dir.glob(f"{slug}.*"):
+            had = target.is_file()
+            if had:
+                target.replace(keep)         # the old preview of the same format, put back if the list can't be written
+            tmp.replace(target)
+            row["preview"] = {"ext": ext, "text": text, "created": int(time.time() * 1000), **meta}
+            try:
+                self._write(store)
+            except BaseException:
+                if had:
+                    keep.replace(target)
+                else:
+                    target.unlink(missing_ok=True)
+                raise
+            keep.unlink(missing_ok=True)
+            for f in self.dir.glob(f"{slug}.*"):  # an old preview in another format, only once the list names the new one
                 if f.suffix[1:] in MIME and f.suffix[1:] != ext:
                     f.unlink(missing_ok=True)
-            row["preview"] = {"ext": ext, "text": text, "created": int(time.time() * 1000), **meta}
-            self._write(store)
         return self.public(row)
 
     @staticmethod
@@ -268,6 +280,9 @@ def router(store: StyleStore, image_model: Callable) -> APIRouter:
                 raise StyleError(422, "bad-model", str(e)) from e
             if image is None:
                 raise StyleError(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
+            if model is not None and provider is None and not llm.image_model(getattr(image, "provider", ""), model):
+                # a model alone is one of the image provider that would draw it (the first set up)
+                raise StyleError(422, "bad-model", f"Unknown image model {model!r}.")
             prov, name = getattr(image, "provider", provider) or provider, getattr(image, "name", model) or model
             q = llm.nearest_quality(prov, name, quality) if prov and name else quality
             shape = art.PREVIEW_SHAPE
