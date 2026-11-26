@@ -27,6 +27,9 @@ from .. import art, images, llm
 
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 MAX_NAME = 40
+# slugs the picture sheet uses for itself ("custom" is its free-text style), so a saved style may never take one; a name
+# with no letters or digits slugs to "custom" too
+RESERVED = frozenset({"custom"})
 MAX_TEXT = 300
 NAMES = {"digital-art": "Digital art", "comic-strip": "Comic strip", "anime": "Anime", "realism": "Realism",
          "hand-drawn": "Hand-drawn", "oil-painting": "Oil painting", "epic-sci-fi": "Epic sci-fi",
@@ -71,7 +74,7 @@ class StyleStore:
         if not isinstance(data, dict):
             data = {}
         rows = [s for s in data.get("styles") or [] if isinstance(s, dict) and SLUG.fullmatch(str(s.get("slug") or ""))
-                and s["slug"] not in art.STYLES and isinstance(s.get("text"), str) and s["text"]]
+                and s["slug"] not in art.STYLES and s["slug"] not in RESERVED and isinstance(s.get("text"), str) and s["text"]]
         retired = {k: v for k, v in (data.get("retired") or {}).items()
                    if isinstance(k, str) and SLUG.fullmatch(k) and isinstance(v, str) and v}
         return {"styles": rows, "retired": retired}
@@ -122,7 +125,7 @@ class StyleStore:
         slug = art.style_slug(name)
         with self._lock:
             data = self._read()
-            if slug in art.STYLES or any(s["slug"] == slug for s in data["styles"]):
+            if slug in art.STYLES or slug in RESERVED or any(s["slug"] == slug for s in data["styles"]):
                 raise StyleError(409, "exists", "There is a style with that name already. Choose another name.")
             now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
             row = {"slug": slug, "name": name, "text": text, "created": now, "updated": now, "preview": None}

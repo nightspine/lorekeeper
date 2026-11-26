@@ -240,3 +240,12 @@ def test_a_failed_list_write_keeps_the_old_preview(env, monkeypatch, mime):
         env.c.post("/api/styles/moody-noir/preview", json={})
     assert listed(env)["moody-noir"]["preview"] == old and env.c.get(old).content == first
     assert sorted(f.name for f in (env.data / "styles").iterdir()) == ["moody-noir.png"]
+
+
+def test_a_name_whose_slug_the_sheet_keeps_for_itself_is_refused(env):
+    for name in ("Custom", "custom!", "!!!"):         # "!!!" slugs to "custom" too
+        r = env.c.post("/api/styles", json={"name": name, "text": NOIR})
+        assert r.status_code == 409 and r.json()["code"] == "exists", name
+    assert "custom" not in listed(env) and "custom" not in art.SAVED_STYLES
+    (env.data / "styles.json").write_text(json.dumps({"styles": [{"slug": "custom", "name": "Custom", "text": NOIR}]}))
+    assert "custom" not in listed(env)                  # an older file's row is never listed
