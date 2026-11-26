@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.27.0](https://github.com/nightspine/lorekeeper/compare/v0.26.0...v0.27.0) (2026-11-26)
+
+
+### Features
+
+* find drawing faults in pictures and fix them, automatically or with a Fix button ([#153](https://github.com/nightspine/lorekeeper/issues/153)) ([8bb6a5f](https://github.com/nightspine/lorekeeper/commit/8bb6a5f74dd38707831e6dad21161df44256e541))
+* portraits drawn on demand show from the first point their look is known ([#149](https://github.com/nightspine/lorekeeper/issues/149)) ([69bb74d](https://github.com/nightspine/lorekeeper/commit/69bb74d90a249d057f9cc014b6bde6d1177d942d))
+
 ## [0.26.0](https://github.com/nightspine/lorekeeper/compare/v0.25.0...v0.26.0) (2026-11-26)
 
 
