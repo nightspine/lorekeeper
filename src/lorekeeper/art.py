@@ -102,6 +102,12 @@ EARLIER_NEW = 2
 EARLIER_NEW_PICKED = 2
 EARLIER_WORDS = ENTITY_WORDS // 4
 SETTINGS = 3           # settings a portrait's <surroundings> lists, the most usual first
+# The place a scene happens at (its event's `setting.place`, visible at the anchor) is its own <setting_entry>, outside the
+# MAX_ENTRIES figures and groups, so it never crowds them out: its description and earlier look up to SETTING_CHARS (an
+# <entry>'s size), so the same place is drawn from the same words in every scene there.
+SETTING_CHARS = OTHER_CHARS
+# Things (type "object") a scene's event names get an <earlier_look> like its figures, so an invented object keeps its design.
+LOOK_TYPES = PORTRAIT_TYPES + ("object",)
 # The version of the material a picture's prompt was written from, stored as the record's `notes`: 2 was the quoted
 # appearance notes, 3 is the one writer call from the whole entry. Only a picture of this version is a reference for a new
 # one, so a face drawn from the older notes is not copied into new pictures.
@@ -228,6 +234,15 @@ assert _NO_TEXT_RULE in WRITER
 SCENE_WRITER = WRITER.replace(_ENTRY_LINE, _ENTRY_LINE + ' An <entry> with a figure label (figure="A") is a figure the image model is given a reference picture of.').replace(
     _NO_TEXT_RULE, """- A figure whose <entry> has a figure label: when you draw them, call them by the label the first time, followed by who they are in a few words (their people, rank or role, and the dress that marks them: "figure A, a tidewarden in a dark travelling coat"), and by the label or a pronoun after that. Do not describe their face, hair, eyes, skin or build: their reference picture gives those. Never write the label of a figure you do not draw (one only heard, unseen or out of frame), never give a label to anyone else, and describe a figure without a label as the other rules say.
 """ + _NO_TEXT_RULE)
+# ...and the place the moment happens at, when its setting is an entry of the companion (<setting_entry>)
+_EARLIER_LINE = "<earlier_look>: how the entry (the entry to draw, or the <entry> of that name)"
+assert _EARLIER_LINE in SCENE_WRITER
+SCENE_WRITER = SCENE_WRITER.replace(_EARLIER_LINE, (
+    "<setting_entry>: the place where the moment happens, as the companion describes it at this point.\n"
+    "<earlier_look>: how the entry (the entry to draw, or the <entry> or <setting_entry> of that name)")).replace(
+    _NO_TEXT_RULE, """- When there is a <setting_entry>, the moment happens there: draw the setting as it and its <earlier_look> describe it (what it is built of, its size and shape, how it is lit, its period), so the place looks the same in every picture of it. A thing that has an <entry> and is in the picture is drawn as its entry describes it. The passages win where they say more about this moment.
+""" + _NO_TEXT_RULE)
+assert SCENE_WRITER.count("<setting_entry>: the place") == 1
 
 
 def labels_in(text: str) -> list[str]:
@@ -2045,6 +2060,13 @@ class Illustrator:
         return [x for x, _ in Counter(ids).most_common(4)]
 
     @staticmethod
+    def _setting_place(job: Job, vis: dict) -> str | None:
+        """The place entity a scene happens at: its event's setting link (a plate's main moment's), when that place is in the
+        view at the anchor (`vis`, for the reader's `finished`); None for a setting with no link, or none."""
+        pid = ((job.event or {}).get("setting") or {}).get("place") if job.kind in ("plate", "event") else None
+        return pid if pid in vis and vis[pid]["type"] == "place" else None
+
+    @staticmethod
     def _tag(tag: str, v: dict, desc: str, figure: str = "") -> str:
         head = f'<{tag} name="{_attr(v["name"])}" type="{TYPE_WORDS.get(v["type"], "thing")}"'
         if v.get("aliases"):
@@ -2108,6 +2130,7 @@ class Illustrator:
         material: list[str] = []
         others: list[str] = []
         scene = job.kind not in ENTITY_KINDS
+        setting_id = None
         if not scene:
             v = vis.get(job.target)
             if v is None:
@@ -2205,7 +2228,11 @@ class Illustrator:
             cited = ev["evidence"] if ev else [a for e2 in ch.get("events", [])[:6] for a in e2["evidence"]]
             passage, blocks = self.passage(bi, [b.seq_of[a] for a in cited if a in b.seq_of and b.seq_of[a] <= upto], upto)
             ids = [x for x in self._figures(job) if x in vis]
-            others = list(ids)
+            setting_id = self._setting_place(job, vis)
+            # the figures (people and creatures) first, then the other entries the event names, then the figures' groups: an
+            # entry past MAX_ENTRIES is cut, and the place the moment happens at has its own <setting_entry>
+            others = [x for x in ids if vis[x]["type"] in PORTRAIT_TYPES] + [
+                x for x in ids if vis[x]["type"] not in PORTRAIT_TYPES and x != setting_id]
             for eid in ids:
                 if vis[eid]["type"] in PORTRAIT_TYPES:
                     _, shown = self._describe(vis[eid], OTHER_CHARS)
@@ -2221,21 +2248,21 @@ class Illustrator:
             pictured = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
             found = self._pictured(pictured, self._pos(bi, anchor), view, fin)
             label_of = {eid: LABELS[n] for n, (eid, _) in enumerate(found)}
-        for eid in others[:MAX_ENTRIES]:
-            desc, shown = self._describe(vis[eid], OTHER_CHARS)
+        def entry(eid: str, tag: str, budget: int, look: bool, figure: str = "") -> None:
+            """An entry of the scene (or the entity's group) in `tag`, with its look told earlier (`look`) within `budget`."""
+            desc, shown = self._describe(vis[eid], budget)
             earlier, said = "", []
-            if scene and eid in ids and vis[eid]["type"] in PORTRAIT_TYPES:   # a figure's look told earlier, within its budget
-                first, _ = self._earlier_look(bi, eid, vis[eid], desc, OTHER_CHARS // 3)
+            if look:                       # a figure's, thing's or setting's look told earlier, within its budget
+                first, _ = self._earlier_look(bi, eid, vis[eid], desc, budget // 3)
                 if first:
                     # make room for it, then choose it against the entry as it is sent: a look in a detail the shorter
                     # entry drops is no longer "said" and may come back in the earlier look
-                    short, short_shown = self._describe(vis[eid], OTHER_CHARS - len(first) - 1)
-                    earlier, said = self._earlier_look(bi, eid, vis[eid], short,
-                                                       min(OTHER_CHARS // 3, OTHER_CHARS - len(short) - 1))
+                    short, short_shown = self._describe(vis[eid], budget - len(first) - 1)
+                    earlier, said = self._earlier_look(bi, eid, vis[eid], short, min(budget // 3, budget - len(short) - 1))
                     if earlier:
                         desc, shown = short, short_shown
             used(eid, shown)
-            material.append(self._tag("entry", vis[eid], desc, label_of.get(eid, "")))
+            material.append(self._tag(tag, vis[eid], desc, figure))
             plain.append(desc)
             if earlier:
                 material.append(f'<earlier_look name="{_attr(vis[eid]["name"])}">{_esc(earlier)}</earlier_look>')
@@ -2245,6 +2272,11 @@ class Illustrator:
                         sources.add(f["from"])
                     else:
                         inherits.add(self._bkey(j))
+
+        for eid in others[:MAX_ENTRIES]:
+            entry(eid, "entry", OTHER_CHARS, scene and eid in ids and vis[eid]["type"] in LOOK_TYPES, label_of.get(eid, ""))
+        if setting_id:                     # where the moment happens, outside the figures' budget
+            entry(setting_id, "setting_entry", SETTING_CHARS, True)
         milieu = ""
         if job.kind == "portrait":
             places, srcs = self._settings(bi, job.target, anchor)
