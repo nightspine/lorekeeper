@@ -140,12 +140,11 @@ def test_an_ordinary_run_hands_the_pipeline_nothing_new(env, seen):
 
 def test_a_run_whose_position_left_the_index_draws_nothing(env, seen):
     env.key()
-    r = post_run(env, entities=["mira"], until={"p": "a10"})
-    assert r.status_code == 200
-    job = env.jobs.jobs[r.json()["id"]]
-    job.config["art"]["until"]["p"] = "gone"            # as if the index were rebuilt before the run started
+    # as if the index were rebuilt between queueing and running: the stored anchor is no longer there
+    cfg = {**BASE, "entities": ["mira"], "until": {"p": "gone", "book": None}}
+    job = env.jobs.submit_art(KEY, cfg, index_path=str(env.index), book_id="", title="Millbrook", text_hash=env.hash)
     done = wait_for(env.c, job.id)
-    assert done["status"] in ("failed", "done")
+    assert done["status"] == "failed" and "no longer" in done["error"]
     assert not env.image.calls
 
 
@@ -200,6 +199,10 @@ def test_a_run_up_to_a_position_draws_only_that_entry_and_never_past_it(env):
     assert all(anchor_ord(doc, r["from"]) <= limit and all(anchor_ord(doc, s) <= limit for s in r.get("sources", []))
                for r in m["pictures"])
     first = len(m["pictures"])
+    # the estimate now knows the look index: nothing left to draw up to a10, the change still to draw by a13
+    q = {"key": KEY, "style": "ink", "level": "none", "portraits": "none", "entities": "mira"}
+    assert env.c.get("/api/art/estimate", params={**q, "until": at}).json()["portraits"] == 0
+    assert env.c.get("/api/art/estimate", params={**q, "until": "a13"}).json()["portraits"] == 1
     # read on to the end: the look change is drawn now, and what was drawn is not drawn again
     done = wait_for(env.c, post_run(env, entities=["mira"], until={"p": "a13"}).json()["id"])
     assert done["status"] == "done"
