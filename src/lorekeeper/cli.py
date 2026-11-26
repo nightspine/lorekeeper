@@ -993,7 +993,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--portrait-writer", metavar="PROVIDER:MODEL", default=None,
                    help="the model that writes the prompts of portraits, places and things (default: --text-provider's strong model)")
     s.add_argument("--picker", metavar="PROVIDER:MODEL", default=None,
-                   help="the model that makes the choosing calls: chapter screening, the look index, the look sentences (default: --text-provider's cheap model)")
+                   help="the model that makes the choosing calls: chapter screening, the look index, the look sentences (default: --text-model when given, else --text-provider's cheap model)")
     s.add_argument("--portrait-model", metavar="[PROVIDER:]MODEL", default=None,
                    help="the image model that draws portraits, places and things (PROVIDER:MODEL, or a model of --provider; default: the scene image model)")
     s.add_argument("--base-url", default=None, help=argparse.SUPPRESS)
