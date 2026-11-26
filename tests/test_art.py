@@ -1797,6 +1797,71 @@ def test_the_choosing_call_is_cached_per_word_and_sentence_and_made_by_the_picke
     assert len(name_calls(picker)) == 2 and name_calls(picker)[1].count(": \"") == 1
 
 
+def test_every_use_of_a_caught_word_is_judged_and_one_name_is_enough():
+    two = f"{SCENE} Gothic arches fill the chapel. She holds the Gothic against her chest."
+    il, t = fresh(text_=Text(scene=lambda p: two, names=lambda w, s: "holds the Gothic" in s))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Gothic"
+    ask = name_calls(t)[0]
+    assert '1. Gothic: "Gothic arches fill the chapel."' in ask and '2. Gothic: "She holds the Gothic against her chest."' in ask
+
+
+def test_a_long_sentence_is_sent_as_a_window_that_holds_the_word():
+    long = ("A woman with a basket on her arm stands at a wooden gate beside a grey stone mill, while a miller watches her "
+            "from the doorway with his arms folded, soft morning light falling across the packed earth of the yard, a path "
+            "leading off toward low green hills, the river bright beyond the mill wheel, a cart of sacks by the wall, and "
+            "far behind them all the pale towers of Kesterholm rise above the mist on the farthest hill")
+    assert long.index("Kesterholm") > art.NAME_SENTENCE_CHARS and "." not in long
+    il, t = fresh(text_=Text(scene=lambda p: long + ".", names=lambda w, s: w == "Kesterholm" and "Kesterholm" in s))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Kesterholm"
+    [piece] = re.findall(r'^\d+\. Kesterholm: "(.*)"$', name_calls(t)[0], re.M)
+    assert "Kesterholm" in piece and len(piece) <= art.NAME_SENTENCE_CHARS and long.endswith(piece.rstrip("."))
+    assert piece.split()[0] in long.split()                         # whole words at the cut
+    for w in ("Gothic", "Kesterholm", "Lucy"):                       # every excerpt holds its word, whatever the length
+        for x in art.Illustrator._excerpts(" ".join([long] * 3).replace(" the ", f" the {w} ", 2), w):
+            assert w in x and len(x) <= art.NAME_SENTENCE_CHARS
+
+
+def test_a_plural_or_stem_of_a_word_judged_not_a_name_is_still_caught():
+    hl = f"{SCENE} A Highland cow stands in the heather. The road climbs into the Highlands."
+    il, t = fresh(text_=Text(scene=lambda p: hl, names=lambda w, s: w == "Highlands"))
+    with pytest.raises(art.Dropped, match="unknown name") as e:
+        il.make_prompt(il.job("event", "e2", at="a5"))
+    assert e.value.detail == "unknown name: Highlands"
+    assert '. Highland: "' in name_calls(t)[0] and '. Highlands: "' in name_calls(t)[0]
+
+
+def test_a_name_answer_from_another_thread_is_never_replaced_and_kept_is_counted_once():
+    il, _ = fresh()
+    text_ = "A coach waits below Whitby on the quay."
+    key = ("Whitby", text_)
+
+    class Racing:
+        def __init__(self, other):
+            self.other = other
+
+        def complete(self, system, prompt, schema, prefix=None):
+            il._name_answers[key] = self.other          # another thread's answer lands while this call is in flight
+            return {"words": [{"n": 1, "name": False}]}
+
+    il.cheap = Racing(True)
+    assert il._names_among(text_, ["Whitby"]) == ["Whitby"] and il._name_answers[key] is True
+    assert not il.report.dropped["kept: a flagged word was not a name"]
+    il._name_answers.clear()
+    il.cheap = Racing(False)          # the other thread already answered and counted "not a name": not counted again
+    assert il._names_among(text_, ["Whitby"]) == [] and il.report.dropped["kept: a flagged word was not a name"] == 0
+    il._name_answers.clear()
+
+    class Plain:
+        def complete(self, system, prompt, schema, prefix=None):
+            return {"words": [{"n": 1, "name": False}]}
+    il.cheap = Plain()
+    assert il._names_among(text_, ["Whitby"]) == [] and il.report.dropped["kept: a flagged word was not a name"] == 1
+
+
 def test_a_word_the_book_already_uses_is_never_asked_about():
     il, t = fresh(text_=chooser(scene=lambda p: f"{SCENE} Oren's mill stands by the river."))
     il.make_prompt(il.job("event", "e2", at="a5"))
