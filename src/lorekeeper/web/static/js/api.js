@@ -187,7 +187,8 @@ export const api = {
   artSoften: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/soften`, body, { signal }),
   artDraw: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body, { signal }),
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
-  artRedraw: (key, id, note) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`, { note }),
+  artRedraw: (key, id, note, p = null) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`,
+    typeof p === "string" && p ? { note, p } : { note }),
   /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
   artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
   /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */

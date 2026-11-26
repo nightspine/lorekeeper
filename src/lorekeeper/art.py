@@ -1953,6 +1953,22 @@ class Illustrator:
         return self._picture(eid, pos, finished=finished) or (
             None if upto == -1 else self.earliest_later_picture(eid, pos, upto, finished=finished))
 
+    def reference_reached(self, job: Job, j: int, rec: dict) -> bool:
+        """Whether a scene's stored reference (book j, its record) may be sent again for the job's reader (a same-prompt
+        redraw): one at or before the scene, as always; one after it only within the reader's frontier (`_reach`: `job.reach`,
+        else the run's limit) and with no look change of its entity recorded between the scene and it (`_changes_after`), as
+        `earliest_later_picture` chose it. Anything but a plate or event keeps its references."""
+        if job.kind not in ("plate", "event"):
+            return True
+        pos = self._pos(job.bi, job.anchor)
+        k = (j, self.books[j].ord_of.get(rec.get("from"), -1))
+        if k <= pos:
+            return True
+        upto = self._reach(job)
+        if j != job.bi or upto == -1 or (upto is not None and k[1] > upto):
+            return False
+        return not self._changes_after(j, str(rec.get("target")), pos[1], k[1])
+
     def reference_bytes(self, j: int, rec: dict) -> bytes | None:
         """A reference picture's file, from the set it belongs to (this book's, or the other style's set it came from)."""
         if rec.get("set"):

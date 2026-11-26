@@ -72,7 +72,8 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-export { sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+export { refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+import { refParts } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
 
@@ -320,12 +321,6 @@ export function cleanFigures(list) {
     .map((f) => ({ label: f.label, entity: f.entity, ref: f.ref ?? null }))
     .sort((a, b) => (a.label < b.label ? -1 : 1));
 }
-/** The id and set of a reference as stored (a plain id, { set, id }) or as the sheet's reply gives it ({ id, set?, url }). */
-export function refParts(ref) {
-  if (typeof ref === "string") return ID_RE.test(ref) ? { id: ref, set: null } : null;
-  if (ref && typeof ref === "object" && typeof ref.id === "string" && ID_RE.test(ref.id)) return { id: ref.id, set: typeof ref.set === "string" ? ref.set : null };
-  return null;
-}
 /**
  * One quiet line per figure: "Figure A is Greyhand" with a 24px round thumbnail of its reference. `name(entity)` gives the
  * name from the reader's own view (null: not visible there, so just "Figure A"), `thumb(figure)` the picture's URL or null
@@ -350,8 +345,8 @@ const when = (iso) => { const t = Date.parse(iso || ""); return Number.isFinite(
  * One picture at full size, with its caption and a closed "How this was drawn". `items` are
  * [{ rec, src, caption, key, canEdit, canRedraw, newPrompt, figureName(entity), figureThumb(rec, figure) }] in the order the arrows step through (only visible pictures
  * are ever passed). `newPrompt(rec)` opens the picture sheet to write a new prompt for the same kind and target, whose
- * picture replaces this one; without it Redraw only draws the saved prompt again. `onChanged()` runs after a redraw, a
- * delete or an undo.
+ * picture replaces this one; without it Redraw only draws the saved prompt again. `position()` (optional) gives the reader's
+ * frontier anchor, sent with a same-prompt redraw. `onChanged()` runs after a redraw, a delete or an undo.
  */
 export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   if (!items.length) return null;
@@ -450,7 +445,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       go_.disabled = true; cancel.disabled = true;
       clear(acts, loading("Drawing it again…"));
       try {
-        const r = await api.artRedraw(it.key, it.rec.id, note.value.trim());
+        // the reader's position: a figure's reference from after the scene is sent again only when it is reached
+        const r = await api.artRedraw(it.key, it.rec.id, note.value.trim(), it.position ? it.position() : null);
         forgetArt(it.key);
         const rec = r?.record || r;
         if (rec && ID_RE.test(rec.id || "")) { it.rec = rec; it.src = it.srcFor ? it.srcFor(rec) : it.src; }
@@ -760,7 +756,8 @@ export async function openPictureSheet(opts) {
   /** Under the box: which reference picture is which figure, as the text stands now (a label taken out drops its line). */
   const figuresBox = h("div.art-figures-box");
   function paintFigures() {
-    const pic = (f) => { const u = f.ref && typeof f.ref === "object" ? f.ref.url : null; return typeof u === "string" && /^\/api\/art\/[^/]+\/[^/]+\/[A-Za-z0-9_-]{1,64}$/.test(u) ? u : null; };
+    // the reply's `ref` is the reference's URL (a string; `{url}` accepted too), only ever an /api/art/<hash>/<set>/<id> address
+    const pic = (f) => refParts(f.ref)?.url || null;
     clear(figuresBox, figureLines(st.figures, { text: st.prompt, name: opts.figureName || undefined, thumb: pic }));
   }
   const styleNote = h("p.hint.art-style-note", { role: "status" });
