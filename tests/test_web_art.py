@@ -1163,6 +1163,8 @@ def test_drawing_in_another_style_or_shape_reuses_the_prompt_with_no_call(env):
     custom = {**ask, "style": "Moody blue gouache", "prompt": got["body"] + " Moody blue gouache. " + got["noText"]}
     r = env.c.post(f"/api/library/{KEY}/art/draw", json=custom)
     assert r.status_code == 200 and "/moody-blue-gouache/" in r.json()["url"] and len(env.text.prompts) == n
+    # the sheet files and shows a custom-style picture under the set's slug, which only the server knows
+    assert r.json()["slug"] == "moody-blue-gouache"
 
 
 def test_a_prompt_drawn_into_another_set_takes_its_references_from_that_set(env):
