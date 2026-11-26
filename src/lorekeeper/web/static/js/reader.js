@@ -117,7 +117,7 @@ export function mountReader(root) {
   // Read: the book's own text, the position following the scroll (read.js). It is handed the Reader's state and moves.
   const canRead = () => !preview && Boolean(s.map?.exact && s.hash);
   const reading = createReading({
-    key: () => s.key, map: () => s.map, view: () => s.view, p: () => s.p, moveTo: (p) => moveTo(p), settle: (p) => setP(p, { quiet: true }),
+    key: () => s.key, map: () => s.map, view: () => s.view, p: () => s.p, moveTo: (p) => moveTo(p), settle: (p) => setP(p, { quiet: true }), line: () => aheadLine(),
     doc: () => s.doc, series: () => Boolean(s.series),
     priorDocs: () => (s.series ? (finishedSet() || []).map((b) => s.seriesDocs.get(b)).filter(Boolean) : []),
     entity: (id) => nameOf(id) || null,
@@ -1119,6 +1119,13 @@ export function mountReader(root) {
         const to = { ArrowRight: keys[(i + 1) % keys.length], ArrowLeft: keys[(i + keys.length - 1) % keys.length], Home: keys[0], End: keys[keys.length - 1] }[ev.key];
         if (to) { ev.preventDefault(); select(to, true); }
       } } }, h("span.tab-full", label), h("span.tab-short", { "aria-hidden": "true" }, short), n == null ? null : h("span.count", String(n)))));
+    // A row that scrolls sideways (a phone, large text) keeps the selected tab in view, without moving the page.
+    const sel = el.tabs.querySelector('[aria-selected="true"]');
+    if (sel && el.tabs.scrollWidth > el.tabs.clientWidth) {
+      const left = sel.getBoundingClientRect().left - el.tabs.getBoundingClientRect().left + el.tabs.scrollLeft, right = left + sel.offsetWidth;
+      if (left < el.tabs.scrollLeft) el.tabs.scrollLeft = left - 12;
+      else if (right > el.tabs.scrollLeft + el.tabs.clientWidth) el.tabs.scrollLeft = right - el.tabs.clientWidth + 12;
+    }
     el.panel.setAttribute("aria-labelledby", `tab-${s.tab}`);
     if (s.tab !== "links") { clear(el.mapSide); el.split.classList.remove("has-side"); }
     ({ overview: paintOverview, chapters: paintChapterRecaps, cast: paintCast, timeline: paintTimeline, links: paintLinks, ask: () => ask.mount(el.panel), read: () => reading.mount(el.panel) })[s.tab]();
