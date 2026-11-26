@@ -2598,3 +2598,38 @@ def test_illustrate_command_takes_a_model_per_responsibility(tmp_path, monkeypat
         cli.main(base + ["--writer", "nobody:x"])
     with pytest.raises(SystemExit, match="Claude cannot draw"):
         cli.main(base + ["--portrait-model", "claude:x"])
+
+
+# ---- style previews
+
+
+def test_preview_prompt_is_the_parts_a_real_prompt_has():
+    for slug, sentence in art.STYLES.items():
+        p = art.preview_prompt(slug)
+        assert p == art.Illustrator._assemble(art.PREVIEW_SCENE, style=sentence)
+        assert p == f"{art.PREVIEW_SCENE} {sentence} {art.NO_TEXT}"
+    own = "  Pastel   crayon on brown paper. "
+    assert art.preview_prompt(own) == f"{art.PREVIEW_SCENE} Pastel crayon on brown paper. {art.NO_TEXT}"
+
+
+def test_preview_scene_is_generic_and_has_no_style_words():
+    scene = art.PREVIEW_SCENE.lower()
+    for word in ("painting", "drawing", "illustration", "ink", "watercolour", "anime", "comic", "style", "text"):
+        assert not re.search(rf"\b{word}\b", scene), word
+    assert 30 <= len(art.PREVIEW_SCENE.split()) <= art.SCENE_WORDS[1]
+    assert art.PREVIEW_SHAPE in images.SHAPES
+
+
+def test_builtin_previews_ship_for_every_style():
+    from pathlib import Path
+    root = Path(art.__file__).parent / "web" / "static" / "styles"
+    if not root.is_dir():
+        pytest.skip("previews not drawn yet")
+    total = 0
+    for slug in art.STYLES:
+        f = root / f"{slug}.webp"
+        assert f.is_file(), slug
+        data = f.read_bytes()
+        assert data[:4] == b"RIFF" and data[8:12] == b"WEBP", slug
+        total += len(data)
+    assert total < 1.5 * 1024 * 1024

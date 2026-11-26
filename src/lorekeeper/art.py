@@ -301,6 +301,20 @@ def style_sentence(style: str) -> str:
     return STYLES.get(style) or " ".join(style.split())
 
 
+# The one scene every style preview shows, so styles compare like for like. Generic and from no book: a writer's body as
+# a real prompt has one (subject, then setting, then light and mood, no style words), drawn with `preview_prompt`.
+PREVIEW_SCENE = ("A lone traveller in a long coat walks away from the viewer along a muddy road at dusk, toward a ruined "
+                 "castle on a hilltop. Weathered gravestones lean by the roadside. Above, a stormy sky of heavy clouds with "
+                 "a pale sun low behind them; cold light, a quiet and uneasy mood.")
+PREVIEW_SHAPE = "square"   # the picker's cards are square: a landscape preview would lose its sides in one
+
+
+def preview_prompt(style: str) -> str:
+    """The preview prompt of a style (a listed slug, or a person's own words): `PREVIEW_SCENE`, the style sentence and the
+    no-text line, joined exactly as a real prompt's parts are (`Illustrator._assemble`)."""
+    return Illustrator._assemble(PREVIEW_SCENE, style=style_sentence(style))
+
+
 def style_slug(style: str) -> str:
     if style in STYLES:
         return style
