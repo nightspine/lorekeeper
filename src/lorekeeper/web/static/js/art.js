@@ -400,6 +400,9 @@ export function modalToasts() {
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
  *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
  *                the old one stays (no `replaces` is sent)
+ *   through      a person or creature portrait: the sheet also offers "Through the book so far", the portraits a run would
+ *                plan for this one entry (first look, then each lasting look change) up to the position, already drawn ones
+ *                skipped, counted by the estimate and started as a pictures run on the queue (never with `replaces`)
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
@@ -420,6 +423,8 @@ export async function openPictureSheet(opts) {
     prompt: "", written: "", price: null, asked: null, slug: null,
     parts: null, sentence: null, missing: false,   // the prompt's parts, the style sentence in it now, and whether that is lost
     busy: false, closed: false, figures: [],   // figures: the labelled figures of the prompt on screen
+    mode: "now",   // "now": one portrait at the position; "through": the entry's portraits through the book so far, as a run
+    est: null,     // through: { ask, r, error } the estimate for the choices and position in `ask` (a JSON key)
   };
   if (!STYLE_LABEL[st.style]) {
     st.custom = (opts.styles || []).find((x) => x.slug === st.style)?.text || st.style.replace(/-/g, " ");
@@ -440,14 +445,16 @@ export async function openPictureSheet(opts) {
 
   const body = h("div.art-sheet-body");
   const drawBtn = h("button.btn.primary", { type: "button", disabled: true }, icon("sparkle"), "Draw");
+  const through = Boolean(opts.through) && opts.kind === "portrait" && !(typeof opts.replaces === "string" && opts.replaces);
+  const startBtn = h("button.btn.primary", { type: "button", disabled: true, hidden: true }, icon("sparkle"), "Start");
   const footNote = h("span.art-price.num", { role: "status" });
   const replaces = typeof opts.replaces === "string" && ID_RE.test(opts.replaces) ? opts.replaces : null;
   const sh = sheet({ title: `${replaces ? "Redraw" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
-    footer: h("div.art-foot", footNote, drawBtn),
+    footer: h("div.art-foot", footNote, drawBtn, startBtn),
     // Always closable: a prompt in flight is abandoned; a drawing already sent is not (the server files it either way), and
     // when it lands its toast, with Undo for a redraw, shows where the sheet was opened from. An edited prompt is asked about first.
     beforeClose: () => {
-      if (st.drawing) return true;
+      if (st.drawing || st.starting) return true;
       if (st.busy) { abort(); return true; }
       if (!st.prompt || st.prompt === st.written) return true;
       confirmDialog({ title: "Discard your prompt?", message: "The prompt you changed is not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
@@ -472,8 +479,11 @@ export async function openPictureSheet(opts) {
     opts.canEditWorld = canEditWorld;   // decided again for the position now: a note hidden here is never written over
     st.prompt = st.written = "";
     st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
+    if (st.mode === "through") { paintFoot(); return; }   // counted again up to the position now; the prompt waits for "now"
     write();
   };
+  /** The position moved (either way): "Through the book so far" counts again up to where the reader is now. */
+  sh.moved = () => { if (st.mode === "through" && !st.closed) paintFoot(); };
 
   const textarea = h("textarea.input.art-prompt", { rows: "7", "aria-label": "Prompt", spellcheck: "true" });
   textarea.addEventListener("input", () => { st.prompt = textarea.value; paintFoot(); paintFigures(); });
@@ -489,7 +499,7 @@ export async function openPictureSheet(opts) {
     st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
     textarea.value = "";
     if (!retried) { write({ retried: true }); return; }
-    clear(body, h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
+    clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
       h("button.btn", { type: "button", on: { click: () => write() } }, "Write it again"));
     paintFoot();
   }
@@ -499,7 +509,7 @@ export async function openPictureSheet(opts) {
     const mine = ++gen;
     ctrl = new AbortController();
     st.busy = true;
-    clear(body, loading("Writing a prompt from what you have read…"));
+    clear(body, modePick(), loading("Writing a prompt from what you have read…"));
     paintFoot();
     const asked = { style: styleText(), quality: st.quality, provider: st.provider.id, model: st.model, shape: st.shape };
     try {
@@ -538,7 +548,7 @@ export async function openPictureSheet(opts) {
         clear(err, h("p", why));
         return;
       }
-      clear(body, h("div.art-error", { role: "alert" }, h("p", why)),
+      clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", why)),
         e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
       paintFoot();
     }
@@ -592,7 +602,7 @@ export async function openPictureSheet(opts) {
    *  server sends no parts, so there the prompt is written again. Updates the text area in place (typing keeps focus). */
   function applyStyle() {
     if (!st.prompt && !st.parts) return;
-    if (!st.parts) { if (styleText() && styleText() !== st.promptStyle) write(); return; }
+    if (!st.parts) { if (st.mode === "now" && styleText() && styleText() !== st.promptStyle) write(); return; }
     const next = sentenceFor(st.parts, st.style, st.custom);
     if (next == null) { st.missing = true; return; }   // a known style the server did not list: the text stays as it is
     Object.assign(st, restyle({ prompt: st.prompt, written: st.written, parts: st.parts, old: st.sentence, next }));
@@ -661,7 +671,21 @@ export async function openPictureSheet(opts) {
       }), (nodes) => h("div.art-moments", { role: "radiogroup", "aria-label": "Moment to draw" }, nodes),
       { show: 4, noun: "moments", open: momentsOpen, onToggle: (o) => { momentsOpen = o; },
         keep: [opts.moments.findIndex((m) => m.kind === st.kind && m.target === st.target)] })) : null;
+    const modeSeg = modePick();
+    if (st.mode === "through") {
+      clear(body, modeSeg,
+        h("p.hint", "A portrait at their first look and one at each lasting change in how they look, up to your position. Portraits already drawn are skipped. They are drawn as a run, which you can follow in Runs."),
+        h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
+        h("div.art-row",
+          h("div.art-field", h("span.label", "Quality"), qualitySeg),
+          provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
+        modelPick ? h("div.art-field", models.length <= 3 ? h("span.label", "Model") : h("label.label", { for: "art-model" }, "Model"), modelPick) : null,
+        err);
+      paintFoot();
+      return;
+    }
     clear(body,
+      modeSeg,
       opts.drawnLine ? h("p.art-drawn.subtle", opts.drawnLine) : null,
       moments,
       h("div.art-field", h("label.label", { for: "art-prompt" }, "Prompt"), textarea,
@@ -723,7 +747,88 @@ export async function openPictureSheet(opts) {
     const a = st.asked;
     return a && a.quality === st.quality && a.provider === st.provider.id && a.model === st.model && a.shape === st.shape ? st.price : null;
   }
+  /** The choice between one portrait now and the entry's portraits through the book so far (null when not offered); it
+   *  heads every state of the sheet, a prompt being written or failed included, so either way is always open. */
+  function modePick() {
+    return through ? h("div.art-field", h("span.label", "What to draw"),
+      h("div.seg.art-mode", { role: "group", "aria-label": "What to draw" },
+        [["now", "As they are now"], ["through", "Through the book so far"]].map(([k, l]) =>
+          h("button", { type: "button", "aria-pressed": String(st.mode === k), on: { click: () => setMode(k) } }, l)))) : null;
+  }
+  /** "As they are now" or "Through the book so far". Leaving "now" keeps a prompt already on screen (typed text included)
+   *  and abandons one being written; coming back writes one only when there is none. */
+  function setMode(k) {
+    if (k === st.mode) return;
+    if (k === "through" && st.busy) abort();
+    st.mode = k;
+    clear(err);
+    if (k === "now" && !st.prompt) { write(); return; }
+    paint();
+    body.querySelector(".art-mode [aria-pressed=true]")?.focus();
+  }
+  /** The run's choices as the estimate and the run route take them: no scenes, portraits of this entry only, up to the
+   *  reader's position now (`until`, the frontier anchor) with their finished books. */
+  function throughAsk() {
+    const at = here();
+    return { style: styleText(), level: "none", portraits: "all", entities: [opts.target], until: at.p, finished: at.finished,
+      quality: st.quality, provider: st.provider.id, ...(st.model ? { model: st.model } : {}) };
+  }
+  let estGen = 0, estTimer = null;
+  /** Ask the estimate for the choices and position now, unless it already answered for exactly those. */
+  async function estimateThrough() {
+    const ask = throughAsk();
+    const key = JSON.stringify(ask);
+    if (!ask.style || ask.until == null) { st.est = null; paintFoot(); return; }
+    if (st.est?.ask === key) return;
+    const mine = ++estGen;
+    st.est = { ask: key, r: null, error: null, busy: true };
+    paintFoot();
+    let r = null, error = null;
+    try {
+      r = await api.artEstimate({ key: opts.key, ...ask });
+    } catch (e) { error = e; }
+    if (mine !== estGen || st.closed) return;
+    st.est = { ask: key, r, error, busy: false };
+    paintFoot();
+  }
+  /** The estimate as one sentence ("3 portraits, about 10 cents."), a range while the look index is not checked yet, and
+   *  whether there is anything to start. Counts only what the server counted up to the position. */
+  function throughLine() {
+    const e = st.est;
+    if (!styleText()) return { text: "Describe the style first.", ok: false };
+    if (here().p == null) return { text: "Nothing is revealed at your position yet.", ok: false };
+    if (!e || e.busy) return { text: "Counting the portraits…", ok: false };
+    if (e.error) return { text: e.error.code === "not-visible" ? "This isn't revealed at your position yet." : e.error.code === "busy" ? "Pictures are being drawn for this book. Try again once that run has finished." : `Couldn't count the portraits: ${e.error.message}`, ok: false };
+    const r = e.r || {};
+    const lo = Number.isFinite(+r.portraits) ? +r.portraits : null;
+    if (lo == null) return { text: "Couldn't count the portraits.", ok: false };
+    const hiRaw = r.portraitsMax ?? r.portraits_max;
+    const hi = Number.isFinite(+hiRaw) && +hiRaw > lo ? +hiRaw : lo;
+    const noun = (n) => `portrait${n === 1 ? "" : "s"}`;
+    if (hi === 0) return { text: "Every portrait through the book so far is already drawn.", ok: false };
+    if (hi > lo) {
+      const pmax = r.priceMax ?? r.price_max;
+      const cost = r.price != null && pmax != null ? `${money(r.price)} to ${money(pmax).replace(/^about /, "")}` : money(pmax ?? r.price);
+      return { text: `${lo ? `${lo} to ${hi}` : `Up to ${hi}`} ${noun(hi)}, ${cost}. The exact number is known once the run has read how they look.`, ok: true };
+    }
+    const planned = Number.isFinite(+r.planned?.portraits) ? +r.planned.portraits : lo;
+    const held = planned > lo ? ` ${planned - lo} more ${planned - lo === 1 ? "is" : "are"} already drawn.` : "";
+    return { text: `${lo} ${noun(lo)}, ${money(r.price)}.${held}`, ok: true };
+  }
   function paintFoot() {
+    drawBtn.hidden = st.mode === "through";
+    startBtn.hidden = st.mode !== "through";
+    if (st.mode === "through") {
+      const ask = throughAsk();
+      const stale = st.est?.ask !== JSON.stringify(ask);
+      // A count made for other choices or another position is never shown as this one's.
+      const line = stale && ask.style && ask.until != null ? { text: "Counting the portraits…", ok: false } : throughLine();
+      footNote.textContent = line.text;
+      startBtn.disabled = !line.ok || st.starting || stale;
+      // A choice or the position changed: count again shortly (a typed custom style asks once the typing pauses).
+      if (stale && !st.closed && ask.style && ask.until != null) { clearTimeout(estTimer); estTimer = setTimeout(() => { if (st.mode === "through") estimateThrough(); }, 250); }
+      return;
+    }
     // An older server's prompt carries its style in the text: until it is written again for a new style, Draw waits.
     const stale = !st.parts && st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
     const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !stale;
@@ -737,6 +842,29 @@ export async function openPictureSheet(opts) {
         : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Price unknown for these choices" : "Price unknown";
   }
 
+  startBtn.addEventListener("click", async () => {
+    if (st.starting || st.mode !== "through") return;
+    // The count shown must be for the position now: a move since it was counted counts again first, and nothing starts.
+    if (st.est?.ask !== JSON.stringify(throughAsk())) { estimateThrough(); return; }
+    st.starting = true; startBtn.disabled = true;
+    const { until, finished, ...rest } = throughAsk();
+    const cap = artDefaults().cap;
+    try {
+      const job = await api.artRun(opts.key, { ...rest, until, finished, cap });
+      st.starting = false;
+      st.written = st.prompt;   // nothing to ask about on close
+      sh.close(true);
+      toast(opts.title ? `Drawing ${opts.title} through the book so far.` : "Drawing their portraits through the book so far.", "ok", { host: modalToasts(),
+        action: job?.id ? { label: "Follow it in Runs", run: () => { location.hash = `#/studio/job/${encodeURIComponent(job.id)}`; } } : null });
+      opts.onStarted?.(job);
+    } catch (e) {
+      st.starting = false;
+      if (st.closed) { toast(`Couldn't start the run: ${e.message}`, "error", { host: modalToasts() }); return; }
+      clear(err, h("p", e.code === "busy" ? "Pictures are being drawn for this book. Try again once that run has finished."
+        : e.code === "not-visible" ? "This isn't revealed at your position yet." : `Couldn't start the run: ${e.message}`));
+      paintFoot();
+    }
+  });
   drawBtn.addEventListener("click", async () => {
     if (st.busy) return;
     // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.

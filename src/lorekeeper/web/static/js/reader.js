@@ -955,6 +955,7 @@ export function mountReader(root) {
     // Names and thumbnails on an open lightbox or sheet follow the view now, not the one they were painted from.
     s.art.lightbox?.refresh?.();
     s.art.sheet?.sh?.refreshFigures?.();
+    s.art.sheet?.sh?.moved?.();   // "Through the book so far" counts again up to the position now
     const repaint = () => {
       frame = 0;
       paintTabs();
@@ -1908,11 +1909,11 @@ export function mountReader(root) {
     return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
-  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null }) {
+  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through,
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
       reached: anchorReached,
@@ -1929,10 +1930,28 @@ export function mountReader(root) {
         if (slug && slug !== s.art.slug) { s.art.style = slug; setArtStyle(slug); }
         refreshPictures();
       },
-      onUndone: () => refreshPictures({ forget: s.key }) });
+      onUndone: () => refreshPictures({ forget: s.key }),
+      onStarted: (job) => watchArtRun(job, s.key) });
     const entry = { kind, target, opened, sh: null };
     s.art.sheet = entry;
     opened.then((sh) => { entry.sh = sh; sh?.closed?.then(() => { if (s.art.sheet === entry) s.art.sheet = null; }); });
+  }
+  /** A pictures run started from the sheet ("Through the book so far"): the art set is fetched again as its pictures come
+   *  in and once it ends, so the entry and the scene references pick the new portraits up. Gated as every picture is. */
+  function watchArtRun(job, key) {
+    if (!job?.id || preview) return;
+    let seen = -1;
+    const tick = async () => {
+      if (disposed || s.key !== key) return;
+      let j = null;
+      try { j = await api.job(job.id); } catch { return; }   // gone or unreachable: stop watching quietly
+      if (disposed || s.key !== key) return;
+      const done = +j?.progress?.art?.done || 0;
+      const live = ["queued", "running", "stopping"].includes(j?.status);
+      if (done !== seen || !live) { if (seen >= 0 || !live) refreshPictures({ forget: key }); seen = done; }
+      if (live) setTimeout(tick, 15000);
+    };
+    setTimeout(tick, 15000);
   }
   /** Everything an open picture sheet names (the moment selected now and every moment listed) is still revealed. */
   function sheetVisible(entry) {
@@ -2349,7 +2368,9 @@ export function mountReader(root) {
     // "Draw a picture", also when the entry has one (the new one is another version beside it; Redraw in the lightbox
     // replaces one). Only for an entry of the book being read (the prompt is written from this book's passages).
     const drawLink = !s.edit && s.art.canDraw && KIND_OF_TYPE[e.type] && (!s.series || inThisBook(e.id))
-      ? h("p.d-art", h("button.linkish.art-draw", { type: "button", on: { click: () => drawPicture({ kind: KIND_OF_TYPE[e.type], target: e.id, title: e.name }) } }, icon("sparkle"), "Draw a picture")) : null;
+      ? h("p.d-art", h("button.linkish.art-draw", { type: "button", on: { click: () => drawPicture({ kind: KIND_OF_TYPE[e.type], target: e.id, title: e.name,
+        // a person or creature can also be drawn through the book so far: every look up to the position, as a run
+        through: e.type === "person" || e.type === "creature" }) } }, icon("sparkle"), "Draw a picture")) : null;
     const title = s.edit ? h("div.d-title", h("h2#drawer-title.sr-only", { tabindex: "-1" }, e.name), editor.drawerTitle(e), origin, askLink)
       : h("div.d-title", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name), origin, jumpNav, drawLink, askLink);
     const content = [h("header", title, closeBtn), body];
