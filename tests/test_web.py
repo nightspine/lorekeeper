@@ -504,7 +504,7 @@ def cloud(client, monkeypatch):
         if provider != "custom" and key != "good-key-123":
             raise llm.ProviderError(f"{llm.PROVIDERS[provider]['label']} rejected this API key.", 401)
         return ["live-model-1", llm.PROVIDERS[provider]["default"] or "x"]
-    monkeypatch.setattr(llm, "list_models", fake_list)
+    monkeypatch.setattr(llm, "live_models", fake_list)
     client.calls = calls
     return client
 

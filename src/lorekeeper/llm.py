@@ -9,6 +9,7 @@ import os
 import re
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from typing import Protocol
@@ -483,6 +484,11 @@ def env_key(provider: str) -> str | None:
 
 def list_models(provider: str, api_key: str | None, base_url: str | None = None, timeout: float = 8) -> list[str]:
     """Live model ids from GET {base_url}/models. Raises ProviderError (auth, unreachable, unsupported)."""
+    return sorted({mid for mid, _ in _model_rows(provider, api_key, base_url, timeout)})
+
+
+def _model_rows(provider: str, api_key: str | None, base_url: str | None, timeout: float) -> list[tuple[str, dict]]:
+    """(id without "models/", the row as sent) for every model GET {base_url}/models lists."""
     spec = PROVIDERS[provider]
     if spec["kind"] != "openai":
         raise ValueError("list_models is for OpenAI-compatible providers")
@@ -503,12 +509,75 @@ def list_models(provider: str, api_key: str | None, base_url: str | None = None,
     rows = data.get("data") if isinstance(data, dict) else data
     if rows is None and isinstance(data, dict):
         rows = data.get("models")   # Gemini's native shape, just in case
-    ids = []
-    for r in rows or []:
+    out = []
+    for r in rows if isinstance(rows, list) else []:
         mid = r.get("id") or r.get("name") if isinstance(r, dict) else r
         if isinstance(mid, str):
-            ids.append(mid.removeprefix("models/"))
-    return sorted(set(ids))
+            out.append((mid.removeprefix("models/"), r if isinstance(r, dict) else {}))
+    return out
+
+
+GEMINI_NATIVE = "https://generativelanguage.googleapis.com/v1beta"
+
+
+def _gemini_rows(api_key: str | None, timeout: float) -> list[tuple[str, dict]]:
+    """Gemini's native model list (it says what each model supports; the OpenAI-compatible one does not), every page."""
+    out, token = [], ""
+    for _ in range(10):
+        q = "pageSize=1000" + (f"&pageToken={urllib.parse.quote(token)}" if token else "")
+        try:
+            status, data = _http("GET", f"{GEMINI_NATIVE}/models?{q}",
+                                 {"User-Agent": "lorekeeper", "x-goog-api-key": api_key or ""}, None, timeout)
+        except (urllib.error.URLError, TimeoutError, ConnectionError, ValueError) as e:
+            raise ProviderError(f"Couldn't reach {GEMINI_NATIVE}: {getattr(e, 'reason', e)}") from e
+        if status in (400, 401, 403) and not out:
+            raise ProviderError("Gemini rejected this API key.", status)
+        if status != 200 or not isinstance(data, dict):
+            raise ProviderError(f"Gemini answered HTTP {status}: {_error_text(data)}", status)
+        for r in data.get("models") or []:
+            if isinstance(r, dict) and isinstance(r.get("name"), str):
+                out.append((r["name"].removeprefix("models/"), r))
+        token = data.get("nextPageToken") or ""
+        if not isinstance(token, str) or not token:
+            break
+    return out
+
+
+def _writes_text(provider: str, mid: str, row: dict, image_names: set[str]) -> bool:
+    """Whether a listed model can write text, from what the provider's list says about it. Only where it says nothing does
+    the id count, and then only to leave out the image models IMAGE_PROVIDERS lists for this provider."""
+    if mid in {m["id"] for m in IMAGE_PROVIDERS.get(provider, {}).get("models", [])}:
+        return False
+    methods = row.get("supportedGenerationMethods")
+    if isinstance(methods, list):        # Gemini's native list
+        # generateContent is claimed by music, speech and image models too; the ones that think are the ones that write.
+        # A model the provider names like a listed image model ("Nano Banana Pro") is that image model under another id.
+        return "generateContent" in methods and row.get("thinking") is True and row.get("displayName") not in image_names
+    arch = row.get("architecture")
+    outputs = arch.get("output_modalities") if isinstance(arch, dict) else None   # OpenRouter
+    if outputs is None:
+        outputs = row.get("output_modalities", row.get("outputModalities"))
+    if isinstance(outputs, list):
+        return "text" in outputs
+    caps = row.get("capabilities")
+    if isinstance(caps, dict) and isinstance(caps.get("completion_chat"), bool):   # Mistral
+        return caps["completion_chat"]
+    return True
+
+
+def live_models(provider: str, api_key: str | None, base_url: str | None = None, timeout: float = 8) -> list[dict]:
+    """Every live model the provider lists, as {"id", "text"} sorted by id: `text` is whether it can write text (a prompt,
+    an index), decided by `_writes_text`. Gemini is read from its native list. Raises ProviderError like list_models."""
+    if provider == "gemini" and not base_url:
+        rows = _gemini_rows(api_key, timeout)
+    else:
+        rows = _model_rows(provider, api_key, base_url, timeout)
+    listed = {m["id"] for m in IMAGE_PROVIDERS.get(provider, {}).get("models", [])}
+    image_names = {r.get("displayName") for mid, r in rows if mid in listed and r.get("displayName")}
+    seen: dict[str, bool] = {}
+    for mid, r in rows:
+        seen[mid] = seen.get(mid, False) or _writes_text(provider, mid, r, image_names)
+    return [{"id": mid, "text": seen[mid]} for mid in sorted(seen)]
 
 
 def make(provider: str, model: str | None = None, api_key: str | None = None, base_url: str | None = None,

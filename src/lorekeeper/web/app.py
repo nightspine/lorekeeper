@@ -522,8 +522,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 return False, "No Anthropic API key yet."
             return False, f"Claude check failed: {type(e).__name__}"
 
-    def check_provider(pid: str, key: str | None, base_url: str | None = None) -> tuple[bool, str | None, list[str]]:
-        """(ok, error, live model ids). A free call: models.list for Anthropic, GET /models otherwise."""
+    def check_provider(pid: str, key: str | None, base_url: str | None = None) -> tuple[bool, str | None, list[dict]]:
+        """(ok, error, live models as {id, text}). A free call: models.list for Anthropic, GET /models otherwise (Gemini's
+        native list). `text` says whether the provider's list shows the model can write text (`llm.live_models`)."""
         spec = llm.PROVIDERS[pid]
         if spec["kind"] == "anthropic":
             ok, error = check_anthropic(key)
@@ -531,7 +532,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if pid != "custom" and not key:
             return False, f"No {spec['label']} API key yet.", []
         try:
-            return True, None, llm.list_models(pid, key, base_url)
+            rows = llm.live_models(pid, key, base_url)
+            return True, None, [r if isinstance(r, dict) else {"id": r, "text": True} for r in rows]
         except llm.ProviderError as e:
             if pid == "custom" and e.status in (404, 405):
                 return True, None, []   # a server without /models: nothing to verify against
@@ -552,7 +554,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             cached = None
         presets = [{"id": m["id"], "label": m["label"], "price": m["price"], "tier": m["tier"]} for m in spec["models"]]
         known = {m["id"] for m in presets}
-        live = [{"id": i, "label": i, "price": None, "tier": None} for i in (cached or {}).get("live", []) if i not in known]
+        rows = [r for r in (cached or {}).get("live", []) if r["id"] not in known]
+        # liveModels: what can write text (every text model select, and the writer checks); otherModels: the rest the
+        # provider lists (music, speech, images, embeddings), for a table that shows everything
+        live = [{"id": r["id"], "label": r["id"], "price": None, "tier": None, "text": True} for r in rows if r["text"]]
+        other = [{"id": r["id"], "label": r["id"], "price": None, "tier": None, "text": False} for r in rows if not r["text"]]
         img = llm.IMAGE_PROVIDERS.get(pid)
         # The image models the person may choose: names, prices per quality (a number, per shape, or absent = unknown)
         # and the quality levels each offers. None for a provider that cannot draw.
@@ -563,7 +569,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 "configured": configured, "source": keys.source(pid), "masked": keys.masked(pid),
                 "ok": bool(cached and cached["ok"]), "error": cached["error"] if cached else None,
                 "base_url": cfg.get("base_url") or spec["base_url"], "model": cfg.get("model"),
-                "models": presets, "liveModels": live,
+                "models": presets, "liveModels": live, "otherModels": other,
                 "default": spec["default"] or cfg.get("model"), "cheap": spec["cheap"] or cfg.get("model"),
                 "strong": spec["strong"] or cfg.get("model"), "images": images}
 

@@ -130,20 +130,23 @@ export function imageProviders(opts = {}) {
 export function textProviders(opts = {}) {
   return allProviders(opts).then((all) => all.filter((p) => p && p.ok && textModels(p).length));
 }
-/** Both lists from one request: { image, text }. */
+/** Both lists from one request: { image, text }, plus `broken`, the providers with a key set whose check failed or has
+ *  not passed yet (Settings says why they are not offered). */
 export function modelProviders(opts = {}) {
-  return allProviders(opts).then((all) => ({ image: all.filter((p) => canDraw(p)), text: all.filter((p) => p && p.ok && textModels(p).length) }));
+  return allProviders(opts).then((all) => ({ image: all.filter((p) => canDraw(p)), text: all.filter((p) => p && p.ok && textModels(p).length),
+    broken: all.filter((p) => p && p.configured && !p.ok) }));
 }
 /** Text model names by "provider\nid", and provider names by id (the lightbox names the model that wrote a prompt). */
 const TEXT_LABEL = new Map();
 const PROVIDER_NAME = new Map();
-/** A provider's text models as Settings lists them: presets, then live ones the presets lack; a custom server's
- *  configured model when it lists none. [{ id, label, price: [in, out] per million tokens | null, tier }] */
+/** A provider's text models: presets, then live ones the presets lack (the server lists only text models under
+ *  `liveModels`, music and image ones under `otherModels`, never read here; an entry marked `text: false` is skipped
+ *  as well); a custom server's configured model when it lists none. [{ id, label, price: [in, out] per million tokens | null, tier }] */
 export function textModels(p) {
   if (!p) return [];
   const seen = new Set(), out = [];
   for (const m of [...(Array.isArray(p.models) ? p.models : []), ...(Array.isArray(p.liveModels) ? p.liveModels : [])]) {
-    if (!m || typeof m.id !== "string" || !m.id || seen.has(m.id)) continue;
+    if (!m || typeof m.id !== "string" || !m.id || seen.has(m.id) || m.text === false) continue;
     seen.add(m.id); out.push(m);
   }
   if (!out.length && typeof p.default === "string" && p.default) out.push({ id: p.default, label: p.default, price: null, tier: null });
@@ -820,7 +823,7 @@ export async function openPictureSheet(opts) {
     if (st.mode === "through") {
       clear(body, modeSeg,
         h("p.hint", "A portrait at their first look and one at each lasting change in how they look, up to your position. Portraits already drawn are skipped. They are drawn as a run, which you can follow in Runs."),
-        h("div.art-field", h("span.label", "Style"), styleRow, st.style === "custom" ? customField : null),
+        h("div.art-field", h("label.label", { for: "art-style-row" }, "Style"), styleChoice, styleNote),
         h("div.art-row",
           h("div.art-field", h("span.label", "Quality"), qualitySeg),
           provSel ? h("div.art-field", h("label.label", "Draw with"), provSel) : null),
