@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.23.0](https://github.com/nightspine/lorekeeper/compare/v0.22.0...v0.23.0) (2026-11-26)
+
+
+### Features
+
+* choose a picture style from previews, and save custom styles with their own preview ([#131](https://github.com/nightspine/lorekeeper/issues/131)) ([c64ed8f](https://github.com/nightspine/lorekeeper/commit/c64ed8f52503112c3b267c640289d68aeb137d0f))
+* descriptions keep a character's stated look, the entry shows every portrait through the book, the estimate gives a range ([#129](https://github.com/nightspine/lorekeeper/issues/129)) ([060d02e](https://github.com/nightspine/lorekeeper/commit/060d02e8f80e609d82e3b8a8361d4cc5b9637a4c))
+
+
+### Bug Fixes
+
+* a picture drawn in a custom style shows in the sheet and the Reader switches to its style ([#128](https://github.com/nightspine/lorekeeper/issues/128)) ([675eba6](https://github.com/nightspine/lorekeeper/commit/675eba6f8f42b1e8df272f72019e3056f2251521))
+
 ## [0.22.0](https://github.com/nightspine/lorekeeper/compare/v0.21.0...v0.22.0) (2026-11-26)
 
 
