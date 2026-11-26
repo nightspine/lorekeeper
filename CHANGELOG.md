@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/nightspine/lorekeeper/compare/v0.20.0...v0.21.0) (2026-11-26)
+
+
+### Features
+
+* choose the text and image model for each picture job ([#121](https://github.com/nightspine/lorekeeper/issues/121)) ([609f757](https://github.com/nightspine/lorekeeper/commit/609f7572ce2c78d31fac6eef0c74f6c954861fdf))
+
 ## [0.20.0](https://github.com/nightspine/lorekeeper/compare/v0.19.0...v0.20.0) (2026-11-25)
 
 

@@ -39,7 +39,8 @@ from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits
+from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits,
+                   text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -569,6 +570,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise HTTPException(404, f"unknown provider {pid!r}")
         return pid
 
+    def text_models(pid: str) -> set[str]:
+        """The text model ids a provider lists right now (presets and live, as Settings shows them)."""
+        st = provider_status(pid)
+        return {m["id"] for m in st["models"] + st["liveModels"]} | ({st["model"]} if st.get("model") else set())
+    jobs.text_models = text_models
+
     @app.get("/api/providers")
     def list_providers(fresh: bool = False):
         return {"providers": [provider_status(p, fresh) for p in llm.PROVIDERS],
@@ -665,6 +672,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if config.get("art"):
             try:
                 config["art"] = art_config(config["art"])
+                jobs.check_art_models(config["art"])
             except ValueError as e:
                 raise HTTPException(422, str(e)) from e
 
@@ -1193,6 +1201,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             self.status, self.code, self.detail, self.why = status, code, detail, why
 
     QUALITIES = ("draft", "standard", "best")
+    PORTRAIT_KINDS = ("portrait", "place", "thing")     # drawn with the portrait image model when one is chosen
 
     def art_index(key: str) -> dict:
         """The one index a pictures route works on (no library scan: only the series prior needs one)."""
@@ -1314,20 +1323,43 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-position", "Only earlier books of this series can be finished.")
         return sorted(set(fin))
 
+    def art_writer(body: dict) -> dict | None:
+        """The request's `writer` ({provider, model}, the sheet's "Prompt written by"), checked against what is set up and
+        listed here; None means the default, the strong tier."""
+        try:
+            choice = text_choice_config(body.get("writer"), "prompt")
+            jobs.check_text_choice(choice, "prompt")
+        except ValueError as e:
+            raise ArtRefusal(422, "bad-writer", str(e)) from e
+        return choice
+
+    def art_image_choice(body: dict, kind) -> tuple[str | None, str | None]:
+        """(provider, model) of the image model a sheet request draws with: for a portrait, place or thing the request's
+        `portraitProvider` / `portraitModel` when it sends either (a model alone is one of `provider`'s), else `provider` /
+        `model` as for every picture."""
+        prov, mod = body.get("provider"), body.get("model")
+        if kind in PORTRAIT_KINDS and (body.get("portraitProvider") is not None or body.get("portraitModel") is not None):
+            pp = body.get("portraitProvider")
+            return pp if pp is not None else prov, body.get("portraitModel")
+        return prov, mod
+
     def illustrator(ctx: dict, style: str, quality: str = "standard", provider=None, model=None, text_needed=True,
-                    portraits: str | bool | None = "main", tier: str = "cheap", cfg: dict | None = None):
+                    portraits: str | bool | None = "main", tier: str = "cheap", writer: dict | None = None,
+                    cfg: dict | None = None):
         """(Illustrator, image model or None, slug) for one book and style. The set is found by its slug and the
         pipeline gets the set's stored style text, so a style written another way ("Ink") never starts the set over.
-        `cfg`, an entity run's checked config (`entity_choice`): the earlier books it draws are given with their EPUB, and
-        the pipeline gets its entries, position and finished books (`jobs.run_limits`)."""
+        `writer` (checked, `art_writer`) writes every kind's prompt; else the `tier` model does. `cfg`, an entity run's
+        checked config (`entity_choice`): the earlier books it draws are given with their EPUB, and the pipeline gets its
+        entries, position and finished books (`jobs.run_limits`)."""
         if provider is not None and provider not in llm.IMAGE_PROVIDERS:
             raise ArtRefusal(422, "bad-provider", f"No image provider {provider!r}.")
         if model is not None and (not isinstance(model, str) or (provider and not llm.image_model(provider, model))):
             raise ArtRefusal(422, "bad-model", f"Unknown image model {model!r}.")
         if quality not in QUALITIES:
             raise ArtRefusal(422, "bad-config", "quality must be draft, standard or best.")
-        # One picture asked for in the sheet is written by the strong tier (`tier`); runs keep the cheap one.
-        text_model = (jobs.strong_model(None) if tier == "strong" else jobs.cheap_model(None)) if text_needed else None
+        # One picture asked for in the sheet is written by the chosen writer, else the strong tier (`tier`); runs keep
+        # their own choices (`JobManager._art`).
+        text_model = jobs.writer_model(writer, tier) if text_needed else None
         if text_model is None and text_needed:
             raise ArtRefusal(409, "no-text-model", "Pictures need a cloud model to write their prompts. Add a key in Settings.")
         try:
@@ -1345,9 +1377,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         extra = run_limits(cfg, ctx["doc"], len(books_) - 1) if cfg is not None else {}
         if "portraits" in extra:
             portraits = extra.pop("portraits")
+        # The sheet's writer writes every kind, and the sheet already chose the image model for the kind it draws.
         return artmod.Illustrator(books_, text_model, image, style, portraits=portraits, quality=quality,
                                   log=lambda m: None, pause=0,
-                                  cheap_text=jobs.cheap_model(None) if text_needed else None, **extra), image, slug_
+                                  cheap_text=jobs.cheap_model(None) if text_needed else None,
+                                  portrait_text=text_model, portrait_image=image, **extra), image, slug_
 
     def entity_choice(ctx: dict, cfg: dict) -> tuple[dict, list[str]]:
         """Check a checked art config's entries, position and finished books against the index, as the reader stands:
@@ -1692,8 +1726,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     @art_route
     def art_estimate(key: str, style: str = "ink", level: str = "main", portraits: str = "main",
                      provider: str | None = None, model: str | None = None, quality: str = "standard",
-                     chapters: str | None = None, entities: str | None = None, until: str | None = None,
-                     finished: str | None = None):
+                     chapters: str | None = None, portraitProvider: str | None = None, portraitModel: str | None = None,
+                     entities: str | None = None, until: str | None = None, finished: str | None = None):
         """How many pictures a run would draw and what they would cost, without a model call: the screened moments
         when the set has them, else the chapters' turning points (main) or non-minor events (all). `level` main, all or
         none; `chapters` the plan numbers chosen ("1,3,4"; absent: every chapter, empty: none). Each chapter row carries
@@ -1756,7 +1790,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
         name = model or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-        each = [llm.image_price(prov, name, quality, "landscape"), llm.image_price(prov, name, quality, "portrait")]
+        # Portraits are priced with their own image model (`portraitProvider` / `portraitModel`; a model alone is one of
+        # the scene provider's), else the scenes' one.
+        pprov = portraitProvider if portraitProvider is not None else prov
+        if pprov not in llm.IMAGE_PROVIDERS:
+            raise ArtRefusal(422, "bad-provider", f"No image provider {pprov!r} for portraits.")
+        pname = portraitModel if portraitModel is not None else \
+            (name if pprov == prov else llm.IMAGE_PROVIDERS[pprov]["default"])
+        if not llm.image_model(pprov, pname):
+            raise ArtRefusal(422, "bad-model", f"Unknown image model {pname!r} for portraits.")
+        # each at the level its model is drawn at: the one asked for, else the nearest it offers (`llm.nearest_quality`)
+        squal, pqual = llm.nearest_quality(prov, name, quality), llm.nearest_quality(pprov, pname, quality)
+        each = [llm.image_price(prov, name, squal, "landscape"), llm.image_price(pprov, pname, pqual, "portrait")]
         price = None if (plates and each[0] is None) or (ports and each[1] is None) else \
             round(plates * (each[0] or 0) + ports * (each[1] or 0), 4)
         high = ports + extra_max
@@ -1764,7 +1809,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
                 "portraitsMax": high, "priceMax": price_max,
                 **({"entities": ecfg["entities"], "until": ecfg["until"], "finished": ecfg["finished"]} if ecfg else {}),
-                "model": name, "level": level, "chapters": chapters_,
+                "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
+                "level": level, "chapters": chapters_,
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
@@ -1821,7 +1867,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
+                il, image, slug_ = illustrator(ctx, style, quality, *art_image_choice(body, body.get("kind")),
+                                               tier="strong", writer=art_writer(body))
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job, pr = prompt_for(il, args)
@@ -1835,14 +1882,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         slug_, stored = arts.resolve(ctx["hash"], style)
         body_, sentence, no_text = prompt_parts(il, pr, stored)
         # The price of the chosen provider and quality, also before its key is added.
-        prov = body.get("provider") or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
-        name = body.get("model") or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
-        # `model` stays the image model (the sheet's Model choice); `writer` names the text model that wrote the prompt
-        wp, wn = jobs.text_choice("strong") or (None, None)
+        ip, im = art_image_choice(body, job.kind)
+        prov = ip or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
+        name = im or getattr(image, "name", None) or llm.IMAGE_PROVIDERS[prov]["default"]
+        # `model` stays the image model (the sheet's Model choice, the portrait one for a portrait, place or thing when
+        # sent); `writer` names the text model that wrote the prompt: the request's choice, else the strong tier
+        chosen = text_choice_config(body.get("writer")) if body.get("writer") is not None else None
+        wp, wn = (chosen["provider"], chosen["model"]) if chosen else (jobs.text_choice("strong") or (None, None))
+        if isinstance(getattr(pr, "written_by", None), dict):     # the model that did write it, when it has a name
+            wp, wn = pr.written_by.get("provider"), pr.written_by.get("model")
         out = {"prompt": pr.text, "body": body_, "writer": {"provider": wp, "model": wn}, "style": sentence, "noText": no_text,
                "styles": style_sentences(il, ctx["hash"]), "scene": pr.scene, "anchor": pr.anchor, "shape": pr.shape,
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
-               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "price": llm.image_price(prov, name, quality, pr.shape), "slug": slug_,
+               "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "quality": llm.nearest_quality(prov, name, quality),
+               "price": llm.image_price(prov, name, llm.nearest_quality(prov, name, quality), pr.shape), "slug": slug_,
                "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
         return out
 
@@ -1868,7 +1921,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, quality, body.get("provider"), body.get("model"), tier="strong")
+                il, image, slug_ = illustrator(ctx, style, quality, *art_image_choice(body, body.get("kind")),
+                                               tier="strong", writer=art_writer(body))
                 given, at = art_position(ctx, body)
                 job = art_job(il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 if not hasattr(il, "soften"):
@@ -1902,8 +1956,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             fin = art_finished(ctx, body)
             slug_ = arts.resolve(ctx["hash"], style)[0]
             with arts.lock(ctx["hash"], slug_):
-                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard", body.get("provider"),
-                                               body.get("model"), tier="strong")   # a cache miss writes as the sheet does
+                il, image, slug_ = illustrator(ctx, style, body.get("quality") or "standard",
+                                               *art_image_choice(body, body.get("kind")), tier="strong",
+                                               writer=art_writer(body))   # a cache miss writes as the sheet does
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 given, at = art_position(ctx, body)
@@ -2060,7 +2115,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    inherits=[k for k in rec.get("inherits") or [] if isinstance(k, str)],
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
-                                   version=rec.get("notes"), body=text_, figures=figures)
+                                   version=rec.get("notes"), body=text_, figures=figures,
+                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None)
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)

@@ -273,3 +273,33 @@ def test_a_run_drawing_an_earlier_book_blocks_its_editions_routes(series_env, mo
         assert mgr.drawing(c.hash_one)
     finally:
         job.status = "done"
+
+
+# ---- the models (picture-model-choices): a through-the-book run is an ordinary pictures run for the models it uses
+
+def test_an_entry_run_writes_with_the_portrait_writer_and_draws_with_the_portrait_image_model(env, monkeypatch):
+    from .test_web_art import GEMINI, WRITERS, is_portrait, models_env
+    made, images_made, kw = models_env(env, monkeypatch)
+    r = post_run(env, entities=["mira"], until={"p": "a13"}, provider="gemini", model=GEMINI,
+                 portraitWriter={"provider": "gemini", "model": "gemini-3.1-pro-preview"},
+                 portraitProvider="gemini", portraitModel="gemini-3-pro-image")
+    assert r.status_code == 200, r.text
+    done = wait_for(env.c, r.json()["id"])
+    assert done["status"] == "done", done.get("error")
+    assert kw["portraits"] == frozenset({"mira"}) and kw["until"] is not None
+    port = made[("gemini", "gemini-3.1-pro-preview")]
+    assert kw["portrait_text"] is port
+    wrote = [p for p, s in zip(port.prompts, port.systems) if s in WRITERS]
+    assert wrote and all(is_portrait(p) for p in wrote)
+    assert ("gemini", "gemini-3-pro-image") in images_made
+    m = json.loads((env.data / "art" / env.hash / "ink" / "art.json").read_text())
+    assert m["pictures"] and all(r["kind"] == "portrait" and r["target"] == "mira" for r in m["pictures"])
+
+
+def test_the_entry_estimate_prices_with_the_portrait_image_model(env):
+    env.key()
+    q = {"key": KEY, "style": "ink", "level": "none", "portraits": "none", "entities": "mira", "until": "a13",
+         "provider": "gemini"}
+    got = env.c.get("/api/art/estimate", params={**q, "portraitProvider": "gemini", "portraitModel": "gemini-3-pro-image"}).json()
+    assert got["portraitModel"] == "gemini-3-pro-image" and got["entities"] == ["mira"] and got["portraits"] >= 1
+    assert env.c.get("/api/art/estimate", params={**q, "portraitModel": "gpt-image-2"}).status_code == 422

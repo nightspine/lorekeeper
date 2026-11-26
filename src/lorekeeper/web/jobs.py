@@ -246,8 +246,20 @@ def art_config(raw) -> dict:
         finished = sorted(set(finished))
     if (level == "none" or chapters == []) and not cast and not entities:
         raise ValueError("Choose chapters or portraits.")
+    writers = {k: text_choice_config(raw.get(k), what) for k, what in TEXT_ROLES.items()}
+    portrait_provider = raw.get("portraitProvider")
+    if portrait_provider is not None and portrait_provider not in llm.IMAGE_PROVIDERS:
+        raise ValueError("Claude cannot draw portraits." if portrait_provider in ("claude", "anthropic")
+                         else f"No image provider {portrait_provider!r} for portraits.")
+    portrait_model = raw.get("portraitModel")
+    on = portrait_provider or provider      # the portrait image provider when it is named (else the first with a key)
+    if portrait_model is not None and (not isinstance(portrait_model, str) or not portrait_model
+                                       or (on and not llm.image_model(on, portrait_model))):
+        raise ValueError(f"Unknown image model {portrait_model!r} for portraits.")
     return {"style": style, "level": level, "chapters": chapters, "portraits": cast, "quality": quality,
-            "provider": provider, "model": model, "cap": cap, "entities": entities, "until": until, "finished": finished}
+            "provider": provider, "model": model, "cap": cap, **writers,
+            "portraitProvider": portrait_provider, "portraitModel": portrait_model,
+            "entities": entities, "until": until, "finished": finished}
 
 
 def entity_run(cfg: dict, doc: dict) -> bool:
@@ -277,6 +289,31 @@ def run_limits(cfg: dict, doc: dict, bi: int) -> dict:
     return out
 
 
+# The text responsibilities of a pictures run, by config key: who writes the scene prompts (plates and event pictures),
+# the portrait prompts (portraits, places and things) and the choosing calls (screening, the look index and the look
+# sentences). Each is {provider, model} or absent (the defaults: cheap tier, strong tier, cheap tier).
+TEXT_ROLES = {"writer": "scene prompts", "portraitWriter": "portrait prompts", "picker": "choosing calls"}
+
+
+def text_choice_config(raw, what: str = "prompts") -> dict | None:
+    """A text model choice of an art config or request, checked for shape: None, or {provider, model} with a cloud
+    provider of the registry (Ollama does not write picture prompts) and a model name. Whether the provider is set up
+    and lists the model is `JobManager.check_art_models`. Raises ValueError with a sentence for the person."""
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f"The model for the {what} must be a provider and a model.")
+    provider, model = raw.get("provider"), raw.get("model")
+    provider = "claude" if provider == "anthropic" else provider
+    if provider == "ollama":
+        raise ValueError(f"A local Ollama model can't write the {what}; choose a cloud model.")
+    if not isinstance(provider, str) or provider not in llm.PROVIDERS:
+        raise ValueError(f"No text provider {provider!r} for the {what}.")
+    if not isinstance(model, str) or not model.strip() or len(model) > 200:
+        raise ValueError(f"Name the model for the {what}.")
+    return {"provider": provider, "model": model.strip()}
+
+
 def chapter_choice(cfg: dict, plan: list[dict]) -> None:
     """Check a checked art config's `chapters` against the book's plan (`art.Book.chapters`): every `n` must be one of
     them. Raises ValueError with a sentence for the person."""
@@ -299,6 +336,8 @@ class JobManager:
         self.art_inputs = None  # job → (index doc, epub.Book, earlier books' docs), set by the app
         self.art_journal = None  # (job, text hash, slug, ids of the pictures drawn[, also]) → journal entry id, set by the app
         self.art_epub_for = None  # text hash → epub.Book or None: an earlier book's EPUB, for an entity run, set by the app
+        # provider id → the text model ids it lists (presets and live), set by the app; checks a picture writer's choice
+        self.text_models = lambda provider: {m["id"] for m in llm.PROVIDERS.get(provider, {}).get("models", [])}
         root.mkdir(parents=True, exist_ok=True)
         index_dir.mkdir(parents=True, exist_ok=True)
         self.jobs: dict[str, Job] = {}
@@ -369,6 +408,7 @@ class JobManager:
         build. `also`: the editions of earlier series books it draws into too (an entry's portraits through the series).
         Refused (RuntimeError) while a run writes that index or pictures are already being drawn for one of those editions."""
         cfg = art_config(config)
+        self.check_art_models(cfg)
         if self.writing(index_path):
             raise RuntimeError("A build is writing this index. Add pictures once it has finished.")
         if any(self.drawing(h) for h in (text_hash, *also)):
@@ -582,6 +622,50 @@ class JobManager:
         self._emit(job, {"type": "log", "line": f"book arcs: {stats.get('arcs', 0)} written ({cost})"})
         return {**stats, "cost_usd": round(model.usage.cost_usd, 4)}
 
+    def check_text_choice(self, choice: dict | None, what: str = "prompts") -> None:
+        """A checked text choice (`text_choice_config`) must name a provider set up here and a model it lists (its presets,
+        its live models, or a custom server's model). Raises ValueError with a sentence for the person."""
+        if choice is None:
+            return
+        p, m = choice["provider"], choice["model"]
+        label = llm.PROVIDERS[p]["label"]
+        if p not in self.configured():
+            raise ValueError(f"{label} is not set up, so it can't write the {what}. Add its key in Settings.")
+        listed = set(self.text_models(p) or ())
+        if p == "custom" and (self.provider_config(p) or {}).get("model"):
+            listed.add(self.provider_config(p)["model"])
+        if m not in listed:
+            raise ValueError(f"{label} has no model {m!r} for the {what}.")
+
+    def check_art_models(self, cfg: dict) -> None:
+        """The model choices of a checked art config against what is set up here: every text choice (`TEXT_ROLES`), and a
+        named portrait image provider must have a key (its model is checked by `art_config`, or here when only the model is
+        named and the portraits draw with the first image provider that has a key). Raises ValueError."""
+        for k, what in TEXT_ROLES.items():
+            self.check_text_choice(cfg.get(k), what)
+        pp = cfg.get("portraitProvider")
+        if pp is not None and not self.keys(pp):
+            raise ValueError(f"{llm.PROVIDERS[pp]['label']} is not set up, so it can't draw the portraits. Add its key in Settings.")
+        pm = cfg.get("portraitModel")
+        on = pp or cfg.get("provider") or next((p for p in llm.IMAGE_PROVIDERS if self.keys(p)), None)
+        if pm is not None and on and not llm.image_model(on, pm):
+            raise ValueError(f"Unknown image model {pm!r} for portraits.")
+
+    def writer_model(self, choice: dict | None, tier: str = "cheap", job_provider: str | None = None):
+        """The text backend for one responsibility: the chosen {provider, model}, else the `tier` default (`cheap_model`
+        or `strong_model`). None when the choice's provider is not set up any more, or there is no default."""
+        if choice:
+            return self.cloud_model(choice["provider"], choice["model"]) if choice["provider"] in self.configured() else None
+        return self.strong_model(job_provider) if tier == "strong" else self.cheap_model(job_provider)
+
+    def portrait_image_model(self, cfg: dict, scene_image):
+        """The image backend for portraits, places and things: the config's `portraitProvider` / `portraitModel`, else the
+        scene backend itself. With only a model named, it is a model of the scene provider. None when that provider has no key."""
+        pp, pm = cfg.get("portraitProvider"), cfg.get("portraitModel")
+        if pp is None and pm is None:
+            return scene_image
+        return self.image_model(pp or cfg.get("provider") or getattr(scene_image, "provider", None), pm)
+
     def image_model(self, provider: str | None = None, model: str | None = None):
         """An image backend with its key (saved in Settings or from the environment, as text keys): the named provider,
         else the first image provider with a key. None when there is no key."""
@@ -604,14 +688,36 @@ class JobManager:
                 which = llm.PROVIDERS[cfg["provider"]]["label"] if cfg["provider"] else "Gemini or OpenAI"
                 self._emit(job, {"type": "log", "line": f"pictures: skipped (add a {which} key in Settings to draw them)"})
                 return {"skipped": "no image key"}
-            text_model = self.cheap_model(job.config.get("provider"))
+            def instead(what: str, chosen: str, used) -> None:
+                """One log line when a chosen model is no longer available and another stands in for it."""
+                ref = artmod.model_ref(used)
+                by = f"{llm.PROVIDERS.get(ref['provider'], {}).get('label', ref['provider'])} {ref['model']}" if ref else "the scene model"
+                self._emit(job, {"type": "log", "line": f"pictures: {chosen} for the {what} is no longer set up; using {by} instead"})
+
+            portrait_image = self.portrait_image_model(cfg, image)
+            if portrait_image is None:      # its key was removed after the run was accepted: the scenes' model draws them
+                pp = cfg["portraitProvider"] or cfg["provider"] or ""
+                instead("portraits", " ".join(x for x in (llm.PROVIDERS.get(pp, {}).get("label"), cfg["portraitModel"]) if x)
+                        or "The portrait model", image)
+                portrait_image = image
+            jp = job.config.get("provider")
+            # Each responsibility its own model (TEXT_ROLES): scene prompts and choosing calls default to the cheap tier,
+            # portrait prompts to the strong one (portraits are few, and every scene draws on them as references).
+            text_model = self.writer_model(cfg["writer"], "cheap", jp)
             if text_model is None:
                 self._emit(job, {"type": "log", "line": "pictures: skipped (add a cloud model key in Settings to write the prompts)"})
                 return {"skipped": "no cloud key"}
+            portrait_text = self.writer_model(cfg["portraitWriter"], "strong", jp)
+            picker = self.writer_model(cfg["picker"], "cheap", jp)
+            for key, what, got in (("portraitWriter", "portrait prompts", portrait_text), ("picker", "choosing calls", picker)):
+                if got is None and cfg[key]:    # chosen and accepted, then its key was removed before this stage
+                    instead(what, f"{llm.PROVIDERS[cfg[key]['provider']]['label']} {cfg[key]['model']}", text_model)
+            portrait_text, picker = portrait_text or text_model, picker or text_model
             if self.art_store is None:
                 raise RuntimeError("no art store")
             self._emit(job, {"type": "phase", "phase": "art"})
-            text_model.cancel = image.cancel = flag.is_set
+            for m in (text_model, portrait_text, picker, image, portrait_image):
+                m.cancel = flag.is_set
             store = self.art_store
             slug, style = store.resolve(h, cfg["style"])    # one set per slug: "Ink" draws into the "ink" set
             books, sets = [], []    # sets: (text hash, slug) of every set the run draws into, this book's last
@@ -653,7 +759,8 @@ class JobManager:
                     # portrait image model, they are the ones to use here
                     il = box["il"] = artmod.Illustrator(books, text_model, image, style, **{"portraits": cfg["portraits"], **extra},
                                                         scene_chapters=cfg["chapters"], quality=cfg["quality"],
-                                                        cap=cfg["cap"], log=log, progress=progress)
+                                                        cap=cfg["cap"], log=log, progress=progress, cheap_text=picker,
+                                                        portrait_text=portrait_text, portrait_image=portrait_image)
                     rep = il.run()
                 finally:
                     got = {k: [r["id"] for r in (store.manifest(*k) or {}).get("pictures", []) if r.get("id") not in had[k]]
@@ -668,7 +775,7 @@ class JobManager:
             self._emit(job, {"type": "log", "line": f"pictures: failed ({type(e).__name__}: {e}); the pictures drawn so far are kept"})
             return {"failed": str(e), "drawn": len(added)}
         out = {"drawn": rep.drawn, "refused": rep.refused, "skipped": dict(rep.skipped), "cost_usd": round(rep.cost, 4),
-               "text_cost_usd": round(rep.text_cost, 4), "stopped": rep.stopped, 
+               "text_cost_usd": round(rep.text_cost, 4), "text_costs": dict(rep.text_costs), "stopped": rep.stopped,
                "reasons": rep.reasons[:200], "style": slug, "textHash": h}
         self._emit(job, {"type": "art", "done": il.done, "total": il.total, "cost": round(rep.cost + rep.text_cost, 4)})
         for line in rep.lines()[:40]:
