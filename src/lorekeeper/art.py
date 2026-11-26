@@ -48,6 +48,9 @@ STYLES: dict[str, str] = {
     "watercolour": "Watercolour painting, translucent washes, soft edges, pale paper showing through.",
     "ink": "Black ink drawing, fine cross-hatching, strong contrast, aged paper.",
 }
+# slug -> sentence of each style a person saved in the web app (`web/styles.py` keeps it in step with styles.json, a
+# deleted one included so its art sets still draw in its words); a style is passed around by its slug like a listed one
+SAVED_STYLES: dict[str, str] = {}
 NO_TEXT = "No text, captions, lettering, titles or signatures anywhere in the picture."
 SHAPE_OF = {"plate": "landscape", "event": "landscape", "portrait": "portrait", "place": "landscape", "thing": "landscape"}
 ENTITY_KINDS = ("portrait", "place", "thing")
@@ -298,7 +301,7 @@ class FileSink:
 
 
 def style_sentence(style: str) -> str:
-    return STYLES.get(style) or " ".join(style.split())
+    return STYLES.get(style) or SAVED_STYLES.get(style) or " ".join(style.split())
 
 
 def style_slug(style: str) -> str:
