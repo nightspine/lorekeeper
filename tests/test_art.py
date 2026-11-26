@@ -3503,13 +3503,81 @@ def test_the_cap_reserves_the_check_and_skips_a_fix_it_has_no_room_for(monkeypat
     assert rep.drawn == 1 and not fixes(im) and rep.checks["skipped: fix, cap reached"] == 1
     assert pics(sink)[0]["check"] == {"faults": [HEAD], "fixed": False} and "fixes" not in pics(sink)[0]
     assert rep.cost + rep.text_cost <= 0.07 + 1e-9
-    # room for a fix: one picture, its check and its fix, then the cap stops the run
+    # room for a fix: one picture, its check and its fix (held at FIX_UNPRICED times the picture, the fake has no table
+    # price), then the cap stops the run
     eye = Seeing(faults=[HEAD], cost=0.002)
-    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.11)
-    assert rep.drawn == 1 and rep.fixed == 1 and rep.cost + rep.text_cost <= 0.11 + 1e-9
-    # the budget counts the check and the expected fixes: 0.1 leaves room for one picture with them, not two
-    il, rep, sink, t, im = run(cheap_text=Seeing(), check=True, portraits=False, cap=0.10)
-    assert rep.drawn == 1
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.13)
+    assert rep.drawn == 1 and rep.fixed == 1 and rep.cost + rep.text_cost <= 0.13 + 1e-9
+
+
+def test_the_budget_counts_a_check_and_the_expected_fixes_per_picture(monkeypatch):
+    monkeypatch.setattr(art, "CHECK_FALLBACK", 0.002)
+    monkeypatch.setattr(llm, "image_price", lambda *a, **k: 0.05)
+    bk = book(("One", CH1), ("Two", CH2))
+
+    def budget(**kw):
+        return art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", portraits=False, cap=0.30,
+                               log=lambda *_: None, pause=0, cheap_text=Seeing(), **kw)._budget()
+    assert budget() == 6                                   # 0.30 / 0.05
+    monkeypatch.setattr(art, "FIX_RATE", 0.55)
+    assert budget(check=True) == 3                         # 0.30 / (0.05 * 1.55 + 0.002)
+    monkeypatch.setattr(art, "FIX_RATE", 0.0)
+    assert budget(check=True) == 5                         # 0.30 / 0.052: the fixes are what take it to 3
+
+
+class Billed(Image):
+    """An image model with no table price whose fix (an edit sending the picture back) is billed `fix` per call."""
+
+    def __init__(self, fix=0.2, cancel_fix=False, **kw):
+        super().__init__(**kw)
+        self.fix, self.cancel_fix = fix, cancel_fix
+
+    def draw(self, prompt, **kw):
+        if prompt.startswith(art.FIX) and self.cancel_fix:
+            raise llm.Cancelled()
+        d = super().draw(prompt, **kw)
+        return images.Drawn(d.data, d.mime, d.model, self.fix) if prompt.startswith(art.FIX) else d
+
+
+def test_a_token_billed_fix_is_held_above_the_picture_cost_and_its_bill_stops_the_run(monkeypatch):
+    monkeypatch.setattr(art, "CHECK_FALLBACK", 0.002)
+    monkeypatch.setattr(art, "FIX_RATE", 0.0)
+    # held at 1.5 times the picture (0.075): 0.052 + 0.075 is over 0.12, so no fix starts (held at the picture's cost it would)
+    il, rep, sink, t, im = run(cheap_text=Seeing(faults=[HEAD], cost=0.002), image=Billed(), check=True, portraits=False, cap=0.12)
+    assert not fixes(im) and rep.checks["skipped: fix, cap reached"] >= 1
+    # the fix fits what was held but is billed 0.2: it counts in full and the run stops there
+    il, rep, sink, t, im = run(cheap_text=Seeing(faults=[HEAD], cost=0.002), image=Billed(), check=True, portraits=False, cap=0.20)
+    assert rep.fixed == 1 and rep.drawn == 1 and rep.cost == pytest.approx(0.25) and len(im.calls) == 2
+    assert rep.stopped == "cost cap $0.20 reached"
+
+
+def test_a_stop_during_the_check_or_the_fix_still_files_the_drawn_picture():
+    class Stopping(Seeing):
+        def complete(self, system, prompt, schema, prefix=None, images=()):
+            if system == art.ANATOMY:
+                raise llm.Cancelled()
+            return super().complete(system, prompt, schema, prefix, images)
+
+    for eye, im in ((Stopping(), Image()), (Seeing(faults=[HEAD]), Billed(cancel_fix=True))):
+        bk = book(("One", CH1), ("Two", CH2))
+        sink = Mem()
+        il = art.Illustrator([art.Book(base_doc(bk), bk, sink)], Text(), im, "ink", portraits=False, workers=1,
+                             log=lambda *_: None, pause=0, cheap_text=eye, check=True)
+        with pytest.raises(llm.Cancelled):
+            il.draw(il.job("event", "e1", at="a11"))
+        (rec,) = sink.m["pictures"]
+        assert sink.files[rec["file"]] and rec["prompt"] == im.calls[0]["prompt"] and "check" not in rec
+        assert il.report.drawn == 1 and il.reserved == 0
+
+
+def test_the_pickers_faults_name_no_person_but_the_persons_own_are_kept_as_typed():
+    named = {"what": "Mira's left hand has six fingers", "where": "Mira, the woman at the gate"}
+    il, rep, sink, t, im = run(cheap_text=Seeing(faults=[named]), check=True, portraits=False)
+    stored = pics(sink)[0]["check"]["faults"][0]
+    assert "Mira" not in stored["what"] + stored["where"] and "figure" in stored["what"]
+    assert all("Mira" not in c["prompt"] for c in fixes(im))
+    new = il.fix(pics(sink)[0], [named])                          # the person's own list: their words
+    assert "Mira's left hand has six fingers" in im.calls[-1]["prompt"] and new["fixes"][-1]["faults"] == [named]
 
 
 def test_the_persons_own_text_is_checked_and_fixed_but_never_rewritten():

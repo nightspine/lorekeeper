@@ -408,6 +408,7 @@ FIX = ("Correct the drawing faults listed below in this picture: redraw each par
        "everything else exactly as it is: the composition and framing, every face, the clothing, the colours, the light and "
        "the drawing style. The faults:")
 FIX_NOTE_CHARS = 300
+FIX_UNPRICED = 1.5         # a fix on a token-billed model is held at this times the picture's cost (the picture goes back in)
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
 # Measured by bench/anatomy_check.py on 2026-11-26 (20 Gemini draft scenes of Dracula and Empire of the Vampire, Claude Haiku
 # 5.5 as the picker): it flagged 11 of 20 (0.55), the share of drawn pictures the cost cap reserves a fix for; one check took
@@ -3091,6 +3092,12 @@ class Illustrator:
         with self.lock:
             self.reserved = max(0.0, self.reserved - amount)
 
+    def _stop_if_over(self) -> None:
+        """Stop the run once what it spent is over the cap (a token-billed call can cost more than was held for it). Under
+        the lock."""
+        if not self.stop and self.cap is not None and self._spent() > self.cap + 1e-9:
+            self.stop = f"cost cap ${self.cap:.2f} reached"
+
     # ---- drawing faults
 
     def _check_estimate(self) -> float:
@@ -3110,9 +3117,10 @@ class Illustrator:
         the bytes with their mime and prompt. One call on the picker (`cheap_text`), counted in the cap and in the text costs
         as a choosing call. A picker that cannot see pictures is not asked again this run (`no_vision` says why, logged
         once); a failed call is not checked. Neither is ever a fault."""
+        nb = len(self.books) - 1 if bi is None else bi      # the book whose people's names the faults may not use
         if isinstance(rec_or_bytes, dict):
             rec = rec_or_bytes
-            j = self._book_of(rec) if bi is None else bi
+            j = nb = self._book_of(rec) if bi is None else bi
             data = self.books[j].b.sink.read(rec.get("file") or "")
             mime = mime or rec.get("mime") or "image/png"
             prompt = rec.get("prompt") if prompt is None else prompt
@@ -3124,6 +3132,9 @@ class Illustrator:
             return Check([], False, 0.0, self.no_vision)
         try:
             c = check_picture(self.cheap, data, mime or "image/png", prompt or "")
+            names = self.names.get(nb)
+            if names is not None:       # the picker's words go on the record and to the image model: no person's name
+                c.faults = [{k: names.strip(v) if v and names.find(v) else v for k, v in f.items()} for f in c.faults]
         except llm.NoVision as e:
             with self.lock:
                 first = not self.no_vision
@@ -3207,14 +3218,16 @@ class Illustrator:
         second check. Returns (the picture to file, what its record gains: `check` {faults, fixed}, and on a fix `fixes`
         and the cost of both calls). A clean or unchecked picture gains nothing."""
         try:
-            c = self.check_picture(pic.data, pic.mime or "image/png", pr.text)
+            c = self.check_picture(pic.data, pic.mime or "image/png", pr.text, bi=job.bi)
         finally:
             self._unhold(held)
         if not c.checked or not c.faults:
             return pic, {}
         info = {"faults": c.faults, "fixed": False}
         image, prov, name = self.image_for(job.kind)
-        price = llm.image_price(prov, name, quality, pr.shape) or pic.cost or self.last_cost
+        # a table price is what the fix costs; a token-billed model (no table price) also bills the picture sent back as
+        # input, so its fix is held at more than the picture cost
+        price = llm.image_price(prov, name, quality, pr.shape) or (pic.cost or self.last_cost) * FIX_UNPRICED
         if not self._hold(price):
             with self.lock:
                 self.report.checks["skipped: fix, cap reached"] += 1
@@ -3222,25 +3235,27 @@ class Illustrator:
         try:
             fixed = self._draw_fix(image, pic.data, pic.mime or "image/png", c.faults, "", pr.shape, quality)
         except images.ImageRefused as e:
-            self._unhold(price)
             with self.lock:
                 self.report.fix_refused += 1
                 self.report.reasons.append({"target": job.target, "reason": f"fix refused ({e.reason[:160]})"})
             return pic, {"check": info}
         except llm.ProviderError as e:
-            self._unhold(price)
             billed = getattr(e, "sent", None) is not False and not (e.status and 400 <= e.status < 500)
             with self.lock:
                 if billed:
                     self.report.at_risk += price
                 self.report.checks["skipped: fix, provider error"] += 1
                 self.report.reasons.append({"target": job.target, "reason": f"skipped: fix, provider error ({str(e)[:160]})"})
+                self._stop_if_over()
             return pic, {"check": info}
-        with self.lock:
-            self.report.cost += fixed.cost
-            self.report.fixed += 1
-            self.last_cost = fixed.cost or self.last_cost
-        self._unhold(price)
+        else:
+            with self.lock:
+                self.report.cost += fixed.cost     # what it was billed, whatever was held
+                self.report.fixed += 1
+                self.last_cost = fixed.cost or self.last_cost
+                self._stop_if_over()
+        finally:
+            self._unhold(price)
         self.log(f"    fixed {job.kind} {job.target}: {'; '.join(f['what'] for f in c.faults)[:160]}")
         return fixed, {"check": {**info, "fixed": True}, "fixes": [self._fix_entry(c.faults, "", fixed, prov, name)],
                        "cost": round(pic.cost + fixed.cost, 6)}
@@ -3395,7 +3410,18 @@ class Illustrator:
         self._release(amount - held)       # the check keeps its part until it is done
         extra: dict = {}
         if held or self.check:
-            pic, extra = self._auto_check(job, pr, pic, quality, held)
+            try:
+                pic, extra = self._auto_check(job, pr, pic, quality, held)
+            except BaseException:
+                # a stop (Cancelled) or anything else in the check or the fix: the picture was drawn and billed, so it is
+                # filed as drawn before the error goes on, and a resume does not draw and pay for it again
+                self._file(job, pr, pic, got, figures, softened, {})
+                raise
+        return self._file(job, pr, pic, got, figures, softened, extra)
+
+    def _file(self, job: Job, pr: Prompt, pic: images.Drawn, got, figures, softened: bool, extra: dict) -> dict:
+        """File a drawn picture: its record (with what the check added, `extra`), its bytes and the manifest."""
+        bi = job.bi
         rec = self._record(job, pr, pic, got, figures)
         rec.update(extra)
         with self.lock:
