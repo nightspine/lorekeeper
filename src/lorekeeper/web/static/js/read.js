@@ -286,6 +286,7 @@ export function createReading(ctx) {
     scrollToSeq(seq);
     st.topSeq = seq;
     maybeLoadMore();
+    paintBar();
   }
   function showError(e, retry) {
     const missing = e?.code === "no-book-file" || e?.status === 404;
@@ -616,8 +617,9 @@ export function createReading(ctx) {
     st.prefsPop = pop;
     aaBtn.setAttribute("aria-expanded", "true");
     const b = aaBtn.getBoundingClientRect(), box = root.getBoundingClientRect();
-    pop.style.width = "300px";
-    pop.style.left = `${Math.max(8, b.right - box.left - 300)}px`;
+    const w = Math.min(340, box.width - 16);
+    pop.style.width = `${w}px`;
+    pop.style.left = `${Math.max(8, b.right - box.left - w)}px`;
     pop.style.top = `${b.top - box.top - pop.offsetHeight - 8}px`;
     pop.querySelector(".rd-card-name").focus({ preventScroll: true });
   }
