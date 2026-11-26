@@ -518,6 +518,9 @@ class Job:
     change: str = ""          # a portrait's reason for a new version (what changed), "" for the first
     shape: str = ""
     finished: frozenset[str] | None = None   # earlier book keys the reader finished (None: all, as a run)
+    # the reader's frontier (book index, anchor ordinal) when the job was asked for at a position (`Illustrator.job` with `at`);
+    # None: no reader (a run, whose limit is its `until`), or no position given
+    reach: tuple[int, int] | None = None
 
 
 @dataclass
@@ -1990,6 +1993,88 @@ class Illustrator:
         return (self.latest_picture(eid, pos, kinds, strict, finished, current=True)
                 or self.likeness_picture(eid, pos, kinds, strict, finished))
 
+    def _reach(self, job: Job) -> int | None:
+        """The last anchor ordinal of the job's book a scene's figure picture may show from: the reader's frontier when the
+        job was asked for at a position (a later book's reader has reached the whole of it), else the run's `until` (None: no
+        limit, -1: nothing)."""
+        if job.reach is not None:
+            rbi, at = job.reach
+            return at if rbi == job.bi else (None if rbi > job.bi else -1)
+        return self._limit(job.bi)
+
+    def _changes_after(self, bi: int, eid: str, lo: int, hi: int) -> bool:
+        """Whether a cached look index of the entity (this set's, else a fresh one in another style's set of the edition;
+        never classified here) flags a look change of one of its items with `from` after ordinal `lo` and at or before `hi`.
+        No look index cached: False."""
+        b = self.books[bi]
+        items = self.items(bi, eid)
+        if not items:
+            return False
+        key = self._items_key(items)
+        got = self.man[bi]["looks"].get(eid)
+        if not (isinstance(got, dict) and got.get("key") == key):
+            got = next((lm["looks"][eid] for _, _, lm in self.like[bi] if isinstance((lm.get("looks") or {}).get(eid), dict)
+                        and lm["looks"][eid].get("key") == key), None)
+        if not got:
+            return False
+        flags = got.get("items") or {}
+        return any((flags.get(it["id"]) or {}).get("change") and lo < b.ord_of[it["from"]] <= hi for it in items)
+
+    def earliest_later_picture(self, eid: str, pos: tuple[int, int], upto: int | None, kinds=ENTITY_KINDS,
+                               finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """(book, record) of the entity's earliest current picture after `pos` in the same book and at or before ordinal
+        `upto` (None: the end of the book): this set's (NOTE_VERSION, `_usable` under `finished`), else a likeness from
+        another style's set (never partial), the earliest anchor first (a likeness: then the most recently drawn). None when
+        the cached look index records a look change of the entity between `pos` and that picture: it shows a look the
+        scene's moment does not have yet."""
+        bi, at = pos
+        b = self.books[bi]
+        hi = len(b.anchors) - 1 if upto is None else upto
+        if hi <= at:
+            return None
+        best = None
+        for r in self.man[bi]["pictures"]:
+            o = b.ord_of.get(r["from"], -1)
+            if r["kind"] in kinds and r["target"] == eid and at < o <= hi and r.get("notes") == NOTE_VERSION \
+                    and self._usable(bi, bi, finished, r) and (best is None or o < best[0]):
+                best = (o, (bi, r), "")
+        if best is None:
+            for slug, _, lm in self.like[bi]:
+                for r in lm.get("pictures", []):
+                    o = b.ord_of.get(r.get("from"), -1)
+                    if r.get("kind") in kinds and r.get("target") == eid and at < o <= hi and r.get("notes") == NOTE_VERSION \
+                            and not r.get("partial") and r.get("file") and self._usable(bi, bi, finished, r):
+                        made = str(r.get("created") or "")
+                        if best is None or o < best[0] or (o == best[0] and made > best[2]):
+                            best = (o, (bi, {**r, "set": slug}), made)
+        if best is None:
+            return None
+        return None if self._changes_after(bi, eid, at, best[0]) else best[1]
+
+    def _figure_picture(self, eid: str, pos: tuple[int, int], upto: int | None,
+                        finished: frozenset[str] | None = None) -> tuple[int, dict] | None:
+        """A scene figure's reference: its picture at or before the scene (`_picture`), else its earliest one after it that
+        the reader has reached (`earliest_later_picture`, up to `upto`), so a figure drawn later still has a face from the
+        moment it appears."""
+        return self._picture(eid, pos, finished=finished) or (
+            None if upto == -1 else self.earliest_later_picture(eid, pos, upto, finished=finished))
+
+    def reference_reached(self, job: Job, j: int, rec: dict) -> bool:
+        """Whether a scene's stored reference (book j, its record) may be sent again for the job's reader (a same-prompt
+        redraw): one at or before the scene, as always; one after it only within the reader's frontier (`_reach`: `job.reach`,
+        else the run's limit) and with no look change of its entity recorded between the scene and it (`_changes_after`), as
+        `earliest_later_picture` chose it. Anything but a plate or event keeps its references."""
+        if job.kind not in ("plate", "event"):
+            return True
+        pos = self._pos(job.bi, job.anchor)
+        k = (j, self.books[j].ord_of.get(rec.get("from"), -1))
+        if k <= pos:
+            return True
+        upto = self._reach(job)
+        if j != job.bi or upto == -1 or (upto is not None and k[1] > upto):
+            return False
+        return not self._changes_after(j, str(rec.get("target")), pos[1], k[1])
+
     def reference_bytes(self, j: int, rec: dict) -> bytes | None:
         """A reference picture's file, from the set it belongs to (this book's, or the other style's set it came from)."""
         if rec.get("set"):
@@ -2083,9 +2168,10 @@ class Illustrator:
         pos = self._pos(bi, job.anchor)
         if job.kind in ("plate", "event"):
             if figures is not None:
-                hits = [hit for f in figures if (hit := self._picture(f["entity"], pos, finished=fin))]
+                upto = self._reach(job)
+                hits = [hit for f in figures if (hit := self._figure_picture(f["entity"], pos, upto, fin))]
                 return hits + (self._setting_refs(job, shows, fin, MAX_REFERENCES - len(hits)) if self.place_refs else [])
-            return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin)
+            return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin, self._reach(job))
         if job.kind == "portrait":
             # the same figure earlier in the story, so a later portrait keeps the face (a look change: the one before it)
             prev = self._picture(job.target, pos, ("portrait",), strict=True, finished=fin)
@@ -2104,20 +2190,21 @@ class Illustrator:
         return [hit for eid, kind in want if (hit := self._picture(eid, pos, (kind,), finished=finished))][:room]
 
     def _references(self, ids: list[str], pos: tuple[int, int], view: dict,
-                    finished: frozenset[str] | None = None) -> list[tuple[int, dict]]:
+                    finished: frozenset[str] | None = None, upto: int | None = -1) -> list[tuple[int, dict]]:
         """The current pictures of the entities a scene names and no others, most tied first, at most MAX_REFERENCES; a picture
         drawn from a note of an older version is no reference."""
-        return [h for _, h in self._pictured(ids, pos, view, finished)]
+        return [h for _, h in self._pictured(ids, pos, view, finished, upto)]
 
     def _pictured(self, ids: list[str], pos: tuple[int, int], view: dict,
-                  finished: frozenset[str] | None = None) -> list[tuple[str, tuple[int, dict]]]:
+                  finished: frozenset[str] | None = None, upto: int | None = -1) -> list[tuple[str, tuple[int, dict]]]:
         """(entity, its reference picture) for the entities among `ids` that have one, most tied in the view first, at most
-        MAX_REFERENCES: the figures a scene may label, in label order."""
+        MAX_REFERENCES: the figures a scene may label, in label order. A figure with no picture at or before `pos` takes its
+        earliest one after it up to ordinal `upto` (`_figure_picture`; -1: none after it, None: the end of the book)."""
         deg = Counter()
         for r in view["relations"]:
             deg[r["src"]] += 1
             deg[r["dst"]] += 1
-        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._picture(eid, pos, finished=finished))]
+        found = [(eid, hit) for eid in dict.fromkeys(ids) if (hit := self._figure_picture(eid, pos, upto, finished))]
         order = {eid: n for n, (eid, _) in enumerate(found)}
         found.sort(key=lambda t: (-deg[t[0]], order[t[0]]))
         return found[:MAX_REFERENCES]
@@ -2362,6 +2449,8 @@ class Illustrator:
                     anchor = f["from"]
             job = Job(kind, target, bi, anchor, shape=shape)
         job.finished = fin if bi == at_bi else (None if fin is None else frozenset(fin))
+        if at is not None:
+            job.reach = (at_bi, self.books[at_bi].ord_of[at])
         if at is not None and bi == at_bi and b.ord_of[job.anchor] > b.ord_of[at]:
             raise NotVisible(target)
         return job
@@ -2567,7 +2656,7 @@ class Illustrator:
         label_of: dict[str, str] = {}
         if scene:
             pictured = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
-            found = self._pictured(pictured, self._pos(bi, anchor), view, fin)
+            found = self._pictured(pictured, self._pos(bi, anchor), view, fin, self._reach(job))
             label_of = {eid: LABELS[n] for n, (eid, _) in enumerate(found)}
         def entry(eid: str, tag: str, budget: int, look: bool, figure: str = "") -> None:
             """An entry of the scene (or the entity's group) in `tag`, with its look told earlier (`look`) within `budget`."""
