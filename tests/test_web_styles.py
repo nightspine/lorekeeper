@@ -197,3 +197,46 @@ def test_the_style_routes_need_sign_in(tmp_path, monkeypatch):
     for method, url in (("get", "/api/styles"), ("post", "/api/styles"), ("put", "/api/styles/x"),
                         ("delete", "/api/styles/x"), ("get", "/api/styles/x/preview"), ("post", "/api/styles/x/preview")):
         assert getattr(c, method)(url).status_code == 401, url
+
+
+# ---- round 2
+
+
+def test_the_saved_words_are_swapped_in_one_assignment_never_emptied(env):
+    make(env)
+    before = art.SAVED_STYLES
+    make(env, "Night city", "Neon noir, wet streets.")
+    assert before == {"moody-noir": NOIR}                 # a reader holding the old table never saw it cleared
+    assert art.SAVED_STYLES == {"moody-noir": NOIR, "night-city": "Neon noir, wet streets."}
+    assert art.style_sentence("night-city") == "Neon noir, wet streets."
+
+
+def test_a_model_sent_without_a_provider_is_checked_against_the_drawing_provider(env):
+    env.key()
+    make(env)
+    r = env.c.post("/api/styles/moody-noir/preview", json={"model": "nope"})
+    assert r.status_code == 422 and r.json()["code"] == "bad-model" and env.image.calls == []
+    assert env.c.post("/api/styles/moody-noir/preview", json={"model": GEMINI}).status_code == 200
+
+
+@pytest.mark.parametrize("mime", ["image/webp", "image/png"])     # a redraw in another format, then in the same one
+def test_a_failed_list_write_keeps_the_old_preview(env, monkeypatch, mime):
+    env.key()
+    make(env)
+    old = env.c.post("/api/styles/moody-noir/preview", json={}).json()["preview"]
+    first = env.c.get(old).content
+    draw = env.image.draw
+
+    def drawn(prompt, **kw):
+        got = draw(prompt, **kw)
+        got.mime = mime
+        return got
+    monkeypatch.setattr(env.image, "draw", drawn)
+
+    def broken(self, data):
+        raise OSError("disk full")
+    monkeypatch.setattr(styles_mod.StyleStore, "_write", broken)
+    with pytest.raises(OSError):
+        env.c.post("/api/styles/moody-noir/preview", json={})
+    assert listed(env)["moody-noir"]["preview"] == old and env.c.get(old).content == first
+    assert sorted(f.name for f in (env.data / "styles").iterdir()) == ["moody-noir.png"]
