@@ -51,6 +51,8 @@ const ICONS = {
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/>',
   sliders: '<path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>',
   pin: '<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.800 12 21 12 21z"/><circle cx="12" cy="9.500" r="2.500"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  expand: '<path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/>',
   feather: '<path d="M20.2 12.2a6 6 0 0 0-8.5-8.5L5 10.5V19h8.5z"/><path d="M16 8 2 22M17.5 15H9"/>',
 };
 
@@ -231,7 +233,9 @@ export function closeLocked(dlg) {
  *   s.setTitle(t) change the title
  *   s.closed      a Promise that resolves when the sheet has closed
  * `beforeClose()` may return false to keep the sheet open (a dirty form asking first); `onClose()`
- * runs once after it closed. Only one sheet is open at a time: opening another closes the first.
+ * runs once after it closed. Only one sheet is open at a time: opening another closes the first, unless the new one
+ * is opened with `stack: true` (the Styles sheet over the picture sheet): it then sits on top, and the one under it is
+ * the open sheet again once it closes.
  */
 let openSheet = null;
 
@@ -252,8 +256,9 @@ export function unlockScroll() {
   b.style.top = "";
   window.scrollTo(0, lockedAt);
 }
-export function sheet({ title = "", content = null, footer = null, onClose = null, beforeClose = null, label = null, focus = null, className = "" } = {}) {
-  if (openSheet) openSheet.close(true);
+export function sheet({ title = "", content = null, footer = null, onClose = null, beforeClose = null, label = null, focus = null, className = "", stack = false } = {}) {
+  const under = stack ? openSheet : null;
+  if (openSheet && !stack) openSheet.close(true);
   const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const titleEl = h("h2.sheet-title", { tabindex: "-1" }, title);
   const closeBtn = h("button.icon-btn.sheet-close", { type: "button", "aria-label": "Close", title: "Close" }, icon("x"));
@@ -267,6 +272,7 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   const closed = new Promise((r) => { done = r; });
   const api = {
     el: dlg, body, toasts, closed,
+    get finished() { return finished; },
     set: (...nodes) => clear(body, ...nodes),
     setTitle: (t) => { titleEl.textContent = t; if (!label) dlg.setAttribute("aria-label", t || "Panel"); },
     close(force = false) {
@@ -288,7 +294,7 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
   function finish() {
     if (finished) return;
     finished = true;
-    if (openSheet === api) openSheet = null;
+    if (openSheet === api) openSheet = under && !under.finished ? under : null;
     dlg.remove();
     if (returnTo?.isConnected) { try { returnTo.focus({ preventScroll: true }); } catch { /* element gone */ } }
     done();

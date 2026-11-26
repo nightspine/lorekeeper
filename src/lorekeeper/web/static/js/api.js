@@ -197,6 +197,14 @@ export const api = {
     .filter(([k, v]) => v != null && (v !== "" || Array.isArray(q[k]))).map(([k, v]) => [k, String(v)]))}`),
   /** The standalone "Add pictures" run on an existing index: a job of kind "art". */
   artRun: (key, art) => request("POST", `/api/library/${encodeURIComponent(key)}/art/run`, { art }),
+  /** The picture styles: the built-in ones first, then the custom ones saved on this server.
+   *  { styles: [{ slug, name, text, builtin, preview, stale }] } (styles.js checks every field). */
+  styles: () => request("GET", "/api/styles"),
+  styleCreate: (body) => request("POST", "/api/styles", body),
+  styleUpdate: (slug, body) => request("PUT", `/api/styles/${encodeURIComponent(slug)}`, body),
+  styleDelete: (slug) => request("DELETE", `/api/styles/${encodeURIComponent(slug)}`),
+  /** Draw a custom style's preview of the shared scene ({ provider?, model?, quality? }); replaces the old one. */
+  stylePreview: (slug, body = {}) => request("POST", `/api/styles/${encodeURIComponent(slug)}/preview`, body),
   /** Every art set on disk, per book: [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }]. */
   artSets: () => request("GET", "/api/art"),
   /** Remove a book's pictures (one style with `style`); 409 while a run draws them; undoable. */

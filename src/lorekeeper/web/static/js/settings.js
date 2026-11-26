@@ -6,7 +6,7 @@ import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./ap
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
-import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, levelsOf, modelFor, modelProviders, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, writerSelect } from "./art.js";
+import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, levelsOf, loadStyles, modelFor, modelProviders, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, stylePicker, writerSelect } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 // A 100,000-word novel at standard depth, measured on a fact-checked run: 1.2 input and 0.58 output tokens per word.
@@ -377,15 +377,24 @@ export function mountSettings(root) {
   // The defaults new pictures start from (kept in this browser), and the art sets on this server with their size.
   async function paintPictures(focusId = null) {
     const d = artDefaults();
-    const { image: provs, text: writers } = await modelProviders({ fresh: true });
+    const [{ image: provs, text: writers }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
     if (disposed) return;
     lines.pictures.textContent = provs.length ? `${styleLabel(d.style)}, ${d.quality}` : "Needs a Gemini or OpenAI key";
     const save = (patch, what) => { setArtDefaults(patch); toast(`${what} saved`); paintPictures(document.activeElement?.id || null); };
+    // The styles, inline: choosing a card makes it the style new pictures start in (no repaint, so focus stays on the
+    // card); custom ones can be edited and deleted here. An older default typed as words is still shown, by its words.
     const known = STYLES.some(([k]) => k === d.style);
-    const style = h("select.select#pic-style", { on: { change: (e) => { if (e.target.value === "custom") { custom.hidden = false; custom.focus(); } else save({ style: e.target.value }, "Style"); } } },
-      STYLES.map(([k, l]) => h("option", { value: k, selected: k === d.style }, l)), h("option", { value: "custom", selected: !known }, "Custom…"));
-    const custom = h("input.input#pic-custom", { hidden: known, value: known ? "" : d.style, placeholder: "Describe the style", "aria-label": "Custom style",
-      on: { change: (e) => { if (e.target.value.trim()) save({ style: e.target.value.trim() }, "Style"); } } });
+    const styles = await loadStyles();
+    if (disposed) return;
+    const legacy = !known && !styles.some((x) => x.slug === d.style) ? [{ slug: d.style, name: styleLabel(d.style), text: d.style }] : [];
+    const summary = () => { const a = artDefaults(); lines.pictures.textContent = provs.length ? `${styleLabel(a.style)}, ${a.quality}${modelName ? `, ${modelName}` : ""}` : "Needs a Gemini or OpenAI key"; };
+    const picker = stylePicker({ value: d.style, extra: legacy, manage: true, pickNew: false,
+      onPick: (x) => { setArtDefaults({ style: x.slug }); summary(); toast(`${x.name} is the style for new pictures`); },
+      onChanged: async (gone) => {
+        // A deleted default goes back to the first built-in style.
+        if (gone && artDefaults().style === gone.slug) { setArtDefaults({ style: "digital-art" }); picker.set("digital-art"); }
+        summary();
+      } });
     // The provider new pictures are drawn with, and its model: the saved one when that provider lists it, else its default.
     const current = provs.find((p) => p.id === d.provider) || provs[0] || null;
     const model = current ? modelFor(current, current.id === d.provider ? d.model : null) : null;
@@ -410,7 +419,6 @@ export function mountSettings(root) {
       head("pictures", "Pictures", provs.length ? "What new pictures start from, and the pictures kept on this server." : null),
       provs.length ? null : h("p.set-note", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Cloud models")),
       h("div.set-rows",
-        row(h("label", { for: "pic-style" }, "Style"), h("div.pic-style", style, custom)),
         row(h("label", { for: "pic-quality" }, "Quality"), quality),
         row(h("label", { for: "pic-cap" }, "Stop a run at"), h("span.pic-cap", "$", cap)),
         prov ? row(h("label", { for: "pic-prov" }, "Draw with"), prov) : provs.length === 1 ? row("Draws with", modelSel ? provs[0].label : `${provs[0].label}, ${imageLine(provs[0], d.quality)}`) : null,
@@ -418,6 +426,9 @@ export function mountSettings(root) {
         provs.length ? row(h("label", { for: "pic-pimage" }, "Portraits drawn with"), portraitImageSelect({ id: "pic-pimage", provs,
           provider: d.portraitProvider, model: d.portraitModel, quality: d.quality,
           onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null),
+      h("h3.pic-sets-h#pic-styles-h", "Styles"),
+      h("p.set-note", "Every style shows the same scene; the one you choose is where new pictures start."),
+      h("div.pic-styles", { role: "region", "aria-labelledby": "pic-styles-h" }, picker.el),
       writers.length && provs.length ? [
         h("h3.pic-sets-h", "Who writes the prompts"),
         h("p.set-note", "Scene prompts are for chapter pictures and moments, portrait prompts for people, places and things, and choosing calls pick what gets drawn."),
