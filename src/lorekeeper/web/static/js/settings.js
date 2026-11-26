@@ -6,6 +6,7 @@ import { onOllama, parseHash, replaceHash, showHash, signOut, state } from "./ap
 import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
+import { CHECK_COST } from "./artfix.js";
 import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, levelsOf, loadStyles, modelFor, modelProviders, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, stylePicker, writerSelect } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
@@ -423,6 +424,8 @@ export function mountSettings(root) {
     const modelName = models.find((m) => m.id === model)?.label;
     if (modelName) lines.pictures.textContent = `${styleLabel(d.style)}, ${d.quality}, ${modelName}`;
     const sets = h("div.pic-sets", h("p.set-note", "Looking for pictures…"));
+    const check = h("input", { type: "checkbox", role: "switch", id: "pic-check", checked: d.check,
+      on: { change: (e) => save({ check: e.target.checked }, "Drawing fault check") } });
     clear(panes.pictures,
       head("pictures", "Pictures", provs.length ? "What new pictures start from, and the pictures kept on this server." : null),
       provs.length ? null : h("p.set-note", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Cloud models")),
@@ -433,7 +436,10 @@ export function mountSettings(root) {
         modelSel ? row(h("label", { for: "pic-model" }, "Image model"), modelSel) : null,
         provs.length ? row(h("label", { for: "pic-pimage" }, "Portraits drawn with"), portraitImageSelect({ id: "pic-pimage", provs,
           provider: d.portraitProvider, model: d.portraitModel, quality: d.quality,
-          onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null),
+          onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null,
+        provs.length ? row(h("label", { for: "pic-check" }, "Check pictures for drawing faults"), h("div.pic-check",
+          h("span.switch", check, h("span", d.check ? "On" : "Off")),
+          h("p.hint", `A cheap model looks at each new picture for things like an extra hand or a head far too small, and the picture is fixed once when it finds one. ${CHECK_COST}`)), null, { top: true }) : null),
       h("h3.pic-sets-h#pic-styles-h", "Styles"),
       h("p.set-note", "Every style shows the same scene; the one you choose is where new pictures start."),
       h("div.pic-styles", { role: "region", "aria-labelledby": "pic-styles-h" }, picker.el),
