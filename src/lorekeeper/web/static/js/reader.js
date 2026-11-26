@@ -2275,7 +2275,13 @@ export function mountReader(root) {
     const quiet = (text) => h("section.book-block.arc-card.current.quiet", { "aria-label": title }, h("div.book-head", h("span.book-title", { title }, text)));
     const nodes = [...real];
     if (asleep) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}: not in this book yet.`));
-    else if (inThisBook(e.id) && !real.some((c) => c.classList.contains("current"))) nodes.unshift(quiet(`${bookNumber(s.book, order)}${title}, so far: appears, nothing new yet.`));
+    else if (inThisBook(e.id) && !real.some((c) => c.classList.contains("current"))) {
+      // This book's pictures of the entry sit in "Portraits" above; a card with nothing else says so rather than "nothing new".
+      const n = entityPictures(e.id).filter((p) => p.book === s.book).length;
+      const noun = ["person", "creature", "group"].includes(e.type) ? "portrait" : "picture";
+      nodes.unshift(quiet(n ? `${bookNumber(s.book, order)}${title}, so far: ${n} ${noun}${n === 1 ? "" : "s"}, shown above.`
+        : `${bookNumber(s.book, order)}${title}, so far: appears, nothing new yet.`));
+    }
     return { nodes, count: real.length };
   }
   const bookNumber = (b, order) => (order.indexOf(b) >= 0 ? `Book ${order.indexOf(b) + 1}, ` : "");
