@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading a book - Lorekeeper docs</title>
+<meta name="description" content="Read a book in the Reader with the names you have met lit, or tell it which chapter you finished in another app.">
+<link rel="stylesheet" href="../css/base.css">
+<link rel="stylesheet" href="docs.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070A0F'/%3E%3Cpath d='M9 8h9a5 5 0 0 1 5 5v11H14a5 5 0 0 1-5-5z' fill='none' stroke='%235CE1D6' stroke-width='2.2' stroke-linejoin='round'/%3E%3Cpath d='M13 13h6M13 17h4' stroke='%235CE1D6' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="docs">
+<nav class="docs-nav" aria-label="Documentation">
+<a class="docs-brand" href="../">Lorekeeper<span>Back to Lorekeeper</span></a>
+<ul><li class="group" role="presentation">Start</li><li><a href="index.html">Overview</a></li><li><a href="reader.html" aria-current="page">Reading a book</a></li><li><a href="ask.html">Ask about a book</a></li><li><a href="pictures.html">Pictures</a></li><li class="group" role="presentation">Build</li><li><a href="reader-apps.html">Reader app guide</a></li><li><a href="protocol.html">Protocol reference</a></li><li><a href="format.html">Index format</a></li><li><a href="locators.html">Locators</a></li><li><a href="community.html">Community indexes</a></li><li><a href="share.html">Share an index</a></li><li class="group" role="presentation">Run</li><li><a href="self-hosting.html">Self-hosting</a></li><li><a href="conformance.html">Conformance</a></li><li class="group" role="presentation">Reference</li><li><a href="spec.html">Specification</a></li></ul>
+</nav>
+<main class="docs-main " id="main">
+<h1>Reading a book</h1>
+<p class="lede">Open a book in the Reader and it shows what you know so far: who you have met, what has happened, and the chapters you have finished. Nothing after your position is on screen. You can read the book itself in the Reader, or tell it which chapter you finished in another app.</p>
+
+<p>The Reader works from your position in the book. There are two ways to give it one. If you read here, the position follows the page as you scroll. If you read in KOReader, a Kindle or a paper copy, you tick the last chapter you finished. Either way, every tab, count, picture and answer follows the same position.</p>
+
+<h2 id="overview">The book's home</h2>
+<p>A book opens on <strong>Overview</strong> (<strong>Home</strong> on a phone). The top is a picture of the book: the latest chapter picture you have reached, else the book's cover, else a plain band. Over it are the title, a line such as "Book 2 of the Red Rising Saga, by Pierce Brown", and the first two sentences of the story so far. <strong>Read the whole recap</strong> opens the full recap on the Chapters tab.</p>
+<p>Beside the title is a card that says where you are, such as "You're at the end of Chapter XI." It has the chapter ticks (see <a href="#steps">Books you read elsewhere</a>), the line "Everything after it stays dark.", the button <strong>I finished Chapter XII</strong> and <strong>Jump</strong>.</p>
+<p>Under it, <strong>Who's who so far</strong> is a grid of the people and creatures you have met, the ones who come up most first. Each shows their portrait if one is drawn and visible, else their initials. Eight are shown, and "All 23 people you've met" opens the Cast tab with only people and creatures. A small "New in Ch. XI" marks those you first met in the chapter you finished last. Tap anyone to open their entry.</p>
+<p><strong>Chapters so far</strong> shows the latest four chapters you have finished, each with its picture and summary. Tap one to open it on the Chapters tab. "All 11 chapters" opens the tab.</p>
+<p>Every number on the Overview counts only what you have reached.</p>
+
+<h2 id="read">Read the book here</h2>
+<p>Choose <strong>Read</strong>, the tab after Overview. It shows the book's own text, one chapter after another, and you read by scrolling. The next chapter loads as you near the end of one, and the previous one when you scroll back up. Each chapter starts with a quiet line holding its title. The tab is there when the server has the EPUB the index was built from, the same copy, not another edition.</p>
+<p>Your position is the paragraph at the top of the page, under the bars. The paragraphs above it count as read, and that paragraph does not yet. As you scroll down, the Cast, Timeline, pictures and Ask follow. Scroll back up and they go back with you. The address and the Reading list in the rail follow too, so a link or a reload opens the same place, and reopening the book returns to the paragraph you left.</p>
+<p>When a chapter has a picture and you have finished the chapter, the picture appears at the chapter's end. "Drawn from this chapter, up to where you are." under it means the picture was made only from that chapter.</p>
+
+<h3 id="names">Names you have met</h3>
+<p>The names of people and creatures you have met are underlined in their type colour. A name is lit only from the paragraph where the index first gives it. If someone is named for the first time halfway down the screen, the name is not lit in the paragraphs above that. A name the index gives later, such as a full name or a title, stays unlit until you reach it.</p>
+<p>Places, groups and things are lit only when you turn on <strong>Light places and groups</strong> in the Aa menu. Terms are never lit.</p>
+<p>Tap a lit name, or move to it with Tab and press Enter, to open a small card: the portrait if there is one, the name, its type and a short description. <strong>Open entry</strong> opens the full entry beside the text (or as a sheet on a smaller screen), and <strong>Ask about Lucy Westenra</strong> starts a question on the Ask tab when a model is set up. The card shows the entry as you know it at your position, whichever paragraph you tapped. Escape closes it.</p>
+
+<h3 id="read-settings">The progress line and the Aa menu</h3>
+<p>A thin line at the bottom of the page shows how far through the book you are, such as "34% of the book", and the minutes left in the chapter at 250 words a minute. It also has <strong>Jump</strong>, to go to a chapter or a percentage, and <strong>Aa</strong>.</p>
+<p>The Aa menu sets the text size (15 to 22 pixels), the typeface (a book serif or Manrope), the line spacing (Compact, Normal or Loose), the width (Narrow, Medium or Wide) and whether places and groups are lit. Your choices are kept in this browser. Changing them keeps the paragraph you are reading where it is.</p>
+<p>Page Down, Page Up and Space scroll by a screen, and Shift+Space goes back one.</p>
+<p>On a phone the app bar shows the chapter you are in. The ruler is hidden while you read, since the scroll is the position, and the progress line has Jump and Aa.</p>
+
+<h3 id="read-orbit">With Book Orbit</h3>
+<p>When the book comes from Book Orbit and Book Orbit has a position for it, the text opens there. Scrolling past that position asks first, as the slider does: "Go past where you're reading?". If you choose to stay, the text goes back to Book Orbit's position. Say "Show me anyway" and you read on without being asked again. The Reader never sends a position back to Book Orbit. See <a href="self-hosting.html#sync">Book Orbit reading position</a>.</p>
+
+<h2 id="steps">Books you read elsewhere</h2>
+<p>Under the ruler is a row of ticks, one per chapter, with a sentence such as "You're part way through Chapter VI." Chapters you have finished are lit, the one you are in is marked, and the rest are dark. A tick past your position has no title, only its number, so the row never names a chapter you have not reached. Front and back matter such as Contents has no tick.</p>
+<p>Press <strong>I finished Chapter VI</strong>, or tap a tick, and the position moves to the end of that chapter. Use the arrow keys to move between ticks, and Enter to choose one. <strong>Part way</strong> opens Jump, where you can give a percentage or pick any chapter. On the Chapters tab, the chapter you just finished says who you met in it: "You met Lucy, Arthur and Quincey.", each name opening their entry.</p>
+<p>The slider is still there for a finer position. On a computer it sits in the ruler above the ticks. On a phone it is folded away: press <strong>Fine position</strong> to show it.</p>
+<p>Every move asks first in the same cases as before: when an edit form holds text you typed, and when a Book Orbit book would move past Book Orbit's position.</p>
+
+<h2 id="entry">An entry</h2>
+<p>When you can see a picture of an entry, the entry opens on it. The portrait fills the top, with the type, the name and "Also called" with up to three other names over its foot. If you can see more than one portrait, they follow as small pictures under a heading such as "3 looks so far". Tap one to see it full size.</p>
+<p>Then come up to three short facts, only when the index states them:</p>
+<ul>
+<li><strong>Age</strong>, when the description or a detail says it of the entry itself, such as "aged 16".</li>
+<li><strong>Belongs to</strong>, a group a stated connection ties them to. Tap it to open the group.</li>
+<li><strong>First met</strong>, the chapter you met them in, or in a series the earlier book.</li>
+</ul>
+<p>The rest of the entry follows as before: who they are, details, connections and events. An entry with no visible picture looks as it always did. With pictures turned off, no entry opens on a picture.</p>
+
+<h2 id="spoilers">Spoilers</h2>
+<p>Everything above follows one rule from the specification: nothing past your position is shown, counted, lit or hinted at (<a href="spec.html#74-safety-requirements">Specification 7.4</a>). In practice:</p>
+<ul>
+<li>A lit name, a card, a chapter tick's title, a "New in" mark, a fact tile, a picture and a count all come from the view at your position.</li>
+<li>A name is lit in a paragraph only when the name itself is revealed at or before that paragraph, not when the person is.</li>
+<li>When your copy of the book differs from the one the index was built from, a paragraph the Reader cannot place takes the place of the next one it can, so the Reader can only show less, never more. The Read tab needs the exact copy.</li>
+</ul>
+
+<h2 id="api">For developers</h2>
+<p>The read routes belong to the web app, not to the <a href="protocol.html">/v0 protocol</a>, and they need a session when sign-in is on. They serve the text of the EPUB the index was built from (its first <code>builtFrom</code> edition on the server). They carry nothing from the index: the page joins the text with the index it already holds, and gates it there.</p>
+<ul>
+<li><code>GET /api/library/{key}/read/toc</code> answers <code>{"chapters": [{"n", "title", "firstSeq", "lastSeq", "words", "story"}], "blocks", "words"}</code>. <code>n</code> is the chapter's place in the book's table of contents, the numbering the Reader's chapter select uses, so it does not start at the first story chapter. <code>story</code> is false for front and back matter. Paragraphs before the first table of contents entry belong to chapter 1, so <code>firstSeq</code> of chapter 1 is always 0. A book with no table of contents is one chapter.</li>
+<li><code>GET /api/library/{key}/read?chapter=N</code>, or <code>?seq=S</code> for the chapter holding block S, answers <code>{"chapter": {"n", "title", "firstSeq", "lastSeq"}, "prev", "next", "blocks": [{"seq", "text", "heading"}]}</code>. <code>prev</code> and <code>next</code> are <code>{"n", "title"}</code> or null. Every block of the chapter is listed, short ones too. <code>text</code> is the block's text with its spaces collapsed, and <code>heading</code> is true for a heading. The text is the book's, so render it as text, never as markup.</li>
+</ul>
+<p>Errors carry a <code>code</code>: 404 <code>not-found</code> (no such index), 404 <code>no-book-file</code> (the EPUB is not on the server), 404 <code>no-chapter</code>, 422 <code>bad-seq</code> (a block outside the book) and 422 <code>bad-request</code> (neither <code>chapter</code> nor <code>seq</code>). For example, on the bundled <em>Dracula</em>:</p>
+<pre><code>curl -s 'http://localhost:8765/api/library/examples--dracula--dracula/read?seq=500' \
+  -b "lorekeeper_session=$SESSION" | jq '.chapter'</code></pre>
+<p>This prints chapter 12, "CHAPTER IX".</p>
+
+</main>
+</div>
+</body>
+</html>

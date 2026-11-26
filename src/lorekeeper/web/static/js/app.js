@@ -78,10 +78,16 @@ onReading(paintReading);
 
 const appbarTitle = document.getElementById("appbar-title");
 let pageTitle = "Lorekeeper";
+let titleOverride = null;
 function paintTitle() {
   const { route, params } = parseHash();
   const book = route === "reader" && recentReading().find((e) => e.key === params.get("i"));
-  appbarTitle.textContent = book ? book.title : pageTitle;
+  appbarTitle.textContent = titleOverride || (book ? book.title : pageTitle);
+}
+/** A page may name what is on screen in the phone app bar (the Reader's reading view: the chapter); null gives it back. */
+export function setAppbarTitle(text) {
+  titleOverride = typeof text === "string" && text ? text : null;
+  paintTitle();
 }
 
 /** Mark the current page in the rail and the tab bar. In the Reader that is the book (its Reading row, its tab). */

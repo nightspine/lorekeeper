@@ -147,6 +147,9 @@ export const api = {
     if (!res.ok) return null;
     return res.json();
   },
+  /** One chapter of the book's own text for the reading view, by `chapter` (n of the chapter map) or by the `seq` of a block in it. */
+  readChapter: (key, { chapter = null, seq = null } = {}) =>
+    request("GET", `/api/library/${encodeURIComponent(key)}/read?${chapter != null ? `chapter=${chapter}` : `seq=${seq}`}`),
   /** Start an empty index for a library book, to write by hand. */
   handmade: (catalogKey, license = null) => request("POST", `/api/catalog/books/${encodeURIComponent(catalogKey)}/handmade`, license ? { license } : {}),
   /** Book Orbit's reading position for this index. A 404 means an older server: treated as "not synced", no message. */
