@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.0](https://github.com/nightspine/lorekeeper/compare/v0.25.0...v0.26.0) (2026-11-26)
+
+
+### Features
+
+* portraits cropped at mid-chest with hands out of frame; scenes keep whole figures and fewer things in hand ([#148](https://github.com/nightspine/lorekeeper/issues/148)) ([35bdf82](https://github.com/nightspine/lorekeeper/commit/35bdf8281fa0a1fbe8db36dcd45e5360e4633541))
+
 ## [0.25.0](https://github.com/nightspine/lorekeeper/compare/v0.24.0...v0.25.0) (2026-11-26)
 
 
