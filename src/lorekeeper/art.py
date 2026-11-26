@@ -985,7 +985,8 @@ class Illustrator:
                  place_refs: bool = False) -> None:
         """One model per responsibility. `text` writes the scene prompts (plates and event pictures); `portrait_text` (else
         `text`) the prompts of portraits, places and things; `cheap_text` (else `text`), the picker, makes the choosing calls:
-        the chapter screening, the look index and the look sentences (the one choosing call the prompt path may make). A
+        the chapter screening, the look index (which an on-demand entity job makes on a miss, to place its anchor) and the look
+        sentences (made on the prompt path on a miss). A
         softening rewrite is written by the writer of its kind. `image` draws the scenes and `portrait_image` (else `image`)
         the portraits, places and things. `place_refs`: a scene's reference slots its labelled figures leave free take the
         picture of the place it happens at, then of the things it shows (an experiment, off until measured).
@@ -1838,8 +1839,9 @@ class Illustrator:
         the manifest (`looks[eid] = {"key", "items"}`), else {} (not classified yet, or the index changed since).
 
         Gating: the classification call sees all the entity's items up to the end of the book, but it only chooses. Every use
-        is filtered by anchor (a look item or a change counts only at or after its own `from`; on the prompt path the flags only
-        put the details the view already shows in another order), and nothing it writes reaches a prompt (a change is stored
+        is filtered by anchor (a look item or a change counts only at or after its own `from`; on the prompt path the flags put
+        the details the view already shows in another order, and an on-demand entity job takes its anchor from the flagged
+        items at or before the reader's position, `_first_look_anchor`), and nothing it writes reaches a prompt (a change is stored
         as true or false, never its phrase).
         The manifest holds item ids and flags only, so it says nothing the index the Reader holds does not."""
         items = self.items(bi, eid)
@@ -2328,8 +2330,8 @@ class Illustrator:
         """What earlier descriptions of a visible entry say of its look that its current one does not: (text, [(book, facet,
         its new words)]). The candidates are the entry's history in the view (so each one is visible at the anchor, of this
         book or of a finished earlier one, never past its own `from`; arcs never). With the look sentences of every book they
-        come from (`look_sentences`, made here on a miss when `pick_on_demand`: the one choosing call the prompt path may
-        make, one per LOOK_SENTENCE_BATCH sentences), only the picked sentences: the one adding the most words the current
+        come from (`look_sentences`, made here on a miss when `pick_on_demand`: a choosing call the prompt path may make,
+        like the look index an on-demand entity `job` makes to place its anchor; one per LOOK_SENTENCE_BATCH sentences), only the picked sentences: the one adding the most words the current
         description and the sentences kept do not have first (at least EARLIER_NEW_PICKED), up to `budget` characters.
         Without them (the call failed): with a fresh look index, the items it flags as a look first, then the earlier
         profiles; without one, the earlier profiles; oldest first, a sentence kept when it adds EARLIER_NEW words, up to
@@ -2465,12 +2467,23 @@ class Illustrator:
     # ---- one picture: its job, its prompt, its drawing (also the entry points of on-demand drawing)
 
     def job(self, kind: str, target: str, bi: int = -1, at: str | None = None, shape: str | None = None,
-            finished: set[str] | frozenset[str] | None = None) -> Job:
-        """The job for a picture of any kind: an event id, a chapter title, or an entity id (the anchor is the latest facet or
-        profile visible at `at`). A target after `at` raises NotVisible. `finished`: the earlier book keys the reader has
-        finished (None: all); the job carries it to `make_prompt`, and an entity only an unfinished earlier book has is not
-        visible. No model call: a plate's main moment comes from the set's fresh screening when it has one, else from every
-        event of the chapter that is not minor."""
+            finished: set[str] | frozenset[str] | None = None, looks: str = "make") -> Job:
+        """The job for a picture of any kind: an event id, a chapter title, or an entity id. A target after `at` raises
+        NotVisible. `finished`: the earlier book keys the reader has finished (None: all); the job carries it to `make_prompt`,
+        and an entity only an unfinished earlier book has is not visible. A plate's main moment comes from the set's fresh
+        screening when it has one, else from every event of the chapter that is not minor (no call).
+
+        An entity's anchor, asked for at a position `at` of its own book: the earliest anchor that still holds everything
+        known about its look there (`_first_look_anchor`): the latest of its items at or before `at` the look index flags as a
+        look or a change, else its first profile (else its first appearance) when none is flagged; the prompt is written from the view at that anchor,
+        so the picture shows from the point its material is known, and nothing later reaches it. The look index is read from
+        this set, else from another style's set of the edition; on a miss, with `looks` "make", the entity is classified (one
+        cheap call per batch, `classify`: the one choosing call `job` may make). `looks` "cached" makes no call; "off", a
+        failed classification or no fresh look index after it keep the old rule, the latest facet or profile visible at `at`
+        (later than needed, never unsafe). With no `at`, or for an entity only an earlier book has, the old rule: the latest
+        facet or profile visible at `at` (the whole book with no `at`)."""
+        if looks not in ("make", "cached", "off"):
+            raise ValueError("looks must be make, cached or off")
         bi = len(self.books) - 1 if bi < 0 else bi
         at_bi = bi
         if kind not in SHAPE_OF:
@@ -2501,11 +2514,15 @@ class Illustrator:
                     raise NotVisible(target)
                 b = self.books[bi]
             e = b.ents[target]
-            anchor = e["from"] if e["from"] in b.ord_of else b.anchors[0]["id"]
+            first = e["from"] if e["from"] in b.ord_of else b.anchors[0]["id"]
+            # the old rule, and the fallback: the latest facet or profile visible at the position (or in the book)
+            anchor = first
             for f in e.get("facets", []):
                 if f["from"] in b.ord_of and b.ord_of[f["from"]] >= b.ord_of[anchor] and (
                         at is None or bi < at_bi or b.ord_of[f["from"]] <= b.ord_of[at]):
                     anchor = f["from"]
+            if at is not None and bi == at_bi and looks != "off" and b.ord_of[first] <= b.ord_of[at]:
+                anchor = self._first_look_anchor(bi, target, at, anchor, make=looks == "make")
             job = Job(kind, target, bi, anchor, shape=shape)
         job.finished = fin if bi == at_bi else (None if fin is None else frozenset(fin))
         if at is not None:
@@ -2513,6 +2530,52 @@ class Illustrator:
         if at is not None and bi == at_bi and b.ord_of[job.anchor] > b.ord_of[at]:
             raise NotVisible(target)
         return job
+
+    def _fresh_looks(self, bi: int, eid: str) -> dict[str, dict] | None:
+        """The entity's look index in book bi from this set (`look_index`), else from a fresh one in another style's set of
+        the edition (the same items, so the same key), else None. Only flags (item ids), never anything a prompt reads."""
+        items = self.items(bi, eid)
+        if not items:
+            return {}
+        key = self._items_key(items)
+        ids = {i["id"] for i in items}
+        for m in [self.man[bi], *(lm for _slug, _sink, lm in self.like[bi])]:
+            got = (m.get("looks") or {}).get(eid)
+            if isinstance(got, dict) and got.get("key") == key:
+                return {k: v for k, v in (got.get("items") or {}).items() if k in ids and isinstance(v, dict)}
+        return None
+
+    def _first_look_anchor(self, bi: int, eid: str, at: str, fallback: str, make: bool = True) -> str:
+        """Where an on-demand picture of an entity seen at `at` shows from: the latest of its items (`items`) at or before
+        `at`, and at or after its own `from`, that the look index flags as a look or a change (a turning point only as a
+        change, as `_versions` reads it); when the index flags none there, its first profile at or before `at` (the prompt
+        then writes it from who it is), else its first appearance. With no fresh look index the entity is classified once when `make` (`classify`, the picker); if that
+        fails, or finds nothing fresh, `fallback` (the latest facet or profile visible at `at`)."""
+        b = self.books[bi]
+        e = b.ents[eid]
+        first = e["from"] if e["from"] in b.ord_of else b.anchors[0]["id"]
+        idx = self._fresh_looks(bi, eid)
+        if idx is None and make:
+            self.classify(bi, [eid])
+            idx = self._fresh_looks(bi, eid)
+        if idx is None:
+            return fallback
+        lo, hi = b.ord_of[first], b.ord_of[at]
+        # with no look item reached, the first profile in reach (as `_versions` starts a run's first portrait): the prompt
+        # is written from who it is, which its first appearance seldom tells; else that first appearance
+        profs = [f["from"] for f in e.get("facets", []) if f.get("kind") == "profile" and f["from"] in b.ord_of
+                 and lo <= b.ord_of[f["from"]] <= hi]
+        start = min(profs, key=b.ord_of.__getitem__) if profs else first
+        anchor = None
+        for it in self.items(bi, eid):
+            o = b.ord_of[it["from"]]
+            flag = idx.get(it["id"]) or {}
+            if not lo <= o <= hi:
+                continue
+            if flag.get("change") or (flag.get("look") and not it["id"].startswith("event:")):
+                if anchor is None or o >= b.ord_of[anchor]:
+                    anchor = it["from"]
+        return anchor or start
 
     def _figures(self, job: Job) -> list[str]:
         """The entities a picture shows: the ones its event names (a plate with no event, the chapter's most named), no others."""

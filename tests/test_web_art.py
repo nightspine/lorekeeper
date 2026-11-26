@@ -1989,6 +1989,94 @@ def test_a_same_prompt_redraw_sends_a_later_reference_only_when_the_reader_has_r
     assert env.c.post(f"/api/library/{KEY}/art/{plain['id']}/redraw", json={"p": "nowhere"}).json()["code"] == "bad-position"
 
 
+# ---- an on-demand portrait shows from the first point its look is known
+
+
+def promised(env):
+    """Mira's index with a detail of hers at a9 that says nothing about her look (her look is told at a5)."""
+    env.doc["entities"][0]["facets"].append({"id": "bk.mira.f9", "from": "a9", "basis": "stated", "evidence": ["a9"],
+                                             "text": "Promised to the rider from the hills."})
+    env.index.write_text(json.dumps(env.doc))
+
+
+def test_a_portrait_asked_for_later_answers_and_draws_from_its_first_look(env):
+    env.key()
+    promised(env)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask)
+    assert got.status_code == 200, got.text
+    got = got.json()
+    assert got["anchor"] == "a5" and "Promised" not in got["prompt"]
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a5"
+    # the same anchor from an earlier position: a reader back at a6 still sees it
+    assert env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": "a6"}).json()["anchor"] == "a5"
+
+
+def test_a_drawn_text_no_prompt_was_written_for_here_is_filed_at_the_position(env):
+    env.key()
+    promised(env)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    # no prompt route first (a cache that expired): the text may use anything the reader has read
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": "A young woman in a brown shawl by a mill."})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a13"
+
+
+def test_an_edited_prompt_is_filed_at_the_position_and_the_servers_own_text_at_its_first_look(env):
+    env.key()
+    promised(env)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    assert got["anchor"] == "a5"
+    edited = got["body"] + " She is promised to the rider from the hills. " + got["style"] + " " + got["noText"]
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": edited})       # a cache hit, edited
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a13"
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": got["prompt"]})   # unedited
+    assert r.json()["from"] == "a5"
+    restyled = " ".join([got["body"], got["styles"]["anime"], got["noText"]])              # only the style changed
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "style": "anime", "prompt": restyled})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a5"
+    # "Write a new prompt" redraw: a draw with `replaces` and an edited text is filed at the position too
+    old = r.json()["id"]
+    r = env.c.post(f"/api/library/{KEY}/art/draw",
+                   json={**ask, "style": "anime", "prompt": "A young woman, promised to a rider.", "replaces": old})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a13" and r.json()["replaces"] == old
+
+
+def test_a_softened_prompt_keeps_the_first_look_only_when_the_refused_text_was_the_servers(env, monkeypatch):
+    env.key()
+    promised(env)
+    import dataclasses
+    seen = []
+
+    def soften(self, job, text_, reason, finished=None):      # a quieter body that says which material it was written from
+        seen.append({"job": job})
+        pr = self.make_prompt(job)
+        quiet = f"A young woman stands with her face turned away, as known at {job.anchor}."
+        return dataclasses.replace(pr, body=quiet, scene=quiet, text=" ".join([quiet, pr.style, pr.no_text]).strip())
+    monkeypatch.setattr(art.Illustrator, "soften", soften, raising=False)
+    ask = {"kind": "portrait", "target": "mira", "style": "ink", "p": "a13"}
+    got = env.c.post(f"/api/library/{KEY}/art/prompt", json=ask).json()
+    soft = env.c.post(f"/api/library/{KEY}/art/soften", json={**ask, "text": got["prompt"], "reason": "IMAGE_SAFETY"})
+    assert soft.status_code == 200, soft.text
+    assert soft.json()["anchor"] == "a5" and seen[-1]["job"].anchor == "a5"
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": soft.json()["prompt"]})
+    assert r.status_code == 200, r.text
+    assert r.json()["from"] == "a5"
+    # a refused text the person wrote: rewritten from the material at the position, and drawn there
+    mine = "A young woman promised to the rider from the hills, weeping."
+    soft = env.c.post(f"/api/library/{KEY}/art/soften", json={**ask, "text": mine, "reason": "IMAGE_SAFETY"})
+    assert soft.status_code == 200, soft.text
+    assert soft.json()["anchor"] == "a13" and seen[-1]["job"].anchor == "a13"
+    r = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "prompt": soft.json()["prompt"]})
+    assert r.json()["from"] == "a13"
+
+
 # ---- portraits are cropped at mid-chest (portrait-chest-up)
 
 
