@@ -2483,8 +2483,10 @@ def test_until_draws_nothing_past_it_and_no_look_change_after_it():
 
 def test_until_before_the_first_look_draws_the_first_profile_instead():
     bk, d = vesna_doc()                      # her look is first described at a9, her first profile is at a2
-    _, _, sink, _, _ = run(d, bk, portraits={"vesna"}, level="none", until=(0, "a5"))
+    _, _, sink, t, _ = run(d, bk, portraits={"vesna"}, level="none", until=(0, "a5"))
     assert [p["from"] for p in pics(sink)] == ["a2"]
+    asked = [p for p in t.scenes() if drawing(p) == "Vesna"]
+    assert asked and not any(w in p for p in asked for w in ("white hair", "hooked nose", "black shawl"))   # the a9 look
     _, _, sink2, _, _ = run(d, bk, portraits={"vesna"}, level="none")
     assert [p["from"] for p in pics(sink2)] == ["a9"]       # a bulk run's plan when nothing limits it
 
@@ -2500,6 +2502,8 @@ def test_a_reader_who_has_not_finished_the_earlier_book_gets_partial_pictures_of
     il, rep = go([], s1, s2)
     assert s1.m is None or not pics(s1)                                   # the unfinished book is never drawn
     assert [p["target"] for p in pics(s2)] == ["mira"] and all(p.get("partial") for p in pics(s2))
+    written = il.text.scenes()
+    assert written and not any(w in p for p in written for w in ("Zephyr", "Gabriel", "Stranger", "silver coin"))   # book one only
     assert il.counts(0)["portraits"] == 0 and il.counts(1)["new_portraits"] == 0
     _, rep2 = go([], s1, s2)                                              # drawn already, for this reader
     assert rep2.drawn == 0
@@ -2525,3 +2529,18 @@ def test_counts_for_chosen_entities_and_until_need_no_model_call():
     il2 = art.Illustrator([art.Book(d, bk, il.books[0].b.sink)], t, Image(), "ink", portraits={"oren"}, until=(0, "a9"),
                           log=lambda *_: None)
     assert il2.counts(0, level=None)["new_portraits"] == 1
+
+
+def test_until_after_a_look_but_before_the_first_profile_starts_at_the_look_and_keeps_its_changes():
+    bk = book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    mira = d["entities"][0]
+    mira["facets"] = [{"id": "bk.mira.f1", "from": "a1", "basis": "stated", "evidence": ["a1"],
+                       "text": "A slight young woman with dark braided hair."},
+                      {"id": "bk.mira.f2", "from": "a4", "basis": "stated", "evidence": ["a4"],
+                       "text": "Her arm is scarred by the mill wheel."},
+                      portrait("mira", "a10", "A slight young woman with a scarred arm who carries baskets to the mill.")]
+    _, _, sink, _, _ = run(d, bk, portraits={"mira"}, level="none", until=(0, "a5"))
+    assert [p["from"] for p in pics(sink)] == ["a1", "a4"]
+    _, _, sink2, _, _ = run(d, bk, portraits={"mira"}, level="none")
+    assert [p["from"] for p in pics(sink2)][:2] == ["a1", "a4"]      # what a bulk run plans up to there (then a10)
