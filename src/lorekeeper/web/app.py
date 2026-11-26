@@ -1737,8 +1737,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         three counts with what is already drawn included. `entities` ("id,id"), `until` (an anchor id or the fraction of
         the book read) and `finished` ("key,key"; absent: every earlier book) estimate an entry's portraits through the book
         as the run route would check them: the portraits of those entries only, at or before the position, in this book and
-        the earlier books the reader finished, without what is drawn; `portraitsMax` and `priceMax` are the upper bound while
-        a look index is not checked yet (equal to `portraits` and `price` otherwise)."""
+        the earlier books the reader finished, without what is drawn. `portraitsMax`, `picturesMax` and `priceMax` are the
+        top of the range: an entity whose looks no run has checked yet counts one portrait in `portraits` but up to
+        `art.MAX_VERSIONS` here (the pipeline's `portraits_max`); all three equal the plain numbers when every counted entity
+        is checked."""
         ctx = art_index(key)
         if level not in artmod.LEVELS:
             raise ArtRefusal(422, "bad-config", "level must be main, all or none.")
@@ -1773,14 +1775,15 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         il.scene_chapters = chosen     # the chapter choice limits scenes only (art.Illustrator's `scene_chapters`)
         got = il.counts(level=level)
         # an upper bound while a look index is unchecked (the pipeline's `portraits_max`, when it gives one)
-        extra_max = max(0, got.get("portraits_max", got["portraits"]) - got["portraits"])
+        # (`portraits_max` is what `new_portraits` could grow to, so the range's extra is measured from that)
+        extra_max = max(0, got.get("portraits_max", got["new_portraits"]) - got["new_portraits"])
         for bi in range(len(il.books) - 1):     # an entity run's earlier books the reader finished: their portraits too
             b = il.books[bi]
             if b.b.draw and b.epub is not None:
                 g = il.counts(bi, level=None)
                 for k in ("portraits", "new_portraits"):
                     got[k] += g[k]
-                extra_max += max(0, g.get("portraits_max", g["portraits"]) - g["portraits"])
+                extra_max += max(0, g.get("portraits_max", g["new_portraits"]) - g["new_portraits"])
         rows = story_rows(il, got["chapters"])
         # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
         plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
@@ -1807,7 +1810,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         high = ports + extra_max
         price_max = None if price is None or (high and each[1] is None) else round(price + extra_max * (each[1] or 0), 4)
         return {"pictures": plates + ports, "plates": plates, "portraits": ports, "price": price, "provider": prov,
-                "portraitsMax": high, "priceMax": price_max,
+                "picturesMax": plates + high, "portraitsMax": high, "priceMax": price_max,
                 **({"entities": ecfg["entities"], "until": ecfg["until"], "finished": ecfg["finished"]} if ecfg else {}),
                 "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
                 "level": level, "chapters": chapters_,

@@ -1,5 +1,7 @@
 import re
 
+import pytest
+
 from lorekeeper import epub, portraits, text
 
 
@@ -24,12 +26,34 @@ CH2 = ["Mira learned that the miller Oren was her father all along, said the old
 
 
 class Fake:
-    def __init__(self, replies):
-        self.replies, self.prompts = list(replies), []
+    """Scripted replies: a string is a description's text, a dict the whole reply. The look-picking call answers from
+    `looks` (a list of number lists, one per call; none picked when it runs out) and is logged in `picks`."""
+
+    def __init__(self, replies, looks=(), lost=(), reader=None, by=None):
+        """`reader(name, sentence)` answers the death question as a careful reader would (default: yes, so the rule stays
+        strict); it may raise to stand for a failed call. `by` maps an entity name to its own replies, for runs where
+        several entities are written at once."""
+        self.replies, self.prompts, self.looks, self.picks = list(replies), [], list(looks), []
+        self.lost, self.confirms, self.asked_dead = list(lost), [], []
+        self.reader, self.by = reader or (lambda name, sentence: True), {k: list(v) for k, v in (by or {}).items()}
 
     def complete(self, system, prompt, schema, prefix=None):
+        if schema is portraits.LOOKS_SCHEMA:
+            self.picks.append(prompt)
+            return {"looks": self.looks.pop(0) if self.looks else []}
+        if schema is portraits.DEATHS_SCHEMA:
+            self.asked_dead.append(prompt)
+            name = re.search(r"each about (.+?) \(", prompt).group(1)
+            items = re.findall(r"^(\d+)\. (.*)$", prompt.split("\n\n", 1)[1], re.M)
+            return {"dead": [int(n) for n, t in items if self.reader(name, t)]}
+        if schema is portraits.LOST_SCHEMA:          # by default every look shown is confirmed lost, by the number shown
+            self.confirms.append(prompt)
+            shown = [int(n) for n in re.findall(r"^(\d+)\. ", prompt.split("New description:")[1], re.M)]
+            return {"lost": self.lost.pop(0) if self.lost else shown}
         self.prompts.append(prompt)
-        return {"text": self.replies.pop(0)}
+        who = re.search(r"places so far where (.+?) \(", prompt)
+        r = (self.by[who.group(1)] if self.by and who and who.group(1) in self.by else self.replies).pop(0)
+        return r if isinstance(r, dict) else {"text": r}
 
 
 def _mira(**kw):
@@ -114,9 +138,9 @@ def test_portraits_never_go_backwards(monkeypatch):
     real = portraits._windows
     calls = []
 
-    def short(text, hits, lo, hi):   # the second time, the budget leaves out the later passages
+    def short(text, hits, lo, hi, since=None):   # the second time, the budget leaves out the later passages
         calls.append(1)
-        out, last = real(text, hits, lo, hi)
+        out, last = real(text, hits, lo, hi, since)
         return out, (last if len(calls) == 1 else 2)
     monkeypatch.setattr(portraits, "_windows", short)
     portraits.portraits([(d, book)], Fake(["A young woman of the mill.", "A young woman of the mill who keeps secrets."]),
@@ -305,3 +329,316 @@ def test_engaged_does_not_stand_in_for_a_death():
     assert not portraits._opens_with("Lucy dies.", "Lucy is a young woman engaged to Arthur. She is sweet.")
     assert portraits._opens_with("Lucy dies.", "Dead, after a long decline. She was engaged to Arthur.")
     assert portraits._opens_with("Captured by the Count.", "Escaped from the castle; a solicitor.")
+
+
+# ---- stated looks are kept
+
+LOOK_BOOK = [("One", CH1), ("Two", CH2 + CH1)]
+FIRST = "A tall woman with red hair who carries baskets to the mill."
+
+
+def test_a_rewrite_is_told_the_looks_the_last_description_stated_and_keeps_them():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A tall red-haired woman of the mill who keeps a secret."], looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert len(model.picks) == 1 and "1. A tall woman\n2. red hair\n3. carries baskets" in model.picks[0]
+    assert '1. A tall woman\n2. red hair\nKeep every one' in model.prompts[1] and len(model.prompts) == 2
+    assert stats["portraits"] == 2 and not any(k.endswith("stated look") for k in stats)
+
+
+def test_a_look_the_passages_changed_may_go_when_the_reply_says_so():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, {"text": "A tall woman of the mill with grey hair who keeps a secret.", "changed": [2]}],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and len(model.prompts) == 2
+    assert d["entities"][0]["facets"][-1]["text"].endswith("grey hair who keeps a secret.")
+
+
+def test_a_change_claimed_for_something_else_entirely_does_not_count():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, {"text": "A tall woman of the mill who keeps a secret.", "changed": [2]},
+                  {"text": "A tall woman of the mill who keeps a secret.", "changed": [2]}], looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost a stated look"] == 1 and len(model.prompts) == 3
+
+
+def test_a_lost_look_gets_one_rewrite():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret.", "A tall woman of the mill with red hair who keeps a secret."],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert 'It no longer says how Mira looks: 1. "A tall woman"; 2. "red hair"' in model.prompts[2]
+    assert stats["rewritten: kept a stated look"] == 1 and stats["portraits"] == 2
+    assert d["entities"][0]["facets"][-1]["text"] == "A tall woman of the mill with red hair who keeps a secret."
+
+
+def test_a_look_lost_twice_leaves_the_previous_description_standing():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret.", "A tall woman of the mill who keeps a secret."],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost a stated look"] == 1 and stats["portraits"] == 1 and len(model.confirms) == 2
+    assert [f["text"] for f in d["entities"][0]["facets"] if f["kind"] == "profile"] == [FIRST]
+
+
+def test_a_first_portrait_keeps_the_looks_of_the_extraction_profile_and_is_not_revealed_before_it():
+    quiet = ["The rain fell on the long road past the old mill all through the night.",
+             "By morning the river had risen over the stones of the ford below the bridge."]
+    book = _book([("One", CH1 + quiet)])
+    early = {"id": "x.p1", "kind": "profile", "from": "b6", "basis": "stated", "evidence": ["b6"], "text": FIRST}
+    d = _doc(book, [_mira(facets=[early])])
+    d["entities"][0]["names"].append({"value": "Mira of the mill", "kind": "alias", "from": "b0"})
+    model = Fake(["A tall woman with red hair from the mill."], looks=[[2]])
+    portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert "1. red hair\nKeep every one" in model.prompts[0]
+    p = d["entities"][0]["facets"][-1]
+    assert p["id"] == "bk.mira.portrait-1" and p["from"] == "b6"      # the passages end at b5, the profile it kept is at b6
+
+
+def test_no_looks_picked_means_nothing_to_keep():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A woman of the mill who keeps a secret."], looks=[[]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "Keep every one" not in model.prompts[1] and len(model.picks) == 1
+
+
+def test_picks_outside_the_pieces_are_ignored():
+    model = Fake([], looks=[[0, 2, 9, "x"]])
+    assert portraits.look_pieces(model, "Mira", "a character", FIRST) == ["red hair"]
+    assert portraits.kept("dark skin", "A dark-skinned smith.") and not portraits.kept("dark skin", "A dark smith.")
+
+
+def test_mentions_since_the_last_description_get_half_the_windows_and_the_budget_first(monkeypatch):
+    text = {s: f"Mira at the mill, paragraph {s}, " + "word " * 40 for s in range(400)}
+    hits = list(range(0, 400, 4))                       # windows that never touch
+    old, _ = portraits._windows(text, hits, 0, 399)
+    assert sum(f"paragraph {s}," in old for s in range(361, 400)) <= 12     # evenly over the book: few recent ones
+    monkeypatch.setattr(portraits, "BUDGET", 8000)                          # room for 11 windows of 3 paragraphs
+    new, last = portraits._windows(text, hits, 0, 399, since=360)
+    assert all(f"paragraph {s}," in new for h in range(364, 400, 4) for s in (h - 1, h, h + 1))   # every recent window
+    assert last == 397 and "paragraph 0," in new and "paragraph 200," not in new                    # then the oldest first
+    assert [int(x.split(",")[0]) for x in new.split("paragraph ")[1:]] == sorted(int(x.split(",")[0]) for x in new.split("paragraph ")[1:])
+
+
+def test_a_look_kept_in_other_words_is_not_lost():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A long-legged woman of the mill with red hair who keeps a secret."], looks=[[1, 2]], lost=[[]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert len(model.prompts) == 2 and stats["kept: look in other words"] == 1 and stats["portraits"] == 2
+    assert "1. A tall woman" in model.confirms[0] and "red hair" not in model.confirms[0].split("New description:")[1].split("\n\n")[1]
+
+
+def test_the_confirming_call_can_only_clear_what_code_flagged():
+    model = Fake([], lost=[[2, 5]])
+    assert portraits.confirm_lost(model, "Mira", "a character", ["a", "b", "c"], "text", [1, 3]) == [3]
+    assert "\n1. a\n2. c" in model.confirms[0]                    # numbered as shown, mapped back by that number
+    assert portraits.confirm_lost(model, "Mira", "a character", ["a"], "text", []) == [] and len(model.confirms) == 1
+
+
+# ---- round 2: confirmation numbering, one gate for every rewrite, deaths
+
+def test_a_lost_look_that_is_not_the_first_is_confirmed_by_the_number_shown():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    model = Fake([FIRST, "A tall woman of the mill who keeps a secret.", "A tall woman of the mill with red hair who keeps a secret."],
+                 looks=[[1, 2]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert "1. red hair" in model.confirms[0] and stats["rewritten: kept a stated look"] == 1
+    assert "kept: look in other words" not in stats
+
+
+DEAD_CH1 = ["Mira waited by the gate of the mill for a long while that day.",
+            "Mira came home again in the evening carrying her empty basket."]
+DEAD_CH2 = [f"Mira was remembered at the mill by all who knew her, said the miller {i}." for i in range(6)]
+
+
+def _dead_mira(fact="Died of the fever in winter."):
+    book = _book([("One", DEAD_CH1), ("Two", DEAD_CH2)])
+    f = {"id": "f1", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": fact}
+    return book, _doc(book, [_mira(facets=[f])])
+
+
+def test_the_look_rewrite_may_not_drop_a_recorded_death():
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a tall woman with red hair.", "Dead of the fever; a tall woman of the village.",
+                  "A tall woman with red hair of the village."], looks=[[2, 3]])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert "red hair" in model.prompts[2] and len(model.prompts) == 3          # the look rewrite, which drops the death
+    assert stats["dropped: lost the change in standing"] == 1
+    assert all(p["text"].startswith("Dead") for p in d["entities"][0]["facets"] if p.get("kind") == "profile")
+
+
+def test_a_death_anywhere_in_the_first_sentence_is_kept():
+    book, d = _dead_mira()
+    opening = "Mira, a young woman of the village and the mill, is dead of the fever."
+    model = Fake([opening, "Mira is a young woman of the village.", "Mira is a young woman of the village."])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+
+
+def test_looks_over_the_cap_are_counted():
+    book = _book(LOOK_BOOK)
+    d = _doc(book, [_mira()])
+    many = "A tall woman, " + ", ".join(f"mark {w}" for w in "abcdefghijklmn") + "."
+    model = Fake([many, many], looks=[list(range(1, 16))])
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["looks over the cap"] == 15 - portraits.MAX_LOOKS
+
+
+# ---- round 3: whose death a sentence states is asked, never guessed
+
+def _people(chapters, people, events=()):
+    """A book of two chapters and a doc of people [(id, [names], [facts])] with turning points [(summary, [ids])] at b1."""
+    book = _book(chapters)
+    ents = [{"id": i, "type": "person", "from": "b0", "names": [{"value": n, "kind": "primary" if k == 0 else "alias",
+                                                                 "from": "b0"} for k, n in enumerate(ns)],
+             "facets": [{"id": f"{i}.f{k}", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": t}
+                        for k, t in enumerate(facts)]} for i, ns, facts in people]
+    d = _doc(book, ents)
+    d["events"] = [{"id": f"e{k}", "from": "b1", "kind": "turn", "summary": t, "entities": ids, "evidence": ["b1"]}
+                   for k, (t, ids) in enumerate(events)]
+    return book, d
+
+
+def _profiles(d, eid):
+    return [f["text"] for e in d["entities"] if e["id"] == eid for f in e["facets"] if f.get("kind") == "profile"]
+
+
+def test_renfield_found_dead_is_recorded_though_no_name_pattern_hits():
+    # dracula.ev.257: his names are "R. M. Renfield" and "Mr. Renfield"; four entities on the turning point
+    ch1 = ["Mr. Renfield sat in his room at the asylum catching flies all the long day.",
+           "Mr. Renfield spoke to the doctor of lives and of the master who would come."]
+    ch2 = [f"Mr. Renfield was spoken of by the attendants on the night of the storm, said one {i}." for i in range(6)]
+    turn = "Renfield is found dead on the floor with broken neck bones, and Seward and Van Helsing are called."
+    book, d = _people([("One", ch1), ("Two", ch2)], [("renfield", ["Mr. Renfield", "R. M. Renfield"], []),
+                                                     ("seward", ["Seward"], []), ("helsing", ["Van Helsing"], [])],
+                      [(turn, ["renfield", "seward", "helsing"])])
+    reader = lambda name, t: name == "Mr. Renfield" and t in (turn, "Dead, his neck broken; a patient of the asylum.")  # noqa: E731
+    model = Fake([], reader=reader, by={"Mr. Renfield": ["Dead, his neck broken; a patient of the asylum.",
+                                                         "A patient of the asylum.", "A patient of the asylum."]})
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+    assert _profiles(d, "renfield") == ["Dead, his neck broken; a patient of the asylum."]
+
+
+MORRIS = "Morris, mortally wounded in the side, takes Mina's hand and speaks of the curse passing away before he dies."
+
+
+def test_morris_dies_and_mina_does_not():
+    # dracula.ev.347: "Mina" ends later than "Morris" before "dies"; the reader knows it is Morris who dies
+    ch1 = ["Quincey Morris rode beside Mina at the head of the party all that day.",
+           "Quincey Morris and Mina watched the road to the castle as the sun went down."]
+    ch2 = [f"Quincey Morris and Mina were remembered by the others at the fire, said one {i}." for i in range(6)]
+    book, d = _people([("One", ch1), ("Two", ch2)], [("quincey", ["Quincey Morris"], []), ("mina", ["Mina"], [])],
+                      [(MORRIS, ["quincey", "mina"])])
+    q_open, m_open = "Dead of a wound in the side; a rider of the party.", "Mina, at whose side Morris dies, is a young woman."
+    reader = lambda name, t: name == "Quincey Morris" and t in (MORRIS, q_open)  # noqa: E731
+    model = Fake([], reader=reader, by={"Quincey Morris": [q_open, "A rider of the party.", "A rider of the party."],
+                                        "Mina": [m_open, "Mina is a young woman of the party."]})
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert _profiles(d, "quincey") == [q_open] and stats["dropped: lost the change in standing"] == 1
+    assert _profiles(d, "mina") == [m_open, "Mina is a young woman of the party."]
+
+
+def test_her_mothers_death_is_not_hers():
+    book, d = _dead_mira("Her mother died in the winter.")
+    opening = "Mira, whose mother died in the winter, is a young woman of the mill."
+    model = Fake([opening, "Mira is a young woman of the mill."], reader=lambda name, t: False)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.asked_dead) == 1
+
+
+def test_she_faced_him_and_died_is_recorded():
+    book, d = _dead_mira("She faced him and died.")
+    opening = "Dead, having faced him at the mill; a young woman."
+    model = Fake([opening, "A young woman of the mill.", "A young woman of the mill."],
+                 reader=lambda name, t: t in ("She faced him and died.", opening))
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1 and _profiles(d, "mira") == [opening]
+
+
+def test_a_hunter_of_the_dead_is_no_death():
+    book = _book([("One", DEAD_CH1 + ["The Dead came down from the hills at night and walked past the mill."]),
+                  ("Two", DEAD_CH2)])
+    fact = {"id": "f1", "from": "b1", "basis": "stated", "evidence": ["b1"], "text": "Hunts the Dead by night."}
+    d = _doc(book, [_mira(facets=[fact])])
+    model = Fake(["A young woman of the mill, a hunter of the Dead.", "A young woman of the mill who keeps a secret."],
+                 reader=lambda name, t: False)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats and len(model.asked_dead) == 1
+
+
+def test_lucys_death_is_kept():
+    book, d = _dead_mira("Lucy dies, and Seward leads the grieving Arthur away.")
+    model = Fake(["Dead, after a long decline; a young woman.", "Mira is a young woman whose health has failed.",
+                  "Mira is a young woman whose health has failed."], reader=lambda name, t: True)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+
+
+def test_no_death_is_recorded_that_the_model_did_not_confirm():
+    # a death word in the opening and in a fact of her own is only a candidate: the reader says no to the fact
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman whose health has failed."],
+                 reader=lambda name, t: t.startswith("Dead"))
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["portraits"] == 2 and "dropped: lost the change in standing" not in stats
+
+
+def test_a_failed_death_call_keeps_the_opening():
+    def fails(name, t):
+        raise RuntimeError("no answer")
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman.", "Mira is a young woman."], reader=fails)
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+
+
+def test_death_answers_are_cached_per_entity_and_text():
+    cache, model = {}, Fake([], reader=lambda name, t: t == "Lucy dies.")
+    assert portraits.own_deaths(model, "Lucy", "a character", ["Lucy dies.", "Arthur weeps."], cache, "lucy") == \
+        {"Lucy dies.": True, "Arthur weeps.": False}
+    portraits.own_deaths(model, "Miss Lucy", "a character", ["Lucy dies."], cache, "lucy")
+    assert len(model.asked_dead) == 1 and "about Lucy (a character)" in model.asked_dead[0]
+    portraits.own_deaths(model, "Lucy", "a character", ["Lucy dies."], cache, "mina")     # another entity asks again
+    assert len(model.asked_dead) == 2 and cache[("mina", "Lucy dies.")] is True
+    assert "numbers" in portraits.DEATHS_SYSTEM and portraits.DEATHS_SCHEMA["properties"]["dead"]["type"] == "array"
+
+
+class _Replies:
+    """A model whose death call returns a fixed reply (a refusal or a cut-off reply comes back as {})."""
+
+    def __init__(self, reply):
+        self.reply = reply
+
+    def complete(self, system, prompt, schema, prefix=None):
+        return self.reply
+
+
+@pytest.mark.parametrize("reply", [{}, {"dead": "x"}, {"other": [1]}, None])
+def test_a_death_reply_without_a_list_is_a_failed_call(reply):
+    cache = {}
+    assert portraits.own_deaths(_Replies(reply), "Lucy", "a character", ["Dead, after a long decline.", "Lucy dies."],
+                                cache, "lucy") is None and cache == {}
+
+
+def test_a_refused_death_call_keeps_the_opening():
+    book, d = _dead_mira()
+    model = Fake(["Dead of the fever; a young woman.", "Mira is a young woman whose health has failed.",
+                  "Mira is a young woman whose health has failed."])
+    real = model.complete
+
+    def refuse(system, prompt, schema, prefix=None):
+        return {} if schema is portraits.DEATHS_SCHEMA else real(system, prompt, schema, prefix)
+    model.complete = refuse
+    stats = portraits.portraits([(d, book)], model, log=lambda m: None)
+    assert stats["dropped: lost the change in standing"] == 1
+

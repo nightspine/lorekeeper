@@ -60,9 +60,174 @@ def _opens_with(change: str, text: str) -> bool:
     return bool(DEATH.search(first)) if DEATH.search(HEDGED.sub(" ", change)) else bool(STATUS.search(first))
 
 
+def opens_with_death(text: str) -> bool:
+    """Whether a description's first sentence has a death word: only a prefilter for `DEATHS`, which decides."""
+    return bool(DEATH.search(HEDGED.sub(" ", _first(text))))
+
+
+# Whose death a sentence states ("Renfield is found dead", "Mina's hand ... before he dies", "Her mother died", "a hunter
+# of the Dead") is reading, not a word list: code finds the candidates by a death word, and one cheap call per batch says,
+# for each numbered item, whether it states that this entity itself died or is dead. It only chooses; nothing it writes is
+# kept, and the answers are cached per (entity, text).
+DEATHS = """Below are numbered sentences from a reader's companion to a novel, each about {name} ({kind}) or naming it.
+For each one, does it state that {name} itself died or is dead (killed, slain, destroyed)? Count only {name}'s own death,
+stated as a fact. Leave out sentences about someone else's death, the dead or undead as a group, danger, wishes, fears,
+rumours or a death only feared or nearly come, and figurative uses.
+Return "dead": the numbers of the sentences that state {name}'s own death (an empty list when none do).
+
+{items}"""
+DEATHS_SCHEMA = {"type": "object", "required": ["dead"],
+                 "properties": {"dead": {"type": "array", "items": {"type": "integer"}}}}
+DEATHS_SYSTEM = "You read the notes of a reader's companion. Answer only with the list of numbers asked for."
+DEATH_BATCH = 40
+
+
+def own_deaths(model, name: str, kind: str, texts: list[str], cache: dict, key: str | None = None) -> dict[str, bool] | None:
+    """{text: whether it states the entity's own death} for `texts`, asking only for those not in `cache` (keyed
+    (key or name, text)), DEATH_BATCH at a time. None when a call fails or its reply has no list of numbers (nothing is
+    cached from it)."""
+    key = key or name
+    todo = [t for t in dict.fromkeys(texts) if (key, t) not in cache]
+    for at in range(0, len(todo), DEATH_BATCH):
+        batch = todo[at:at + DEATH_BATCH]
+        try:
+            out = model.complete(DEATHS_SYSTEM, DEATHS.format(name=name, kind=kind, items="\n".join(
+                f"{n}. {t}" for n, t in enumerate(batch, 1))), DEATHS_SCHEMA) or {}
+        except Exception:   # noqa: BLE001 - no answer: the caller keeps the safe default
+            return None
+        if not isinstance(out, dict) or not isinstance(out.get("dead"), list):
+            return None     # a refusal or a cut-off reply comes back as {}: a failed call, never a "no"
+        yes = set(_numbers(out, "dead", len(batch)))
+        for n, t in enumerate(batch, 1):
+            cache[(key, t)] = n in yes
+    return {t: cache[(key, t)] for t in texts}
+
+
 def changes_standing(text: str) -> bool:
     """Whether a fact or turning point records a lasting change in standing (not a hedged "near death")."""
     return bool(STATUS.search(HEDGED.sub(" ", text)))
+
+
+# A stated look: a rewrite is free to leave out what the previous description said a character looks like, and over a long
+# book the lasting details fell away one rewrite at a time (Empire of the Vampire: "dark skin" in five descriptions of
+# Baptiste in a row, then in none). The previous description is cut into short pieces by punctuation and joining words,
+# a cheap call picks the pieces that tell a lasting look (numbers only, nothing it writes is kept), the new description is
+# told to keep them unless the passages show a change, and code checks that each picked piece's content words are still
+# there, or that the reply names it as changed and still speaks of the same thing. No list of look words anywhere.
+LOOKS = """Below is a short description of {name} ({kind}) from a reader's companion to a novel, cut into numbered pieces.
+Which pieces tell how {name} lastingly looks to the eye: body, build, face, skin, hair, eyes, size, age as it shows, the
+marks, scars or tattoos on it, how it dresses or what it always carries; for a group, how its members look? Leave out
+pieces about character, voice, manner, rank, role, history, ties or deeds, and how it looks at one passing moment.
+Return "looks": the numbers of those pieces (an empty list when none).
+
+{pieces}"""
+LOOKS_SCHEMA = {"type": "object", "required": ["looks"],
+                "properties": {"looks": {"type": "array", "items": {"type": "integer"}}}}
+LOOKS_SYSTEM = "You sort the sentences of a reader's companion. Answer only with the numbers asked for."
+# The portrait's own reply when it is given looks to keep: the text, and the numbers of the looks the passages show changed.
+LOOK_SCHEMA = {"type": "object", "required": ["text"],
+               "properties": {"text": {"type": "string"}, "changed": {"type": "array", "items": {"type": "integer"}}}}
+# Code reads words, so "bent-backed" for "stooped" looks like a loss: a loss code finds is confirmed by a second cheap call
+# that only picks numbers among the ones code flagged, so it can clear a flag and never add one.
+LOST = """Below is a new description of {name} ({kind}) from a reader's companion to a novel, and a numbered list of details an
+earlier description gave of how {name} looks. Which numbered details does the new description not carry at all? One it
+states in other words is carried, and so is one it states as changed. Return "lost": those numbers (an empty list when it
+carries every one).
+
+New description: {text}
+
+{looks}"""
+LOST_SCHEMA = {"type": "object", "required": ["lost"],
+               "properties": {"lost": {"type": "array", "items": {"type": "integer"}}}}
+_JOINS = re.compile(r"(?<=[.!?])\s+|\s*[,;:()\u2014\u2013]\s*|\s+(?:and|with|but|while|who|whose|which)\s+", re.IGNORECASE)
+MAX_LOOKS = 12       # pieces of the previous description kept as looks, at most
+
+
+def _pieces(text: str) -> list[str]:
+    """The previous description cut at sentence ends, punctuation and joining words, each piece with a content word."""
+    return [x.strip(" .") for x in _JOINS.split(" ".join(text.split())) if x and _content(x)]
+
+
+def _words(text: str) -> list[str]:
+    """Lowercased words, split at hyphens too ("dark-skinned" is "dark", "skinned")."""
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
+def _content(text: str) -> list[str]:
+    from .ask import STOP
+    return [w for w in _words(text) if len(w) >= 3 and w not in STOP]
+
+
+def _same(w: str, t: str) -> bool:
+    """One word, allowing an ending ("skin", "skinned"; "scarred", "scars")."""
+    if w == t:
+        return True
+    n = 0
+    for a, b in zip(w, t):
+        if a != b:
+            break
+        n += 1
+    return n >= 4 and n >= min(len(w), len(t)) - 2
+
+
+def _missing(piece: str, words: list[str]) -> list[str]:
+    return [w for w in _content(piece) if not any(_same(w, t) for t in words)]
+
+
+def kept(piece: str, text: str) -> bool:
+    """Whether `text` still carries `piece`: at most a third of its content words gone."""
+    gone = _missing(piece, _words(text))
+    return len(gone) <= len(_content(piece)) // 3
+
+
+def lost_looks(looks: list[str], text: str, changed: set[int] = frozenset()) -> list[int]:
+    """The numbers (from 1) of `looks` that `text` no longer carries. One the reply names as changed counts as kept when the
+    text still speaks of the same thing (a content word in common: "grey hair" for "black hair")."""
+    words = _words(text)
+    out = []
+    for n, piece in enumerate(looks, 1):
+        if kept(piece, text):
+            continue
+        if n in changed and len(_missing(piece, words)) < len(_content(piece)):
+            continue
+        out.append(n)
+    return out
+
+
+def _numbers(out: dict, key: str, top: int) -> list[int]:
+    got = []
+    for x in out.get(key) or [] if isinstance(out.get(key), list) else []:
+        try:
+            n = int(x)
+        except (TypeError, ValueError):
+            continue
+        if 1 <= n <= top and n not in got:
+            got.append(n)
+    return got
+
+
+def confirm_lost(model, name: str, kind: str, looks: list[str], text: str, flagged: list[int]) -> list[int]:
+    """Of the looks code flagged as gone from `text`, those a cheap call confirms are not carried in any wording. A failed
+    call confirms them all."""
+    if not flagged:
+        return []
+    try:
+        out = model.complete(LOOKS_SYSTEM, LOST.format(name=name, kind=kind, text=text, looks="\n".join(
+            f"{i}. {looks[n - 1]}" for i, n in enumerate(flagged, 1))), LOST_SCHEMA) or {}   # numbered as shown
+    except Exception:   # noqa: BLE001 - no answer: what code found stands
+        return flagged
+    return [flagged[i - 1] for i in _numbers(out, "lost", len(flagged))]
+
+
+def look_pieces(model, name: str, kind: str, text: str) -> list[str]:
+    """The pieces of a description that tell a lasting look, picked by one cheap call (numbers only), all of them; the caller
+    keeps MAX_LOOKS and counts the rest."""
+    pieces = list(dict.fromkeys(_pieces(text)))
+    if not pieces:
+        return []
+    out = model.complete(LOOKS_SYSTEM, LOOKS.format(name=name, kind=kind, pieces="\n".join(
+        f"{n}. {x}" for n, x in enumerate(pieces, 1))), LOOKS_SCHEMA) or {}
+    return [pieces[n - 1] for n in _numbers(out, "looks", len(pieces))]
 
 
 BUDGET = 24000       # characters of passage text per portrait
@@ -93,7 +258,7 @@ Rules:
   they show only a connection ("someone Harker keeps notes for"), state that connection plainly and stop, and do
   not upgrade it ("Harker's fiancée"). Do not narrate the passage and do not pad. Return an empty text only if they show nothing at all
   about who or what {name} is.
-{previous}
+{previous}{looks}
 Passages:
 {passages}"""
 
@@ -146,25 +311,31 @@ def _sample(seqs: list[int], k: int) -> list[int]:
     return sorted({seqs[round(i * step)] for i in range(k)})
 
 
-def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int) -> tuple[str, int]:
+def _windows(text: dict[int, str], hits: list[int], lo: int, hi: int, since: int | None = None) -> tuple[str, int]:
     """Passages around the sampled hits, merged where they touch, within the budget.
-    Returns (text, last seq used)."""
+    Returns (text, last seq used). With `since` (the mark of the previous description, which the new one builds on), the
+    mentions after it get up to half the windows and the budget first: sampled evenly over the whole book so far they were
+    a few windows among forty, and a character's new look (Baptiste's cropped hair, Empire of the Vampire) was never sent."""
+    new = [s for s in hits if since is not None and s > since]
+    old = [s for s in hits if since is None or s <= since]
+    k = min(len(new), MAX_WINDOWS // 2)
     ranges: list[list[int]] = []
-    for s in _sample(hits, MAX_WINDOWS):
+    for s in sorted(_sample(old, MAX_WINDOWS - k) + _sample(new, k)):
         a, b = max(lo, s - CONTEXT), min(hi, s + CONTEXT)
         if ranges and a <= ranges[-1][1] + 1:
             ranges[-1][1] = max(ranges[-1][1], b)
         else:
             ranges.append([a, b])
+    first = [r for r in ranges if since is not None and r[1] > since] + [r for r in ranges if since is None or r[1] <= since]
     out, used, last = [], 0, lo
-    for a, b in ranges:
+    for a, b in first:
         chunk = "\n".join(text[s] for s in range(a, b + 1) if s in text)
         if used + len(chunk) > BUDGET:
             continue  # skip rather than stop, so later passages still get in
-        out.append(chunk)
+        out.append((a, chunk))
         used += len(chunk)
         last = max(last, b)
-    return "\n…\n".join(out), last
+    return "\n…\n".join(c for _, c in sorted(out)), last
 
 
 def _first(text: str) -> str:
@@ -274,7 +445,11 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                         + turns.get(e["id"], []))
         for e in d["entities"]}
     status: dict[str, list[int]] = {eid: [q for q, _ in xs] for eid, xs in standing.items()}
+    # entity → (seq, text) of its checked facts and the turning points naming it that have a death word: only candidates
+    deaths_of = {eid: [(q, t) for q, t in xs if DEATH.search(HEDGED.sub(" ", t))] for eid, xs in standing.items()}
     last_text: dict[str, str] = {}
+    look_cache: dict[str, list[str]] = {}    # description → its look pieces
+    dead_cache: dict[tuple[str, str], bool] = {}   # (entity, text) → whether it states that entity's own death
     written: dict[str, list[dict]] = {}
     marks = sorted(set(marks))
     for step, mark in enumerate(marks, 1):
@@ -307,10 +482,33 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             e = ents[eid]
             visible = [n for n in e["names"] if seq_of.get(n["from"], hi) <= mark]
             names = [n["value"] for n in visible]
-            passages, last = _windows(text, seen, lo, mark)
+            passages, last = _windows(text, seen, lo, mark, upto_mark.get(eid))
             # Never before the entity, or any name the prompt gives it, is itself revealed.
             last = max([last, seq_of.get(e["from"], hi)] + [seq_of.get(n["from"], hi) for n in visible])
             prev = last_text.get(eid)
+            stats_one: Counter = Counter()
+            # What the previous description of this book said it looks like (the last portrait, else the latest extraction
+            # profile up to here; an earlier book's is never used, it may tell what a reader of this one has not read).
+            told, told_seq = prev, None
+            if not told:
+                ps = [f for f in e["facets"] if f.get("kind") == "profile" and seq_of.get(f["from"], hi) <= mark]
+                if ps:
+                    f = max(ps, key=lambda f: seq_of[f["from"]])
+                    told, told_seq = f["text"], seq_of[f["from"]]
+            looks: list[str] = []
+            if told:
+                if told not in look_cache:
+                    try:
+                        picked = look_pieces(model, name_of(e, names), KINDS.get(e["type"], e["type"]), told)
+                    except Exception as err:   # noqa: BLE001 - a failed pick only means no looks to keep
+                        log(f"    looks of {e['names'][0]['value']}: {err}")
+                        picked = []
+                    if len(picked) > MAX_LOOKS:     # never a silent loss: counted once per description
+                        stats_one["looks over the cap"] += len(picked) - MAX_LOOKS
+                    look_cache[told] = picked[:MAX_LOOKS]
+                looks = look_cache[told]
+            if looks and told_seq is not None:
+                last = max(last, told_seq)    # never before the description whose looks it keeps
             # The companion's own checked notes up to here: a status fact ("has died") may sit in a
             # paragraph that never names the entity, so the passages alone can miss it.
             noted = [f["text"] for f in e["facets"] if f.get("kind") not in ("profile", "arc")
@@ -322,6 +520,11 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
                        + " from the book so far: " + " / ".join(noted)) if noted else "",
                 sheet=" (as on a character sheet)" if e["type"] in ("person", "creature") else "",
                 previous=f"\nYour description from earlier in the book (keep what still holds; correct and extend it):\n{prev}\n" if prev else "",
+                looks=("\nHow earlier descriptions said " + name_of(e, names) + " looks, numbered:\n"
+                       + "\n".join(f"{n}. {x}" for n, x in enumerate(looks, 1))
+                       + "\nKeep every one of these in your description (their words are yours to reuse) unless these passages show it "
+                       "changed; then say how it is now and give its number in \"changed\". Shorten other things first.\n")
+                if looks else "",
                 passages=passages)
             # A change in standing the notes record since the last portrait is spelled out, not left among the
             # notes: told only "her death is reported", Haiku still described Lucy as recovering.
@@ -342,45 +545,93 @@ def _doc(d: dict, book: epub.Book, model, current: dict, log, progress=None) -> 
             # portrait), not only on the sampled passages: Lucy's "engaged" sits in letters the sample can miss.
             source = "\n".join([passages, prev or ""] + [f["text"] for f in e["facets"]
                                                     if f.get("kind") != "arc" and seq_of.get(f["from"], hi) <= mark])
-            out = model.complete(SYSTEM, prompt, SCHEMA)
+            schema = LOOK_SCHEMA if looks else SCHEMA
+            changed: dict[str, set[int]] = {}    # reply text → the looks it names as changed
+
+            def ask(p: str) -> dict:
+                r = model.complete(SYSTEM, p, schema) or {}
+                c = r.get("changed") if isinstance(r.get("changed"), list) else []
+                changed[" ".join(str(r.get("text", "")).split())] = {x for x in c if isinstance(x, int)}
+                return r
+
+            out = ask(prompt)
             got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             if changes and got[0] and not _opens_with(" ".join(changes), got[0]):
-                again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nIts first sentence does '
-                                       "not state the change in standing. Rewrite it so the first sentence does.", SCHEMA)
+                again = ask(prompt + f'\n\nYour first answer was: "{got[0]}"\nIts first sentence does '
+                                       "not state the change in standing. Rewrite it so the first sentence does.")
                 retry = _checked(str((again or {}).get("text", "")), known, source, shingles)
                 if retry[0]:
                     got = (retry[0], "rewritten: change in standing")
             if got[1].startswith("tie not in the text"):
                 word = got[1].split(": ", 1)[1]
-                out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
-                                     f'No passage says {word}. Rewrite it without that tie, stating only what the passages show.', SCHEMA)
+                out = ask(prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
+                                     f'No passage says {word}. Rewrite it without that tie, stating only what the passages show.')
                 got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("copies the book"):
                 run = got[1].split(": ", 1)[1]
-                out = model.complete(SYSTEM, prompt + f'\n\nYour first answer copied the book\'s wording ("{run}"): "{out.get("text", "")}"\n'
-                                     "Rewrite it in your own words, quoting at most 5 consecutive words of the passages.", SCHEMA)
+                out = ask(prompt + f'\n\nYour first answer copied the book\'s wording ("{run}"): "{out.get("text", "")}"\n'
+                                     "Rewrite it in your own words, quoting at most 5 consecutive words of the passages.")
                 got = _checked(str((out or {}).get("text", "")), known, source, shingles)
             elif got[1].startswith("wording"):
                 # Usually a lasting fact phrased as news ("now works with dragons"): one rewrite.
                 word = got[1].split(": ", 1)[1]
-                out = model.complete(SYSTEM, prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
-                                     "Rewrite it as a timeless description without that wording.", SCHEMA)
+                out = ask(prompt + f'\n\nYour first answer used "{word}": "{out.get("text", "")}"\n'
+                                     "Rewrite it as a timeless description without that wording.")
                 got = _checked(str((out or {}).get("text", "")), known, source, shingles)
-            # A rewrite may not quietly drop the standing the last portrait opened with: after the stake, Lucy's
-            # went from "Dead, after a long decline" back to "her health has lately failed". One rewrite that keeps
-            # it, else the previous portrait stands.
-            if got[0] and prev and DEATH.search(HEDGED.sub(" ", _first(prev))) and not _opens_with(_first(prev), got[0]):
-                again = model.complete(SYSTEM, prompt + f'\n\nYour first answer was: "{got[0]}"\nYour earlier description '
-                                       f'began: "{_first(prev)}" That still holds unless the passages show it changed; '
-                                       "open with where things stand now.", SCHEMA)
-                retry = _checked(str((again or {}).get("text", "")), known, source, shingles)
-                got = (retry[0], "rewritten: kept the change in standing") if retry[0] and _opens_with(_first(prev), retry[0]) \
-                    else (None, "lost the change in standing")
-            return eid, seen, last, got
+            # One gate decides whether a text may replace the previous description, whatever rewrite produced it:
+            # - it may not drop the death the previous one opened with (after the stake, Lucy's went from "Dead, after a long
+            #   decline" back to "her health has lately failed"), when the companion records that death: `DEATHS` confirms
+            #   both that the opening states this entity's own death and that a checked fact or turning point of it does.
+            #   Read by code alone, "a hunter of the Dead" froze Dior's description for forty chapters (Empire of the
+            #   Vampire), and "Aaron wants him dead" Gabriel's;
+            # - it keeps the looks the previous description stated unless the passages show them changed.
+            # One rewrite naming every fault, then the previous description stands.
+            who, kind = name_of(e, names), KINDS.get(e["type"], e["type"])
+            opened_dead = False
+            if prev and opens_with_death(prev):
+                # the candidates: the entity's checked facts and the turning points naming it, up to here, with a death word
+                told = [t for q, t in deaths_of.get(eid, ()) if q <= mark]
+                if told:
+                    said = own_deaths(model, who, kind, [_first(prev)] + told, dead_cache, eid)
+                    # a failed call keeps the safe default: a death in the opening is kept
+                    opened_dead = said is None or (said[_first(prev)] and any(said[t] for t in told))
+            cleared = [False]
+
+            def faults(t: str) -> tuple[bool, list[int]]:
+                standing_lost = opened_dead and not _opens_with(_first(prev), t)
+                flagged = lost_looks(looks, t, changed.get(t, set())) if looks else []
+                gone = confirm_lost(model, who, kind, looks, t, flagged)
+                if flagged and not gone and not cleared[0]:
+                    stats_one["kept: look in other words"] += 1
+                    cleared[0] = True
+                return standing_lost, gone
+
+            if got[0]:
+                standing_lost, gone = faults(got[0])
+                if standing_lost or gone:
+                    asks = []
+                    if standing_lost:
+                        asks.append(f'Your earlier description began: "{_first(prev)}" That still holds unless the passages '
+                                    "show it changed; open with where things stand now.")
+                    if gone:
+                        asks.append(f"It no longer says how {who} looks: " + "; ".join(f'{n}. "{looks[n - 1]}"' for n in gone)
+                                    + ". Keep each of these (their words are yours to reuse) unless the passages show it "
+                                    'changed; then say how it is now and give its number in "changed".')
+                    again = ask(prompt + f'\n\nYour first answer was: "{got[0]}"\n' + "\n".join(asks))
+                    retry = _checked(str(again.get("text", "")), known, source, shingles)
+                    left = faults(retry[0]) if retry[0] else (standing_lost, gone)
+                    if retry[0] and not left[0] and not left[1]:
+                        got = (retry[0], "rewritten: kept the change in standing" if standing_lost else "rewritten: kept a stated look")
+                    elif left[0] or (standing_lost and not left[1]):
+                        got = (None, "lost the change in standing")
+                    else:
+                        got = (None, "lost a stated look: " + "; ".join(looks[n - 1] for n in left[1] or gone))
+            return eid, seen, last, got, stats_one
 
         with ThreadPoolExecutor(WORKERS) as pool:
             results = list(pool.map(one, due))
-        for eid, seen, last, (t, why) in results:
+        for eid, seen, last, (t, why), more in results:
+            stats += more
             if t is not None and why:
                 stats[why] += 1
             if t is None:

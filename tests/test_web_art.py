@@ -1491,6 +1491,64 @@ def test_the_estimate_leaves_out_front_matter_with_nothing_to_draw(env, monkeypa
     assert [r["title"] for r in rows] == ["Chapter One", "Chapter Two"]
 
 
+def test_the_estimate_gives_a_range_while_looks_are_unchecked(env):
+    env.key()
+    q = {"key": KEY, "style": "ink", "portraits": "all"}
+    got = env.c.get("/api/art/estimate", params=q).json()
+    assert got["portraits"] > 0 and env.text.prompts == []                    # no look check: every entity unchecked
+    extra = got["portraitsMax"] - got["portraits"]
+    assert 0 < extra and got["portraitsMax"] <= got["portraits"] * art.MAX_VERSIONS
+    assert got["picturesMax"] == got["pictures"] + extra and got["plates"] + got["portraitsMax"] == got["picturesMax"]
+    each = llm.image_price("gemini", GEMINI, "standard", "portrait")
+    assert got["priceMax"] == pytest.approx(got["price"] + extra * each)
+    run_set(env, portraits="all")                                              # the run checks every entity's looks
+    after = env.c.get("/api/art/estimate", params=q).json()
+    assert (after["picturesMax"], after["portraitsMax"], after["priceMax"]) == \
+        (after["pictures"], after["portraits"], after["price"])
+
+
+def test_the_range_is_measured_from_the_portraits_still_to_draw(env, monkeypatch):
+    # `portraits_max` is what `new_portraits` could grow to: with 3 of 5 planned portraits drawn and up to 6 still to draw,
+    # the top is 6, not 2 + (6 - 5)
+    env.key()
+    real = art.Illustrator.counts
+
+    def drawn(self, bi=-1, level="main"):
+        got = real(self, bi, level)
+        got.update(portraits=5, new_portraits=2, portraits_max=6)
+        return got
+    monkeypatch.setattr(art.Illustrator, "counts", drawn)
+    got = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink", "portraits": "all", "level": "none"}).json()
+    assert (got["portraits"], got["portraitsMax"], got["picturesMax"]) == (2, 6, got["plates"] + 6)
+
+
+def test_the_estimate_has_no_range_without_a_portraits_max_or_a_price(env, monkeypatch):
+    env.key()
+    q = {"key": KEY, "style": "ink", "portraits": "all"}
+    real = art.Illustrator.counts
+
+    def older(self, bi=-1, level="main"):                                      # a pipeline from before the range
+        got = real(self, bi, level)
+        got.pop("portraits_max")
+        return got
+    monkeypatch.setattr(art.Illustrator, "counts", older)
+    plain = env.c.get("/api/art/estimate", params=q).json()
+    assert plain["portraits"] > 0
+    assert (plain["picturesMax"], plain["portraitsMax"], plain["priceMax"]) == \
+        (plain["pictures"], plain["portraits"], plain["price"])
+
+    def below(self, bi=-1, level="main"):                                      # never a top under the plain number
+        got = real(self, bi, level)
+        got["portraits_max"] = 0
+        return got
+    monkeypatch.setattr(art.Illustrator, "counts", below)
+    assert env.c.get("/api/art/estimate", params=q).json()["portraitsMax"] == plain["portraits"]
+    monkeypatch.setattr(art.Illustrator, "counts", real)
+    monkeypatch.setattr(llm, "image_price", lambda *a, **kw: None)             # a price unknown: both unknown
+    unknown = env.c.get("/api/art/estimate", params=q).json()
+    assert unknown["price"] is None and unknown["priceMax"] is None and unknown["picturesMax"] > unknown["pictures"]
+
+
 def test_a_builds_pictures_stage_honours_level_none(tmp_path, monkeypatch):
     from .test_web import SlowFake, upload
     monkeypatch.setattr(llm, "Ollama", lambda **kw: SlowFake())

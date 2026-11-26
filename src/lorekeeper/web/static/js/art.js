@@ -31,13 +31,8 @@ export function styleLabel(slug, text = null) {
   const t = typeof text === "string" && text.trim() ? text.trim() : String(slug || "").replace(/-/g, " ");
   return t ? t[0].toUpperCase() + t.slice(1) : "Custom";
 }
-/** "about 3 cents", "about $1.75", "price unknown" (never a made-up number). */
-export function money(usd) {
-  if (usd == null || !Number.isFinite(+usd)) return "price unknown";
-  const v = +usd;
-  if (v < 0.995) { const c = Math.max(1, Math.round(v * 100)); return `about ${c} cent${c === 1 ? "" : "s"}`; }
-  return `about $${v.toFixed(2)}`;
-}
+export { estimateText, money } from "./artestimate.js";
+import { estimateText, money } from "./artestimate.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -1361,8 +1356,7 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     if (allDrawn !== drawnBefore) onChange?.();
     if (allDrawn) { line.classList.add("why"); line.textContent = ALL_DRAWN; return; }
     if (r && Number.isFinite(+r.pictures)) {
-      const n = +r.pictures;
-      line.textContent = `About ${n} picture${n === 1 ? "" : "s"}, ${money(r.price)}${r.price != null && +r.price > st.cap ? `. The run stops at $${Number.isInteger(st.cap) ? st.cap : st.cap.toFixed(2)}` : ""}.`;
+      line.textContent = estimateText(r, st.cap);
     } else {
       const rough = fallback?.(st);
       line.textContent = rough || "The count is worked out when the index is written.";
