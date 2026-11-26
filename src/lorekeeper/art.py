@@ -270,6 +270,25 @@ TASKS = {
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
 REWRITE = """\n\nYour first answer was: "{text}"\nIt was rejected: {why}. Write it again, fixing that."""
+# The name check's second look: code catches every capitalised word the book has not used by the anchor (`_unknown_words`),
+# and this choosing call only says which of them the prompt uses as a name. Code drops or rewrites for those alone; a failed
+# call, or a reply with no answer for a word, keeps the word caught, as before the call existed.
+NAMES = """A text written for an image model was checked for names. The capitalised words below were caught because the book it
+illustrates has not used them by this point. Each is numbered, with the sentence of the text it stands in.
+For each word, say whether that sentence uses it as a name: the name of a particular person, creature, place, group, people,
+house, order, ship or thing in a story, real or invented, or a word made from such a name. A name counts as a name even where
+it describes something else or opens a sentence.
+A word is not a name when it is an ordinary describing word of the real world: a historical period or era, an art,
+architecture or dress style, a real nationality, region or language used to describe someone or something, or an ordinary
+word that is capitalised only because it opens the sentence. A word made up for the story's own world is a name.
+When you are unsure, answer that it is a name.
+Return "words": one object {{"n", "name"}} for each number, "name" true when the sentence uses the word as a name.
+
+{words}"""
+NAMES_SCHEMA = {"type": "object", "required": ["words"], "properties": {"words": {"type": "array", "items": {
+    "type": "object", "required": ["n", "name"], "properties": {"n": {"type": "integer"}, "name": {"type": "boolean"}}}}}}
+MAX_FLAGGED = 20           # caught words asked about in one prompt's check; past it the text is dropped as before
+NAME_SENTENCE_CHARS = 300
 # A refused prompt, written again from the same material: by a run once on its own, on the Reader's sheet when the person asks
 # (`Illustrator.soften`). A quieter picture of the same moment, never a trick to slip past the image model's filter.
 SOFTEN = """\n\nThe image model refused to draw this prompt: "{text}"{reason}. Write a quieter composition of the same subject, one an
@@ -960,6 +979,7 @@ class Illustrator:
         self._views: dict[tuple, dict] = {}
         self._view_locks: dict[tuple, threading.Lock] = {}
         self._class_lock = threading.Lock()
+        self._name_answers: dict[tuple[str, str], bool] = {}   # (word caught, its sentence) -> used as a name (`_names_among`)
         self._earlier = [frozenset().union(*(b.first for b in self.books[:i])) for i in range(len(self.books))]
         self._dirty: set[int] = set()     # books whose sink received a picture
         self.man: list[dict] = []
@@ -1124,11 +1144,12 @@ class Illustrator:
         if n > words[1]:
             return None, "too long"
         known = self._known(bi, anchor, finished)
-        got, why = P._checked(text, known, source or None, None, limit=words[1] * 9)
+        got, why, flagged = self._unknown_words(text, known, source, words[1] * 9)
         if got is None:
             return None, why
-        if w := _opening_unknown(got, known, source):
-            return None, f"unknown name: {w}"
+        if flagged:
+            if names := self._names_among(got, flagged):
+                return None, f"unknown name: {names[0]}"
         if ABOUT_THE_TEXT.search(got):
             return None, "wording: about the passage"
         hit = self.names[bi].find(got)
@@ -1137,6 +1158,68 @@ class Illustrator:
         if check is not None and (why := check(got)):
             return None, why
         return got, ""
+
+    @staticmethod
+    def _unknown_words(text: str, known: Known, source: str, limit: int) -> tuple[str | None, str, list[str]]:
+        """`portraits._checked` and `_opening_unknown` as they are, but every word they catch as an unknown name is gathered
+        instead of failing the text: (text, "", the words caught, in the order caught) when nothing else fails, else (None,
+        the reason, []). Each caught word is let through the next pass, so the checks themselves decide what is caught."""
+        flagged: list[str] = []
+        k = known
+        for _ in range(MAX_FLAGGED + 1):
+            got, why = P._checked(text, k, source or None, None, limit=limit)
+            if got is None:
+                if not why.startswith("unknown name: "):
+                    return None, why, []
+                w = why[len("unknown name: "):]
+            else:
+                w = _opening_unknown(got, k, source)
+                if not w:
+                    return got, "", flagged
+            if w in flagged or len(flagged) >= MAX_FLAGGED:
+                return None, f"unknown name: {flagged[0] if flagged else w}", []
+            flagged.append(w)
+            k = Known(known.first, known.at, known.earlier | set(flagged), known.lower, known.earlier_lower)
+        return None, f"unknown name: {flagged[0]}", []
+
+    @staticmethod
+    def _sentence_of(text: str, word: str) -> str:
+        """The sentence of `text` the word first stands in (as a whole word, case as written)."""
+        rx = re.compile(r"(?<![\w-])" + re.escape(word) + r"(?!\w)")
+        for s in re.split(r"(?<=[.!?])\s+", text):
+            if rx.search(s):
+                return s[:NAME_SENTENCE_CHARS]
+        return text[:NAME_SENTENCE_CHARS]
+
+    def _names_among(self, text: str, flagged: list[str]) -> list[str]:
+        """Which of the words the name check caught the text uses as names (`NAMES`, one choosing call on the picker for the
+        words not answered yet, cached per word and sentence), in the order caught. Every word without an answer counts as
+        a name: when the call fails or its reply holds no usable answer nothing is cached, and the old rule holds (the
+        first word caught is the one dropped). A word answered "not a name" is let through and counted ("kept: a flagged
+        word was not a name")."""
+        items = [(w, self._sentence_of(text, w)) for w in flagged]
+        with self.lock:
+            ask = list(dict.fromkeys(it for it in items if it not in self._name_answers))
+        if ask:
+            lines = "\n".join(f'{n}. {w}: "{s}"' for n, (w, s) in enumerate(ask, 1))
+            try:
+                out = self._complete(NAMES.format(words=lines), NAMES_SCHEMA)
+            except TextFailed:
+                out = {}
+            got: dict[int, bool] = {}
+            for x in out.get("words") if isinstance(out.get("words"), list) else ():
+                n = x.get("n") if isinstance(x, dict) else None
+                if (isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= len(ask)
+                        and isinstance(x.get("name"), bool)):
+                    got[n] = got.get(n, False) or x["name"]        # two answers for one number: a name if either says so
+            with self.lock:
+                for n, it in enumerate(ask, 1):
+                    if n in got:
+                        self._name_answers[it] = got[n]
+                        if not got[n]:
+                            self.report.dropped["kept: a flagged word was not a name"] += 1
+        with self.lock:
+            return [w for w, s in items if self._name_answers.get((w, s), True)]
 
     @staticmethod
     def _label_check(given: set[str], keep: set[str] | None = None) -> Callable[[str], str]:
