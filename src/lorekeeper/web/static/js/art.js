@@ -310,7 +310,7 @@ export function artImg(src, alt, cls = "art-img", { eager = false } = {}) {
 
 // ---- figure labels: which picture is which figure in a scene prompt -------------------------------
 
-const LABEL_RE = /\b[Ff]igure ([A-D])\b/g;
+const LABEL_RE = /\b[Ff]igure ([A-F])\b/g;
 /** The labels a prompt text uses ("figure A"), each once, in label order: the same rule the server draws by. */
 export function labelsIn(text) {
   const seen = new Set();
@@ -320,7 +320,7 @@ export function labelsIn(text) {
 /** The figures a server reply or record carries, checked: [{ label, entity, ref }] with ref the raw reference or null. */
 export function cleanFigures(list) {
   if (!Array.isArray(list)) return [];
-  return list.filter((f) => f && typeof f.label === "string" && /^[A-D]$/.test(f.label) && typeof f.entity === "string" && f.entity)
+  return list.filter((f) => f && typeof f.label === "string" && /^[A-F]$/.test(f.label) && typeof f.entity === "string" && f.entity)
     .map((f) => ({ label: f.label, entity: f.entity, ref: f.ref ?? null }))
     .sort((a, b) => (a.label < b.label ? -1 : 1));
 }

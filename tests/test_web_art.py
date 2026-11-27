@@ -1958,7 +1958,8 @@ def test_an_early_scene_takes_a_later_portrait_only_once_the_reader_has_reached_
     far = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": 1.0}).json()
     assert [f["entity"] for f in far["figures"]] == ["mira"] and far["figures"][0]["ref"]
     near = env.c.post(f"/api/library/{KEY}/art/prompt", json={**ask, "p": e1["from"]}).json()
-    assert near["figures"] == [] and near["references"] == []
+    # labelled all the same, with no picture behind the label
+    assert [(f["entity"], f["ref"]) for f in near["figures"]] == [("mira", None)] and near["references"] == []
     # a draw at the early position never reuses the prompt written further on (the frontier is part of the cache key)
     drawn = env.c.post(f"/api/library/{KEY}/art/draw", json={**ask, "p": e1["from"], "prompt": far["prompt"]}).json()
     assert drawn["references"] == []
