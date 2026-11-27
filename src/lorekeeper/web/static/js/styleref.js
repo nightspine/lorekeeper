@@ -49,3 +49,10 @@ export function describedLine(modelName, cost) {
   const who = typeof modelName === "string" && modelName.trim() ? modelName.trim() : "the model";
   return `Described by ${who}, ${smallCost(cost)}.`;
 }
+
+/** Which of several overlapping checks is the newest: `start()` gives a number, `current(n)` is true only for the
+ *  last one started, so a slow check of an earlier choice never overwrites a newer one. */
+export function latestOnly() {
+  let n = 0;
+  return { start: () => ++n, current: (k) => k === n };
+}

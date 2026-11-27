@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { sniff, refProblem, smallCost, describedLine, REF_MAX_BYTES } = await import(join(here, "../../src/lorekeeper/web/static/js/styleref.js"));
+const { sniff, refProblem, smallCost, describedLine, latestOnly, REF_MAX_BYTES } = await import(join(here, "../../src/lorekeeper/web/static/js/styleref.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 const bytes = (...xs) => new Uint8Array([...xs, ...new Array(16).fill(0)]);
@@ -42,6 +42,17 @@ test("smallCost never makes up a number", () => {
 test("describedLine", () => {
   assert.equal(describedLine("Claude Haiku 5.5", 0.001), "Described by Claude Haiku 5.5, 0.1 cent.");
   assert.equal(describedLine("", 0), "Described by the model, price unknown.");
+});
+test("the size limit is known before decoding", () => {
+  // inspect() asks refProblem with no dimensions first and decodes only when that passes.
+  assert.equal(refProblem({ kind: "jpg", size: REF_MAX_BYTES + 1 }), "This picture is over 8 MB. Choose a smaller one.");
+  assert.equal(refProblem({ kind: null, size: REF_MAX_BYTES + 1 }), "Choose a PNG, JPEG or WebP picture.");
+});
+test("latestOnly: only the newest check may land", () => {
+  const l = latestOnly();
+  const a = l.start(), b = l.start();
+  assert.equal(l.current(a), false);
+  assert.equal(l.current(b), true);
 });
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");

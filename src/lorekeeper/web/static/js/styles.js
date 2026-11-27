@@ -8,7 +8,7 @@ import { api } from "./api.js";
 import { artDefaults, fitQuality, imagePrice, imageProviders, modalToasts, modelFor, modelProviders, money, STYLES, writerFact } from "./art.js";
 import { confirmDialog } from "./build.js";
 import { clear, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
-import { describedLine, REF_ACCEPT, refProblem, sniff } from "./styleref.js";
+import { describedLine, latestOnly, REF_ACCEPT, refProblem, sniff } from "./styleref.js";
 
 const SLUG_RE = /^[a-z0-9-]{1,64}$/;
 const BUILTIN_PREVIEW = /^\/static\/styles\/[a-z0-9-]{1,64}\.webp$/;
@@ -95,7 +95,7 @@ export function viewStyle(s) {
       h("div.lb-main", h("div.lb-stage", img)),
       h("div.lb-foot",
         s.text ? h("p.style-view-text", s.text) : null,
-        s.preview && s.stale ? h("p.hint", "Preview is of the old wording.") : null,
+        s.preview && s.stale ? h("p.hint", "Preview is out of date.") : null,
         refFig, refLine)));
   const close = () => closeLocked(dlg);
   dlg.addEventListener("close", () => { dlg.remove(); if (returnTo?.isConnected) returnTo.focus({ preventScroll: true }); });
@@ -163,7 +163,7 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
       h("button.linkish", { type: "button", "aria-label": `Edit ${s.name}`, on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); editStyle(s); } } }, "Edit"),
       h("button.linkish.danger", { type: "button", "aria-label": `Delete ${s.name}`, on: { click: () => removeStyle(s) } }, "Delete")) : null;
     return h(`div.style-card${on ? ".on" : ""}`, { dataset: { slug: s.slug } }, pick, expand,
-      s.stale ? h("p.style-stale", "Preview is of the old wording") : null, acts);
+      s.stale ? h("p.style-stale", "Preview is out of date") : null, acts);
   }
   function paint() {
     if (!list) { clear(el, loading("Loading styles…")); return; }
@@ -223,12 +223,13 @@ export function styleRow({ value = null, extra = [], onPick = null, disabled = f
 
 // ---- the custom style form ---------------------------------------------------------------------------
 
-/** Read a chosen file far enough to check it: its kind from the first bytes, then its size in pixels once decoded
- *  (null when it could not be decoded). Never rejects. */
+/** Read a chosen file far enough to check it: its kind from the first bytes and its size in bytes, and only when both
+ *  pass its size in pixels once decoded (null when it could not be decoded), so a file over the limit is never
+ *  decoded. Never rejects. */
 async function inspect(file) {
   let kind = null;
   try { kind = sniff(new Uint8Array(await file.slice(0, 16).arrayBuffer())); } catch {}
-  if (!kind) return { kind, size: file.size };
+  if (refProblem({ kind, size: file.size })) return { kind, size: file.size };
   const dims = await new Promise((resolve) => {
     const url = URL.createObjectURL(file);
     const img = new Image();
@@ -250,6 +251,10 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   // A picture chosen here and not sent yet: { file, url } (url an object URL for the thumbnail, revoked when it goes).
   let pending = null;
   let describing = null;   // the AbortController of a describe call in flight
+  // The picture being checked (a chosen file is decoded before it is kept): Save and Draw wait for it, and only the
+  // newest choice may land.
+  const choices = latestOnly();
+  let checking = null;
   const nameIn = h("input.input#style-name", { value: saved?.name || "", maxlength: String(NAME_MAX), autocomplete: "off", "aria-describedby": "style-name-err" });
   const textIn = h("textarea.input#style-text", { rows: "4", maxlength: String(TEXT_MAX), "aria-describedby": "style-text-hint style-text-err",
     placeholder: "For example: a linocut print in two colours, bold carved lines" });
@@ -278,7 +283,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   const hasPicture = () => Boolean(pending || saved?.reference);
   const savedUse = () => (saved?.reference ? saved.useReference : true);
   const dirty = () => squash(nameIn.value) !== (saved?.name || "") || squash(textIn.value) !== (saved?.text || "")
-    || Boolean(pending) || (hasPicture() && useIn.checked !== savedUse());
+    || Boolean(pending) || Boolean(checking) || (hasPicture() && useIn.checked !== savedUse());
   const dropPending = () => { if (pending) URL.revokeObjectURL(pending.url); pending = null; };
 
   const sh = sheet({ title: style ? `Edit style: ${style.name}` : "New style", className: "style-form-sheet", stack: true, focus: nameIn,
@@ -310,7 +315,9 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
       : h("p.hint", hasPicture()
         ? "No preview yet. A preview draws the same scene every built-in style shows, in this style, with your picture if it is sent."
         : "No preview yet. A preview draws the same scene every built-in style shows, in this style."),
-    saved?.preview && (saved.stale || (saved && squash(textIn.value) !== saved.text)) ? h("p.style-stale", "Preview is of the old wording") : null);
+    // Out of date for the words, the picture or the "Send this picture" choice (the server says so once saved).
+    saved?.preview && (saved.stale || squash(textIn.value) !== saved.text || pending || (saved.reference && useIn.checked !== saved.useReference))
+      ? h("p.style-stale", "Preview is out of date") : null);
   }
   function paintDraw() {
     drawBtn.disabled = busy || Boolean(describing) || !provider;
@@ -320,7 +327,8 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   }
   function paintRef() {
     const focusIn = refBox.contains(document.activeElement) ? document.activeElement.dataset.act : null;
-    const choose = (label, act) => h("button.btn", { type: "button", dataset: { act }, disabled: busy, "aria-describedby": "style-ref-err",
+    const locked = busy || Boolean(describing);   // no new picture while one is saved or described
+    const choose = (label, act) => h("button.btn", { type: "button", dataset: { act }, disabled: locked, "aria-describedby": "style-ref-err",
       on: { click: () => fileIn.click() } }, act === "choose" ? icon("upload") : null, label);
     const src = pending?.url || saved?.reference || null;
     if (!src) {
@@ -337,7 +345,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
           pending ? h("p.hint", "Not saved yet. Save sends it.") : null,
           h("div.style-ref-acts",
             choose("Replace", "replace"),
-            h("button.btn.quiet", { type: "button", dataset: { act: "remove" }, disabled: busy, on: { click: removeRef } }, "Remove")))));
+            h("button.btn.quiet", { type: "button", dataset: { act: "remove" }, disabled: locked, on: { click: removeRef } }, "Remove")))));
     }
     useRow.hidden = !src;
     describeBtn.hidden = !src;
@@ -347,9 +355,16 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
 
   /** Check a chosen or dropped file and keep it as the pending picture, or say what is wrong under the field. */
   async function take(file) {
-    if (!file) return;
+    if (!file || busy || describing) return;
     refErr.textContent = "";
-    const problem = refProblem(await inspect(file));
+    const n = choices.start();
+    const check = inspect(file);
+    checking = check;
+    let info;
+    try { info = await check; } finally { if (checking === check) checking = null; }
+    // A newer choice, or the sheet closed meanwhile: this one is forgotten.
+    if (!choices.current(n) || sh.finished) return;
+    const problem = refProblem(info);
     if (problem) { refErr.textContent = problem; return; }
     const first = !hasPicture();
     dropPending();
@@ -362,10 +377,10 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
     refErr.textContent = "";
     if (pending && !saved?.reference) { dropPending(); paintRef(); paintPreview(); refBox.querySelector("button")?.focus({ preventScroll: true }); return; }
     if (!(await confirmDialog({ title: "Remove the reference picture?", message: "Pictures drawn in this style from now on get only its description. Pictures already drawn stay.", confirmLabel: "Remove picture" }))) return;
-    dropPending();
     busy = true; paintDraw(); paintRef();
     try {
       await api.styleReferenceDelete(saved.slug);
+      dropPending();   // a pending replacement goes only once the saved picture is gone
       await reload();
       changed = true;
       useIn.checked = true;
@@ -375,23 +390,26 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   }
   fileIn.addEventListener("change", () => { const f = fileIn.files?.[0]; fileIn.value = ""; take(f); });
   refBox.addEventListener("dragover", (e) => {
-    if (busy || ![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    if (busy || describing || ![...(e.dataTransfer?.types || [])].includes("Files")) return;
     e.preventDefault(); e.dataTransfer.dropEffect = "copy"; refBox.classList.add("over");
   });
   refBox.addEventListener("dragleave", (e) => { if (!refBox.contains(e.relatedTarget)) refBox.classList.remove("over"); });
   refBox.addEventListener("drop", (e) => {
     refBox.classList.remove("over");
-    if (busy) return;
     e.preventDefault();
+    if (busy || describing) return;
     const files = [...(e.dataTransfer?.files || [])];
     if (files.length > 1) { refErr.textContent = "Drop one picture: a style has one reference picture."; return; }
     take(files[0]);
   });
   useIn.addEventListener("change", () => paintPreview());
 
+  /** Wait for a picture still being checked, so Save and Draw send the newest choice. */
+  async function settled() { while (checking) await checking.catch(() => {}); }
+
   /** Fill the Description from the picture: one call to a model that sees pictures. Asks first over typed text. */
   describeBtn.addEventListener("click", async () => {
-    if (describing || busy || !hasPicture()) return;
+    if (describing || busy || checking || !hasPicture()) return;
     if (squash(textIn.value) && !(await confirmDialog({ title: "Replace your description?", message: "The description you have now is replaced by one written from the picture.", confirmLabel: "Replace", danger: false }))) return;
     textErr.textContent = ""; describeLine.textContent = "";
     const ctrl = new AbortController();
@@ -491,6 +509,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
     if (busy || !provider) return;
     busy = true; prevErr.textContent = ""; paintDraw(); paintRef();
     try {
+      await settled();
       if (!(await store())) return;
       paintPreview(true);
       const body = { provider: provider.id, ...(provider.model ? { model: provider.model } : {}), quality: provider.quality };
@@ -508,6 +527,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   saveBtn.addEventListener("click", async () => {
     if (busy) return;
     busy = true; paintDraw(); paintRef();
+    await settled();
     const ok = await store();
     busy = false; paintDraw(); paintRef();
     if (ok) { sh.close(true); toast(style ? "Style saved" : "Style added", "ok", { host: modalToasts() }); }
