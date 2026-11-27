@@ -151,10 +151,9 @@ def stale(pv: dict, row: dict) -> bool:
     """A preview drawn from other words, or (for one that recorded it) with another picture sent or none, is stale."""
     if pv.get("text") != row["text"]:
         return True
-    if "reference" in pv:
-        sent = row["reference"]["sha"] if row.get("reference") and row.get("useReference") else None
-        return pv["reference"] != sent
-    return False
+    # a preview drawn before reference pictures existed recorded none, so it was drawn with no picture
+    sent = row["reference"]["sha"] if row.get("reference") and row.get("useReference") else None
+    return pv.get("reference") != sent
 
 
 class StyleStore:
@@ -409,7 +408,8 @@ class StyleStore:
 
 def router(store: StyleStore, image_model: Callable, vision_model: Callable | None = None) -> APIRouter:
     """The /api/styles routes. Mutating ones sit behind the app's CSRF header and sign-in like every /api route.
-    `vision_model()` is a text backend that can see pictures (or None), for "Describe it for me"."""
+    `vision_model()` is a text backend that can see pictures (or None), for "Describe it for me" (the app passes
+    `JobManager.describe_model`, the strong tier first)."""
     r = APIRouter()
     drawing: set[str] = set()
     drawing_lock = threading.Lock()
@@ -496,6 +496,8 @@ def router(store: StyleStore, image_model: Callable, vision_model: Callable | No
                 raise StyleError(502, "model-failed", str(e)[:200]) from e
             except ValueError as e:
                 raise StyleError(502, "model-failed", "The model could not describe this picture. Write the description yourself.") from e
+            except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key, as Ask has it
+                raise StyleError(502, "model-failed", f"The model could not describe this picture ({type(e).__name__}).") from e
             ref = art.model_ref(model) or {}
             return {"text": text, "provider": ref.get("provider"), "model": ref.get("model"),
                     "cost": round(art._cost_of(model) - before, 6)}
