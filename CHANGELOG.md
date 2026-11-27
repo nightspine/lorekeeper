@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.0](https://github.com/nightspine/lorekeeper/compare/v0.28.0...v0.29.0) (2026-11-27)
+
+
+### Features
+
+* a saved style can carry a reference picture, described for you and sent with every drawing in that style ([#161](https://github.com/nightspine/lorekeeper/issues/161)) ([6160dba](https://github.com/nightspine/lorekeeper/commit/6160dba2b01e0bb9b3113ae1f6b3f4ab0de8500e))
+
 ## [0.28.0](https://github.com/nightspine/lorekeeper/compare/v0.27.1...v0.28.0) (2026-11-27)
 
 
