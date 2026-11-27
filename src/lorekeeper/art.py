@@ -588,8 +588,8 @@ def describe_style(model, data: bytes, mime: str) -> str:
             raise
         text = " ".join(str(out.get("text") or "").split()) if isinstance(out, dict) else ""
         text = text.strip(" \"'“”")
-        if text and text[-1] not in ".!?":
-            text += "."
+        if text and text[-1] not in ".!?" and len(text) < STYLE_DESCRIBE_CHARS:
+            text += "."     # the closing mark only when it still fits: the length is checked on what the model wrote
         faults = style_faults(text) if text else ["it is empty"]
         if not faults:
             return text
