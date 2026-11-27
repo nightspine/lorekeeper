@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/nightspine/lorekeeper/compare/v0.27.1...v0.28.0) (2026-11-27)
+
+
+### Features
+
+* name every figure in a scene prompt by its label, with or without a portrait ([#158](https://github.com/nightspine/lorekeeper/issues/158)) ([b15a39a](https://github.com/nightspine/lorekeeper/commit/b15a39a4634cdcc2dc7b7d1a066915e94709558c))
+
 ## [0.27.1](https://github.com/nightspine/lorekeeper/compare/v0.27.0...v0.27.1) (2026-11-26)
 
 
