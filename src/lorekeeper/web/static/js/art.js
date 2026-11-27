@@ -406,6 +406,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         fixed.length ? h("ul.lb-fixes", { "aria-label": "Fixes" }, fixed.map((x) => h("li", h("span", x.line), x.created && when(x.created) ? h("span.subtle", ` ${when(x.created)}`) : null))) : null,
         h("div.lb-figs", lbFigures(it)),
+        // The style's own reference picture went with this one (the record holds only its sha, never the picture).
+        typeof r.styleRef === "string" && r.styleRef ? h("p.lb-styleref", "Style from your reference picture.") : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
     paintActs();
   }
