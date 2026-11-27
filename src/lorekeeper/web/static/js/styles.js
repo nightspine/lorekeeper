@@ -327,7 +327,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   }
   function paintRef() {
     const focusIn = refBox.contains(document.activeElement) ? document.activeElement.dataset.act : null;
-    const locked = busy || Boolean(describing);   // no new picture while one is saved or described
+    const locked = busy || Boolean(describing) || Boolean(checking);   // no new picture while one is saved, described or checked
     const choose = (label, act) => h("button.btn", { type: "button", dataset: { act }, disabled: locked, "aria-describedby": "style-ref-err",
       on: { click: () => fileIn.click() } }, act === "choose" ? icon("upload") : null, label);
     const src = pending?.url || saved?.reference || null;
@@ -355,13 +355,14 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
 
   /** Check a chosen or dropped file and keep it as the pending picture, or say what is wrong under the field. */
   async function take(file) {
-    if (!file || busy || describing) return;
+    if (!file || busy || describing || checking) return;
     refErr.textContent = "";
     const n = choices.start();
     const check = inspect(file);
     checking = check;
+    paintRef();
     let info;
-    try { info = await check; } finally { if (checking === check) checking = null; }
+    try { info = await check; } finally { if (checking === check) { checking = null; if (!sh.finished) paintRef(); } }
     // A newer choice, or the sheet closed meanwhile: this one is forgotten.
     if (!choices.current(n) || sh.finished) return;
     const problem = refProblem(info);
@@ -374,6 +375,7 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
     paintRef(); paintPreview();
   }
   async function removeRef() {
+    if (busy || describing || checking) return;
     refErr.textContent = "";
     if (pending && !saved?.reference) { dropPending(); paintRef(); paintPreview(); refBox.querySelector("button")?.focus({ preventScroll: true }); return; }
     if (!(await confirmDialog({ title: "Remove the reference picture?", message: "Pictures drawn in this style from now on get only its description. Pictures already drawn stay.", confirmLabel: "Remove picture" }))) return;
@@ -390,14 +392,14 @@ export function openStyleForm({ style = null, onSaved = null } = {}) {
   }
   fileIn.addEventListener("change", () => { const f = fileIn.files?.[0]; fileIn.value = ""; take(f); });
   refBox.addEventListener("dragover", (e) => {
-    if (busy || describing || ![...(e.dataTransfer?.types || [])].includes("Files")) return;
+    if (busy || describing || checking || ![...(e.dataTransfer?.types || [])].includes("Files")) return;
     e.preventDefault(); e.dataTransfer.dropEffect = "copy"; refBox.classList.add("over");
   });
   refBox.addEventListener("dragleave", (e) => { if (!refBox.contains(e.relatedTarget)) refBox.classList.remove("over"); });
   refBox.addEventListener("drop", (e) => {
     refBox.classList.remove("over");
     e.preventDefault();
-    if (busy || describing) return;
+    if (busy || describing || checking) return;
     const files = [...(e.dataTransfer?.files || [])];
     if (files.length > 1) { refErr.textContent = "Drop one picture: a style has one reference picture."; return; }
     take(files[0]);
