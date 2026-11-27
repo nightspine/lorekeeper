@@ -33,7 +33,7 @@ from . import anchors as A
 from . import epub, gating, images, llm
 from . import portraits as P
 from .common_words import SENTENCE_FIRST
-from .generate import ABOUT_THE_TEXT
+from .generate import ABOUT_THE_TEXT as _ABOUT_THE_TEXT
 
 VERSION = "0.1"
 
@@ -365,6 +365,25 @@ def reframed(kind: str, prompt: str, style: str = "") -> str:
         if k > 0 and text[k:].rstrip() == tail and text[k - 1].isspace():
             return f"{text[:k].rstrip()} {PORTRAIT_CROP} {text[k:]}"
     return f"{text.rstrip()} {PORTRAIT_CROP}"
+
+
+# Talk about the material ("this passage", "the passage describes") in a picture prompt. Narrower than the generator's
+# ABOUT_THE_TEXT, kept for the "this ..." forms: in a picture, "the passage" and "the section" are also a corridor and a part
+# of a wall ("doors line the passage"), so "the ..." counts only when the text then tells, says or describes.
+ABOUT_THE_TEXT = re.compile(r"\bthis (?:passage|section|excerpt|chunk)\b|\bthe (?:passage|section|excerpt|chunk|material)s? "
+                            r"(?:says?|describes?|tells?|mentions?|states?|notes?|gives?|records?)\b", re.IGNORECASE)
+assert _ABOUT_THE_TEXT.pattern.startswith(r"\b(this|the) (passage|section|excerpt|chunk)")
+_LABEL_CAPS = re.compile(r"\bFigure ([A-D])\b")
+
+
+def lower_labels(text: str) -> str:
+    """A figure label written with a capital inside a sentence ("dots mark Figure C's throat") as "figure C": the label is
+    a word of code's, never a name, and a capital there reads as a name the book has not used. At the start of the text or
+    of a sentence it stays as written."""
+    def sub(m: re.Match) -> str:
+        before = text[:m.start()].rstrip(" \"“‘'(")
+        return m.group(0) if not before or before[-1] in ".!?" else f"figure {m.group(1)}"
+    return _LABEL_CAPS.sub(sub, text)
 
 
 def labels_in(text: str) -> list[str]:
@@ -1403,7 +1422,7 @@ class Illustrator:
         """(text, "") when a written text is usable at an anchor, else (None, reason): its length, a word the book has not
         used by the anchor, hindsight or "now" wording, a tie the material does not state, talk about "the passage", a
         person's or creature's name, and `check` (a scene's figure labels, `_label_check`)."""
-        text = " ".join(str(text or "").split())
+        text = lower_labels(" ".join(str(text or "").split()))
         n = _words(text)
         if n and n < words[0]:
             return None, "too short"

@@ -3816,3 +3816,19 @@ def test_a_comic_softens_and_redraws_as_a_scene_does():
 def test_a_run_never_draws_a_comic():
     il, rep, sink, t, im = run(level="all")
     assert not pics(sink, "comic") and art.COMIC_WRITER not in t.systems
+
+
+def test_a_corridor_called_the_passage_and_a_capital_label_inside_a_sentence_pass_the_checks():
+    # found on Dracula's comic pages: "More locked doors line the passage." is a corridor, not talk about the material
+    il0, _, im, by, sink = labelled(Text())
+    t = Text(comic=lambda p: [PANEL + " More doors line the passage.", PANEL + " Two small marks show on Figure A's throat."])
+    bk = il0.books[0].epub
+    il = art.Illustrator([art.Book(comic_doc(bk)[1], bk, sink)], t, im, "ink", portraits="all", workers=1, log=lambda *_: None,
+                         pause=0)
+    assert "Figure" not in il.books[0].first
+    pr = il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert len(t.prompts) == 1 and "line the passage" in pr.body and "on figure A's throat" in pr.body
+    assert pr.figures and pr.figures[0]["label"] == "A"
+    for talk in ("This passage shows a gate.", "The passage describes a gate.", "the material says so"):
+        assert art.ABOUT_THE_TEXT.search(talk)
+    assert art.lower_labels("Figure A waits. He sees Figure B; Figure C runs.") == "Figure A waits. He sees figure B; figure C runs."
