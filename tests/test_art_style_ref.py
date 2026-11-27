@@ -200,3 +200,12 @@ def test_style_faults_lets_a_plain_style_line_pass():
     assert art.style_faults("Black ink drawing, fine cross-hatching, strong contrast, aged paper.") == []
     assert art.style_faults("Flat digital colour with soft gradients. Clean thin lines and gentle rim light.") == []
     assert "Mucha" in art.style_faults("Flowing lines, flat pastel colour, decorative borders like Mucha.")[0]
+
+
+def test_a_300_character_description_with_no_closing_mark_passes_as_written():
+    line = ("Soft digital painting, " + "fine brushed texture, " * 20)[:300].rstrip(" ,")
+    line = line + "x" * (300 - len(line))
+    assert len(line) == 300 and line[-1] not in ".!?"
+    m = Describer(line)
+    assert art.describe_style(m, STYLE_PNG, "image/png") == line and len(m.calls) == 1
+    assert art.describe_style(Describer(line[:299]), STYLE_PNG, "image/png") == line[:299] + "."
