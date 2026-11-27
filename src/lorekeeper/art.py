@@ -723,8 +723,9 @@ class Prompt:
     no_text: str = NO_TEXT    # the closing line appended after the style
     shows: list[str] = field(default_factory=list)   # entity ids the picture shows (a portrait: its entity; a scene: the
                                                      # writer's "shows", every figure when it gave none); never the shape
-    # a scene's labelled figures, [{"label", "entity"}] in label order: the labels its checked text uses, each a figure that
-    # has a reference picture; the reference of label n is sent as the n-th picture. None: an older prompt (no labels).
+    # a scene's labelled figures, [{"label", "entity"}] in label order: the labels its checked text uses. A figure the material
+    # marked portrait="no" carries "portrait": False and never gets a reference picture; the others get theirs, in label
+    # order. None: an older prompt (no labels).
     figures: list[dict] | None = None
     # the text model that wrote it, {"provider", "model"} (None: not known, an older prompt or a model with no name)
     written_by: dict | None = None
@@ -1459,6 +1460,7 @@ class Illustrator:
             if keep and allowed and not used & allowed:
                 return "lost the figure labels"
             return ""
+        check.allowed = frozenset(allowed)
         return check
 
     def _write_full(self, prompt: str, bi: int, anchor: str, source: str, words: tuple[int, int],
@@ -1489,15 +1491,8 @@ class Illustrator:
             with self.lock:
                 self.report.dropped["rewritten: figure not called by its label"] += 1
         if got is not None and miss:
-            first = set(labels_in(got))
-
-            def kept(text_: str) -> str:
-                if check is not None and (w := check(text_)):
-                    return w
-                lost = sorted(first - set(labels_in(text_)))
-                return f"lost the figure labels: figure {lost[0]}" if lost else ""
             again = self._complete(prompt + REWRITE.format(text=got[:900], why=missing("", miss)), schema, system, model)
-            got2, _ = self._vet(again.get("text"), bi, anchor, source, words, finished, kept)
+            got2, _ = self._vet(again.get("text"), bi, anchor, source, words, finished, self._keeping(check, got))
             if got2 is None:
                 counted(got, out)
                 return got, "", out
@@ -1505,12 +1500,14 @@ class Illustrator:
             return got2, "", again
         if got is None and why != "empty":
             tries = [(str(out.get("text") or ""), why, out)]
+            # a rewrite naming missing labels besides another fault may not lose a label the first text used either
+            again = self._keeping(check, tries[0][0]) if miss else check
             out = self._complete(prompt + REWRITE.format(text=str(out.get("text", ""))[:900], why=missing(why, miss)), schema,
                                  system, model)
-            got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, check)
+            got, why = self._vet(out.get("text"), bi, anchor, source, words, finished, again)
             if got is None:
-                for text_, why_, out_ in [(str(out.get("text") or ""), why, out)] + tries:
-                    fixed = self._fix(text_, why_, bi, anchor, source, words, finished, check)
+                for (text_, why_, out_), check_ in zip([(str(out.get("text") or ""), why, out)] + tries, (again, check)):
+                    fixed = self._fix(text_, why_, bi, anchor, source, words, finished, check_)
                     if fixed is not None:
                         with self.lock:
                             self.report.dropped["fixed: name replaced by a role"] += 1
@@ -1518,6 +1515,21 @@ class Illustrator:
                         return fixed, "", out_
             counted(got, out)
         return got, why, out
+
+    @staticmethod
+    def _keeping(check: Callable[[str], str] | None, first: str) -> Callable[[str], str]:
+        """`check`, and then that a rewrite keeps every figure label the first text used among those the check allows (a
+        label that was never given is the first text's fault, not one to keep): a rewrite that asked for a missing label may
+        not lose another figure on the way ("lost the figure labels: figure A")."""
+        allowed = getattr(check, "allowed", None)
+        keep = {x for x in labels_in(first) if allowed is None or x in allowed}
+
+        def kept(text_: str) -> str:
+            if check is not None and (w := check(text_)):
+                return w
+            lost = sorted(keep - set(labels_in(text_)))
+            return f"lost the figure labels: figure {lost[0]}" if lost else ""
+        return kept
 
     def _fix(self, text: str, why: str, bi: int, anchor: str, source: str, words: tuple[int, int],
              finished: frozenset[str] | None = None, check: Callable[[str], str] | None = None) -> str | None:
@@ -2409,7 +2421,9 @@ class Illustrator:
         if job.kind in ("plate", "event"):
             if figures is not None:
                 upto = self._reach(job)
-                hits = [hit for f in figures if (hit := self._figure_picture(f["entity"], pos, upto, fin))][:MAX_REFERENCES]
+                # only a figure the material told the writer has a picture (no "portrait": False) gets one sent
+                hits = [hit for f in figures if f.get("portrait") is not False
+                        and (hit := self._figure_picture(f["entity"], pos, upto, fin))][:MAX_REFERENCES]
                 return hits + (self._setting_refs(job, shows, fin, MAX_REFERENCES - len(hits)) if self.place_refs else [])
             return self._references(list(shows), pos, self.view(bi, job.anchor, fin), fin, self._reach(job))
         if job.kind == "portrait":
@@ -3041,7 +3055,8 @@ class Illustrator:
         figures = None
         if scene:                          # an entity's own picture always shows it
             entity_of = {lab: eid for eid, lab in label_of.items()}
-            figures = [{"label": lab, "entity": entity_of[lab]} for lab in labels_in(body) if lab in entity_of]
+            figures = [{"label": lab, "entity": entity_of[lab], **({} if entity_of[lab] in pictured else {"portrait": False})}
+                       for lab in labels_in(body) if lab in entity_of]
             labelled = [f["entity"] for f in figures]
             # the labelled figures first; a figure with a picture that the text does not label is not drawn (one with none,
             # the writer may have drawn unlabelled: `shows` decides)
