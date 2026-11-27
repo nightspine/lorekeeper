@@ -489,6 +489,119 @@ def check_price(provider: str | None, model: str | None) -> float | None:
     return (CHECK_TOKENS[0] * price[0] + CHECK_TOKENS[1] * price[1]) / 1e6
 
 
+# ---- a saved style's own reference picture (the web app's styles: `web/styles.py` keeps SAVED_STYLE_REFS in step)
+
+# slug -> {"path", "mime", "sha"} of each saved style whose reference picture is sent with its drawings (`useReference`), a
+# deleted one included so its sets keep drawing as they did; rebound in one assignment, like SAVED_STYLES
+SAVED_STYLE_REFS: dict[str, dict] = {}
+# sent with the references, last, whenever the style's picture goes with a drawing (never in the prompt a person reads); the
+# style picture is always the last reference, after every figure, likeness, place and thing
+STYLE_REF = ("The last reference picture shows only the drawing style to use: its medium, line, colour, texture and light. "
+             "Never take its subjects, figures, faces, composition or setting.")
+
+
+@dataclass
+class StyleRef:
+    """A saved style's reference picture as it is sent: its bytes, mime and the sha256 hex of the bytes."""
+    data: bytes
+    mime: str
+    sha: str
+
+
+def style_reference(style: str | None) -> StyleRef | None:
+    """The reference picture of a saved style (its slug, or a style text that slugs to it) when it is sent with drawings
+    (in SAVED_STYLE_REFS), else None: a built-in style, a style with no picture or with "send" off, or a file gone. The sha
+    is the one of the bytes read, so the record says what was actually sent."""
+    if not style:
+        return None
+    hit = SAVED_STYLE_REFS.get(style) or SAVED_STYLE_REFS.get(style_slug(style))
+    if not isinstance(hit, dict) or not hit.get("path"):
+        return None
+    try:
+        data = Path(hit["path"]).read_bytes()
+    except OSError:
+        return None
+    mime = mime_of(data) or hit.get("mime") or "image/png"
+    return StyleRef(data, mime, hashlib.sha256(data).hexdigest()) if data else None
+
+
+def preview_references(slug: str) -> dict:
+    """What a style preview's `image.draw` adds for a saved style with a reference picture it sends: {"references": [(bytes,
+    mime)], "note": STYLE_REF}, else {}. Pass it as keywords (`image.draw(prompt, shape=, quality=, **preview_references(slug))`)."""
+    ref = style_reference(slug)
+    return {"references": [(ref.data, ref.mime)], "note": STYLE_REF} if ref else {}
+
+
+# Describing a picture's drawing style for a saved style's sentence: one call on a text model that sees pictures, checked by
+# code (length, no capitalised word but a sentence's first, no "in the style of"), one rewrite naming what was caught.
+STYLE_DESCRIBE = """You describe how a picture is made, so that an image model can draw other pictures the same way.
+
+Write one or two sentences, at most 300 characters in all, about the drawing style only: the medium (oil paint, watercolour, ink, pencil, digital painting, woodcut...), the line (none, fine, bold, loose, hatched), the colour palette, the texture and surface, the light and the rendering (flat, cel-shaded, painterly, photographic, detailed or simple).
+
+Never mention what the picture shows: no subjects, figures, people, animals, objects, place, story, period or era. Never name an artist, illustrator, studio, title, franchise, school or movement after a person, and never write "in the style of" or anything like it. Use no names and no capital letters except at the start of a sentence.
+
+Write it the way a style is listed, as a run of plain phrases, for example: "Watercolour painting, translucent washes, soft edges, pale paper showing through." or "Bold black ink outlines, flat muted colour, halftone dots for shading, printed-paper texture."
+Return "text"."""
+STYLE_DESCRIBE_PROMPT = "Describe the drawing style of the picture above."
+STYLE_DESCRIBE_SCHEMA = {"type": "object", "required": ["text"], "properties": {"text": {"type": "string"}}}
+STYLE_DESCRIBE_CHARS = 300
+STYLE_DESCRIBE_MIN = 20
+_STYLE_OF = re.compile(r"\b(in the (style|manner|vein|tradition) of|style of|reminiscent of|inspired by|after the manner of|"
+                       r"à la|a la|homage to|in the spirit of)\b", re.I)
+
+
+def style_faults(text: str) -> list[str]:
+    """What code finds wrong with a style description: too long or short, more than two sentences, a capitalised word that
+    does not open a sentence (a name), wording like "in the style of". Empty when it passes."""
+    t = " ".join(str(text or "").split())
+    out = []
+    if len(t) < STYLE_DESCRIBE_MIN:
+        out.append("it is too short")
+    if len(t) > STYLE_DESCRIBE_CHARS:
+        out.append(f"it is {len(t)} characters, over {STYLE_DESCRIBE_CHARS}")
+    sentences = [s for s in re.split(r"(?<=[.!?])\s+", t) if s.strip()]
+    if len(sentences) > 2:
+        out.append(f"it has {len(sentences)} sentences, more than two")
+    caps = []
+    for s in sentences:
+        for n, w in enumerate(re.findall(r"[^\W\d_][\w'’-]*", s)):
+            if n and w[0].isupper() and w not in caps:
+                caps.append(w)
+    if caps:
+        out.append("it uses a capitalised word, which reads as a name: " + ", ".join(caps[:6]))
+    if m := _STYLE_OF.search(t):
+        out.append(f"it compares with someone else's work (\"{m.group(0)}\")")
+    return out
+
+
+def describe_style(model, data: bytes, mime: str) -> str:
+    """One or two sentences, at most 300 characters, on how the picture is made (medium, line, colour, texture, light,
+    rendering), never what it shows or whose it is: one call on `model`, a text model that sees pictures, under
+    STYLE_DESCRIBE, checked by code (`style_faults`); one rewrite naming what was caught, then ValueError("could not
+    describe"). llm.NoVision (also for a backend whose complete() takes no pictures), llm.ProviderError and llm.Cancelled
+    are raised as they come. The cost is in the model's usage."""
+    prompt, text = STYLE_DESCRIBE_PROMPT, ""
+    for attempt in (0, 1):
+        try:
+            out = model.complete(STYLE_DESCRIBE, prompt, STYLE_DESCRIBE_SCHEMA, images=[(data, mime)])
+        except TypeError as e:
+            if "images" in str(e):
+                raise llm.NoVision(f"{getattr(model, 'name', 'the model')} cannot see pictures") from e
+            raise
+        text = " ".join(str(out.get("text") or "").split()) if isinstance(out, dict) else ""
+        text = text.strip(" \"'“”")
+        if text and text[-1] not in ".!?" and len(text) < STYLE_DESCRIBE_CHARS:
+            text += "."     # the closing mark only when it still fits: the length is checked on what the model wrote
+        faults = style_faults(text) if text else ["it is empty"]
+        if not faults:
+            return text
+        if attempt:
+            break
+        prompt = (f"{STYLE_DESCRIBE_PROMPT}\n\nYour last description was refused because {'; '.join(faults)}:\n"
+                  f"<refused>{text[:600]}</refused>\nWrite it again, keeping to the rules.")
+    raise ValueError("could not describe")
+
+
 class Sink(Protocol):
     """Where one edition's art set lives. `FileSink` is a folder; the web store implements the same four calls."""
 
@@ -558,6 +671,17 @@ def default_dir(index_path: str | Path, doc: dict, style: str) -> Path:
 def blank(text_hash: str, style: str) -> dict:
     return {"lorekeeperArt": VERSION, "textHash": text_hash, "style": style, "world": None, "pictures": [],
             "screened": {}, "looks": {}, "lookSentences": {}, "skipped": [], "cost": 0.0}
+
+
+def mime_of(data: bytes) -> str | None:
+    """The mime of PNG, JPEG or WebP bytes by their magic bytes, else None."""
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 def size_of(data: bytes) -> tuple[int | None, int | None]:
@@ -2332,12 +2456,13 @@ class Illustrator:
         return self.books[j].b.sink.read(rec["file"])
 
     @staticmethod
-    def likeness_note(refs: list[tuple[int, dict]]) -> str:
-        """The words sent with the references when some are in another style (LIKENESS), "" when none is."""
+    def likeness_note(refs: list[tuple[int, dict]], style_ref: bool = False) -> str:
+        """The words sent with the references when some are in another style (LIKENESS), "" when none is. `style_ref`: the
+        style's own picture follows them, so a lone reference is still numbered ("Reference picture 1")."""
         other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set")]
         if not other:
             return ""
-        if len(refs) == 1:
+        if len(refs) == 1 and not style_ref:
             which, them = "The reference picture is", "it"
         elif len(other) == 1:
             which, them = f"Reference picture {other[0]} is", "it"
@@ -2348,7 +2473,7 @@ class Illustrator:
 
     @staticmethod
     def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None,
-                       names: dict[str, str] | None = None) -> str:
+                       names: dict[str, str] | None = None, style_ref: bool = False) -> str:
         """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
         portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
         labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
@@ -2357,9 +2482,12 @@ class Illustrator:
         (no label, the record's kind "place" or "thing") says what to take from it (PLACE_NOTE, THING_NOTE with its name from
         `names`, entity id to the name visible at the anchor) and, from another style's set, never its style. A scene with a
         portrait among its references (a record of kind "portrait", labelled or not) ends with CHEST_UP: the portrait is
-        cropped at mid-chest and the rest of the figure comes from the prompt. "" when there are no references."""
+        cropped at mid-chest and the rest of the figure comes from the prompt. `style_ref`: the style's own picture is sent
+        after `refs` as the last reference (numbered len(refs) + 1), and STYLE_REF ends the note, the only words when it is
+        the one reference. "" when there are no references."""
+        tail = [STYLE_REF] if style_ref else []
         if not refs:
-            return ""
+            return " ".join(tail)
         out = []
         # a scene drawn from a portrait, cropped at mid-chest, draws the rest of the figure from its text (CHEST_UP, last)
         chest = [CHEST_UP] if kind != "portrait" and any(r.get("kind") == "portrait" for _, r in refs) else []
@@ -2376,7 +2504,7 @@ class Illustrator:
                 out.append((PLACE_NOTE.format(n=n) if r["kind"] == "place" else THING_NOTE.format(n=n, name=name))
                            + (OTHER_STYLE if r.get("set") else ""))
         else:
-            return " ".join(x for x in [Illustrator.likeness_note(refs), *chest] if x)
+            return " ".join(x for x in [Illustrator.likeness_note(refs, style_ref), *chest, *tail] if x)
         # the likeness words are for figures: a place or thing in a spare slot has its own words above
         other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set") and not (
             labels is not None and n <= len(labels) and not labels[n - 1] and r.get("kind") in SETTING_KINDS)]
@@ -2386,7 +2514,7 @@ class Illustrator:
             else:
                 which, them = "Reference pictures " + ", ".join(map(str, other[:-1])) + f" and {other[-1]} are", "them"
             out.append(LIKENESS.format(which=which, them=them))
-        return " ".join(out + chest)
+        return " ".join(out + chest + tail)
 
     def _passage_first(self, bi: int, seqs: list[int], upto: int, words: int) -> tuple[str, list[int]]:
         """The paragraphs at `seqs` in that order of priority (the first ones kept when the budget runs out), each with one
@@ -3383,6 +3511,27 @@ class Illustrator:
             return got, labels, figures
         return [(j, r, d) for j, r in pr.references if (d := self.reference_bytes(j, r))][:images.MAX_REFERENCES], None, None
 
+    def style_ref(self, bi: int) -> StyleRef | None:
+        """The reference picture of book bi's set's style (a saved style that sends its picture, `SAVED_STYLE_REFS`), else
+        None. Never sent by `fix`: an edit keeps the picture's own look."""
+        return style_reference(style_slug(self.styles[bi]))
+
+    @staticmethod
+    def _room(got: list[tuple[int, dict, bytes]], labels: list[str | None] | None,
+              extra: int) -> tuple[list[tuple[int, dict, bytes]], list[str | None] | None]:
+        """The references cut so that `extra` more pictures (the style's own) still fit the image call's
+        images.MAX_REFERENCES: the last place or thing in a spare slot goes first, then the last reference of any kind, so
+        the style picture is never the one dropped."""
+        got, labels = list(got), None if labels is None else list(labels)
+        while got and len(got) + extra > images.MAX_REFERENCES:
+            spare = [n for n, (_, r, _) in enumerate(got)
+                     if r.get("kind") in SETTING_KINDS and (labels is None or not labels[n])]
+            n = spare[-1] if spare else len(got) - 1
+            del got[n]
+            if labels is not None:
+                del labels[n]
+        return got, labels
+
     def _ref_names(self, job: Job, got: list[tuple[int, dict, bytes]]) -> dict[str, str]:
         """The names, as the view at the picture's anchor gives them, of the things whose pictures fill a scene's spare slots."""
         if not any(r.get("kind") == "thing" for _, r, _ in got):
@@ -3444,10 +3593,13 @@ class Illustrator:
         price = llm.image_price(prov, name, quality, pr.shape) or 0.0
         softened = retried = False
         held = self._check_estimate() if self.check and not self.no_vision else 0.0
+        sref = self.style_ref(bi)        # the style's own picture, sent last with every drawing in this set
         while True:
             got, labels, figures = self._attach(job, pr)
-            refs = [(d, r["mime"]) for _, r, d in got]
-            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels, self._ref_names(job, got))
+            got, labels = self._room(got, labels, 1 if sref else 0)
+            refs = [(d, r["mime"]) for _, r, d in got] + ([(sref.data, sref.mime)] if sref else [])
+            note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels, self._ref_names(job, got),
+                                       style_ref=sref is not None)
             why, amount = self._reserve(price, held)
             if why:
                 with self.lock:
@@ -3514,8 +3666,10 @@ class Illustrator:
             except BaseException:
                 # a stop (Cancelled) or anything else in the check or the fix: the picture was drawn and billed, so it is
                 # filed as drawn before the error goes on, and a resume does not draw and pay for it again
-                self._file(job, pr, pic, got, figures, softened, {})
+                self._file(job, pr, pic, got, figures, softened, {"styleRef": sref.sha} if sref else {})
                 raise
+        if sref:
+            extra = {"styleRef": sref.sha, **extra}
         return self._file(job, pr, pic, got, figures, softened, extra)
 
     def _file(self, job: Job, pr: Prompt, pic: images.Drawn, got, figures, softened: bool, extra: dict) -> dict:
