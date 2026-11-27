@@ -415,7 +415,7 @@ def test_describe_writes_the_sentence_from_the_picture_and_stores_nothing(env, m
         m.usage.cost_usd += 0.001
         return "Loose ink line over flat washes of muted colour."
     monkeypatch.setattr(art, "describe_style", describe, raising=False)
-    monkeypatch.setattr(env.jobs.__class__, "vision_model", lambda self, choice=None: model)
+    monkeypatch.setattr(env.jobs.__class__, "describe_model", lambda self: model)
     r = env.c.post("/api/styles/describe", files={"file": ("x.bin", jpeg_of(), "application/octet-stream")})
     assert r.status_code == 200, r.text
     assert r.json() == {"text": "Loose ink line over flat washes of muted colour.", "provider": "claude",
@@ -428,13 +428,15 @@ def test_describe_writes_the_sentence_from_the_picture_and_stores_nothing(env, m
 
 def test_describe_says_when_no_model_can_see_or_the_model_fails(env, monkeypatch):
     pic = {"file": ("x.png", png_of(), "image/png")}
-    monkeypatch.setattr(env.jobs.__class__, "vision_model", lambda self, choice=None: None)
+    monkeypatch.setattr(env.jobs.__class__, "describe_model", lambda self: None)
     r = env.c.post("/api/styles/describe", files=pic)
     assert r.status_code == 409 and r.json()["code"] == "no-vision-model" and "Settings" in r.json()["detail"]
-    monkeypatch.setattr(env.jobs.__class__, "vision_model", lambda self, choice=None: Seeing())
+    monkeypatch.setattr(env.jobs.__class__, "describe_model", lambda self: Seeing())
     for error, status, code in ((llm.NoVision("blind"), 409, "no-vision-model"),
                                 (llm.ProviderError("HTTP 500"), 502, "model-failed"),
-                                (ValueError("could not describe"), 502, "model-failed")):
+                                (ValueError("could not describe"), 502, "model-failed"),
+                                (RuntimeError("Claude returned no JSON"), 502, "model-failed"),
+                                (KeyError("secret body"), 502, "model-failed")):
         def describe(m, data, mime, error=error):
             raise error
         monkeypatch.setattr(art, "describe_style", describe, raising=False)
@@ -482,3 +484,30 @@ def test_a_draw_in_a_style_with_a_picture_sends_it_last_and_the_art_route_serves
     assert r.json()["styleRef"] == sha
     pics = env.c.get(f"/api/library/{KEY}/art", params={"style": "moody-noir"}).json()["pictures"]
     assert [p.get("styleRef") for p in pics] == [sha]
+
+
+def test_a_preview_from_before_reference_pictures_goes_stale_once_a_picture_is_sent(env):
+    env.key()
+    make(env)
+    env.c.post("/api/styles/moody-noir/preview", json={})
+    saved = json.loads((env.data / "styles.json").read_text())
+    saved["styles"][0]["preview"].pop("reference")           # as an older server wrote it
+    (env.data / "styles.json").write_text(json.dumps(saved))
+    assert not listed(env)["moody-noir"]["stale"]             # no picture then, none now
+    upload(env, "moody-noir", png_of())
+    assert listed(env)["moody-noir"]["stale"]
+    env.c.put("/api/styles/moody-noir", json={"useReference": False})
+    assert not listed(env)["moody-noir"]["stale"]
+
+
+def test_describe_uses_the_strong_tier_that_sees_pictures_else_the_cheap_one(env, monkeypatch):
+    jm = env.jobs.__class__
+    made = []
+    monkeypatch.setattr(jm, "cloud_model", lambda self, p, m=None: made.append((p, m)) or (p, m))
+    monkeypatch.setattr(jm, "configured", lambda self: ["groq", "claude"])
+    assert env.jobs.describe_model() == ("claude", llm.PROVIDERS["claude"]["strong"])     # groq's strong one is blind
+    seeing = {("claude", llm.PROVIDERS["claude"]["cheap"])}
+    monkeypatch.setattr(llm, "vision", lambda p, m: (p, m) in seeing)
+    assert env.jobs.describe_model() == ("claude", llm.PROVIDERS["claude"]["cheap"])      # no strong one sees: cheap
+    seeing.clear()
+    assert env.jobs.describe_model() is None
