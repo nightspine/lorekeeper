@@ -441,7 +441,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const boxes = it.rec.kind === "comic" && fixable(it) ? gridBoxes(it.rec) : null;
     if (!img || !boxes) { clear(stage, img); return; }
     clear(stage, h("div.lb-pagebox", img, boxes.map(([x0, y0, x1, y1], n) => h("button.lb-panel-hover", {
-      type: "button", style: { left: `${(x1 * 100).toFixed(2)}%`, top: `${(y0 * 100).toFixed(2)}%` },
+      type: "button", style: { right: `${((1 - x1) * 100).toFixed(2)}%`, top: `${(y0 * 100).toFixed(2)}%` },
       "aria-label": `Fix panel ${n + 1}`, title: `Fix panel ${n + 1}`, on: { click: () => panelForm(it, n + 1) } }, icon("sparkle"), `Fix panel ${n + 1}`))));
   }
   /** The actions under the picture: Fix, Redraw and Delete. Fix needs the image provider that drew this picture set up
