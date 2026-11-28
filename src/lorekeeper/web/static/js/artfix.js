@@ -103,12 +103,24 @@ export function verdictLine(verified, sent = []) {
   const named = (kind) => f.results.filter((r) => r.fixed === kind).map((r) => faults[r.n - 1]).filter(Boolean).map((x) => bare(x.what));
   const out = [];
   if (v.doubtful) {
-    const all = faults.slice(0, f.of).map((x) => bare(x.what));
-    if (all.length) out.push(`The checker thinks nothing was fixed: ${all.join("; ")}.`);
-    else if (f.of) out.push("The checker thinks nothing was fixed.");
-    else if (f.note) out.push(`The checker thinks your change was ${DONE[f.note]}.`);
-    else out.push("The checker thinks nothing was fixed.");
-    if (f.of && f.note) out.push(`Your change: ${DONE[f.note]}.`);
+    // Doubtful: either nothing was judged put right, or something was but the checker says the picture did not visibly
+    // change. Read the items: name as not fixed only those judged "no".
+    const done = f.fixed + f.partly, noteDone = f.note === "yes" || f.note === "partly";
+    const still = named("no");
+    if (!done && !noteDone) {
+      if (still.length) out.push(`The checker thinks nothing was fixed: ${still.join("; ")}.`);
+      else if (!f.results.length && faults.length && f.of) out.push(`The checker thinks nothing was fixed: ${faults.slice(0, f.of).map((x) => bare(x.what)).join("; ")}.`);
+      else if (f.of || !f.note) out.push("The checker thinks nothing was fixed.");
+      else out.push(`The checker thinks your change was ${DONE[f.note]}.`);
+    } else {
+      const judged = done ? `${f.fixed ? `${f.fixed} of ${f.of} put right` : ""}${f.fixed && f.partly ? " and " : ""}${f.partly ? `${f.partly} partly` : ""}`
+        : `your change ${DONE[f.note]}`;
+      out.push(`The checker found little visible change, though it judged ${judged}.`);
+      if (still.length) out.push(`Still wrong: ${still.join("; ")}.`);
+    }
+    // the note's result, unless a sentence above already said it ("your change was not done", "judged your change done")
+    const said = !done && (noteDone || !f.of);
+    if (f.note && !said) out.push(`Your change: ${DONE[f.note]}.`);
   } else {
     if (!f.of) { if (!f.note) out.push("Fixed."); }
     else if (f.fixed === f.of) out.push(f.of === 1 ? "Fixed it." : f.of === 2 ? "Fixed both." : `Fixed all ${f.of}.`);
@@ -201,12 +213,16 @@ export function panelBody(k, value, was = "", note = "") {
 /** What the verdict names for a panel fix: the wish as one fault line. */
 export const panelWish = (k, body) => ({ what: cutWords(body?.text ? `panel ${k} should show: ${body.text}` : (body?.note || `panel ${k}`), WHAT_CHARS) });
 
-/** "Fixed panel 3: <new text, cut to 120 characters, or the note>." with the tally when checked ("Tried to fix panel 3"
- *  when doubtful). */
+/** "Fixed panel 3: <new text, cut to 120 characters, or the note>." with the tally over the panel's own items when checked
+ *  ("Tried to fix panel 3" when doubtful), then "Also: <note> (done)." for a note sent beside a new text, which is judged
+ *  as its own last item. */
 export function panelFixLine(fix) {
   const k = fix?.panel;
-  const said = cutWords(typeof fix?.text === "string" && fix.text.trim() ? fix.text : text(fix?.note, NOTE_CHARS), 120);
-  const v = cleanVerified(fix?.verified);
-  const tally = v && v.of ? ` (${v.fixed} of ${v.of} put right${v.partly ? `, ${v.partly} partly` : ""})` : "";
-  return `${v?.doubtful ? "Tried to fix" : "Fixed"} panel ${k}${said ? `: ${said}` : ""}${tally}.`;
+  const hasText = typeof fix?.text === "string" && fix.text.trim();
+  const note = text(fix?.note, NOTE_CHARS).replace(/[.\s]+$/, "");
+  const said = cutWords(hasText ? fix.text : note, 120);
+  const t = tallies(fix?.verified);
+  // the note is its own line only beside a new text (then it was judged as the last item); alone it is the panel's wish
+  const also = hasText && note ? ` Also: ${note}${t.note}.` : "";
+  return `${t.doubtful ? "Tried to fix" : "Fixed"} panel ${k}${said ? `: ${said}` : ""}${t.faults}.${also}`;
 }
