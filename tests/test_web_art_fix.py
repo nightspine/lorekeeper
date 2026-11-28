@@ -331,9 +331,9 @@ def test_the_fix_and_the_check_judge_with_the_strong_tier_unless_a_picker_is_sen
     given = []
     real = art.Illustrator.fix
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
         given.append((verify, checker))
-        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker)
+        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker, **kw)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD]})
     assert r.status_code == 200, r.text
@@ -353,9 +353,9 @@ def test_without_a_model_that_sees_pictures_the_fix_is_filed_unverified(env, mon
     given = []
     real = art.Illustrator.fix
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
         given.append(verify)
-        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker)
+        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker, **kw)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD]})
     assert r.status_code == 200, r.text
@@ -368,9 +368,9 @@ def test_a_fault_may_carry_its_severity(env, sev, monkeypatch):
     seen = []
     real = art.Illustrator.fix
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
         seen.append(faults)
-        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker)
+        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker, **kw)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
     f = {**HEAD, **({"severity": sev} if sev else {})}
     assert env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [f]}).status_code == 200
@@ -402,13 +402,18 @@ def test_a_fix_that_changed_nothing_is_422_unchanged_and_files_nothing(env, eye,
     before, entries = pictures(env), journal(env)
     verdict = art.Verdict(results=[{"n": 1, "fixed": "no"}], changed=False, new=[], checked=True, cost=0.002)
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    given = []
+
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
+        given.append(kw)
         raise art.FixUnchanged(verdict, 0.042)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD], "note": "the hand"})
     assert r.status_code == 422, r.text
     body = r.json()
-    assert body["code"] == "unchanged" and body["detail"].startswith("The model sent the picture back without the fix")
+    assert given == [{"keep_doubtful": True}]                     # a hand fix: only the same bytes are thrown away
+    assert body["code"] == "unchanged"
+    assert body["detail"] == "The model sent the picture back unchanged, so your picture is kept."
     assert body["verified"] == {"fixed": 0, "partly": 0, "of": 1, "results": [{"n": 1, "fixed": "no"}], "new": []}
     assert body["fixCost"] == pytest.approx(0.042)
     assert pictures(env) == before and journal(env) == entries
@@ -436,7 +441,7 @@ def scripted_verdict(monkeypatch, verified):
     """`Illustrator.fix` as the pipeline files a verified fix: the real edit, then `verified` on its fix entry."""
     real = art.Illustrator.fix
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
         new = real(self, rec, faults, note, bi=bi, verify=False, checker=None)
         new["fixes"][-1]["verified"] = verified
         m = self.man[len(self.books) - 1]
@@ -546,8 +551,9 @@ def test_the_verdict_numbers_the_faults_from_one_end_to_end(env, eye):
     assert next(p for p in pictures(env) if p["id"] == r.json()["id"])["fixes"][-1]["verified"]["results"] == v["results"]
     eye.verdict = {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}], "changed": True, "new": []}
     r = env.c.post(f"/api/library/{KEY}/art/{r.json()['id']}/fix", json={"faults": two})
-    assert r.status_code == 422 and r.json()["code"] == "unchanged"
+    assert r.status_code == 200, r.text                          # changed but judged not fixed: filed, doubtful
     assert r.json()["verified"]["results"] == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
+    assert r.json()["verified"]["doubtful"] is True
 
 
 def test_a_position_that_is_an_anchor_id_is_read_as_that_anchor_before_a_fraction(env, eye):
@@ -594,9 +600,9 @@ def test_a_fault_may_carry_its_kind_and_it_is_passed_on_as_sent(env, kind, monke
     seen = []
     real = art.Illustrator.fix
 
-    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None, **kw):
         seen.append(faults)
-        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker)
+        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker, **kw)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
     f = {**HEAD, **({"kind": kind} if kind else {})}
     assert env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [f]}).status_code == 200
@@ -630,3 +636,55 @@ def test_the_check_sends_the_sets_style_sentence_inside_style_and_none_without_o
     monkeypatch.setattr(art.Illustrator, "_style", lambda self, bi: "")      # a set with no style sentence
     assert env.c.post(url, json={}).status_code == 200
     assert "<style>" not in eye.looked[-1][0]
+
+
+def test_a_changed_picture_the_checker_calls_unfixed_is_filed_as_a_doubtful_fix_and_can_be_undone(env, eye):
+    """The person paid for the edit and the picture did change: it is filed (Before/After, Keep the original) with the
+    verdict as judged and `doubtful: true`, never thrown away unseen."""
+    old = one_picture(env)
+    old_bytes = env.c.get(old["url"]).content
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}], "changed": True, "new": []}
+    minor = {**HEAD, "severity": "minor"}
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [minor]})
+    assert r.status_code == 200, r.text
+    new = r.json()
+    v = new["verified"]
+    assert v["doubtful"] is True and v["fixed"] == 0 and v["partly"] == 0 and v["of"] == 1
+    assert v["results"] == [{"n": 1, "fixed": "no"}]
+    assert new["replaces"] == old["id"] and new["undo"]
+    assert new["beforeUrl"] == f"/api/library/{KEY}/art/{new['id']}/before"
+    assert env.c.get(new["beforeUrl"]).content == old_bytes
+    assert next(p for p in pictures(env) if p["id"] == new["id"])["fixes"][-1]["verified"]["doubtful"] is True
+    undo(env, new["undo"])                                       # Keep the original
+    ids = {p["id"] for p in pictures(env)}
+    assert old["id"] in ids and new["id"] not in ids
+
+
+def test_a_fix_the_checker_calls_fixed_is_not_doubtful(env, eye):
+    old = one_picture(env)
+    eye.verdict = {"results": [{"n": 1, "fixed": "partly"}], "changed": True, "new": []}
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD]})
+    assert r.status_code == 200, r.text
+    assert not r.json()["verified"].get("doubtful")
+
+
+def test_the_note_is_judged_as_the_last_item_and_named_in_the_verdict(env, eye):
+    """The note counts like a fault: it is item n = faults + 1, `note: true` on its result, through the route as filed."""
+    old = one_picture(env)
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "yes"}], "changed": True, "new": []}
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix",
+                   json={"faults": [HEAD], "note": "his hand grips the collar"})
+    assert r.status_code == 200, r.text
+    v = r.json()["verified"]
+    assert v["of"] == 2 and v["fixed"] == 1 and not v.get("doubtful")
+    assert v["results"][-1] == {"n": 2, "fixed": "yes", "note": True}
+    assert "his hand grips the collar" in eye.verified[-1][0]
+
+
+def test_a_note_alone_the_checker_calls_not_done_is_a_doubtful_fix(env, eye):
+    old = one_picture(env)
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}], "changed": True, "new": []}
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"note": "his hand grips the collar"})
+    assert r.status_code == 200, r.text
+    v = r.json()["verified"]
+    assert v["doubtful"] is True and v["of"] == 1 and v["results"] == [{"n": 1, "fixed": "no", "note": True}]
