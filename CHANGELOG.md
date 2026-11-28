@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.31.0](https://github.com/nightspine/lorekeeper/compare/v0.30.0...v0.31.0) (2026-11-28)
+
+
+### Features
+
+* a critical drawing-fault check, and a fix verified before it is called fixed ([#167](https://github.com/nightspine/lorekeeper/issues/167)) ([47498ab](https://github.com/nightspine/lorekeeper/commit/47498abe56716c8903e028b49563c04e653b25ff))
+* add your own reference pictures, with a note each, to any picture you draw by hand ([#170](https://github.com/nightspine/lorekeeper/issues/170)) ([c6f296c](https://github.com/nightspine/lorekeeper/commit/c6f296c4618c9b98ebffb753d2a6e8200cfddc4f))
+* style previews drawn from a scene in each book's opening, per image provider ([#172](https://github.com/nightspine/lorekeeper/issues/172)) ([4fa4683](https://github.com/nightspine/lorekeeper/commit/4fa4683f855ef4412f953dc0edb51f01849be78d))
+
+
+### Bug Fixes
+
+* chapters are labelled with the book's own number, so prologues and part dividers no longer shift them ([#171](https://github.com/nightspine/lorekeeper/issues/171)) ([4410528](https://github.com/nightspine/lorekeeper/commit/44105285e1158d292671ffa88f77dffd2ab6f501))
+
 ## [0.30.0](https://github.com/nightspine/lorekeeper/compare/v0.29.0...v0.30.0) (2026-11-28)
 
 

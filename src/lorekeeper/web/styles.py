@@ -38,9 +38,10 @@ from .. import art, images, llm
 
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 MAX_NAME = 40
-# slugs the picture sheet uses for itself ("custom" is its free-text style), so a saved style may never take one; a name
-# with no letters or digits slugs to "custom" too
-RESERVED = frozenset({"custom"})
+# slugs a saved style may never take: "custom" is the picture sheet's free-text style (a name with no letters or digits
+# slugs to it too), and "refs" is the folder beside an edition's style sets that holds uploaded reference pictures
+# (art/<textHash>/refs/), which a set of that slug would collide with
+RESERVED = frozenset({"custom", "refs"})
 MAX_TEXT = 300
 NAMES = {"digital-art": "Digital art", "comic-strip": "Comic strip", "anime": "Anime", "realism": "Realism",
          "hand-drawn": "Hand-drawn", "oil-painting": "Oil painting", "epic-sci-fi": "Epic sci-fi",

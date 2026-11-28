@@ -21,11 +21,14 @@ const remembered = () => { try { return localStorage.getItem("lk-passages") === 
 const remember = (on) => { try { localStorage.setItem("lk-passages", on ? "1" : "0"); } catch { /* private mode */ } };
 
 const plural = (n, one, many) => (n === 1 ? one : many);
-/** "Chapter 5, Letters, Lucy and Mina": the book's own heading when it already says what it is. */
-function chapterName(c) {
+/** "Chapter 5, Letters, Lucy and Mina": the book's own heading when it already says what it is, the book's own number
+ *  (`number`, never `n`, which is the chart column), else the title alone. */
+export function chapterName(c) {
   const t = tidyTitle(c.title || "");
   if (/^(chapter|part|book|prologue|epilogue|preface|introduction)\b/i.test(t)) return t;
-  return t ? `Chapter ${c.n}, ${t}` : `Chapter ${c.n}`;
+  const n = Number.isInteger(c.number) && c.number > 0 ? c.number : null;
+  if (n == null) return t || "This chapter";
+  return t ? `Chapter ${n}, ${t}` : `Chapter ${n}`;
 }
 
 /** Axis numbers: the first chapter, a few evenly spaced, the last. */
@@ -60,7 +63,7 @@ function chart(data) {
     { style: { left: `${c === 1 ? 0 : c === total ? 100 : at(c)}%` } }, String(c))));
   const x = placed ? at(here) : 0;
   const you = !placed ? null : h("div.mhere", h(`span${x < 9 ? ".start" : x > 91 ? ".end" : ""}`, { style: { left: `${x}%` } }, "You're here"));
-  const label = placed ? `Mentions per chapter. ${counts.get(here)} so far in chapter ${here}.` : "Mentions per chapter.";
+  const label = placed ? `Mentions per chapter. ${counts.get(here)} so far in ${chapterName(data.current)}.` : "Mentions per chapter.";
   const mchart = h("div.mchart", cols);
   mchart.style.setProperty("--cols", String(total));
   return h("div", { role: "img", "aria-label": label }, mchart, axis, you);

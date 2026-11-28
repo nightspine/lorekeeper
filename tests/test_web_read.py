@@ -40,6 +40,10 @@ def test_toc_is_the_readers_chapter_map(client, tmp_path):
     assert [(c["n"], c["title"], c["firstSeq"]) for c in toc["chapters"]] == [(c["n"], c["title"], c["start"]) for c in meta["chapters"]]
     assert [c["words"] for c in toc["chapters"]] == [c["words"] for c in meta["chapters"]]
     assert [c["story"] for c in toc["chapters"]] == [c["story"] for c in meta["chapters"]]
+    # The "Chapter N" the book states, the same in both: the title page takes no number and shifts none.
+    assert [(c["kind"], c["number"]) for c in toc["chapters"]] == [(c["kind"], c["number"]) for c in meta["chapters"]]
+    assert [(c["title"], c["kind"], c["number"]) for c in toc["chapters"]] == \
+        [("Title Page", "named", None), ("Chapter One", "chapter", 1), ("Chapter Two", "chapter", 2)]
     assert toc["blocks"] == len(book.blocks) and toc["words"] == sum(len(b.words) for b in book.blocks)
     # The chapters cover every block once, in order.
     spans = [(c["firstSeq"], c["lastSeq"]) for c in toc["chapters"]]

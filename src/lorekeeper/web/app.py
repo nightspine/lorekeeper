@@ -30,19 +30,21 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import art as artmod
 from .. import ask as askmod
+from .. import chapters as chaptersmod
 from .. import epub, gating, images, llm, text
 from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
+from . import previews as previewsmod
 from . import read as readmod
 from . import styles as stylesmod
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits,
-                   text_choice_config)
+from .jobs import (SIDE_KINDS, BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story,
+                   previews_config, run_limits, text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -210,6 +212,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     arts = artstore.ArtStore(data_dir)
     jobs.art_store = arts
     style_store = stylesmod.StyleStore(data_dir)     # saved picture styles; also gives art.style_sentence their words
+    preview_store = previewsmod.PreviewStore(data_dir)   # a book's own style previews (web/previews.py), never an art set
+    jobs.previews = preview_store
+    jobs.preview_styles = lambda: {st["slug"]: st["text"] for st in style_store.all()}
     library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
                        *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
@@ -244,7 +249,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return none
         # A pictures run writes its prompts with a cloud model: it counts only when its text provider is Ollama.
         busy = any(j.status in ("running", "stopping")
-                   and (j.config.get("provider") or ("" if j.kind == "art" else "ollama")) == "ollama"
+                   and (j.config.get("provider") or ("" if j.kind in SIDE_KINDS else "ollama")) == "ollama"
                    for j in jobs.jobs.values())
         # one Ollama model at a time: don't compete with a running build
         return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
@@ -459,7 +464,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def job_json(job) -> dict:
         return {**asdict(job), "output_name": Path(job.output).name,
-                **({"index": job.config.get("index_key")} if job.kind == "art" else {})}
+                **({"index": job.config.get("index_key")} if job.kind in SIDE_KINDS else {})}
 
     @app.get("/")
     def root():
@@ -565,7 +570,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # and the quality levels each offers. None for a provider that cannot draw.
         images = {"default": img["default"], "cheap": img["cheap"], "strong": img["strong"],
                   "models": [{"id": m["id"], "label": m["label"], "tier": m["tier"], "price": m["price"],
-                              "levels": list(m.get("levels") or img["quality"])} for m in img["models"]]} if img else None
+                              "levels": list(m.get("levels") or img["quality"]),
+                              # whether the person's own reference pictures go to it as pictures (else described in words)
+                              "references": image_takes(pid, m["id"])} for m in img["models"]]} if img else None
         return {"id": pid, "label": spec["label"], "kind": spec["kind"], "key_url": spec["key_url"], "key_env": spec["key_env"],
                 "configured": configured, "source": keys.source(pid), "masked": keys.masked(pid),
                 "ok": bool(cached and cached["ok"]), "error": cached["error"] if cached else None,
@@ -586,10 +593,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {m["id"] for m in st["models"] + st["liveModels"]} | ({st["model"]} if st.get("model") else set())
     jobs.text_models = text_models
 
+    def image_takes(provider: str, model: str) -> bool:
+        """Whether an image model takes pictures as input (`llm.image_takes_references`; every listed one does today)."""
+        fn = getattr(llm, "image_takes_references", None)
+        return True if fn is None else bool(fn(provider, model))
+
+    def describer_ref() -> dict | None:
+        """{provider, model} of the model that would describe the person's reference pictures for an image model that takes
+        none (`JobManager.describe_model`), or None when no model set up here can see pictures."""
+        try:
+            return artmod.model_ref(jobs.describe_model())
+        except Exception:
+            return None
+
     @app.get("/api/providers")
     def list_providers(fresh: bool = False):
         return {"providers": [provider_status(p, fresh) for p in llm.PROVIDERS],
-                "throughput": {**DEFAULT_THROUGHPUT, **jobs.throughput()}}
+                "throughput": {**DEFAULT_THROUGHPUT, **jobs.throughput()}, "describe": describer_ref()}
 
     @app.get("/api/claude")
     def claude_status(fresh: bool = False):
@@ -1122,11 +1142,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             story_flags[k] = [c["story"] for c in secs]
         return story_flags[k]
 
+    def toc_numbers(p: Path, book) -> list[dict]:
+        """`{kind, number}` per table-of-contents entry (`chapters.numbering` over the whole toc with its story flags):
+        the "Chapter N" the book itself states, never a position among the rows a view lists."""
+        return chaptersmod.numbering([{"title": c.title or f"Section {i + 1}", "story": f}
+                                      for i, (c, f) in enumerate(zip(book.chapters, sections_story(p, book)))])
+
     def mentions_body(book, flags: list[bool], m, eid: str) -> dict:
-        """Chapters are the story chapters, numbered 1..N in reading order. A section between two story chapters that
-        is not story (a part title, an interlude) is counted in the column of the story chapter before it."""
+        """Chapters are the story chapters, numbered 1..N in reading order (`n`, the column); `number` is the chapter
+        number the book states (`chapters.numbering`, null for a prologue or a plain title), the one to show. A section
+        between two story chapters that is not story (a part title, an interlude) is counted in the column of the story
+        chapter before it."""
         from .. import mentions
         story = [i for i, f in enumerate(flags) if f]                 # section index of story chapter n = story[n - 1]
+        nums = chaptersmod.numbering([{"title": c.title or f"Section {i + 1}", "story": f}
+                                      for i, (c, f) in enumerate(zip(book.chapters, flags))])
         body = {"total": len(story), "chapters": [], "current": None,
                 "first": None, "busiest": None, "latest": None}
         cur = m.current
@@ -1140,20 +1170,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             # up to the next story chapter; after the last one, only its own section (back matter is not folded in)
             end = story[n + 1] if n + 1 < len(story) else i + 1
             chapters.append({"n": n + 1, "title": book.chapters[i].title or f"Section {i + 1}",
-                             "count": sum(counts[i:min(end, cur + 1)])})
+                             "number": nums[i]["number"], "count": sum(counts[i:min(end, cur + 1)])})
         body["chapters"] = chapters
         seen = [c for c in chapters if c["count"]]
         if not seen:
             return body
         busiest = max(seen, key=lambda c: (c["count"], -c["n"]))
-        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
-        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
-        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
+        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"], "number": seen[0]["number"]}
+        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "number": busiest["number"],
+                           "count": busiest["count"]}
+        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"], "number": seen[-1]["number"]}
         if flags[cur]:                                                # an interlude or back matter has no current chapter
             first = book.chapters[cur].start
             u16 = lambda t, i: len(t[:i].encode("utf-16-le")) // 2   # noqa: E731
             sn = mentions.snippets(book.blocks, m.spans.get(eid, []))
-            body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
+            body["current"] = {"n": story.index(cur) + 1, "number": nums[cur]["number"], "count": counts[cur],
                                "snippets": [{**x, "para": x["seq"] - first + 1,
                                              "start": u16(x["text"], x["start"]), "end": u16(x["text"], x["end"])}
                                             for x in sn]}
@@ -1218,14 +1249,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def read_toc(key: str):
         """Every chapter of the index's own edition, numbered as the Reader's chapter map (`n`), with the blocks it
         spans and its words. `story` is the build form's front and back matter rule (absent for a book read with no
-        table of contents)."""
+        table of contents). `kind` and `number` are `chapters.numbering` over the whole table of contents: the
+        "Chapter N" to show (null: the title alone); a book with no table of contents is one `other` entry with none."""
         p, book, refusal = read_book(key)
         if refusal:
             return refusal
         spans = readmod.chapter_spans(book)
         if book.chapters:
-            for c, flag in zip(spans, sections_story(p, book)):
-                c["story"] = flag
+            for c, flag, num in zip(spans, sections_story(p, book), toc_numbers(p, book)):
+                c.update(story=flag, kind=num["kind"], number=num["number"])
+        else:
+            for c in spans:
+                c.update(kind="other", number=None)
         return {"chapters": spans, "blocks": len(book.blocks), "words": sum(c["words"] for c in spans)}
 
     @app.get("/api/library/{key}/read")
@@ -1327,7 +1362,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def art_revert(entry: dict, snap: Path) -> None:
         """Undo one pictures entry, touching only the records it names: what it added is taken out, what it removed is put
-        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay."""
+        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay. Every upload
+        the entry names is renewed first, so none is pruned while its record comes back and the entry goes."""
+        try:
+            h_ = entry["art"]["textHash"]
+            for sha in artstore.user_ref_shas(entry):
+                arts.touch_ref(h_, sha)
+        except Exception:
+            pass
+        _art_revert(entry, snap)
+
+    def _art_revert(entry: dict, snap: Path) -> None:
         a = entry["art"]
         h = a["textHash"]
         if a.get("op") == "remove-sets":
@@ -1342,6 +1387,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                 shutil.copy2(f, dst / f.name)
                     else:
                         arts.put_back(h, slug_, json.loads((src / "art.json").read_text()).get("pictures", []), src)
+            if a.get("refs") and (snap / artstore.REFS).is_dir():      # the uploads went with every set
+                with arts.refs_lock:
+                    dst = arts.refs_dir(h)
+                    dst.mkdir(parents=True, exist_ok=True)
+                    for f in (snap / artstore.REFS).iterdir():
+                        if artstore.REF_FILE.fullmatch(f.name) and not (dst / f.name).exists():
+                            shutil.copy2(f, dst / f.name)
+                            os.utime(dst / f.name)      # back in use: a day before it may be pruned
             return
         if a.get("op") == "world" and "sets" in a:
             for sl, was in a["sets"].items():
@@ -1353,6 +1406,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if "background" in a:
                 with arts.lock(h, "background"):
                     arts.set_background(h, a["background"])
+            return
+        if a.get("op") == "refs":               # a picture's reference pictures changed without drawing
+            with arts.lock(h, a["style"]):
+                m = arts.manifest(h, a["style"])
+                for r in (m or {}).get("pictures", []):
+                    if r.get("id") == a["id"]:
+                        was = (a.get("was") or {}).get("userRefs")
+                        if was:
+                            r["userRefs"] = was
+                        else:
+                            r.pop("userRefs", None)
+                if m is not None:
+                    arts.save(h, a["style"], m)
             return
         for more in a.get("also", []):          # a run's pictures in earlier books' sets
             with arts.lock(more["textHash"], more["style"]):
@@ -1565,11 +1631,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         except (KeyError, StopIteration, ValueError) as e:
             raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
 
-    def draw_given(il, job, pr, text_: str) -> dict:
+    def draw_given(il, job, pr, text_: str, user_refs=()) -> dict:
         """Draw the prompt as given (the person's own or edited text, or an old prompt): with `text` the pipeline never
-        softens it, and a refusal is raised with the provider's reason and recorded as no skip, so the person may try again."""
+        softens it, and a refusal is raised with the provider's reason and recorded as no skip, so the person may try again.
+        `user_refs` (`art.UserRef`) are the person's own reference pictures; only a hand-started draw passes them."""
         try:
-            rec = il.draw(job, prompt=pr, text=text_)
+            rec = il.draw(job, prompt=pr, text=text_, **({"user_refs": list(user_refs)} if user_refs else {}))
         except images.ImageRefused as e:
             raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
         if rec is None:
@@ -1690,6 +1757,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def picture_json(ctx: dict, slug_: str, rec: dict, hashes: list[str] | None = None) -> dict:
         out = {**rec, "url": f"/api/art/{ctx['hash']}/{slug_}/{rec['id']}"}
+        if isinstance(rec.get("userRefs"), list):   # the person's own pictures, each served from the edition's `refs/`
+            out["userRefs"] = [{**r, "url": f"/api/art/{ctx['hash']}/refs/{r['sha']}"} for r in rec["userRefs"]
+                               if isinstance(r, dict) and artstore.SHA.fullmatch(str(r.get("sha") or ""))]
         if isinstance(rec.get("figures"), list):    # each reference as a URL (or null), as the prompt route answers
             hashes = hashes if hashes is not None else edition_hashes(ctx)
             out["figures"] = [{"label": f.get("label"), "entity": f.get("entity"), "ref": figure_ref_url(hashes, slug_, f.get("ref"))}
@@ -1847,8 +1917,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for h in arts.editions():
             it = found.get(h)
             styles = [{k: s[k] for k in ("style", "slug", "pictures", "bytes")} for s in arts.styles(h)]
+            rd = arts.refs_dir(h)       # the person's uploaded reference pictures, shared by the sets
+            refs_bytes = sum(f.stat().st_size for f in rd.iterdir() if f.is_file()) if rd.is_dir() else 0
             out.append({"key": it["key"] if it else None, "title": (it["doc"].get("work") or {}).get("title") if it else None,
-                        "textHash": h, "styles": styles, "bytes": sum(s["bytes"] for s in styles)})
+                        "textHash": h, "styles": styles, "refsBytes": refs_bytes,
+                        "bytes": sum(s["bytes"] for s in styles) + refs_bytes})
         return out
 
     @app.delete("/api/art/{text_hash}")
@@ -1864,8 +1937,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             key = next((it["key"] for it in library.scan().values() if it["doc"].get("kind") == "index"
                         and artstore.text_hash(it["doc"]) == text_hash), None)
             entry = None
+            # every set going: the person's uploads (shared by the sets) go too
+            refs_dir = arts.refs_dir(text_hash)
+            every = len(slugs) == len(arts.styles(text_hash)) and refs_dir.is_dir()
             if key:
-                entry = journal_art(key, [], {"op": "remove-sets", "textHash": text_hash, "sets": slugs},
+                entry = journal_art(key, [], {"op": "remove-sets", "textHash": text_hash, "sets": slugs,
+                                              **({"refs": True} if every else {})},
                                     f"removed the pictures ({', '.join(slugs)})")
             for slug_ in slugs:
                 with arts.lock(text_hash, slug_):
@@ -1873,6 +1950,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     if entry:
                         shutil.copytree(folder, identity.dir / entry["id"] / slug_)
                     shutil.rmtree(folder)
+            if every:
+                with arts.refs_lock:       # no upload lands between the copy for undo and the removal
+                    if entry:
+                        shutil.copytree(refs_dir, identity.dir / entry["id"] / artstore.REFS)
+                    shutil.rmtree(refs_dir, ignore_errors=True)
             parent = arts.root / text_hash
             if parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
@@ -2003,10 +2085,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     got[k] += g[k]
                 extra_max += max(0, g.get("portraits_max", g["new_portraits"]) - g["new_portraits"])
         rows = story_rows(il, got["chapters"])
+        # each row's "Chapter N" as the book states it (`chapters.numbering` over the whole toc, keyed by plan number n,
+        # a toc position); with no toc the plan's rows are the recaps' titles in order
+        pe = library.edition_path(ctx["hash"])
+        bk = parsed(pe) if pe else None
+        if bk is not None and bk.chapters:
+            numbers = {i + 1: x for i, x in enumerate(toc_numbers(pe, bk))}
+        else:
+            numbers = dict(zip([c["n"] for c in got["chapters"]],
+                               chaptersmod.numbering([c["title"] for c in got["chapters"]])))
         # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
         plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
         chapters_ = [{"n": c["n"], "title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
-                      "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"]}
+                      "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"],
+                      "number": numbers.get(c["n"], {}).get("number")}
                      for c in rows]
         ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
@@ -2063,6 +2155,15 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 "model": name, "quality": squal, "portraitProvider": pprov, "portraitModel": pname, "portraitQuality": pqual,
                 "level": level, "chapters": chapters_,
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
+
+    @app.get("/api/art/{text_hash}/refs/{sha}")
+    def art_ref_file(text_hash: str, sha: str):
+        """One of the person's uploaded reference pictures, by content (so cached a day as it never changes)."""
+        p = arts.ref_path(text_hash, sha)
+        if p is None:
+            raise HTTPException(404, "no such picture")
+        return FileResponse(p, media_type=artstore.REF_MIME[p.suffix[1:]],
+                            headers={"Cache-Control": "max-age=86400", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
     def art_file(text_hash: str, style: str, pid: str):
@@ -2227,6 +2328,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             text_ = " ".join(str(body.get("prompt") or "").split())
             if not text_ or len(text_) > 4000:
                 raise ArtRefusal(422, "bad-prompt", "Give the prompt to draw, at most 4,000 characters.")
+            items = refs_request(ctx, body.get("refs"))     # the person's own pictures, checked before any call
             art_busy(ctx["hash"])
             fin = art_finished(ctx, body)
             check = body.get("check", False)
@@ -2244,6 +2346,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                                checker=checker, check=check and checker is not None)
                 if image is None:
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
+                known = known_descriptions(ctx) if items else {}
+                describer = ref_describer(image, items, known)     # 409 before any call when none can describe them
                 given, at = art_position(ctx, body)
                 args = (il, body.get("kind"), body.get("target"), given, at, body.get("shape"), fin)
                 job = art_job(*args)
@@ -2285,7 +2389,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if not own and at_position(il, job, at):
                     pr.anchor = job.anchor
                 old_rec = replaced_record(ctx, il, job, slug_, at, fin, body.get("replaces"))
-                rec = draw_given(il, job, pr, text_)
+                refs_ = user_refs(ctx, image, items, known, describer)
+                rec = draw_given(il, job, pr, text_, refs_)
                 if old_rec is None:
                     entry = journal_art(key, [], {"op": "add", "textHash": ctx["hash"], "style": slug_,
                                                   "added": [rec["id"]]}, f"drew a picture ({rec['kind']})")
@@ -2315,7 +2420,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
         return rec
 
-    def take_place_of(key: str, h: str, slug_: str, old_rec: dict, new: dict, what: str = "drew a picture again") -> dict:
+    def take_place_of(key: str, h: str, slug_: str, old_rec: dict, new: dict, what: str = "drew a picture again",
+                      carry: dict | None = None) -> dict:
         """File `new` (already in the set) in the place of `old_rec`: the new record `replaces` it and the old leaves the set
         with its file, both kept in one journal entry (op `redraw`) whose undo puts the old one back. Under the set's lock."""
         pid = old_rec["id"]
@@ -2328,6 +2434,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             for r in man["pictures"]:
                 if r["id"] == new["id"]:
                     r["replaces"] = pid
+                    r.update(carry or {})
                     if "inherits" not in old_rec and "inherits" not in new:
                         r.pop("inherits", None)
             man["pictures"] = [r for r in man["pictures"] if r["id"] != pid or r["id"] == new["id"]]
@@ -2345,6 +2452,167 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if hit is None:
             raise ArtRefusal(404, "no-picture", "no such picture")
         return hit
+
+    # ---- the person's own reference pictures (`refs`): uploads kept by content per edition (`ArtStore.put_ref`)
+
+    GONE_REF = "That reference picture is no longer here. Add it again."
+
+    def refs_request(ctx: dict, raw, absent_ok: bool = True) -> list[dict]:
+        """The `refs` of a draw, redraw or `PUT .../refs`, checked before any call: at most 4, distinct shas, each one the
+        edition's `refs/` holds, a note of at most 120 characters after collapsing whitespace. [{sha, ext, note}];
+        422 `bad-refs` with a sentence. None (no `refs`) is none, unless `absent_ok` is off (redraw's `"refs": null`, PUT).
+        Each one checked is renewed (`ArtStore.touch_ref`), so it is never pruned while it is being drawn with."""
+        def bad(why: str):
+            return ArtRefusal(422, "bad-refs", why)
+        if raw is None and absent_ok:
+            return []
+        if not isinstance(raw, list):
+            raise bad("refs must be a list of reference pictures.")
+        if len(raw) > artstore.MAX_USER_REFS:
+            raise bad(f"Send at most {artstore.MAX_USER_REFS} reference pictures.")
+        out, seen = [], set()
+        for r in raw:
+            sha = r.get("sha") if isinstance(r, dict) else None
+            if not isinstance(sha, str) or not artstore.SHA.fullmatch(sha):
+                raise bad("Each reference picture needs the sha its upload answered.")
+            note = r.get("note")
+            if note is not None and not isinstance(note, str):
+                raise bad("A reference picture's note must be text.")
+            note = " ".join((note or "").split())
+            if len(note) > artstore.REF_NOTE_CHARS:
+                raise bad(f"Keep each note to {artstore.REF_NOTE_CHARS} characters.")
+            if sha in seen:
+                raise bad("Each reference picture can be sent once.")
+            seen.add(sha)
+            p = arts.touch_ref(ctx["hash"], sha)
+            if p is None:
+                raise bad(GONE_REF)
+            out.append({"sha": sha, "ext": p.suffix[1:], "note": note})
+        return out
+
+    def stored_refs(ctx: dict, rec: dict) -> list[dict]:
+        """A record's `userRefs` as stored, each still in `refs/` (one that is gone is left out, as a reference that is)."""
+        out = []
+        for r in rec.get("userRefs") or []:
+            p = arts.touch_ref(ctx["hash"], r["sha"]) if isinstance(r, dict) and isinstance(r.get("sha"), str) else None
+            if p is not None:
+                out.append({"sha": r["sha"], "ext": p.suffix[1:],
+                            "note": " ".join(str(r.get("note") or "").split())[:artstore.REF_NOTE_CHARS],
+                            **({"description": r["description"]} if isinstance(r.get("description"), str) else {})})
+        return out
+
+    def known_descriptions(ctx: dict, *recs: dict) -> dict[tuple[str, str], str]:
+        """(sha, note) -> a description already made of that picture for that note, from the given records first, then any
+        record of the edition's sets: a picture is described once, and a redraw makes no new call."""
+        out: dict[tuple[str, str], str] = {}
+        pool = [r for r in recs if r]
+        for st in arts.styles(ctx["hash"]):
+            pool += (arts.manifest(ctx["hash"], st["slug"]) or {}).get("pictures", [])
+        for rec in pool:
+            for r in rec.get("userRefs") or [] if isinstance(rec, dict) else []:
+                if isinstance(r, dict) and isinstance(r.get("description"), str) and isinstance(r.get("sha"), str):
+                    out.setdefault((r["sha"], " ".join(str(r.get("note") or "").split())), r["description"])
+        return out
+
+    def takes_references(image) -> bool:
+        """Whether the image backend takes pictures as input (`image_takes`)."""
+        return True if image is None else image_takes(image.provider, image.name)
+
+    def ref_describer(image, items: list[dict], known: dict):
+        """The vision model that describes the person's pictures for an image model that takes none (the one Describe
+        uses), or None when nothing needs describing. 409 `no-vision-model` when some do and no model can see pictures."""
+        if not items or takes_references(image) or all((r["sha"], r["note"]) in known for r in items):
+            return None
+        model = jobs.describe_model()
+        if model is None:
+            raise ArtRefusal(409, "no-vision-model", "This image model can't take pictures, and no model that can see "
+                                                     "pictures is set up to describe them. Draw without them, or add a "
+                                                     "Claude, OpenAI or Gemini key in Settings.")
+        return model
+
+    def user_refs(ctx: dict, image, items: list[dict], known: dict, describer=None) -> list:
+        """The pipeline's `art.UserRef`s for the checked `items`: the bytes from `refs/`, and for an image model that takes
+        no pictures each one's description (a known one reused, else one `describe_reference` call on `describer`)."""
+        takes = takes_references(image)
+        out = []
+        for r in items:
+            got = arts.ref_bytes(ctx["hash"], r["sha"])
+            if got is None:
+                raise ArtRefusal(422, "bad-refs", GONE_REF)
+            data, mime, _ = got
+            desc = None
+            if not takes:
+                desc = known.get((r["sha"], r["note"]))
+                if desc is None:
+                    try:
+                        desc = artmod.describe_reference(describer, data, mime, r["note"])
+                    except ValueError as e:
+                        raise ArtRefusal(502, "model-failed", "A reference picture could not be described. Try again, or "
+                                                              "draw without it.") from e
+            out.append(artmod.UserRef(data=data, mime=mime, sha=r["sha"], note=r["note"], description=desc))
+        return out
+
+    @app.post("/api/library/{key}/art/refs")
+    async def art_ref_upload(key: str, file: UploadFile = File(...)):
+        """Keep one of the person's own reference pictures for a drawing (multipart `file`), checked by its bytes only (as a
+        style's reference picture): {sha, ext, width, height, bytes, url}. Kept by content in the edition's `refs/`; one no
+        picture lists goes after a day. Pictures are not the index, so this works on community and example indexes too."""
+        try:
+            ctx = art_index(key)
+            if library.edition_path(ctx["hash"]) is None:
+                raise ArtRefusal(404, "no-edition", "The book file for this index is not here, so pictures can't be made for it.")
+            data = await stylesmod.read_upload(file)
+            got = await asyncio.get_running_loop().run_in_executor(None, arts.put_ref, ctx["hash"], data)
+        except ArtRefusal as e:
+            return art_error(e.status, e.code, e.detail)
+        except stylesmod.StyleError as e:
+            return art_error(e.status, e.code, e.detail)
+        return {k: got[k] for k in ("sha", "ext", "width", "height", "bytes")} | {
+            "url": f"/api/art/{ctx['hash']}/refs/{got['sha']}"}
+
+    @app.put("/api/library/{key}/art/{pid}/refs")
+    async def art_refs_put(key: str, pid: str, request: Request):
+        """Change the person's reference pictures of a drawn picture without drawing (remove one, change a note): only what
+        a redraw reuses, never the picture. One journal entry (`op: "refs"`), undone like an edit."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            slug_, rec = art_record(ctx, pid)
+            art_busy(ctx["hash"])
+            if "refs" not in body:
+                raise ArtRefusal(422, "bad-refs", "Send the reference pictures to keep as refs.")
+            items = refs_request(ctx, body.get("refs"), absent_ok=False)
+            fin = art_finished(ctx, body)
+            with arts.lock(ctx["hash"], slug_):
+                slug_, rec = art_record(ctx, pid)       # read again under the lock
+                if body.get("p", body.get("anchor")) is not None or fin is not None:
+                    il, _, _ = illustrator(ctx, slug_, text_needed=False)
+                    art_gate(ctx, il, rec, body, fin)
+                known = known_descriptions(ctx, rec)
+                new = [{**r, **({"description": known[(r["sha"], r["note"])]} if (r["sha"], r["note"]) in known else {})}
+                       for r in items]
+                before = rec.get("userRefs")
+                # `was` keeps the old list under a `userRefs` key, so the uploads it names stay while the undo can bring them back
+                entry = journal_art(key, [], {"op": "refs", "textHash": ctx["hash"], "style": slug_, "id": pid,
+                                              "was": {"userRefs": before} if before else {}, "userRefs": new},
+                                    "changed a picture's reference pictures")
+                try:
+                    man = arts.manifest(ctx["hash"], slug_)
+                    for r in man["pictures"]:
+                        if r.get("id") == pid:
+                            if new:
+                                r["userRefs"] = new
+                            else:
+                                r.pop("userRefs", None)
+                            rec = r
+                    arts.save(ctx["hash"], slug_, man)
+                except Exception:
+                    identity.discard(entry["id"])
+                    raise
+            return {**picture_json(ctx, slug_, rec), "slug": slug_, "undo": entry["id"]}
+        return await work()
 
     @app.delete("/api/library/{key}/art/{pid}")
     def art_delete(key: str, pid: str):
@@ -2400,8 +2668,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 raise ArtRefusal(422, "bad-note", "Keep the note to 300 characters.")
             ctx = art_index(key)
             slug_, rec = art_record(ctx, pid)
+            # the person's pictures: the record's own as stored, unless `refs` replaces them (`[]` drops them all)
+            given_refs = refs_request(ctx, body["refs"], absent_ok=False) if "refs" in body else None
             art_busy(ctx["hash"])
             with arts.lock(ctx["hash"], slug_):
+                slug_, rec = art_record(ctx, pid)       # read again under the lock: a `PUT .../refs` that came first stands
                 prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
                 mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
                 qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
@@ -2436,7 +2707,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None,
                                    panels=panels if rec["kind"] == "comic" else None,
                                    **({"no_text": artmod.COMIC_NO_TEXT} if rec["kind"] == "comic" else {}))
-                new = draw_given(il, job, pr, text_)
+                items = given_refs if given_refs is not None else stored_refs(ctx, rec)
+                known = known_descriptions(ctx, rec) if items else {}
+                refs_ = user_refs(ctx, image, items, known, ref_describer(image, items, known))
+                new = draw_given(il, job, pr, text_, refs_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
                 entry = take_place_of(key, ctx["hash"], slug_, rec, new)
@@ -2597,7 +2871,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 new.pop("inherits", None)
             kept = arts.path(ctx["hash"], slug_, pid)
             before = kept is not None and kept.name != new["file"]
-            entry = take_place_of(key, ctx["hash"], slug_, rec, new, what)
+            # the fix sends none of the person's pictures (an edit keeps the picture's own look), but they stay with it
+            # for a redraw
+            carry = {"userRefs": rec["userRefs"]} if rec.get("userRefs") and not new.get("userRefs") else None
+            new = {**new, **(carry or {})}
+            entry = take_place_of(key, ctx["hash"], slug_, rec, new, what, carry)
         last = (new.get("fixes") or [{}])[-1]
         verified = last.get("verified")
         return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
@@ -2638,6 +2916,167 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                                                 verify=checker is not None, checker=checker),
                             f"fixed panel {k} of a comic")
         return await work()
+
+    # ---- style previews: one opening scene of the book in every style, per image provider (web/previews.py) ----------
+
+    def preview_moments(ctx: dict, need: bool = True):
+        """(Illustrator, opening moments) of an index, no model call; (None, []) without the EPUB unless `need`."""
+        try:
+            book = art_epub(ctx)
+        except ArtRefusal:
+            if need:
+                raise
+            return None, []
+        il = previewsmod.illustrator(ctx["doc"], book, art_prior(ctx), None, preview_seed(ctx["hash"]))
+        return il, previewsmod.opening(il, is_story)
+
+    def preview_seed(h: str) -> dict | None:
+        sets = arts.styles(h)
+        return arts.manifest(h, sets[0]["slug"]) if sets else None
+
+    def preview_scene_json(scene: dict | None) -> dict | None:
+        if not isinstance(scene, dict):
+            return None
+        return {k: scene.get(k) for k in ("kind", "target", "chapter", "storyChapter", "summary", "writer", "chosen",
+                                          "created")}
+
+    def preview_estimate_json(plan: dict) -> dict:
+        return {"pictures": plan["pictures"], "price": plan["price"], "styles": plan["styles"],
+                "providers": [{"provider": r["provider"], "label": llm.PROVIDERS.get(r["provider"], {}).get("label", r["provider"]),
+                               "model": r["model"], "quality": r["quality"], "price": r["price"],
+                               "pictures": len(r["styles"])} for r in plan["providers"]]}
+
+    def preview_target(ctx: dict, raw) -> tuple[dict, dict | None, bool]:
+        """(the moment a previews job would draw, the stored data, whether the scene is new): 422 `no-moments` when the
+        opening has none, `bad-scene` for a target that is not one of them."""
+        _, moments = preview_moments(ctx)
+        if not moments:
+            raise ArtRefusal(422, "no-moments", "The first chapters of this book have no moments to draw.")
+        cur = preview_store.get(ctx["hash"])
+        m = previewsmod.choose(moments, raw, (cur or {}).get("scene"))
+        if m is None:
+            raise ArtRefusal(422, "bad-scene", "Choose a moment from the first chapters of the book.")
+        return m, cur, not previewsmod.same_scene((cur or {}).get("scene"), m)
+
+    @app.get("/api/library/{key}/previews")
+    @art_route
+    def previews_get(key: str):
+        """The book's own style previews: the scene (never its prompt), one URL per provider and style with whether it is
+        stale, the opening moments a person may choose instead, and whether a previews job is under way."""
+        ctx = art_index(key)
+        h = ctx["hash"]
+        il, moments = preview_moments(ctx, need=False)
+        data = preview_store.get(h) or {}
+        scene = data.get("scene")
+        if il is not None and isinstance(scene, dict):
+            b = il.books[-1]       # a stored scene outside the opening as the book reads now is never shown
+            story = [c for c in b.chapters if is_story(c["title"], c.get("words", 0))][:previewsmod.OPENING_CHAPTERS]
+            s = b.seq_of.get(scene.get("anchor"))
+            if s is None or not any(c["lo"] <= s <= c["hi"] for c in story):
+                scene = None
+        words = jobs.preview_styles()
+        providers = {}
+        if scene:
+            for p, per in (data.get("items") or {}).items():
+                if p not in llm.IMAGE_PROVIDERS or not isinstance(per, dict):
+                    continue
+                row = {}
+                for slug_, it in per.items():
+                    if slug_ not in words or not isinstance(it, dict) or preview_store.path(h, p, slug_) is None:
+                        continue
+                    ref = artmod.style_reference(slug_) if slug_ not in artmod.STYLES else None
+                    row[slug_] = {"url": f"/api/previews/{h}/{p}/{slug_}?v={int(it.get('created') or 0)}",
+                                  "model": it.get("model"), "quality": it.get("quality"),
+                                  "stale": previewsmod.stale(it, words[slug_], ref.sha if ref else None)}
+                if row:
+                    providers[p] = row
+        return {"scene": preview_scene_json(scene), "providers": providers,
+                "moments": [previewsmod.public_moment(m) for m in moments], "drawing": jobs.previewing(h)}
+
+    @app.get("/api/previews/{text_hash}/{provider}/{slug}")
+    def preview_file(text_hash: str, provider: str, slug: str):
+        p = preview_store.path(text_hash, provider, slug)
+        if p is None:
+            raise HTTPException(404, "no such preview")
+        return FileResponse(p, media_type=previewsmod.MIME.get(p.suffix[1:], "application/octet-stream"),
+                            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/library/{key}/previews/estimate")
+    @art_route
+    def previews_estimate(key: str, scene: str | None = None, redraw: bool = False):
+        """What drawing the previews would cost, no model call: every style for each image provider with a key, at its
+        default model's cheapest level, square; with the same scene, only the styles not drawn yet or stale (all with
+        `redraw`). `price` null when a picture to draw has no known price."""
+        ctx = art_index(key)
+        _, _, fresh = preview_target(ctx, scene or None)
+        return preview_estimate_json(jobs.preview_plan(ctx["hash"], None, None, fresh=fresh, redraw=redraw))
+
+    @app.post("/api/library/{key}/previews")
+    async def previews_post(key: str, request: Request):
+        """Queue the book's style previews ({scene?: a moment's target, redraw?: bool, styles?, providers?}); answers the job."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            try:
+                cfg = previews_config(body)
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            if not any(jobs.keys(p) for p in (cfg["providers"] or llm.IMAGE_PROVIDERS)):
+                raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw style previews.")
+            m, _, fresh = preview_target(ctx, cfg["scene"])
+            if fresh and jobs.text_choice("cheap") is None:
+                raise ArtRefusal(409, "no-text-model", "Style previews need a cloud model to write the scene. Add a key in Settings.")
+            if jobs.previewing(ctx["hash"]):
+                raise ArtRefusal(409, "busy", "Style previews are already being drawn for this book.")
+            plan = jobs.preview_plan(ctx["hash"], cfg["styles"], cfg["providers"], fresh=fresh, redraw=cfg["redraw"])
+            if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+                raise ArtRefusal(422, "bad-config", f"That would cost more than ${previewsmod.CAP:.2f}.")
+            owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
+            title = ctx["doc"].get("work", {}).get("title") or key
+            try:
+                job = jobs.submit_previews(key, {**cfg, "scene": m["target"] if cfg["scene"] else None},
+                                           index_path=str(ctx["item"]["path"]), book_id=(owner or {}).get("localId") or "",
+                                           title=title, text_hash=ctx["hash"], catalog_key=(owner or {}).get("key"))
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            except RuntimeError as e:
+                raise ArtRefusal(409, "busy", str(e)) from e
+            return job_json(job)
+        return await work()
+
+    @app.delete("/api/library/{key}/previews")
+    @art_route
+    def previews_delete(key: str):
+        ctx = art_index(key)
+        if jobs.previewing(ctx["hash"]):
+            raise ArtRefusal(409, "busy", "Style previews are being drawn for this book. Stop that run first.")
+        return {"removed": preview_store.remove(ctx["hash"])}
+
+    def after_build(job) -> str | None:
+        """A finished build asked for style previews (`stylePreviews` in its config): queue them when the edition has
+        none yet and an image provider has a key. The line goes into the build's log."""
+        if job.config.get("stylePreviews") is not True:
+            return None
+        key = art_key_for(job)
+        item = library.get(key) if key else None
+        if item is None or item["doc"].get("kind") != "index":
+            return None
+        h = artstore.text_hash(item["doc"])
+        if not artstore.HASH.fullmatch(h) or preview_store.get(h) or jobs.previewing(h):
+            return None
+        if not any(jobs.keys(p) for p in llm.IMAGE_PROVIDERS):
+            return "style previews: not drawn (add a Gemini or OpenAI key in Settings to draw them)"
+        plan = jobs.preview_plan(h, None, None, fresh=True)
+        if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+            return f"style previews: not drawn (they would cost more than ${previewsmod.CAP:.2f})"
+        title = item["doc"].get("work", {}).get("title") or job.book_title
+        jobs.submit_previews(key, {}, index_path=str(item["path"]), book_id=job.book_id, title=title, text_hash=h,
+                             catalog_key=job.config.get("catalog_key"))
+        cost = "price unknown" if plan["price"] is None else f"about ${plan['price']:.2f}"
+        return f"style previews: queued, {plan['pictures']} pictures, {cost}"
+    jobs.after_build = after_build
 
     @app.get("/api/library/{key}/art/{pid}/before")
     def art_before(key: str, pid: str, p: str | None = None, finished: str | None = None):

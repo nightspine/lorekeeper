@@ -660,6 +660,9 @@ def make(provider: str, model: str | None = None, api_key: str | None = None, ba
 # quality levels a model offers (default all three); asking for another is a ValueError. `quality` and
 # `shapes` map our levels (draft/standard/best) and shapes (square/portrait/landscape = 1:1, 3:4, 16:9)
 # onto the provider's words, so a UI can show them; on Gemini draft and standard are both 1K on purpose.
+# `references: False` on a model row marks one that takes no pictures as input (default True, every
+# listed model takes them): it is sent no reference picture at all, and a person's own reference
+# pictures are described in words first (`art.describe_reference`); see `image_takes_references`.
 # Verified 2026-11-24 against:
 #   Gemini ids and prices   https://ai.google.dev/gemini-api/docs/pricing
 #   Gemini request fields   https://ai.google.dev/gemini-api/docs/generate-content/image-generation
@@ -726,6 +729,13 @@ def image_model(provider: str, model: str) -> dict | None:
         if m["id"] == model:
             return m
     return None
+
+
+def image_takes_references(provider: str, model: str) -> bool:
+    """Whether an image model takes pictures as input (references): False only for a table row marked `references: False`;
+    True for every other listed model and for a model not in the table (tried as given)."""
+    m = image_model(provider, model)
+    return m.get("references", True) is not False if m else True
 
 
 def image_price(provider: str, model: str, quality: str = "standard", shape: str | None = None) -> float | None:

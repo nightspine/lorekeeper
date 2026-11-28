@@ -22,9 +22,12 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .. import art as artmod, arcs as book_arcs, bookkind, epub, generate, llm, portraits, text, validate
+from ..chapters import numbering
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
+# job kinds that never write an index: "art" draws pictures for one, "previews" draws its style previews
+SIDE_KINDS = ("art", "previews")
 ENTITY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,127}")   # the index schema's slug
 MAX_RUN_ENTITIES = 12      # entries one pictures run draws through the book
 
@@ -125,6 +128,8 @@ NOT_STORY = re.compile(
     r"contents|licen[cs]e|gutenberg|copyright|colophon|imprint|title ?page|endnotes|uncopyright|^index$|"
     r"acknowledg|dedication|about the (author|publisher)|also by|^praise|newsletter|sign up|preview|excerpt|"
     r"^maps?$|reading group|discussion questions|^cover$|^half title|"
+    # A list of the people in the book is front matter, however long.
+    r"^dramatis person|^cast of characters|^list of characters|^(principal )?characters$|"
     # An author's own introduction or note usually discusses the plot: never story by default.
     r"^introduction|author[’']?s note|^foreword|^preface|^afterword", re.IGNORECASE)
 
@@ -134,7 +139,7 @@ NOT_STORY = re.compile(
 BACK_MATTER = re.compile(
     r"also by|about the (author|publisher)|acknowledg|newsletter|sign up|preview|excerpt|^praise|"
     r"reading group|discussion questions|coming soon|other books|more from|books by", re.IGNORECASE)
-STORY_RULES = 2   # bump when story detection changes, so cached book metadata is recomputed
+STORY_RULES = 3   # bump when story detection changes, so cached book metadata is recomputed
 
 
 def is_story(title: str, words: int) -> bool:
@@ -160,6 +165,9 @@ def describe(path: Path, book=None) -> dict:
                  "words": sum(len(b.words) for b in book.blocks[c.start:end])}
                 for i, (c, end) in enumerate(zip(book.chapters, ends))]
     mark_story(chapters)
+    # the "Chapter N" the book states (`chapters.numbering` over the whole toc), for the Reader's chapter map
+    for c, num in zip(chapters, numbering(chapters)):
+        c.update(kind=num["kind"], number=num["number"])
     found = bookkind.infer(book)   # no model call here; a build may ask one (generate)
     return {"bookKind": {"detected": found.kind, "basis": found.basis, "why": found.why}, "storyRules": STORY_RULES, "title": book.title or path.stem, "authors": book.authors, "language": book.language,
             "series": book.series, "seriesIndex": book.series_index, "isbns": book.isbns,
@@ -182,7 +190,8 @@ class Job:
     report: dict | None = None
     progress: dict = field(default_factory=dict)   # latest chunk / phase / stats snapshot
     resume: bool = False
-    kind: str = "index"             # index: a build; art: pictures for an existing index (`output` is that index, never written)
+    kind: str = "index"             # index: a build; art: pictures for an existing index (`output` is that index, never written);
+                                    # previews: the book's style previews (web/previews.py; `output` is the index, never written)
 
 
 def art_config(raw) -> dict:
@@ -326,6 +335,30 @@ def chapter_choice(cfg: dict, plan: list[dict]) -> None:
         raise ValueError("Some of the chosen chapters are not chapters of this book.")
 
 
+def previews_config(raw) -> dict:
+    """A style previews job's request, checked: {providers: [image provider ids] or None (every one with a key), styles:
+    [style slugs] or None (every listed and saved style), scene: a moment's target or None (the stored scene, else the
+    default), redraw: draw again what is already drawn and fresh}. Raises ValueError."""
+    raw = {} if raw is None else raw
+    if not isinstance(raw, dict):
+        raise ValueError("expected a JSON object")
+    out: dict = {}
+    for k, ok in (("providers", lambda v: v in llm.IMAGE_PROVIDERS), ("styles", lambda v: re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", v))):
+        v = raw.get(k)
+        if v is not None and (not isinstance(v, list) or not v or len(v) > 64
+                              or not all(isinstance(x, str) and ok(x) for x in v)):
+            raise ValueError(f"{k} must be a list of {'image providers' if k == 'providers' else 'style slugs'}.")
+        out[k] = list(dict.fromkeys(v)) if v is not None else None
+    scene = raw.get("scene")
+    if scene is not None and (not isinstance(scene, str) or not scene or len(scene) > 300):
+        raise ValueError("scene must be a moment of the opening.")
+    out["scene"] = scene
+    if not isinstance(raw.get("redraw", False), bool):
+        raise ValueError("redraw must be true or false.")
+    out["redraw"] = raw.get("redraw", False)
+    return out
+
+
 class JobManager:
     def __init__(self, root: Path, books: BookStore, index_dir: Path, ollama_url: str,
                  keys=lambda provider: None, provider_config=lambda provider: {},
@@ -340,6 +373,9 @@ class JobManager:
         self.art_inputs = None  # job → (index doc, epub.Book, earlier books' docs), set by the app
         self.art_journal = None  # (job, text hash, slug, ids of the pictures drawn[, also]) → journal entry id, set by the app
         self.art_epub_for = None  # text hash → epub.Book or None: an earlier book's EPUB, for an entity run, set by the app
+        self.previews = None      # web.previews.PreviewStore, set by the app
+        self.preview_styles = lambda: dict(artmod.STYLES)   # slug → style words of every style a preview is drawn in (the app's)
+        self.after_build = None   # finished build job → log line or None: the app queues its style previews (set by the app)
         # provider id → the text model ids it lists (presets and live), set by the app; checks a picture writer's choice
         self.text_models = lambda provider: {m["id"] for m in llm.PROVIDERS.get(provider, {}).get("models", [])}
         root.mkdir(parents=True, exist_ok=True)
@@ -430,19 +466,77 @@ class JobManager:
         self.queue.put(job_id)
         return job
 
+    def previewing(self, text_hash: str) -> bool:
+        """A style previews job is queued, running or stopping for this edition."""
+        return any(j.kind == "previews" and j.config.get("text_hash") == text_hash for j in self.active())
+
+    def preview_plan(self, text_hash: str, styles: list[str] | None, providers: list[str] | None, *, fresh: bool,
+                     redraw: bool = False, since: int | None = None) -> dict:
+        """What a previews job would draw: per image provider with a key (of `providers`, else all), its default image model
+        at its cheapest level (`llm.nearest_quality(..., "draft")`), the price of one square picture (None: unknown) and the
+        styles still to draw. `fresh`: the scene is new, so every style is drawn; else a style already drawn from its
+        current words and picture is kept unless `redraw` (then only those drawn before `since`, ms, are drawn again).
+        Answers {pictures, price (None when a picture to draw has no price), providers: [{provider, model, quality, price,
+        styles}], styles: [slugs]}."""
+        from . import previews as pv
+        words = self.preview_styles()
+        slugs = [s for s in (styles if styles is not None else list(words)) if s in words]
+        data = None if fresh or self.previews is None else self.previews.get(text_hash)
+        out, total, price = [], 0, 0.0
+        for p in providers if providers is not None else list(llm.IMAGE_PROVIDERS):
+            if p not in llm.IMAGE_PROVIDERS or not self.keys(p):
+                continue
+            name = llm.IMAGE_PROVIDERS[p]["default"]
+            q = llm.nearest_quality(p, name, pv.QUALITY)
+            each = llm.image_price(p, name, q, artmod.PREVIEW_SHAPE)
+            have = ((data or {}).get("items") or {}).get(p) or {}
+            todo = []
+            for s in slugs:
+                it = have.get(s)
+                ref = artmod.style_reference(s) if s not in artmod.STYLES else None
+                if isinstance(it, dict) and not pv.stale(it, words[s], ref.sha if ref else None) and \
+                        not (redraw and (since is None or (it.get("created") or 0) < since)):
+                    continue
+                todo.append(s)
+            out.append({"provider": p, "model": name, "quality": q, "price": each, "styles": todo})
+            total += len(todo)
+            if price is not None:
+                price = None if (todo and each is None) else round(price + len(todo) * (each or 0), 4)
+        return {"pictures": total, "price": price, "providers": out, "styles": slugs}
+
+    def submit_previews(self, key: str, config: dict, *, index_path: str, book_id: str, title: str, text_hash: str,
+                        catalog_key: str | None = None) -> Job:
+        """Queue a book's style previews (library key `key`): a job of kind "previews" on the build queue. Refused
+        (RuntimeError) while another previews job is queued or running for that edition; ValueError for a bad config.
+        Never blocked by builds, merges, edits or pictures runs, and never blocks them."""
+        cfg = previews_config(config)
+        if self.previewing(text_hash):
+            raise RuntimeError("Style previews are already being drawn for this book.")
+        job_id = uuid.uuid4().hex[:12]
+        job = Job(id=job_id, book_id=book_id, book_title=title, output=index_path, kind="previews",
+                  config={**cfg, "index_key": key, "text_hash": text_hash, "since": int(_now() * 1000),
+                          "name": f"Style previews, {title}",
+                          "provider": self.text_provider(), **({"catalog_key": catalog_key} if catalog_key else {})})
+        self.jobs[job_id] = job
+        self.events[job_id] = []
+        self._save(job)
+        self._emit(job, {"type": "queued"})
+        self.queue.put(job_id)
+        return job
+
     def active(self):
         return [j for j in list(self.jobs.values()) if j.status in ("queued", "running", "stopping")]
 
     def writing(self, index_path) -> bool:
         """A build (not a pictures run, which never writes the index) is writing or about to write this index file."""
-        return any(j.kind != "art" and j.output == str(index_path) for j in self.active())
+        return any(j.kind not in SIDE_KINDS and j.output == str(index_path) for j in self.active())
 
     def drawing(self, text_hash: str) -> bool:
         """Pictures are being drawn, or will be, for this edition: an art run, or a build that ends with the pictures stage."""
         for j in self.active():
             if j.kind == "art" and (j.config.get("text_hash") == text_hash or text_hash in j.config.get("text_hashes", [])):
                 return True
-            if j.kind != "art" and j.config.get("art"):
+            if j.kind not in SIDE_KINDS and j.config.get("art"):
                 try:
                     if self.books.get(j.book_id).get("textHash") == text_hash:
                         return True
@@ -480,7 +574,7 @@ class JobManager:
         self.events.pop(job_id, None)
         for suffix in (".json", ".events.jsonl"):
             (self.root / f"{job_id}{suffix}").unlink(missing_ok=True)
-        if job.kind == "art":
+        if job.kind in SIDE_KINDS:
             return    # its output is the index it drew for, which belongs to the library, and its pictures stay
         out = Path(job.output)
         for p in (out, out.with_suffix(out.suffix + ".state"), out.with_suffix(out.suffix + ".report")):
@@ -512,6 +606,8 @@ class JobManager:
                 continue
             if job.kind == "art":
                 self._run_art(job)
+            elif job.kind == "previews":
+                self._run_previews(job)
             else:
                 self._run(job)
 
@@ -844,7 +940,19 @@ class JobManager:
             job.progress = {k: v for k, v in job.progress.items() if k != "resumeFrom"}
         job.report = report
         job.status = "stopped" if report.get("stopped") else "done"
+        self._built(job)
         self._emit(job, {"type": job.status, "report": report})
+
+    def _built(self, job: Job) -> None:
+        """A build that finished (not stopped): the app may queue its style previews, said in one log line of the build."""
+        if job.status != "done" or self.after_build is None:
+            return
+        try:
+            line = self.after_build(job)
+        except Exception as e:  # noqa: BLE001 - the index is done; previews are extra
+            line = f"style previews: not queued ({type(e).__name__}: {e})"
+        if line:
+            self._emit(job, {"type": "log", "line": line})
 
     def _run_art(self, job: Job) -> None:
         """A pictures run on an existing index: no generator, the same events as a build's pictures stage."""
@@ -878,6 +986,147 @@ class JobManager:
             job.finished = _now()
             job.resume = False
             self._save(job)
+
+    def _run_previews(self, job: Job) -> None:
+        """A book's style previews (web/previews.py): the opening scene's body written once by the cheap text tier, then one
+        square picture per image provider with a key and per style, at the provider's cheapest level, one at a time and
+        saved after each. A refusal or provider error skips that one style; a stop keeps what was drawn; the price of each
+        picture is reserved against `previews.CAP` before its call."""
+        from . import previews as pv
+        flag = self.stop_flags[job.id] = threading.Event()
+        job.status, job.started = "running", job.started or _now()
+        self._save(job)
+        self._emit(job, {"type": "running", "resume": job.resume})
+        cfg, report = job.config, {}
+
+        def log(line: str) -> None:
+            self._emit(job, {"type": "log", "line": f"style previews: {line}"})
+        try:
+            for _ in range(100):     # a run resumed at start-up can reach the worker before the app is wired
+                if self.art_inputs is not None and self.previews is not None:
+                    break
+                time.sleep(0.05)
+            if self.art_inputs is None or self.previews is None:
+                raise RuntimeError("style previews are not available on this server")
+            store, h = self.previews, cfg["text_hash"]
+            doc, book, prior = self.art_inputs(job)
+            text_model = self.cheap_model(cfg.get("provider"))
+            seed = None
+            if self.art_store is not None:      # a set's fresh screening, read only
+                sets = self.art_store.styles(h)
+                seed = self.art_store.manifest(h, sets[0]["slug"]) if sets else None
+            il = pv.illustrator(doc, book, prior, text_model, seed)
+            moments = pv.opening(il, is_story)
+            cur = store.get(h)
+            m = pv.choose(moments, cfg.get("scene"), (cur or {}).get("scene"))
+            if m is None:
+                why = "the chosen scene is not in the opening any more" if cfg.get("scene") else "the opening has no moments to draw"
+                log(f"skipped ({why})")
+                report = {"skipped": why}
+            else:
+                spent = 0.0
+                fresh = not pv.same_scene((cur or {}).get("scene"), m)
+                if fresh:
+                    if text_model is None:
+                        log("skipped (add a cloud model key in Settings to write the scene)")
+                        report = {"skipped": "no cloud key"}
+                        m = None
+                    else:
+                        text_model.cancel = flag.is_set
+                        before = artmod._cost_of(text_model)
+                        pr = il.preview_body(m["moment"], finished=frozenset(), story=is_story, chapters=pv.OPENING_CHAPTERS)
+                        spent = report["text_cost_usd"] = round(artmod._cost_of(text_model) - before, 6)
+                        scene = pv.scene_record(m, pr, artmod.model_ref(text_model),
+                                                "person" if cfg.get("scene") else "auto")
+                        if not scene["body"]:
+                            raise RuntimeError("the scene writer wrote nothing")
+                        store.set_scene(h, scene)
+                        log(f"scene from {m['chapter']}")
+                if m is not None:
+                    report.update(self._draw_previews(job, store, h, spent, flag, log))
+            if flag.is_set() or report.get("stopped"):
+                report["stopped"] = report.get("stopped") or "stopped by request"
+                job.status = "stopped"
+            else:
+                job.status = "done"
+            job.report = report
+            self._emit(job, {"type": job.status, "report": report})
+        except llm.Cancelled:
+            job.status, job.report = "stopped", {**report, "stopped": True}
+            self._emit(job, {"type": "stopped", "report": job.report})
+        except Exception as e:  # surface every failure to the UI rather than killing the worker
+            job.status, job.error = "failed", f"{type(e).__name__}: {e}"
+            self._emit(job, {"type": "failed", "error": job.error, "trace": traceback.format_exc(limit=5)})
+        finally:
+            job.finished = _now()
+            job.resume = False
+            self._save(job)
+
+    def _draw_previews(self, job: Job, store, h: str, spent: float, flag: threading.Event, log) -> dict:
+        from . import previews as pv
+        from .. import images
+        cfg = job.config
+        scene = (store.get(h) or {}).get("scene") or {}
+        body = scene.get("body") or ""
+        plan = self.preview_plan(h, cfg.get("styles"), cfg.get("providers"), fresh=False,
+                                 redraw=bool(cfg.get("redraw")), since=cfg.get("since"))
+        words = self.preview_styles()
+        total = plan["pictures"]
+        done, drawn, refused, failed, cost = 0, 0, 0, 0, 0.0
+        out: dict = {}
+
+        def progress() -> None:
+            job.progress = {**job.progress, "previews": [done, total], "cost": round(cost + spent, 4), "last": "previews"}
+            self._emit(job, {"type": "previews", "done": done, "total": total, "cost": round(cost + spent, 4)})
+        if not plan["providers"]:
+            log("skipped (add a Gemini or OpenAI key in Settings to draw them)")
+            return {"skipped": "no image key", "drawn": 0}
+        progress()
+        for row in plan["providers"]:
+            p, q, price = row["provider"], row["quality"], row["price"]
+            image = self.image_model(p)
+            if image is None:
+                log(f"{llm.PROVIDERS.get(p, {}).get('label', p)}: no key any more, skipped")
+                continue
+            image.cancel = flag.is_set
+            for slug in row["styles"]:
+                if flag.is_set():
+                    out["stopped"] = "stopped by request"
+                    break
+                if spent + cost + (price or 0) > pv.CAP:
+                    out["stopped"] = f"the ${pv.CAP:.2f} cap was reached"
+                    log(f"stopped: the ${pv.CAP:.2f} cap was reached; the previews drawn so far are kept")
+                    break
+                ref = artmod.style_reference(slug) if slug not in artmod.STYLES else None
+                prompt = artmod.Illustrator._assemble(body, style=words[slug])
+                try:
+                    got = image.draw(prompt, shape=artmod.PREVIEW_SHAPE, quality=q,
+                                     **({"references": [(ref.data, ref.mime)], "note": artmod.STYLE_REF} if ref else {}))
+                except llm.Cancelled:
+                    out["stopped"] = "stopped by request"
+                    break
+                except images.ImageRefused as e:
+                    refused += 1
+                    log(f"{p} {slug}: refused ({str(getattr(e, 'reason', e))[:160]}); skipped")
+                except llm.ProviderError as e:
+                    failed += 1
+                    log(f"{p} {slug}: failed ({str(e)[:160]}); skipped")
+                else:
+                    store.put(h, p, slug, got.data, got.mime,
+                              {"model": got.model or row["model"], "quality": q, "cost": got.cost, "text": words[slug],
+                               "reference": ref.sha if ref else None})
+                    drawn += 1
+                    cost += got.cost or 0
+                done += 1
+                progress()
+            if out.get("stopped"):
+                break
+        if out.get("stopped") and flag.is_set():
+            log("stopped; the previews drawn so far are kept")
+        log(f"{drawn} drawn" + (f", {refused} refused" if refused else "") + (f", {failed} failed" if failed else "")
+            + f", ${cost + spent:.2f}")
+        return {**out, "drawn": drawn, "refused": refused, "failed": failed, "cost_usd": round(cost, 4),
+                "total": total}
 
     def _reapply_edits(self, job: Job) -> dict:
         """Put the person's recorded edits for this book back onto the fresh index (editor.reapply)."""
@@ -958,6 +1207,7 @@ class JobManager:
                 return
             job.report = report
             job.status = "stopped" if report.get("stopped") else "done"
+            self._built(job)
             self._emit(job, {"type": job.status, "report": report})
         except Exception as e:  # surface every failure to the UI rather than killing the worker
             job.status, job.error = "failed", f"{type(e).__name__}: {e}"

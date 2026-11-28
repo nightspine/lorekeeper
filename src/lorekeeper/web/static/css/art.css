@@ -279,6 +279,11 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 /* A 44px hit area round the small button. */
 .style-expand::after { content: ""; position: absolute; inset: -8px; }
 .style-stale { margin: 0; color: var(--text-3); font-size: var(--text-xs); }
+/* With a book: the head over the grid, the provider switch when the book has previews for two, and where the scene is from. */
+.style-picker { display: grid; gap: 12px; min-width: 0; }
+.style-book { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; min-width: 0; }
+.style-book[hidden] { display: none; }
+.style-book-line { margin: 0; }
 .style-acts { display: flex; gap: 14px; font-size: var(--text-xs); }
 .style-acts .linkish { min-height: 32px; }
 .style-acts .linkish.danger { color: var(--rose); }
@@ -348,6 +353,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 @media (max-width: 640px) {
   /* Three across on a phone, as the sheet's full width allows. */
   .style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+  .style-prov button { min-height: 44px; }
   .style-name { font-size: var(--text-xs); }
   .style-row { max-width: none; }
   .style-acts { gap: 10px; }
@@ -356,4 +362,43 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .style-ref-acts .btn, .style-ref-drop .btn { min-height: 44px; }
   .style-ref-check, .style-describe { min-height: 44px; }
   .style-ref-thumb { width: 96px; }
+}
+
+/* ---- the person's own reference pictures: the sheet's row and the lightbox's list ---- */
+.art-refs { display: grid; gap: 8px; border-radius: 6px; }
+.art-refs > .hint { margin: 0; }
+.art-refs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.art-ref { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: center; gap: 10px; min-width: 0; }
+.art-ref-thumb { position: relative; display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
+.art-ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.art-ref.uploading .art-ref-thumb img { opacity: .45; }
+.art-ref-thumb .spinner { position: absolute; margin: 0; }
+.art-ref-note { min-width: 0; width: 100%; }
+.art-refs-drop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px; border: 1px dashed var(--line-2); border-radius: 6px; }
+.art-refs-drop-hint { font-size: var(--text-xs); line-height: 1.45; min-width: 0; }
+.art-refs.over .art-refs-drop { border-color: var(--beacon); background: var(--hover); }
+.art-refs-path { margin: 0; color: var(--text-3); }
+.art-refs .field-error:empty, .art-refs-path:empty { display: none; }
+.art-left-out { margin: 0; }
+
+.lb-refs { display: grid; gap: 6px; }
+.lb-refs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.lb-ref { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: start; gap: 10px; min-width: 0; }
+.lb-ref-thumb { display: block; width: 48px; height: 48px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
+.lb-ref-thumb:focus-visible { outline: 2px solid var(--beacon); outline-offset: 2px; }
+.lb-ref-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.lb-ref-text { display: grid; gap: 2px; min-width: 0; }
+.lb-ref-text p { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); overflow-wrap: anywhere; }
+.lb-ref-text .lb-ref-desc { color: var(--text-3); }
+.lb-refs-hint, .lb-redraw-refs { margin: 0; }
+
+@media (max-width: 640px) {
+  /* The button only (no dropping on a phone), full width; the note field is 16px so iOS does not zoom on focus. */
+  .art-refs-drop { padding: 0; border: 0; }
+  .art-refs-drop-hint { display: none; }
+  .art-refs-add-btn { width: 100%; justify-content: center; min-height: 44px; }
+  .art-ref { grid-template-columns: 56px minmax(0, 1fr) 44px; gap: 8px; }
+  .art-ref-note { font-size: 16px; min-height: 44px; }
+  .art-ref-del, .lb-ref-del { width: 44px; height: 44px; }
+  .lb-ref { grid-template-columns: 48px minmax(0, 1fr) 44px; }
 }

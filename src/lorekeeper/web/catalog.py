@@ -187,7 +187,7 @@ class Catalog:
         versions = self._versions()
         active = {}
         for j in self.jobs.jobs.values():
-            if j.status in ("running", "queued", "stopping") and getattr(j, "kind", "index") != "art":   # pictures never build
+            if j.status in ("running", "queued", "stopping") and getattr(j, "kind", "index") not in ("art", "previews"):   # pictures never build
                 active[j.config.get("catalog_key") or f"up:{j.book_id}"] = j
                 active.setdefault(f"local:{j.book_id}", j)
         for e in out:

@@ -511,3 +511,10 @@ def test_describe_uses_the_strong_tier_that_sees_pictures_else_the_cheap_one(env
     assert env.jobs.describe_model() == ("claude", llm.PROVIDERS["claude"]["cheap"])      # no strong one sees: cheap
     seeing.clear()
     assert env.jobs.describe_model() is None
+
+
+def test_a_style_named_refs_is_refused_since_that_folder_holds_reference_uploads(env):
+    for name in ("Refs", "refs", " REFS "):
+        r = env.c.post("/api/styles", json={"name": name, "text": NOIR})
+        assert r.status_code == 409 and r.json()["code"] == "exists", name
+    assert "refs" not in listed(env)
