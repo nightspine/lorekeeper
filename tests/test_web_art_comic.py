@@ -124,3 +124,73 @@ def test_a_comic_redraw_keeps_its_panels_and_its_no_text_line(env):
     assert new["kind"] == "comic" and new["panels"] == ["e4", "e5"] and new["replaces"] == old["id"]
     assert new["from"] == at and new["prompt"].startswith("Make it night. ") and new["prompt"].endswith(art.COMIC_NO_TEXT)
     assert [f["label"] for f in new.get("figures") or []] == [f["label"] for f in old.get("figures") or []]
+
+
+# ---- a page's anchor moves with the position: its text is filed where the server wrote it, or at the position
+
+
+def after(e, eid: str) -> str:
+    """The anchor just after an event's: a position past it, short of the book's end."""
+    ids = [a["id"] for a in e.doc["anchors"]]
+    return ids[ids.index(anchor_of(e, eid)) + 1]
+
+
+def test_a_page_written_for_a_frontier_not_reached_is_never_drawn_or_softened_earlier(env):
+    env.key()
+    late = ask(env, "prompt", p=1.0).json()                          # e4, e5 and e6, shown from e6
+    assert late["panels"] == ["e4", "e5", "e6"]
+    restyled = f'{late["body"]} {art.style_sentence("watercolour")} {late["noText"]}'
+    n = len(env.text.prompts)
+    for text_ in (late["prompt"], restyled):
+        r = ask(env, "draw", p=anchor_of(env, "e5"), prompt=text_)
+        assert r.status_code == 422 and r.json()["code"] == "not-visible"
+        r = ask(env, "soften", p=anchor_of(env, "e5"), text=text_, reason="IMAGE_SAFETY")
+        assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert env.image.calls == [] and len(env.text.prompts) == n         # refused before any call
+    assert env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"] == []
+    # nor in the place of a page the reader can see
+    at = anchor_of(env, "e5")
+    first = ask(env, "draw", p=at, prompt=ask(env, "prompt", p=at).json()["prompt"]).json()
+    r = ask(env, "draw", p=at, prompt=late["prompt"], replaces=first["id"])
+    assert r.status_code == 422 and r.json()["code"] == "not-visible" and len(env.image.calls) == 1
+    # a reader who has reached its last panel draws it as the page it is, from that panel
+    rec = ask(env, "draw", p=after(env, "e6"), prompt=late["prompt"]).json()
+    assert rec["from"] == anchor_of(env, "e6") and rec["panels"] == ["e4", "e5", "e6"]
+
+
+def test_a_text_the_person_wrote_is_filed_at_the_position_never_earlier(env):
+    env.key()
+    mid = after(env, "e6")
+    late = ask(env, "prompt", p=1.0).json()
+    typed = "A storm comes over the mill roof and two figures run for the door. " + late["prompt"]   # edited: not the server's
+    rec = ask(env, "draw", p=mid, prompt=typed).json()
+    assert rec["from"] == mid and rec["panels"] == ["e4", "e5", "e6"]
+    rec = ask(env, "draw", p=anchor_of(env, "e5"), prompt=typed).json()
+    assert rec["from"] == anchor_of(env, "e5") and rec["panels"] == ["e4", "e5"]
+    first = ask(env, "draw", p=mid, prompt=ask(env, "prompt", p=mid).json()["prompt"]).json()
+    assert first["from"] == anchor_of(env, "e6")                     # the server's own text keeps its last panel's anchor
+    r = ask(env, "draw", p=mid, prompt="Rain on the mill, panel after panel.", replaces=first["id"])
+    assert r.status_code == 200 and r.json()["from"] == mid and r.json()["replaces"] == first["id"]
+    out = ask(env, "soften", p=mid, text=typed, reason="IMAGE_SAFETY").json()
+    assert out["anchor"] == mid and out["panels"] == ["e4", "e5", "e6"]
+
+
+def test_a_page_kept_while_the_reader_moved_on_keeps_its_own_anchor_and_panels(env):
+    env.key()
+    at = anchor_of(env, "e5")
+    early = ask(env, "prompt", p=at).json()                          # e4 and e5
+    n = len(env.text.prompts)
+    rec = ask(env, "draw", p=1.0, prompt=early["prompt"]).json()
+    assert rec["from"] == at and rec["panels"] == ["e4", "e5"] and len(env.text.prompts) == n   # nothing written again
+    other = f'{early["body"]} {art.style_sentence("watercolour")} {early["noText"]}'
+    rec = ask(env, "draw", p=1.0, style="watercolour", prompt=other).json()
+    assert rec["from"] == at and rec["panels"] == ["e4", "e5"] and len(env.text.prompts) == n
+    # a soften of it rewrites the same page, and that reply is the same page when drawn further on
+    out = ask(env, "soften", p=1.0, text=early["prompt"], reason="IMAGE_SAFETY").json()
+    assert out["anchor"] == at and out["panels"] == ["e4", "e5"]
+    rec = ask(env, "draw", p=after(env, "e6"), prompt=out["prompt"]).json()
+    assert rec["from"] == at and rec["panels"] == ["e4", "e5"]
+    # written for a frontier further on than its page (p 1.0, page at e6), drawn at e6: the page it is
+    late = ask(env, "prompt", p=1.0).json()
+    rec = ask(env, "draw", p=anchor_of(env, "e6"), prompt=late["prompt"]).json()
+    assert rec["from"] == anchor_of(env, "e6") and rec["panels"] == ["e4", "e5", "e6"]
