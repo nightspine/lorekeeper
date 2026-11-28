@@ -531,6 +531,19 @@ details.history .fact-list { padding-bottom: var(--space-3); }
 .ask-count { min-height: 0; text-align: right; }
 .ask-count:empty { display: none; }
 .ask-via { margin: 0; }
+/* Where answers come from (only with the book file here), and one quiet line on where the passages go. */
+.ask-src { display: grid; gap: 2px; min-width: 0; }
+.ask-src[hidden] { display: none; }
+.ask-seg { flex-wrap: wrap; row-gap: 0; }
+.ask-src-line { margin: 0; }
+.ask-src-line:empty { display: none; }
+/* A cited passage of the book, in a sheet: the book's paragraphs at the Read tab's measure. */
+.ask-passage { display: grid; gap: var(--space-3); max-width: 72ch; }
+.ask-passage-p { margin: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.ask-passage-h { margin: 0; font-size: var(--text-base); font-weight: 700; }
+.ask-passage-note { margin: 0; flex: 1 1 16rem; min-width: 0; }
+.ask-passage-sheet .sheet-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.ask-passage-sheet .sheet-foot > .btn { flex: none; }
 .d-ask { margin: var(--space-2) 0 0; }
 .d-ask .linkish { font-weight: 600; }
 
