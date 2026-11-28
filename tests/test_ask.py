@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from lorekeeper import ask
+from lorekeeper import ask, epub
+from lorekeeper import text as textmod
 from lorekeeper.gating import Position, view
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "sherlock-holmes"
@@ -1069,3 +1070,228 @@ def test_an_oversized_arc_id_is_never_sent_or_citable():
     sl = ask.select(v, "What happened to Gabriel?", [], 20_000, AB)
     assert "A" * 20 not in sl.text and "Gabriel fled the cathedral" not in sl.text and "[a:A2]" in sl.text
     assert all(t.get("id") != "A" * (ask.MAX_ID + 1) for t in sl.tags.values())
+
+
+# ---- the book's own text (source "both" and "book")
+
+
+LATER = "quexfig"        # in the frontier block and after it: never in any prompt
+FRONT = "zorblax"
+
+
+def blk(seq, raw):
+    return epub.Block(seq=seq, spine=0, words=textmod.words(raw), raw=raw)
+
+
+def tbook(before, blocks=None, key=None, title=None):
+    blocks = blocks or [
+        blk(0, "Chapter One"),
+        blk(1, "Harker came to the castle gate at dusk by the Borgo road, and the driver left him there alone."),
+        blk(2, "At the gate Harker saw a great grey wolf with burning eyes, and he was afraid of it."),
+        blk(3, "The Count opened the door himself, holding an old silver lamp, and bade him enter freely."),
+        blk(4, "Chapter Two"),
+        blk(5, "Renfield ate the flies in his room and kept a little notebook of figures about them."),
+        blk(6, f"Harker saw the {FRONT} {LATER} wolf at the gate again, and the Count laughed at him."),
+        blk(7, f"Harker learned that {LATER} the Count sleeps by day in a box of earth in the chapel."),
+    ]
+    chs = [epub.Chapter("Chapter One", 0), epub.Chapter("Chapter Two", 4)]
+    nums = [{"kind": "chapter", "number": 1}, {"kind": "chapter", "number": 2}]
+    return ask.TextBook(book=key, title=title, blocks=blocks, chapters=chs, numbers=nums, before=before)
+
+
+def tview():
+    return mkview([ent("E1", "Jonathan Harker", ["Harker"], facets=[fac("F1", "A young solicitor.")]),
+                   ent("E2", "Count Dracula", ["the Count"], facets=[fac("F2", "An old nobleman.")]),
+                   ent("E3", "Renfield", facets=[fac("F3", "A patient.")])],
+                  events=[ev("V1", "Harker reaches the castle.", ["E1"])])
+
+
+class Rec(Fake):
+    def everything(self):
+        return "\n".join(s + "\n" + p for s, p, _ in self.calls)
+
+
+def test_booktext_keeps_only_blocks_before_the_frontier():
+    bt = ask.BookText([tbook(6)])
+    assert [b.seq for b in bt.books[0].blocks] == [0, 1, 2, 3, 4, 5]
+    assert LATER not in bt.vocab and FRONT not in bt.vocab
+    found = bt.search({"harker": 3.0, "wolf": 1.0, "gate": 1.0, LATER: 3.0}, 10_000)
+    assert found and all(p.end < 6 for p in found)
+    assert all(LATER not in p.text for p in found)
+
+
+@pytest.mark.parametrize("source", ["both", "book"])
+def test_nothing_at_or_after_the_frontier_reaches_any_prompt(source):
+    bt = ask.BookText([tbook(6)])
+    m = Rec(reply("Harker saw a grey wolf at the gate.", ["[p:1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source=source)
+    assert r.source == source and r.passages >= 1 and r.found
+    assert "grey wolf" in m.everything()
+    assert LATER not in m.everything() and FRONT not in m.everything()
+    assert r.cites[0]["kind"] == "passage" and r.cites[0]["seq"] < 6
+    # a question naming nobody: the pick call over the roster sees no later text either
+    m2 = Rec({"ids": ["E1"]}, reply("A wolf.", ["[p:1]"]))
+    ask.answer(tview(), "what waited at the gate with burning eyes?", m2, text=bt, source=source, roster_chars=5_000)
+    assert LATER not in m2.everything() and FRONT not in m2.everything()
+    # a follow-up whose history cites a later passage: the cite is ignored, never fetched or named
+    hist = [ask.Turn("What did Harker see at the gate?", f"The {LATER} wolf.", ["p::6", "[p:2]", "p::7"])]
+    m3 = Rec(reply("He was afraid.", ["[p:1]"]))
+    ask.answer(tview(), "Why was he afraid?", m3, hist, text=bt, source=source)
+    assert LATER not in m3.everything() and FRONT not in m3.everything()
+    assert "That answer was about" not in m3.calls[-1][1]
+    # after the position moved back: a new, shorter text, and an old question with a word past it is masked
+    bt2 = ask.BookText([tbook(3)])
+    hist = [ask.Turn(f"Where does the {LATER} sleep?", "In a box.", ["p::5"])]
+    m4 = Rec(reply("A wolf.", ["[p:1]"]))
+    ask.answer(tview(), "What did Harker see?", m4, hist, text=bt2, source=source)
+    assert "Renfield ate" not in m4.everything() and "silver lamp" not in m4.everything()
+    assert LATER not in m4.everything()
+
+
+def test_earlier_questions_are_masked_against_the_index_and_the_text_before_the_position():
+    hist = [ask.Turn(f"Was the Borgo road near the {LATER}?", "Yes.", [])]
+    m = Rec(reply("A wolf.", ["[p:1]"]))
+    ask.answer(tview(), "What did Harker see at the gate?", m, hist, text=ask.BookText([tbook(6)]), source="both")
+    assert "Was the Borgo road near the …?" in m.calls[-1][1]
+    m = Rec(reply("A solicitor.", ["[e:E1]"]))
+    ask.answer(tview(), "Who is Harker?", m, hist)
+    assert "Was the … road near the …?" in m.calls[-1][1]
+
+
+def test_index_source_is_todays_answer_even_with_text():
+    bt = ask.BookText([tbook(8)])
+    a, b = Rec(reply("A solicitor.", ["[e:E1]"])), Rec(reply("A solicitor.", ["[e:E1]"]))
+    r1 = ask.answer(tview(), "Who is Harker?", a)
+    r2 = ask.answer(tview(), "Who is Harker?", b, text=bt, source="index")
+    assert a.calls == b.calls and r1 == r2 and r2.source == "index" and r2.passages == 0
+    c = Rec(reply("A solicitor.", ["[e:E1]"]))
+    assert ask.answer(tview(), "Who is Harker?", c, text=None, source="both").source == "index"
+    assert c.calls == a.calls
+    with pytest.raises(ValueError):
+        ask.answer(tview(), "Who is Harker?", c, text=bt, source="web")
+
+
+def test_passage_cites_and_prompt_shape():
+    bt = ask.BookText([tbook(6, key="b1", title="Dracula")])
+    m = Rec(reply("He saw a wolf.", ["[p:1]", "[e:E1]", "[p:99]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="both")
+    system, prompt, _ = m.calls[-1]
+    assert system == ask.SYSTEM_BOTH and "<passages>" in prompt and "<notes>" in prompt
+    assert prompt.index("<notes>") < prompt.index("<passages>") < prompt.index("Reader's question")
+    pc = [c for c in r.cites if c["kind"] == "passage"]
+    assert len(pc) == 1 and set(pc[0]) == {"kind", "id", "book", "seq", "end", "chapter", "number"}
+    assert pc[0]["id"] == f"p:b1:{pc[0]['seq']}" and pc[0]["book"] == "b1"
+    assert pc[0]["chapter"] == "Chapter One" and pc[0]["number"] == 1
+    assert any(c["kind"] == "entity" for c in r.cites)
+    # book only: no notes, its own system prompt, entries never citable
+    m = Rec(reply("He saw a wolf.", ["[p:1]", "[e:E1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="book")
+    assert m.calls[-1][0] == ask.SYSTEM_BOOK and "<notes>" not in m.calls[-1][1]
+    assert [c["kind"] for c in r.cites] == ["passage"]
+    assert "One book" in m.calls[-1][1] and 'now in "Chapter Two"' in m.calls[-1][1]
+
+
+def test_passages_stay_in_one_chapter_and_never_overlap():
+    blocks = [blk(0, "Chapter One")] + [blk(i, f"Lucy walked by the sea, line {i} of many words here.") for i in range(1, 30)]
+    blocks += [blk(30, "Chapter Two")] + [blk(i, f"Lucy slept at the abbey, line {i} with words.") for i in range(31, 60)]
+    chs = [epub.Chapter("Chapter One", 0), epub.Chapter("Chapter Two", 30)]
+    bt = ask.BookText([ask.TextBook(None, None, blocks, chs, None, 60)])
+    ps = bt.search({"lucy": 3.0, "sea": 1.0, "abbey": 1.0}, 100_000, max_words=40)
+    seen = set()
+    for p in ps:
+        span = set(range(p.seq, p.end + 1))
+        assert not span & seen
+        seen |= span
+        assert (p.seq < 30) == (p.end < 30)
+        assert len(p.text.split()) <= 40
+
+
+def test_a_long_paragraph_is_cut_around_its_hits():
+    long = " ".join(["filler"] * 600) + " the garlic wreath on her neck " + " ".join(["filler"] * 600)
+    bt = ask.BookText([ask.TextBook(None, None, [blk(0, long)], [], None, 1)])
+    p = bt.search({"garlic": 1.0, "wreath": 1.0}, 10_000)[0]
+    assert "garlic wreath" in p.text and len(p.text.split()) <= ask.PASSAGE_WORDS + 2
+
+
+def test_copy_rule_retries_then_refuses():
+    bt = ask.BookText([tbook(6)])
+    copy = "At the gate Harker saw a great grey wolf with burning eyes."
+    m = Rec(reply(copy, ["[p:1]"]), reply("He saw a big grey wolf, its eyes \"burning\" in the dusk.", ["[p:1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="both")
+    assert len(m.calls) == 2 and "in your own words" in m.calls[1][1]
+    assert r.found and r.note == "rewritten: copied the book"
+    m = Rec(reply(copy, ["[p:1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="book")
+    assert len(m.calls) == 2 and r.answer == ask.NOT_SAID_BOOK and r.note == "refused: copied the book"
+    # eight words quoted is allowed
+    m = Rec(reply('He spotted "a great grey wolf with burning eyes" and feared it.', ["[p:1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="both")
+    assert len(m.calls) == 1 and r.found and r.note is None
+
+
+def test_outside_knowledge_counts_the_passages_sent():
+    blocks = [blk(0, "Chapter One"), blk(1, "Harker met Mina Murray at the gate of the castle that night."),
+              blk(2, "The sailors spoke of Whitby harbour and the storm.")]
+    bt = ask.BookText([ask.TextBook(None, None, blocks, [epub.Chapter("Chapter One", 0)], None, 3)])
+    # a name only a sent passage holds is fine
+    m = Rec(reply("Harker met Mina at the gate.", ["[p:1]"]))
+    r = ask.answer(tview(), "Who did Harker meet at the gate?", m, text=bt, source="both")
+    assert r.found and r.note is None and len(m.calls) == 1
+    # a name from nowhere is refused after one retry
+    m = Rec(reply("Harker met Lucy Westenra.", ["[p:1]"]))
+    r = ask.answer(tview(), "Who did Harker meet at the gate?", m, text=bt, source="both")
+    assert r.answer == ask.NOT_SAID_BOTH and r.note == "refused: outside knowledge"
+
+
+def test_a_name_only_the_book_holds_is_not_refused_without_a_call():
+    blocks = [blk(0, "Chapter One"), blk(1, "Harker met Mina Murray at the gate of the castle that night.")]
+    bt = ask.BookText([ask.TextBook(None, None, blocks, [epub.Chapter("Chapter One", 0)], None, 2)])
+    v = tview()
+    m = Rec(reply("x"))
+    assert ask.answer(v, "Who is Mina?", m).note == "unknown name" and not m.calls     # the index alone refuses
+    m = Rec(reply("Mina met Harker at the castle gate.", ["[p:1]"]))
+    r = ask.answer(v, "Who is Mina?", m, text=bt, source="book")
+    assert m.calls and r.found and r.cites[0]["kind"] == "passage"
+    # a name the book has not used before the position: still no call
+    m = Rec(reply("x"))
+    r = ask.answer(v, "Who is Quincey?", m, text=bt, source="both")
+    assert not m.calls and r.answer == ask.NOT_SAID_BOTH and r.note == "unknown name"
+
+
+def test_book_source_with_no_passage_makes_no_call():
+    bt = ask.BookText([tbook(0)])
+    m = Rec(reply("x"))
+    r = ask.answer(tview(), "What did Harker see?", m, text=bt, source="book")
+    assert not m.calls and r.answer == ask.NOT_SAID_BOOK and r.passages == 0
+
+
+def test_series_text_only_as_given_and_labelled_by_book():
+    b1 = tbook(8, key="b1", title="First Tale")
+    b2 = tbook(2, [blk(0, "Chapter One"), blk(1, "Harker rode north to the wolf country in spring."),
+                   blk(2, f"{LATER} Harker saw the wolf.")], key="b2", title="Second Tale")
+    bt = ask.BookText([b1, b2])
+    v = tview()
+    v["position"]["book"] = "b2"
+    books = {"b1": {"title": "First Tale", "number": 1}, "b2": {"title": "Second Tale", "number": 2}}
+    m = Rec(reply("A wolf.", ["[p:1]"]))
+    r = ask.answer(v, "What wolf did Harker see?", m, books=books, text=bt, source="book")
+    p = m.calls[-1][1]
+    assert 'Book 1 "First Tale" (finished)' in p and 'Book 2 "Second Tale" (reading now' in p
+    assert f"{LATER} Harker saw" not in p and r.cites[0]["book"] in ("b1", "b2")
+
+
+def test_voice_in_text_modes():
+    bt = ask.BookText([tbook(6)])
+    m = Rec(reply("The passages say Harker saw a wolf.", ["[p:1]"]))
+    r = ask.answer(tview(), "What did Harker see at the gate?", m, text=bt, source="both")
+    assert len(m.calls) == 2 and "the book" in r.answer.lower() and "passages" not in r.answer
+
+
+def test_query_weighs_written_names_over_entry_names_and_borrows_event_words():
+    v = tview()
+    v["events"].append(ev("V2", "Harker sees a wolf in the moonlight by the gate.", ["E1"]))
+    sl = ask.select(v, "What did Harker see in Piccadilly at the gate?", [], 10_000)
+    t = ask._query(v, "What did Harker see in Piccadilly at the gate?", sl)
+    assert t["piccadilly"] == ask.WRITTEN_NAME_WEIGHT > t["gate"] == 1.0 > t["harker"] == ask.NAME_WEIGHT
+    assert t["moonlight"] == ask.EXPAND_WEIGHT and "the" not in t
+    assert ask._stem("climbed") == ask._stem("climbing") == ask._stem("climbs")
