@@ -228,6 +228,10 @@ def test_without_image_input_and_no_describer_the_draw_raises_no_vision_before_d
     with pytest.raises(llm.NoVision):
         il.draw(il.job("event", "e1", at="a11"), user_refs=[uref(1)])
     assert len(im.calls) == n
+    # the web layer describes them itself: a description already set is used as given, with no describer and no call
+    rec = il.draw(il.job("event", "e1", at="a11"), user_refs=[uref(1, "her coat", "a long red wool coat.")])
+    assert im.calls[-1]["references"] == [] and "Also: her coat: a long red wool coat." in im.calls[-1]["prompt"]
+    assert rec["userRefs"][0]["description"] == "a long red wool coat."
     # with none of the person's pictures it draws, sending nothing
     rec = il.draw(il.job("event", "e1", at="a11"))
     assert im.calls[-1]["references"] == [] and "userRefs" not in rec
