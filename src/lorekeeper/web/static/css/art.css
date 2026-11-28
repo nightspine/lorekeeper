@@ -118,6 +118,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .lb-details[open] > summary .svg-icon { transform: rotate(90deg); }
 .lb-details-body { display: grid; gap: 12px; padding-top: 8px; }
 .lb-prompt { display: grid; gap: 4px; }
+.lb-styleref { margin: 0; color: var(--text-2); font-size: var(--text-sm); }
 .lb-prompt p { margin: 0; max-width: 72ch; font-size: var(--text-base); line-height: 1.55; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
 .lb-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; font-size: var(--text-sm); }
 .lb-facts dt { color: var(--text-3); }
@@ -227,7 +228,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .style-card { position: relative; display: grid; align-content: start; gap: 4px; min-width: 0; }
 .style-pick, .style-new { display: grid; gap: 6px; align-content: start; width: 100%; min-width: 0; min-height: 44px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; border-radius: 6px; }
 .style-pick:focus-visible, .style-new:focus-visible { outline: 2px solid var(--beacon); outline-offset: 4px; }
-.style-prev { display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
+.style-prev { position: relative; display: block; width: 100%; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
 .style-prev img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .style-prev.no-pic { display: flex; align-items: center; justify-content: center; padding: 10px; color: var(--text-2); font-size: var(--text-xs); line-height: 1.4; }
 .style-words { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
@@ -280,6 +281,38 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .style-form-draw { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .style-form-price { font-size: var(--text-xs); }
 .style-form-foot { display: flex; justify-content: flex-end; width: 100%; }
+/* The reference picture: a drop area with "Choose a picture", then the thumbnail with Replace and Remove. */
+.style-ref { display: grid; gap: 6px; border-radius: 6px; }
+.style-ref-drop { display: grid; justify-items: start; gap: 10px; padding: 14px; border: 1px dashed var(--line-2); border-radius: 6px; }
+.style-ref.over .style-ref-drop, .style-ref.over .style-ref-chosen { border-color: var(--beacon); background: var(--hover); }
+.style-ref-hint { margin: 0; color: var(--text-2); font-size: var(--text-xs); line-height: 1.45; }
+.style-ref-chosen { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; padding: 0; border: 1px solid transparent; border-radius: 6px; }
+.style-ref-thumb { display: flex; align-items: center; justify-content: center; flex: none; width: 120px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--pane-2); }
+.style-ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.style-ref-thumb .style-words { padding: 8px; color: var(--text-3); font-size: var(--text-xs); }
+.style-ref-side { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.style-ref-side .hint { margin: 0; }
+.style-ref-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.style-ref-use { display: grid; gap: 2px; }
+.style-ref-use[hidden] { display: none; }
+.style-ref-use .hint { margin: 0 0 0 26px; }
+.style-ref-check { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+.style-ref-check input { flex: none; width: 18px; height: 18px; margin: 0; accent-color: var(--beacon); }
+.style-form-labelrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.style-describe { display: inline-flex; align-items: center; gap: 4px; min-height: 32px; font-size: var(--text-xs); }
+.style-describe[hidden] { display: none; }
+.style-describe .svg-icon { width: 13px; height: 13px; }
+.style-describe-line { margin: 0; }
+.style-describe-line:empty { display: none; }
+/* A card whose picture is the person's reference (no preview yet), and the reference small in a preview's corner. */
+.style-mine { position: absolute; left: 6px; bottom: 6px; padding: 2px 6px; border-radius: 4px; background: color-mix(in srgb, var(--bg) 78%, transparent); color: var(--text); font-size: var(--text-xs); }
+.style-ref-corner { position: absolute; left: 6px; bottom: 6px; width: 30%; aspect-ratio: 1; border: 1px solid var(--bg); border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--line-2); background: var(--pane-2); }
+.style-ref-corner img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.style-view-ref { display: flex; align-items: center; gap: 10px; margin: 0; }
+.style-view-ref-img { flex: none; width: 72px; aspect-ratio: 1; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.style-view-ref-img img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.style-view-ref figcaption { color: var(--text-2); font-size: var(--text-xs); }
+.style-view .lb-foot .hint { margin: 0; }
 
 @media (max-width: 640px) {
   /* Three across on a phone, as the sheet's full width allows. */
@@ -289,4 +322,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .style-acts { gap: 10px; }
   .style-acts .linkish { min-height: 44px; }
   .style-form-foot .btn { flex: 1; }
+  .style-ref-acts .btn, .style-ref-drop .btn { min-height: 44px; }
+  .style-ref-check, .style-describe { min-height: 44px; }
+  .style-ref-thumb { width: 96px; }
 }

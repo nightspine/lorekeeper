@@ -338,7 +338,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     app.state.auth = accounts
     app.state.jobs = jobs
     app.mount("/static", Revalidated(directory=STATIC), name="static")
-    app.include_router(stylesmod.router(style_store, jobs.image_model))   # /api/styles: the picker's styles and previews
+    app.include_router(stylesmod.router(style_store, jobs.image_model, lambda: jobs.describe_model()))   # /api/styles: the picker's styles and previews
     # The docs site (static/docs) links ../css, ../fonts and ../vendor so that it works unchanged when
     # `lorekeeper docs export` copies it to a static host. Serve those folders at the root to match.
     app.mount("/docs", Revalidated(directory=STATIC / "docs", html=True), name="docs")

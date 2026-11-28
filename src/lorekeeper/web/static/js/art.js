@@ -310,7 +310,7 @@ export function artImg(src, alt, cls = "art-img", { eager = false } = {}) {
 
 // ---- figure labels: which picture is which figure in a scene prompt -------------------------------
 
-const LABEL_RE = /\b[Ff]igure ([A-D])\b/g;
+const LABEL_RE = /\b[Ff]igure ([A-F])\b/g;
 /** The labels a prompt text uses ("figure A"), each once, in label order: the same rule the server draws by. */
 export function labelsIn(text) {
   const seen = new Set();
@@ -320,7 +320,7 @@ export function labelsIn(text) {
 /** The figures a server reply or record carries, checked: [{ label, entity, ref }] with ref the raw reference or null. */
 export function cleanFigures(list) {
   if (!Array.isArray(list)) return [];
-  return list.filter((f) => f && typeof f.label === "string" && /^[A-D]$/.test(f.label) && typeof f.entity === "string" && f.entity)
+  return list.filter((f) => f && typeof f.label === "string" && /^[A-F]$/.test(f.label) && typeof f.entity === "string" && f.entity)
     .map((f) => ({ label: f.label, entity: f.entity, ref: f.ref ?? null }))
     .sort((a, b) => (a.label < b.label ? -1 : 1));
 }
@@ -406,6 +406,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         fixed.length ? h("ul.lb-fixes", { "aria-label": "Fixes" }, fixed.map((x) => h("li", h("span", x.line), x.created && when(x.created) ? h("span.subtle", ` ${when(x.created)}`) : null))) : null,
         h("div.lb-figs", lbFigures(it)),
+        // The style's own reference picture went with this one (the record holds only its sha, never the picture).
+        typeof r.styleRef === "string" && r.styleRef ? h("p.lb-styleref", "Style from your reference picture.") : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
     paintActs();
   }

@@ -22,11 +22,13 @@ export function generation() {
 }
 
 async function request(method, url, body, opts = {}) {
+  // A FormData body (a file) goes as multipart: the browser sets its own Content-Type with the boundary.
+  const form = typeof FormData !== "undefined" && body instanceof FormData;
   const res = await fetch(url, {
     method,
     // Required on every change; other websites can't send it (CSRF protection on the server).
-    headers: { "X-Lorekeeper": "1", ...(body ? { "Content-Type": "application/json" } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
+    headers: { "X-Lorekeeper": "1", ...(body && !form ? { "Content-Type": "application/json" } : {}) },
+    body: form ? body : body ? JSON.stringify(body) : undefined,
     signal: opts.signal,
   });
   if (!res.ok) {
@@ -62,6 +64,14 @@ function redirectToLogin() {
   if (/^#\/login(\?|$)/.test(here)) return;
   const next = safeNext(here);
   redirectTo("#/login" + (next ? "?next=" + encodeURIComponent(next) : ""));
+}
+
+/** A multipart body holding one file as `file` (a Blob without a name gets one from its type). */
+function fileForm(file) {
+  const form = new FormData();
+  const ext = { "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp" }[file?.type] || "bin";
+  form.append("file", file, typeof file?.name === "string" && file.name ? file.name : `reference.${ext}`);
+  return form;
 }
 
 let catalogCache = null;
@@ -216,6 +226,12 @@ export const api = {
   styleDelete: (slug) => request("DELETE", `/api/styles/${encodeURIComponent(slug)}`),
   /** Draw a custom style's preview of the shared scene ({ provider?, model?, quality? }); replaces the old one. */
   stylePreview: (slug, body = {}) => request("POST", `/api/styles/${encodeURIComponent(slug)}/preview`, body),
+  /** Give a custom style its reference picture (a PNG, JPEG or WebP File or Blob), replacing any old one: the row back. */
+  styleReference: (slug, file) => request("PUT", `/api/styles/${encodeURIComponent(slug)}/reference`, fileForm(file)),
+  styleReferenceDelete: (slug) => request("DELETE", `/api/styles/${encodeURIComponent(slug)}/reference`),
+  /** Describe a picture's drawing style in a sentence, storing nothing: { text, provider, model, cost }.
+   *  409 `no-vision-model` when no configured model can see pictures. */
+  styleDescribe: (file, opts = {}) => request("POST", "/api/styles/describe", fileForm(file), opts),
   /** Every art set on disk, per book: [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }]. */
   artSets: () => request("GET", "/api/art"),
   /** Remove a book's pictures (one style with `style`); 409 while a run draws them; undoable. */

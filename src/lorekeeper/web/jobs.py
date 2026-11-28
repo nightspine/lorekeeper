@@ -568,6 +568,16 @@ class JobManager:
                 return self.cloud_model(p, name)
         return None
 
+    def describe_model(self):
+        """A text backend that can see pictures, for describing a style's reference picture: the strong tier of the first
+        configured provider whose strong model can (a cheap model misread colour and palette on the bench), else the
+        cheap tier `vision_model` picks. None when no configured model can."""
+        for p in self.configured():
+            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["strong"]
+            if name and llm.vision(p, name) is not False:
+                return self.cloud_model(p, name)
+        return self.vision_model()
+
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Rewrite the finished index's profiles from every passage mentioning each entity
         (portraits.py). Needs a cloud model key; a failure here keeps the index as the run wrote it."""
