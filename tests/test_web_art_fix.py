@@ -618,3 +618,15 @@ def test_the_check_answers_each_faults_kind(env, eye, monkeypatch):
     monkeypatch.setattr(art.Illustrator, "check_picture", lambda self, *a, **k: art.Check(faults, True, 0.001, ""))
     got = env.c.post(f"/api/library/{KEY}/art/{old['id']}/check", json={}).json()["faults"]
     assert [f["kind"] for f in got] == ["text", "style", "drawing", "drawing"]
+
+
+def test_the_check_sends_the_sets_style_sentence_inside_style_and_none_without_one(env, eye, monkeypatch):
+    old = one_picture(env)
+    eye.faults = []
+    url = f"/api/library/{KEY}/art/{old['id']}/check"
+    assert env.c.post(url, json={}).status_code == 200
+    prompt = eye.looked[-1][0]
+    assert f"<style>{art.style_sentence('ink')}</style>" in prompt          # the ink set's own sentence
+    monkeypatch.setattr(art.Illustrator, "_style", lambda self, bi: "")      # a set with no style sentence
+    assert env.c.post(url, json={}).status_code == 200
+    assert "<style>" not in eye.looked[-1][0]
