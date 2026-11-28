@@ -354,7 +354,7 @@ def test_a_client_that_leaves_before_the_job_starts_never_holds_a_slot(ask):
 
 # ---- source: the book's own text before the position (Index and book, Book only) --------------------------------
 
-import dataclasses  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
 
 import lorekeeper.ask as askmod  # noqa: E402
 from lorekeeper import epub  # noqa: E402
@@ -362,7 +362,7 @@ from lorekeeper import epub  # noqa: E402
 from .test_editor import edit  # noqa: E402
 from .test_generate import make_epub  # noqa: E402
 
-REAL_TEXT = hasattr(askmod, "BookText")   # the pipeline side; the route tests below run with stand-ins without it
+REAL_TEXT = hasattr(askmod, "BookText")   # the pipeline side of this feature; the end-to-end tests skip without it
 
 # The frontier block holds FRONTIER, a later block LATER: neither may ever reach the model at that position.
 FRONTIER, LATER, EARLY = "zanzibarfrontier", "quixoticlater", "marmaladeearly"
@@ -378,28 +378,33 @@ def text_ask(make, tmp_path):
     """A hand-made index of a book whose EPUB is here, with Alice visible from the start; a cloud key."""
     build, model, mp = make
     mp.setenv("ANTHROPIC_API_KEY", "test-key-123")
-    if not REAL_TEXT:
-        @dataclasses.dataclass
-        class TextBook:
-            book: object
-            title: object
-            blocks: list
-            chapters: list
-            numbers: object
-            before: int
-
-        class BookText:
-            def __init__(self, books):
-                self.books = [dataclasses.replace(b, blocks=[x for x in b.blocks if x.seq < b.before]) for b in books]
-        mp.setattr(askmod, "TextBook", TextBook, raising=False)
-        mp.setattr(askmod, "BookText", BookText, raising=False)
+    built = record_built(mp)
     with build() as c:
         path = make_epub(tmp_path / "light.epub", ch1=CH1, ch2=CH2)
         up = c.post("/api/books", files={"file": ("light.epub", path.read_bytes(), "application/epub+zip")}).json()
         key = c.post(f"/api/catalog/books/up:{up['id']}/handmade", json={"license": "CC-BY-4.0"}).json()["key"]
         edit(c, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A young woman who comes to a lighthouse.")
-        c.model, c.mp, c.key, c.book = model, mp, key, epub.read(path)
+        c.model, c.mp, c.key, c.book, c.built = model, mp, key, epub.read(path), built
         yield c
+
+
+def record_built(mp):
+    """Every `ask.TextBook` the route builds, as the route passed it (before `BookText` cuts anything again), so the
+    cut is proved in the web layer itself. One list of `SimpleNamespace`s per `BookText`, the latest last."""
+    built, pending = [], []
+    real_tb, real_bt = askmod.TextBook, askmod.BookText
+
+    def text_book(**kw):
+        pending.append(SimpleNamespace(**{**kw, "blocks": list(kw["blocks"]), "chapters": list(kw["chapters"])}))
+        return real_tb(**kw)
+
+    def book_text(books):
+        built.append(pending[:])
+        pending.clear()
+        return real_bt(books)
+    mp.setattr(askmod, "TextBook", text_book)
+    mp.setattr(askmod, "BookText", book_text)
+    return built
 
 
 def frac_before(book, seq):
@@ -418,13 +423,18 @@ def spy_answer(mp):
 
     def spy(view, question, llm_, history=(), budget=0, books=None, roster_chars=0, **kw):
         seen.append({"history": list(history), **kw})
-        return askmod.Answer("ok", True, [], None, 0, {})
+        return askmod.Answer("ok", True, [], None, 0, {}, source=kw.get("source", "index"))
     mp.setattr(askmod, "answer", spy)
     return seen
 
 
-def searchable(text):
-    return [b for tb in text.books for b in tb.blocks] if hasattr(text, "books") else None
+def assert_cut(tb, frontier):
+    """The route itself cut the book being read at the frontier: `before` is it, and no block or chapter at or
+    after it was passed at all."""
+    assert tb.before == frontier
+    assert [b.seq for b in tb.blocks] == list(range(frontier))
+    assert all(c.start < frontier for c in tb.chapters)
+    assert tb.numbers is None or len(tb.numbers) == len(tb.chapters)
 
 
 def test_index_only_is_todays_call(text_ask):
@@ -442,15 +452,13 @@ def test_only_blocks_before_the_frontier_are_passed(text_ask, source):
     book, F = text_ask.book, seq_of(text_ask.book, FRONTIER)
     r = text_ask.post(f"/api/library/{text_ask.key}/ask",
                       json={"question": "What did Alice Marlow find?", "source": source, "p": frac_before(book, F)})
-    assert r.status_code == 200, r.text and r.json()["source"] == source
-    got = seen[-1]
-    assert got["source"] == source
-    [tb] = got["text"].books if hasattr(got["text"], "books") else [None]
-    if tb is not None:
-        assert tb.before == F and [b.seq for b in tb.blocks] == list(range(F))
-        assert tb.book is None and all(c.start < F for c in tb.chapters)
-        assert tb.numbers is None or len(tb.numbers) == len(tb.chapters)
-    assert F > 0 and all(FRONTIER not in b.raw and LATER not in b.raw for b in searchable(got["text"]) or [])
+    assert r.status_code == 200, r.text
+    assert r.json()["source"] == source
+    assert seen[-1]["source"] == source and seen[-1]["text"].books   # the BookText the route built
+    [tb] = text_ask.built[-1]
+    assert F > 0 and tb.book is None and tb.title is None
+    assert_cut(tb, F)
+    assert not [b for b in tb.blocks if FRONTIER in b.raw or LATER in b.raw]
 
 
 def test_the_block_being_read_never_counts_and_the_whole_book_only_at_the_end(text_ask):
@@ -460,10 +468,11 @@ def test_the_block_being_read_never_counts_and_the_whole_book_only_at_the_end(te
     # one word into the frontier block: still not read
     for p, before in ((frac_before(book, F) + 1 / total, F), (0.0, 0), (0.9999, len(book.blocks) - 1),
                       (1, len(book.blocks)), (1.0, len(book.blocks))):
-        assert text_ask.post(f"/api/library/{text_ask.key}/ask",
-                             json={"question": "Who is Alice Marlow?", "source": "both", "p": p}).status_code == 200
-        [tb] = seen[-1]["text"].books
-        assert tb.before == before and [b.seq for b in tb.blocks] == list(range(before)), p
+        r = text_ask.post(f"/api/library/{text_ask.key}/ask",
+                          json={"question": "Who is Alice Marlow?", "source": "both", "p": p})
+        assert r.status_code == 200 and r.json()["source"] == "both"
+        [tb] = text_ask.built[-1]
+        assert_cut(tb, before)
 
 
 def test_passage_cites_in_history_are_never_handed_on(text_ask):
@@ -516,28 +525,38 @@ def series_ask(make, tmp_path):
     build, model, mp = make
     mp.setenv("ANTHROPIC_API_KEY", "test-key-123")
     seen = spy_answer(mp)
-    if not REAL_TEXT:
-        mp.setattr(askmod, "TextBook", lambda **kw: type("TB", (), kw)(), raising=False)
-        mp.setattr(askmod, "BookText", lambda books: type("BT", (), {"books": books})(), raising=False)
+    built = record_built(mp)
     with build() as c:
-        keys = []
+        keys, epubs = [], []
         for i, title in enumerate(["Lights One", "Lights Two", "Lights Three"], 1):
             meta = f'<meta name="calibre:series" content="Lights"/><meta name="calibre:series_index" content="{i}"/>'
             words = [f"Book {i} marker{i}word: Alice Marlow kept the harbour light alone for twenty winters and more."] * 3
             path = make_epub(tmp_path / f"b{i}.epub", title=title, series_meta=meta, ch1=words)
+            epubs.append(epub.read(path))
             up = c.post("/api/books", files={"file": (f"b{i}.epub", path.read_bytes())}).json()
             r = c.post(f"/api/catalog/books/up:{up['id']}/handmade", json={"license": "CC-BY-4.0"})
             assert r.status_code == 200, r.text
             keys.append(r.json()["key"])
         docs = [c.get(f"/api/library/{k}").json() for k in keys]
-        c.keys, c.books, c.seen = keys, [d["series"]["book"] for d in docs], seen
+        c.keys, c.books, c.seen, c.built, c.epubs = keys, [d["series"]["book"] for d in docs], seen, built, epubs
         yield c
 
 
 def text_books(c, key, **body):
     r = c.post(f"/api/library/{key}/ask", json={"question": "Who is Alice Marlow?", "source": "both", **body})
     assert r.status_code == 200, r.text
-    return {tb.book: tb for tb in c.seen[-1]["text"].books}
+    assert r.json()["source"] == "both"
+    return {tb.book: tb for tb in c.built[-1]}
+
+
+def frontier_at(book, p):
+    """The first block not read at `p` (finished mode), worked out here rather than taken from the route."""
+    total, done = sum(len(b.words) for b in book.blocks), 0
+    for b in book.blocks:
+        if done + len(b.words) > p * total:
+            return b.seq
+        done += len(b.words)
+    return len(book.blocks)
 
 
 def test_an_earlier_book_is_read_only_when_finished(series_ask):
@@ -547,7 +566,10 @@ def test_an_earlier_book_is_read_only_when_finished(series_ask):
     assert list(mid) == [one, two]
     assert mid[one].before == len(mid[one].blocks) and mid[one].title == "Lights One"
     assert any("marker1word" in b.raw for b in mid[one].blocks)
-    assert 0 < mid[two].before < len(mid[one].blocks)                  # this book is cut, the finished one is whole
+    assert [b.seq for b in mid[one].blocks] == list(range(len(c.epubs[0].blocks)))   # the finished one is whole
+    F = frontier_at(c.epubs[1], 0.5)
+    assert 0 < F < len(c.epubs[1].blocks)
+    assert_cut(mid[two], F)                                              # this book is cut at the frontier
     assert not [b for t in mid.values() for b in t.blocks if "marker3word" in b.raw]
     # not finished, finished = null, or a later book listed as finished: never sent
     assert list(text_books(c, c.keys[1], p=0.5, finished=[])) == [two]
@@ -555,6 +577,9 @@ def test_an_earlier_book_is_read_only_when_finished(series_ask):
     assert list(text_books(c, c.keys[1], p=0.5, finished=[one, three])) == [one, two]
     got = text_books(c, c.keys[2], p=0.5, finished=[one, two])
     assert list(got) == [one, two, three]
+    assert_cut(got[three], frontier_at(c.epubs[2], 0.5))
+    for k, i in ((one, 0), (two, 1)):
+        assert got[k].before == len(c.epubs[i].blocks) == len(got[k].blocks)
 
 
 def test_a_missing_earlier_book_file_is_skipped(series_ask, tmp_path):
