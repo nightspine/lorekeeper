@@ -380,9 +380,9 @@ def soften_request(text: str, reason: str = "") -> str:
 # a second look). The model first writes down, figure by figure, the heads, arms, hands and legs it sees (`figures`, never
 # stored or shown: it is there so the model looks before it judges). The stored prompt goes with the picture, so a figure the
 # prompt describes as maimed is not a fault. A failed call is "not checked", never a fault.
-ANATOMY = """You check a picture an image model drew for a reader's illustrated companion to a novel, for drawing faults: the things that are drawn wrong, the way image models get them wrong. Be critical. Image models often draw bodies, hands and objects wrong, and a picture that looks fine at a glance often is not on a second look.
+ANATOMY = """You check a picture an image model drew for a reader's illustrated companion to a novel, for drawing faults: things drawn wrong, the way image models draw them wrong. Be critical. Image models often draw bodies, hands, faces and objects wrong, and a picture that looks fine at a glance often is not on a second look.
 
-First take stock, figure by figure: for every person and creature in the picture, write down in "figures" where it is and how many heads, arms, hands and legs are drawn on it, counting what you see, not what it should have (count only what is in the picture; a limb hidden or cut off by the frame is not counted and is no fault).
+First take stock, figure by figure: for every person and creature in the picture, write in "figures" where it is (a few words) and how many heads, arms, hands and legs are drawn on it, counting what you see, not what it should have. Count only what is in the picture: a limb hidden or cut off by the frame is not counted and is no fault.
 
 Then look for these faults, on every figure and every object:
 - an extra or a missing head, arm, hand or leg, against what that figure should have;
@@ -395,13 +395,13 @@ Then look for these faults, on every figure and every object:
 - an object merged into a body, or passing through a hand, an arm or a body;
 - a held thing floating with no hand gripping it, or a hand closed round nothing where it should hold something;
 - a doubled or broken object (a sword with two blades or two hilts, a chair with a leg missing, a cup fused into the table, a candle melting into what it stands on);
-- furniture or a building that could not stand (a table with legs that do not reach the floor, a stair leading nowhere, a wall that bends through itself);
+- furniture or a building that could not stand (a table whose legs do not reach the floor, a stair leading nowhere, a wall that bends through itself);
 - figures at an impossible scale to each other or to the room (a man as tall as the door is wide, a child twice the size of the adults beside it);
 - one person the prompt describes drawn twice.
 
-These are never faults: style, taste, mood, colour, composition; how well anyone resembles anyone; text or lettering; a pose or a long reach; foreshortening; a limb or a hand hidden behind something or cut off by the frame; a hand that is small or rough because the drawing style is loose; a crowd or a team of animals whose legs overlap but can be counted; and anything the prompt asks for (a figure the prompt says has lost an arm is drawn without it, a creature the prompt gives four arms has four).
+Judge how things are drawn, not whether the picture follows the prompt: a thing the prompt mentions that is missing, placed elsewhere or posed otherwise is not a fault, and neither is a figure doing something else than the prompt says. A part that is only sketchy, vague or hard to make out is not a fault either: a fault is something drawn wrong, and you can say what is wrong with it. These are never faults: style, taste, mood, colour, composition; how well anyone resembles anyone; text or lettering; a pose or a long reach; foreshortening; a limb or a hand hidden behind something or cut off by the frame; a hand that is small or rough because the drawing style is loose; a crowd or a team of animals whose legs overlap but can be counted; and anything the prompt asks for (a figure the prompt says has lost an arm is drawn without it, a creature the prompt gives four arms has four).
 
-Report what a careful viewer would find wrong on a second look. A fault you can point to is reported even when it is small: then it is "minor". "severity" is "major" when a reader notices it at a glance, "minor" when it takes a second look.
+Report what a careful viewer would find wrong on a second look. A fault you can point to is reported even when it is small. "severity" is "major" for a fault a reader notices at a glance: a wrong number of heads, limbs, hands or fingers, bodies merged, a melted or doubled face, a joint bent backwards, an object through a body, a broken or doubled object in the middle of the picture; it is major even when the figure is small in the picture. It is "minor" when it takes a second look: a grip that does not quite close, a slightly wrong proportion, a small object a little out of shape.
 
 For each fault, "what" is a short phrase saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "the sword passes through the man's hand"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
 Return "figures", then "faults"."""

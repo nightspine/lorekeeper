@@ -80,7 +80,9 @@ class Spend:
         self.cap, self.models, self.images, self.held = cap, models, 0.0, 0.0
 
     def text(self) -> float:
-        return sum(m.usage.cost_usd for m in self.models)
+        return sum(m.usage.cost_usd for m in self.models) + self.calls
+
+    calls = 0.0     # text spent on per-call models (`Calls`)
 
     def total(self) -> float:
         return self.images + self.text()
@@ -187,6 +189,7 @@ def main() -> int:
     ap.add_argument("--redraw", action="store_true", help="also fix by a redraw with the faults to avoid")
     ap.add_argument("--limit", type=int, default=40)
     ap.add_argument("--clean", type=int, default=0)
+    ap.add_argument("--no-fix", action="store_true", help="check only")
     ap.add_argument("--cap", type=float, default=4.0)
     ap.add_argument("--out", type=Path, required=True)
     a = ap.parse_args()
@@ -202,6 +205,17 @@ def main() -> int:
     picker = text_model(a.picker)
     strong = text_model(a.strong, "strong")
     checkers = {"picker": picker, "strong": strong}
+    specs = {"picker": (a.picker, "cheap"), "strong": (a.strong, "strong")}
+    lock = threading.Lock()
+
+    def fresh(who: str):
+        """A model of its own for one call, so its usage is that call's tokens and cost (the bench runs calls in threads)."""
+        return text_model(*specs[who])
+
+    def spent(m) -> dict:
+        with lock:
+            spend.calls += m.usage.cost_usd
+        return {"cost": m.usage.cost_usd, "tokens": [m.usage.prompt_tokens, m.usage.output_tokens]}
     writer = text_model(a.writer)
     spend = Spend(a.cap, [picker, strong, writer])
     if a.sets:
@@ -224,7 +238,6 @@ def main() -> int:
     log(f"{len(recs)} pictures from {len(sets)} sets ({source})")
 
     rows = []
-    lock = threading.Lock()
 
     def check_one(sr) -> dict | None:
         s, r = sr
@@ -235,15 +248,15 @@ def main() -> int:
         row = {"id": r["id"], "set": str(s), "kind": r["kind"], "target": r["target"], "provider": r.get("provider"),
                "model": r.get("model"), "quality": r.get("quality"), "shape": r.get("shape"), "prompt": r["prompt"],
                "file": p.name, "checks": {}}
-        for who, m in checkers.items():
+        for who in checkers:
             for way in ("new", "old") if a.old else ("new",):
                 with lock:
                     if not spend.room(0.03):
                         row["checks"][f"{who}/{way}"] = {"checked": False, "why": "cap", "faults": []}
                         continue
+                m = fresh(who)
                 c = (art.check_picture if way == "new" else old_check)(m, data, mime, r["prompt"])
-                # cost and tokens of this one call: the usage counters are shared by threads, so read from the Check only
-                row["checks"][f"{who}/{way}"] = {"checked": c.checked, "why": c.why, "faults": c.faults, "cost": c.cost}
+                row["checks"][f"{who}/{way}"] = {"checked": c.checked, "why": c.why, "faults": c.faults, **spent(m)}
         got = row["checks"].get("strong/new", {})
         log(f"  {r['id']} {r['kind']} {r['target'][:30]}: " + "; ".join(
             f"{k} {len(v['faults'])}" + ("" if v["checked"] else " (not checked)") for k, v in row["checks"].items())
@@ -303,13 +316,15 @@ def main() -> int:
             f = save(img, name, pic)
             d = {"file": f.name, "cost": pic.cost, "seconds": round(time.time() - t, 1), "prompt": prompt,
                  "identical": pic.data == orig, "verify": {}}
-            for who, m in checkers.items():
+            for who in checkers:
+                m = fresh(who)
                 v = art.verify_fix(m, (orig, mime), (pic.data, pic.mime or "image/png"), faults, note)
                 d["verify"][who] = {"checked": v.checked, "why": v.why, "changed": v.changed, "results": v.results,
-                                    "new": v.new, "unchanged": v.unchanged(), "cost": v.cost,
+                                    "new": v.new, "unchanged": v.unchanged(), **spent(m),
                                     **({"counts": v.counts()} if v.checked else {})}
-            re_ = art.check_picture(strong, pic.data, pic.mime, rec["prompt"])
-            d["recheck"] = {"checked": re_.checked, "faults": re_.faults, "cost": re_.cost}
+            m = fresh("strong")
+            re_ = art.check_picture(m, pic.data, pic.mime, rec["prompt"])
+            d["recheck"] = {"checked": re_.checked, "faults": re_.faults, **spent(m)}
             d["keep"] = keep_score(picker, orig, mime, pic.data, pic.mime)
             x["fixes"][way] = d
             vs = d["verify"]["strong"]
@@ -320,7 +335,7 @@ def main() -> int:
                 + f"; recheck {len(re_.faults)} faults, keep {d['keep']['score']}")
 
     with ThreadPoolExecutor(3) as pool:
-        list(pool.map(fix_one, flagged + clean))
+        list(pool.map(fix_one, [] if a.no_fix else flagged + clean))
 
     def stats(key: str) -> dict:
         got = [x["checks"][key] for x in rows if key in x["checks"]]
@@ -333,7 +348,9 @@ def main() -> int:
                 if ok else None,
                 "faults": len(faults), "major": sum(f.get("severity") == "major" for f in faults),
                 "minor": sum(f.get("severity") == "minor" for f in faults),
-                "cost_per_check": round(statistics.mean(c["cost"] for c in ok), 5) if ok else None}
+                "cost_per_check": round(statistics.mean(c["cost"] for c in ok), 5) if ok else None,
+                "tokens_mean": [round(statistics.mean(c["tokens"][i] for c in ok)) for i in (0, 1)] if ok else None,
+                "tokens_max": [max(c["tokens"][i] for c in ok) for i in (0, 1)] if ok else None}
 
     def verdicts(who: str, group: list[dict]) -> dict:
         done = [x["fixes"]["edit"] for x in group if x.get("fixes", {}).get("edit", {}).get("file")]
@@ -346,7 +363,9 @@ def main() -> int:
                 "all_fixed": sum(1 for v in ok if not v["unchanged"] and all(r["fixed"] == "yes" for r in v["results"])),
                 "faults": {k: res.count(k) for k in ("yes", "partly", "no")},
                 "added_faults": sum(len(v["new"]) for v in ok),
-                "cost_per_verify": round(statistics.mean(v["cost"] for v in ok), 5) if ok else None}
+                "cost_per_verify": round(statistics.mean(v["cost"] for v in ok), 5) if ok else None,
+                "tokens_mean": [round(statistics.mean(v["tokens"][i] for v in ok)) for i in (0, 1)] if ok else None,
+                "tokens_max": [max(v["tokens"][i] for v in ok) for i in (0, 1)] if ok else None}
 
     done = [x["fixes"]["edit"] for x in flagged if x.get("fixes", {}).get("edit", {}).get("file")]
     scores = [d["keep"]["score"] for d in done if isinstance(d["keep"]["score"], int)]
