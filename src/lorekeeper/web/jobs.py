@@ -560,29 +560,27 @@ class JobManager:
                 return p, name
         return None
 
-    def vision_model(self, choice: dict | None = None):
+    def vision_model(self, choice: dict | None = None, tier: str = "cheap"):
         """A text backend that can see pictures, for the drawing-fault check: the chosen {provider, model} (checked by
-        `check_text_choice`) unless its preset is marked as unable to, else the cheap tier of the first configured provider
-        whose cheap model is not (a live or custom model counts: it is tried). None when no configured model can."""
+        `check_text_choice`) unless its preset is marked as unable to, else the `tier` model of the first configured
+        provider whose `tier` model is not (a live or custom model counts: it is tried). `tier="strong"` falls back to the
+        cheap tier when no strong model can see pictures. None when no configured model can."""
         if choice:
             if llm.vision(choice["provider"], choice["model"]) is False or choice["provider"] not in self.configured():
                 return None
             return self.cloud_model(choice["provider"], choice["model"])
-        for p in self.configured():
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["cheap"]
-            if name and llm.vision(p, name) is not False:
-                return self.cloud_model(p, name)
+        for t in (("strong", "cheap") if tier == "strong" else ("cheap",)):
+            for p in self.configured():
+                name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p].get(t)
+                if name and llm.vision(p, name) is not False:
+                    return self.cloud_model(p, name)
         return None
 
     def describe_model(self):
         """A text backend that can see pictures, for describing a style's reference picture: the strong tier of the first
         configured provider whose strong model can (a cheap model misread colour and palette on the bench), else the
         cheap tier `vision_model` picks. None when no configured model can."""
-        for p in self.configured():
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["strong"]
-            if name and llm.vision(p, name) is not False:
-                return self.cloud_model(p, name)
-        return self.vision_model()
+        return self.vision_model(tier="strong")
 
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Rewrite the finished index's profiles from every passage mentioning each entity

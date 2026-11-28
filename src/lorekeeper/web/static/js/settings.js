@@ -439,7 +439,7 @@ export function mountSettings(root) {
           onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null,
         provs.length ? row(h("label", { for: "pic-check" }, "Check pictures for drawing faults"), h("div.pic-check",
           h("span.switch", check, h("span", d.check ? "On" : "Off")),
-          h("p.hint", `A cheap model looks at each new picture for things like an extra hand or a head far too small, and the picture is fixed once when it finds one. ${CHECK_COST}`)), null, { top: true }) : null),
+          h("p.hint", `A cheap model looks at each new picture for drawing faults, such as an extra hand or a head far too small. When it finds one you would see at a glance, the picture is fixed once, and the original is kept if a second look finds the fix put nothing right. Smaller faults are left as drawn. ${CHECK_COST}`)), null, { top: true }) : null),
       h("h3.pic-sets-h#pic-styles-h", "Styles"),
       h("p.set-note", "Every style shows the same scene; the one you choose is where new pictures start."),
       h("div.pic-styles", { role: "region", "aria-labelledby": "pic-styles-h" }, picker.el),

@@ -3434,15 +3434,30 @@ def test_the_scene_writer_asks_for_no_more_than_two_hands_can_do_and_figures_kep
 
 class Seeing(Text):
     """The scripted text model with eyes: the drawing-fault check answers `faults` (a list, or a function of the check's
-    prompt and the picture's bytes), or fails (`fail`), or cannot see pictures (`blind`). Each check costs `cost`."""
+    prompt and the picture's bytes), or fails (`fail`), or cannot see pictures (`blind`). Each check costs `cost`. The
+    verification of a fix answers `verdict` (a dict, or a function of its prompt and the two pictures' bytes; by default
+    every fault fixed and the picture changed), or fails (`vfail`); each costs `vcost`."""
 
-    def __init__(self, faults=(), fail=False, blind=False, cost=0.001, **kw):
+    def __init__(self, faults=(), fail=False, blind=False, cost=0.001, verdict=None, vfail=False, vcost=0.002, **kw):
         super().__init__(**kw)
         self.faults, self.fail, self.blind, self.cost = faults, fail, blind, cost
-        self.looked = []
+        self.verdict, self.vfail, self.vcost = verdict, vfail, vcost
+        self.looked, self.verified = [], []
         self.usage = llm.Usage()
 
     def complete(self, system, prompt, schema, prefix=None, images=()):
+        if system == art.VERIFY_FIX:
+            self.verified.append((prompt, [d for d, _ in images]))
+            if self.blind:
+                raise llm.NoVision("fake-picker cannot see pictures")
+            self.usage.cost_usd += self.vcost
+            if self.vfail:
+                raise RuntimeError("the picker is down")
+            v = self.verdict
+            if callable(v):
+                return v(prompt, images[0][0], images[1][0])
+            return v if v is not None else {"results": [{"n": i, "fixed": "yes"} for i in range(1, 9)], "changed": True,
+                                             "new": []}
         if system != art.ANATOMY:
             return super().complete(system, prompt, schema, prefix)
         self.looked.append((prompt, [d for d, _ in images]))
@@ -3452,10 +3467,11 @@ class Seeing(Text):
         if self.fail:
             raise RuntimeError("the picker is down")
         got = self.faults(prompt, images[0][0]) if callable(self.faults) else self.faults
-        return {"faults": list(got)}
+        return {"figures": [], "faults": list(got)}
 
 
-HEAD = {"what": "the head is far too small for the body and robe", "where": "the woman at the gate"}
+HEAD = {"what": "the head is far too small for the body and robe", "where": "the woman at the gate", "severity": "major"}
+ALL_FIXED_1 = {"fixed": 1, "partly": 0, "of": 1, "results": [{"n": 1, "fixed": "yes"}], "new": []}
 
 
 def fixes(im):
@@ -3483,12 +3499,16 @@ def test_a_faulty_picture_is_fixed_once_and_never_checked_again():
         assert first["references"] == [] and fix["shape"] == p["shape"] and fix["quality"] == p["quality"]
         assert "- the woman at the gate: the head is far too small for the body and robe." in fix["prompt"]
         assert fix["prompt"].endswith(art.NO_TEXT) and fix["note"] == ""
-        assert p["prompt"].startswith(SCENE) and p["check"] == {"faults": [HEAD], "fixed": True}   # the prompt is unchanged
-        assert [f["faults"] for f in p["fixes"]] == [[HEAD]] and p["fixes"][0]["cost"] == 0.05
+        assert p["prompt"].startswith(SCENE)                                          # the prompt is unchanged
+        assert p["check"] == {"faults": [HEAD], "fixed": True, "verified": ALL_FIXED_1}
+        assert p["fixes"][-1]["verified"] == ALL_FIXED_1
+        assert [f["faults"] for f in p["fixes"]] == [[HEAD]] and p["fixes"][0]["cost"] == 0.052   # the edit and its verification
         first_bytes = eye.looked[plates.index(p)][1][0]
-        assert p["cost"] == pytest.approx(0.10) and sink.files[p["file"]] != first_bytes      # the fixed picture is filed
+        assert p["cost"] == pytest.approx(0.102) and sink.files[p["file"]] != first_bytes     # the fixed picture is filed
+        assert eye.verified[plates.index(p)][1] == [first_bytes, sink.files[p["file"]]]      # the original first, then the fix
+        assert "1. the woman at the gate: the head is far too small" in eye.verified[plates.index(p)][0]
         assert p["id"] == "p" + __import__("hashlib").sha256(sink.files[p["file"]]).hexdigest()[:8]
-    assert sink.m["cost"] == pytest.approx(0.20) and rep.cost == pytest.approx(0.20)
+    assert sink.m["cost"] == pytest.approx(0.204) and rep.cost == pytest.approx(0.20)      # the report: images only
     assert "  2 x fixed: drawing fault" in rep.lines()
 
 
@@ -3528,10 +3548,14 @@ def test_the_cap_reserves_the_check_and_skips_a_fix_it_has_no_room_for(monkeypat
     assert pics(sink)[0]["check"] == {"faults": [HEAD], "fixed": False} and "fixes" not in pics(sink)[0]
     assert rep.cost + rep.text_cost <= 0.07 + 1e-9
     # room for a fix: one picture, its check and its fix (held at FIX_UNPRICED times the picture, the fake has no table
-    # price), then the cap stops the run
+    # price) and the fix's verification (VERIFY_FALLBACK), then the cap stops the run
+    monkeypatch.setattr(art, "VERIFY_FALLBACK", 0.004)
     eye = Seeing(faults=[HEAD], cost=0.002)
     il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.13)
-    assert rep.drawn == 1 and rep.fixed == 1 and rep.cost + rep.text_cost <= 0.13 + 1e-9
+    assert rep.drawn == 2 and not fixes(im)                  # 0.05 + 0.002 + 0.075 + 0.004 is over 0.13: no room for it
+    eye = Seeing(faults=[HEAD], cost=0.002)
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False, cap=0.135)
+    assert rep.drawn == 1 and rep.fixed == 1 and rep.cost + rep.text_cost <= 0.135 + 1e-9
 
 
 def test_the_budget_counts_a_check_and_the_expected_fixes_per_picture(monkeypatch):
@@ -3601,7 +3625,8 @@ def test_the_pickers_faults_name_no_person_but_the_persons_own_are_kept_as_typed
     assert "Mira" not in stored["what"] + stored["where"] and "figure" in stored["what"]
     assert all("Mira" not in c["prompt"] for c in fixes(im))
     new = il.fix(pics(sink)[0], [named])                          # the person's own list: their words
-    assert "Mira's left hand has six fingers" in im.calls[-1]["prompt"] and new["fixes"][-1]["faults"] == [named]
+    assert "Mira's left hand has six fingers" in im.calls[-1]["prompt"]
+    assert new["fixes"][-1]["faults"] == [{**named, "severity": "major"}]
 
 
 def test_the_persons_own_text_is_checked_and_fixed_but_never_rewritten():
@@ -3638,8 +3663,8 @@ def test_fix_on_demand_keeps_the_record_and_adds_to_its_fixes():
     assert new["id"] != scene["id"] and sink.files[new["file"]] and new["prompt"] == scene["prompt"]
     for k in ("figures", "references", "sources", "from", "kind", "target", "inherits", "notes"):
         assert new[k] == scene[k], k
-    assert new["fixes"][-1]["faults"][1] == {"what": "an extra hand", "where": ""}
-    assert new["fixes"][-1]["note"] == "the cloak should stay red" and new["cost"] == pytest.approx(scene["cost"] + 0.05)
+    assert new["fixes"][-1]["faults"][1] == {"what": "an extra hand", "where": "", "severity": "major"}
+    assert new["fixes"][-1]["note"] == "the cloak should stay red" and new["cost"] == pytest.approx(scene["cost"] + 0.052)
     assert any(r["id"] == scene["id"] for r in sink.m["pictures"]) and sink.m["pictures"][-1]["id"] == new["id"]
     again = il.fix(new, [], note="the left eye open")                 # a second fix by hand adds to the list, newest last
     assert [f["note"] for f in again["fixes"]] == ["the cloak should stay red", "the left eye open"]
@@ -3650,6 +3675,209 @@ def test_fix_on_demand_keeps_the_record_and_adds_to_its_fixes():
         il.fix(scene, [HEAD])
 
 
+class Echo(Image):
+    """An image model whose edit sends the picture back as it came (the reference's bytes), billed like any edit."""
+
+    def draw(self, prompt, **kw):
+        d = super().draw(prompt, **kw)
+        refs = kw.get("references") or ()
+        return images.Drawn(refs[0][0], refs[0][1], d.model, d.cost) if prompt.startswith(art.FIX) and refs else d
+
+
+HAND = {"what": "the left hand has six fingers", "where": "the miller in the doorway", "severity": "minor"}
+
+
+def scene_of(eye, image=None, **kw):
+    il, rep, sink, t, im = run(cheap_text=eye, image=image, level="all", **kw)
+    return il, sink, im, next(p for p in pics(sink) if p["kind"] == "event" and p.get("figures"))
+
+
+def test_the_check_is_critical_takes_stock_first_and_grades_each_fault():
+    for gone in ("when unsure, it is not a fault", "Most pictures have none", "gross drawing faults only"):
+        assert gone not in art.ANATOMY
+    for words in ("First take stock, figure by figure", "a distorted or melted face", "a joint bent the way it cannot bend",
+                  "a limb that starts or ends nowhere", "passing through a hand", "a held thing floating with no hand",
+                  "a chair with a leg missing", "could not stand", "at an impossible scale",
+                  "Report what a careful viewer would find wrong on a second look", "anything the prompt asks for",
+                  "cut off by the frame", "foreshortening", "text or lettering", "At most 6 faults"):
+        assert words in art.ANATOMY, words
+    props = art.ANATOMY_SCHEMA["properties"]
+    assert art.ANATOMY_SCHEMA["required"] == ["figures", "faults"]      # the stock-taking is written before the faults
+    assert set(props["figures"]["items"]["required"]) == {"where", "heads", "arms", "hands", "legs"}
+    assert props["figures"]["items"]["properties"]["hands"]["type"] == "integer"
+    assert props["faults"]["items"]["properties"]["severity"]["enum"] == ["major", "minor"]
+    assert art.MAX_FAULTS == 6
+    # severity is kept; missing or unknown is major (an older client's list, a person's own line)
+    assert art.clean_faults([{"what": "a", "where": "", "severity": "minor"}, {"what": "b"}, {"what": "c", "severity": "huge"}]) \
+        == [{"what": "a", "where": "", "severity": "minor"}, {"what": "b", "where": "", "severity": "major"},
+            {"what": "c", "where": "", "severity": "major"}]
+
+
+def test_the_checks_figures_are_never_kept():
+    eye = Seeing(faults=[HAND])
+    il, sink, im, scene = scene_of(eye)
+    c = il.check_picture(scene)
+    assert c.faults == [HAND] and not hasattr(c, "figures")
+
+
+def test_check_picture_may_use_another_model_than_the_picker():
+    picker, strong = Seeing(), Seeing(faults=[HEAD])
+    il, sink, im, scene = scene_of(picker)
+    n = len(picker.looked)
+    assert il.check_picture(scene, model=strong).faults == [HEAD]
+    assert len(picker.looked) == n and len(strong.looked) == 1
+    blind = Seeing(blind=True)
+    c = il.check_picture(scene, model=blind)
+    assert not c.checked and il.no_vision                                   # the caller can say the model cannot see
+
+
+def test_verify_fix_with_the_same_bytes_is_unchanged_with_no_call():
+    eye = Seeing()
+    v = art.verify_fix(eye, (b"same", "image/png"), (b"same", "image/png"), [HEAD, HAND])
+    assert v.checked and not v.changed and v.unchanged() and v.cost == 0 and not eye.verified
+    assert v.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
+    v = art.verify_fix(None, (b"same", "image/png"), (b"same", "image/png"), [HEAD])     # no model needed for that
+    assert v.checked and v.unchanged()
+
+
+def test_verify_fix_sends_both_pictures_and_reads_a_strict_verdict():
+    eye = Seeing(verdict={"results": [{"n": 2, "fixed": "partly"}, {"n": 9, "fixed": "yes"}, {"n": 1, "fixed": "maybe"}],
+                          "changed": True, "new": [{"what": f"new {i}", "where": "x", "severity": "minor"} for i in range(5)]})
+    v = art.verify_fix(eye, (b"one", "image/png"), (b"two", "image/jpeg"), [HEAD, HAND], note="keep the cloak red")
+    prompt, pictures = eye.verified[-1]
+    assert pictures == [b"one", b"two"]
+    assert "1. the woman at the gate: the head is far too small for the body and robe" in prompt
+    assert "2. the miller in the doorway: the left hand has six fingers" in prompt and "keep the cloak red" in prompt
+    # an unknown answer and a skipped fault are "no"; an n out of range is ignored; new faults cleaned, at most 3
+    assert v.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "partly"}] and v.checked and v.changed
+    assert len(v.new) == art.MAX_NEW_FAULTS and v.new[0] == {"what": "new 0", "where": "x", "severity": "minor"}
+    assert not v.unchanged() and v.cost == pytest.approx(0.002)
+    assert v.counts() == {"fixed": 0, "partly": 1, "of": 2, "results": v.results, "new": v.new}
+    for bad in ({}, {"results": [], "changed": "yes", "new": []}, {"changed": True}):
+        assert not art.verify_fix(Seeing(verdict=bad), (b"a", "image/png"), (b"b", "image/png"), [HEAD]).checked
+    failed = art.verify_fix(Seeing(vfail=True), (b"a", "image/png"), (b"b", "image/png"), [HEAD])
+    assert not failed.checked and not failed.unchanged() and "RuntimeError" in failed.why
+    blind = art.verify_fix(Seeing(blind=True), (b"a", "image/png"), (b"b", "image/png"), [HEAD])
+    assert not blind.checked and blind.why.startswith("NoVision")
+    # with no faults (a note alone) only `changed` decides
+    assert art.verify_fix(Seeing(verdict={"results": [], "changed": False, "new": []}), (b"a", "image/png"),
+                          (b"b", "image/png"), [], note="open the left eye").unchanged()
+    assert not art.verify_fix(Seeing(verdict={"results": [], "changed": True, "new": []}), (b"a", "image/png"),
+                              (b"b", "image/png"), [], note="open the left eye").unchanged()
+
+
+def test_a_fix_sent_back_as_it_was_files_nothing_and_is_billed():
+    eye = Seeing()
+    il, sink, im, scene = scene_of(eye, image=Echo())
+    before, cost0, n = list(sink.m["pictures"]), il.report.cost, len(eye.verified)
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix(scene, [HEAD])
+    assert sink.m["pictures"] == before and len(eye.verified) == n            # nothing filed, no verification call
+    assert e.value.verdict.checked and not e.value.verdict.changed and e.value.cost == pytest.approx(0.05)
+    assert il.report.cost == pytest.approx(cost0 + 0.05) and il.report.checks["not fixed: the fix changed nothing"] == 1
+    with pytest.raises(art.FixUnchanged):
+        il.fix(scene, [HEAD], verify=False)                                   # the same bytes need no model to tell
+
+
+@pytest.mark.parametrize("verdict", [
+    {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}], "changed": True, "new": []},
+    {"results": [{"n": 1, "fixed": "yes"}, {"n": 2, "fixed": "yes"}], "changed": False, "new": []},
+])
+def test_a_fix_the_verification_calls_unchanged_files_nothing(verdict):
+    eye = Seeing(verdict=verdict)
+    il, sink, im, scene = scene_of(eye)
+    before = list(sink.m["pictures"])
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix(scene, [HEAD, HAND])
+    assert sink.m["pictures"] == before and il.report.fixed == 0
+    assert e.value.cost == pytest.approx(0.052) and e.value.verdict.unchanged()
+
+
+def test_a_partial_fix_is_filed_with_what_the_verification_counted():
+    named = {"what": "Mira's arm is now fused into the gate", "where": "Mira, the woman at the gate", "severity": "major"}
+    eye = Seeing(verdict={"results": [{"n": 1, "fixed": "yes"}, {"n": 2, "fixed": "partly"}, {"n": 3, "fixed": "no"}],
+                          "changed": True, "new": [named]})
+    il, sink, im, scene = scene_of(eye)
+    new = il.fix(scene, [HEAD, HAND, {"what": "an extra leg", "where": ""}])
+    v = new["fixes"][-1]["verified"]
+    assert {k: v[k] for k in ("fixed", "partly", "of")} == {"fixed": 1, "partly": 1, "of": 3}
+    assert [r["fixed"] for r in v["results"]] == ["yes", "partly", "no"]
+    assert len(v["new"]) == 1 and "Mira" not in v["new"][0]["what"] + v["new"][0]["where"]   # no person's name kept
+    assert new["fixes"][-1]["cost"] == pytest.approx(0.052) and sink.m["pictures"][-1]["id"] == new["id"]
+
+
+def test_a_failed_verification_files_the_fix_unverified():
+    eye = Seeing(vfail=True)
+    il, sink, im, scene = scene_of(eye)
+    new = il.fix(scene, [HEAD])
+    assert new["fixes"][-1]["verified"] is None and sink.m["pictures"][-1]["id"] == new["id"]
+    assert il.report.checks["not verified: verification failed"] == 1
+    # no verification asked: filed unverified, no call
+    eye = Seeing()
+    il, sink, im, scene = scene_of(eye)
+    assert il.fix(scene, [HEAD], verify=False)["fixes"][-1]["verified"] is None and not eye.verified
+
+
+def test_the_fix_is_verified_by_the_checker_given():
+    picker, strong = Seeing(), Seeing(verdict={"results": [{"n": 1, "fixed": "partly"}], "changed": True, "new": []})
+    il, sink, im, scene = scene_of(picker)
+    new = il.fix(scene, [HEAD], checker=strong)
+    assert not picker.verified and len(strong.verified) == 1 and new["fixes"][-1]["verified"]["partly"] == 1
+
+
+def test_a_note_alone_is_verified_on_whether_the_picture_changed():
+    eye = Seeing(verdict={"results": [], "changed": False, "new": []})
+    il, sink, im, scene = scene_of(eye)
+    with pytest.raises(art.FixUnchanged):
+        il.fix(scene, [], note="the left eye open")
+    eye.verdict = {"results": [], "changed": True, "new": []}
+    new = il.fix(scene, [], note="the left eye open")
+    assert new["fixes"][-1]["verified"] == {"fixed": 0, "partly": 0, "of": 0, "results": [], "new": []}
+
+
+def test_the_automatic_check_fixes_major_faults_only():
+    eye = Seeing(faults=[HAND])                                   # minor only: recorded, not fixed
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    assert not fixes(im) and not eye.verified and rep.fixed == 0
+    assert all(p["check"] == {"faults": [HAND], "fixed": False} and "fixes" not in p for p in pics(sink))
+    eye = Seeing(faults=[HAND, HEAD])                             # the fix is asked for the major one alone
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    assert len(fixes(im)) == 2 and all("six fingers" not in c["prompt"] and "head is far too small" in c["prompt"]
+                                       for c in fixes(im))
+    p = pics(sink)[0]
+    assert p["check"]["faults"] == [HAND, HEAD] and p["check"]["fixed"] is True and p["fixes"][-1]["faults"] == [HEAD]
+
+
+def test_the_automatic_check_keeps_the_first_picture_when_the_fix_changed_nothing():
+    for eye, im in ((Seeing(faults=[HEAD]), Echo()),
+                    (Seeing(faults=[HEAD], verdict={"results": [{"n": 1, "fixed": "no"}], "changed": True, "new": []}),
+                     Image())):
+        il, rep, sink, t, im = run(cheap_text=eye, image=im, check=True, portraits=False)
+        assert rep.drawn == 2 and rep.fixed == 0 and len(fixes(im)) == 2
+        assert rep.checks["not fixed: the fix changed nothing"] == 2 and "  2 x not fixed: the fix changed nothing" in rep.lines()
+        for p in pics(sink):
+            first = next(c for c in im.calls if c["prompt"] == p["prompt"])
+            fix = next(c for c in fixes(im) if c["references"] == [sink.files[p["file"]]])     # the original is filed
+            assert first and fix and "fixes" not in p
+            assert p["check"]["fixed"] is False and p["check"]["verified"]["fixed"] == 0 and p["check"]["faults"] == [HEAD]
+            assert p["cost"] == pytest.approx(0.10 + (0.002 if eye.verified else 0))   # both image calls were billed
+        assert rep.cost == pytest.approx(0.20)
+
+
+def test_the_budget_holds_a_verification_per_expected_fix(monkeypatch):
+    monkeypatch.setattr(art, "CHECK_FALLBACK", 0.002)
+    monkeypatch.setattr(art, "VERIFY_FALLBACK", 0.05)
+    monkeypatch.setattr(art, "FIX_RATE", 1.0)
+    monkeypatch.setattr(llm, "image_price", lambda *a, **k: 0.05)
+    bk = book(("One", CH1), ("Two", CH2))
+    il = art.Illustrator([art.Book(base_doc(bk), bk, Mem())], Text(), Image(), "ink", portraits=False, cap=0.30,
+                         log=lambda *_: None, pause=0, cheap_text=Seeing(), check=True)
+    assert il._budget() == 1                                    # 0.30 / (0.05 * 2 + 0.002 + 0.05); without it 2
+    assert art.verify_price("claude", "claude-haiku-5-5") == pytest.approx(
+        (art.VERIFY_TOKENS[0] * 0.10 + art.VERIFY_TOKENS[1] * 0.50) / 1e6)
+    assert art.verify_price("custom", "mine") is None
+
+
 def test_fault_lists_are_cleaned_and_priced():
     raw = [{"what": "x" * 300, "where": "y" * 200}, {"what": "", "where": "z"}, "junk"] + [{"what": f"f{i}", "where": ""} for i in range(9)]
     got = art.clean_faults(raw)
@@ -3657,6 +3885,20 @@ def test_fault_lists_are_cleaned_and_priced():
     assert art.check_price("claude", "claude-haiku-5-5") == pytest.approx(
         (art.CHECK_TOKENS[0] * 0.10 + art.CHECK_TOKENS[1] * 0.50) / 1e6)
     assert art.check_price("custom", "mine") is None
+
+
+def test_a_long_fault_is_cut_at_a_word_boundary():
+    # Sonnet's faults on the bench ran past 200 characters; the fix prompt must never end on half a word.
+    long = ("the falcon's talons do not close round the glove and float above it, the glove itself bends back through the "
+            "wrist, and the strap that should tie the jesses hangs loose in the air beside the arm without clear attachment")
+    assert len(long) > art.FAULT_CHARS
+    got = art.clean_faults([{"what": long, "where": "the falconer on the left, " * 8, "severity": "minor"}])[0]
+    assert len(got["what"]) <= art.FAULT_CHARS and long.startswith(got["what"])
+    assert long[len(got["what"])] == " " and not got["what"].endswith(("att", ","))
+    assert len(got["where"]) <= art.WHERE_CHARS and got["where"].endswith(" on")
+    assert art._cut_words("a broken sword, " * 20, 40) == "a broken sword, a broken sword, a broken"
+    assert art._cut_words("short.", 40) == "short"
+    assert "at most about 150 characters" in art.ANATOMY and "at most about 150 characters" in art.VERIFY_FIX
 
 
 def test_the_writers_ask_for_no_visible_writing_and_no_detail_too_small_once():
