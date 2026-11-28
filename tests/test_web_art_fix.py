@@ -548,3 +548,41 @@ def test_the_verdict_numbers_the_faults_from_one_end_to_end(env, eye):
     r = env.c.post(f"/api/library/{KEY}/art/{r.json()['id']}/fix", json={"faults": two})
     assert r.status_code == 422 and r.json()["code"] == "unchanged"
     assert r.json()["verified"]["results"] == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
+
+
+def test_a_position_that_is_an_anchor_id_is_read_as_that_anchor_before_a_fraction(env, eye):
+    """An anchor id may look like a number ("1"): `?p=1` at that anchor is that anchor, never the end of the book."""
+    env.index.write_text(env.index.read_text().replace('"a1"', '"1"'))
+    assert any(a["id"] == "1" for a in json.loads(env.index.read_text())["anchors"])
+    old = one_picture(env)
+    new = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD]}).json()
+    r = env.c.get(new["beforeUrl"], params={"p": "1"})
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    assert env.c.get(new["beforeUrl"], params={"p": "1.0"}).status_code == 200      # not an id: the whole book read
+
+
+def test_the_picture_before_is_only_ever_a_picture_file_inside_its_snapshot(env, eye, tmp_path):
+    old = one_picture(env)
+    new = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD]}).json()
+    snap = env.data / "merges" / new["undo"]
+    path = snap / "entry.json"
+    entry = json.loads(path.read_text())
+    good = entry["art"]["removed"][0]["file"]
+    assert env.c.get(new["beforeUrl"]).status_code == 200
+
+    def named(name):
+        e = json.loads(path.read_text())
+        e["art"]["removed"][0]["file"] = name
+        path.write_text(json.dumps(e))
+        return env.c.get(new["beforeUrl"])
+    other = "p" + "0" * 8 + ".png"
+    (snap / other).write_bytes(b"another picture")
+    for bad in ("entry.json", "../entry.json", f"../{new['undo']}/{good}", other, good.rsplit(".", 1)[0] + ".svg", ""):
+        r = named(bad)
+        assert r.status_code == 404 and r.json()["code"] == "no-before", bad
+    outside = tmp_path / "secret.png"
+    outside.write_bytes(b"outside the snapshot")
+    (snap / good).unlink()
+    (snap / good).symlink_to(outside)
+    r = named(good)
+    assert r.status_code == 404 and r.json()["code"] == "no-before"                # a link out of the snapshot
