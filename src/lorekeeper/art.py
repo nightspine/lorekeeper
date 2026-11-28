@@ -729,11 +729,24 @@ Return "text"."""
 REF_DESCRIBE_SCHEMA = STYLE_DESCRIBE_SCHEMA
 
 
+def ref_faults(text: str) -> list[str]:
+    """What code finds wrong with a reference picture's description: `style_faults`, plus a capitalised word opening a
+    sentence that is no ordinary sentence word (`common_words.SENTENCE_FIRST`, as `_opening_unknown` reads one), which reads
+    as a name ("Lucy wears a green dress.")."""
+    out = style_faults(text)
+    names = [m.group(1) for m in _OPENING.finditer(" ".join(str(text or "").split()))
+             if m.group(1).lower() not in SENTENCE_FIRST]
+    if names:
+        out.append("a sentence opens with a capitalised word that reads as a name: " + ", ".join(dict.fromkeys(names)))
+    return out
+
+
 def describe_reference(model, data: bytes, mime: str, note: str = "") -> str:
     """One or two sentences, at most 300 characters, on what a person's reference picture shows that their note asks for (or
     its main subject), never a name or its drawing style: one call on `model`, a text model that sees pictures, under
-    REF_DESCRIBE, checked by code as `style_faults` checks a style sentence (length, at most two sentences, no capitalised
-    word but a sentence's first); one rewrite naming what was caught, then ValueError("could not describe"). llm.NoVision
+    REF_DESCRIBE, checked by code (`ref_faults`: as `style_faults` checks a style sentence, length, at most two sentences,
+    no capitalised word but a sentence's first, and a sentence's first word only when it is an ordinary sentence word);
+    one rewrite naming what was caught, then ValueError("could not describe"). llm.NoVision
     (also for a backend whose complete() takes no pictures), llm.ProviderError and llm.Cancelled are raised as they come."""
     note = user_note(note)
     ask = (f"The person's note on the picture above: <note>{note}</note>\nDescribe what the picture shows that the note asks for."
@@ -750,7 +763,7 @@ def describe_reference(model, data: bytes, mime: str, note: str = "") -> str:
         text = text.strip(" \"'“”")
         if text and text[-1] not in ".!?" and len(text) < STYLE_DESCRIBE_CHARS:
             text += "."
-        faults = style_faults(text) if text else ["it is empty"]
+        faults = ref_faults(text) if text else ["it is empty"]
         if not faults:
             return text
         if attempt:
@@ -3790,13 +3803,15 @@ class Illustrator:
         self.log(f"    fixed {kind} {rec.get('target')} ({rec.get('id')} -> {fid}, ${pic.cost:.3f})")
         return new
 
-    def _auto_check(self, job: Job, pr: Prompt, pic: images.Drawn, quality: str, held: float) -> tuple[images.Drawn, dict]:
+    def _auto_check(self, job: Job, pr: Prompt, pic: images.Drawn, quality: str, held: float,
+                    text: str | None = None) -> tuple[images.Drawn, dict]:
         """The automatic check of a picture just drawn (`check`): `held` is what was reserved for the check, given back once
         it is done. On faults, one fix if the cap leaves room for it ("skipped: fix, cap reached" else), kept without a
         second check. Returns (the picture to file, what its record gains: `check` {faults, fixed}, and on a fix `fixes`
         and the cost of both calls). A clean or unchecked picture gains nothing."""
         try:
-            c = self.check_picture(pic.data, pic.mime or "image/png", pr.text, bi=job.bi)
+            # the text the picture was drawn from, as sent and stored (with the described lines of the person's pictures)
+            c = self.check_picture(pic.data, pic.mime or "image/png", text if text is not None else pr.text, bi=job.bi)
         finally:
             self._unhold(held)
         if not c.checked or not c.faults:
@@ -4077,7 +4092,7 @@ class Illustrator:
         extra: dict = {}
         if held or self.check:
             try:
-                pic, extra = self._auto_check(job, pr, pic, quality, held)
+                pic, extra = self._auto_check(job, pr, pic, quality, held, sent)
             except BaseException:
                 # a stop (Cancelled) or anything else in the check or the fix: the picture was drawn and billed, so it is
                 # filed as drawn before the error goes on, and a resume does not draw and pay for it again
