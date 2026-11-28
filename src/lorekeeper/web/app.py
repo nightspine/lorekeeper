@@ -1540,13 +1540,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None,
                 looks: str = "make"):
         if kind not in artmod.SHAPE_OF:
-            raise ArtRefusal(422, "bad-kind", "kind must be plate, event, portrait, place or thing.")
+            raise ArtRefusal(422, "bad-kind", "kind must be plate, event, comic, portrait, place or thing.")
         if not isinstance(target, str) or not target:
             raise ArtRefusal(422, "bad-target", "Say what the picture is of.")
         if shape is not None and shape not in ("square", "portrait", "landscape"):
             raise ArtRefusal(422, "bad-shape", "shape must be square, portrait or landscape.")
         if given and at is None:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+        if kind == "comic" and not given:
+            # with no position the pipeline would take the whole chapter: a comic is only ever of what the reader reached
+            raise ArtRefusal(422, "bad-position", "A comic needs the reader's position.")
         try:
             fin_ = None if finished is None else set(finished)
             if looks == "make":
@@ -1556,6 +1559,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
         except artmod.TextFailed as e:      # the on-demand plate's screening call failed twice
             raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+        except artmod.TooFewMoments as e:   # a comic of a chapter with fewer than two moments reached
+            raise ArtRefusal(422, "too-few-moments", "A comic needs at least two moments of this chapter that you have "
+                                                     "reached.") from e
         except (KeyError, StopIteration, ValueError) as e:
             raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
 
@@ -1615,7 +1621,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return pick(job, list(pr.shows), fin, figures=pr.figures) if pr.figures is not None else pick(job, list(pr.shows), fin)
         # until `Illustrator.references` lands: the same rule from the pipeline's own parts
         pos = (job.bi, il.books[job.bi].ord_of[pr.anchor])
-        if job.kind in ("plate", "event"):
+        if job.kind in artmod.SCENE_KINDS:
             return il._references(list(pr.shows), pos, il.view(job.bi, pr.anchor, fin), fin)
         if job.kind == "portrait" and job.change:
             prev = il.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
@@ -1779,6 +1785,43 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         """Whether `text_` was written by the server from the material at the job's anchor (`k` its `prompt_key`): the
         prompt cached for it (or `fresh`, the one just written), or one of its remembered soften replies."""
         return any(written_as(il, h, style, pr, text_) for pr in [fresh or recall_prompt(k), *recall_softs(k)] if pr)
+
+    def comic_matches(il, h: str, style: str, k: tuple, text_: str) -> list[tuple[tuple, object]]:
+        """Every server-written comic text of the same chapter of this index under another key (`prompt_key`: another
+        anchor, frontier or set of finished books) that `text_` is (exactly, or its body with any style sentence): the cached
+        prompts and the remembered soften replies, each with its key."""
+        now = time.time()
+        with prompts_lock:
+            found = [(kk, v[1]) for kk, v in prompts.items() if now - v[0] < 3600]
+            found += [(kk, x) for kk, (t, xs) in softs.items() if now - t < 3600 for x in xs]
+        return [(kk, copy.copy(x)) for kk, x in found
+                if kk[:3] == k[:3] and kk != k and written_as(il, h, style, x, text_)]
+
+    def comic_place(il, h: str, style: str, k: tuple, job, text_: str, at: str, fresh=None):
+        """Where a comic text drawn or softened at the reader's position `at` is filed, since a page's anchor moves with the
+        position: its own job's anchor and panels when the server wrote it for this job (None); the anchor and panels of the
+        server-written page of the same chapter it is, written for a frontier the reader has reached (that Prompt and its
+        key, the job then taking that anchor and those panels); "position" for any other text, the person's own, which the
+        caller files at the reader's position anchor. Server text of a page whose anchor the reader has not reached is
+        refused, 422 `not-visible`, under any set of finished books: it tells moments past the position. A page written for
+        another set of finished books is the person's text here (its references and `inherits` are this reader's)."""
+        if server_written(il, h, style, k, text_, fresh=fresh):
+            return None
+        ords = il.books[job.bi].ord_of
+        hits = comic_matches(il, h, style, k, text_)
+        if any(kk[3] not in ords or ords[kk[3]] > ords[at] for kk, _ in hits):
+            raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+        same = [(kk, x) for kk, x in hits if kk[4] == k[4]]
+        if same:
+            kk, x = max(same, key=lambda hit: ords[hit[0][3]])
+            job.anchor, job.panels = x.anchor, list(x.panels or job.panels)
+            return x, kk
+        return "position"
+
+    def later_than(il, job, at: str | None) -> bool:
+        """Whether the reader's position anchor `at` comes after the job's anchor."""
+        ords = il.books[job.bi].ord_of
+        return at is not None and ords[at] > ords[job.anchor]
 
     def at_position(il, job, at: str | None) -> bool:
         """File an entity picture of the book being read at the reader's position `at` (text the server did not write at
@@ -2074,7 +2117,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
                "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "quality": llm.nearest_quality(prov, name, quality),
                "price": llm.image_price(prov, name, llm.nearest_quality(prov, name, quality), pr.shape), "slug": slug_,
-               "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
+               "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin,
+               # a comic page's event ids in panel order (the Reader captions them from its own view); null otherwise
+               "panels": list(pr.panels) if getattr(pr, "panels", None) is not None else None}
         return out
 
     @app.post("/api/library/{key}/art/soften")
@@ -2113,9 +2158,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 # it did not write (the person's edit) may use anything read up to the position, so the rewrite is written
                 # from the material at the position and answers that anchor.
                 k = prompt_key(key, job, fin)
-                own = server_written(il, ctx["hash"], style, k, refused)
-                if not own:
-                    at_position(il, job, at)
+                if job.kind == "comic":
+                    # a page's anchor moves with the position: its text is filed where the server wrote it, or at the position
+                    placed = comic_place(il, ctx["hash"], style, k, job, refused, at)
+                    own = placed is None or isinstance(placed, tuple)
+                    if isinstance(placed, tuple):      # its own page's material, remembered under that page's key
+                        k = placed[1]
+                    elif placed == "position" and later_than(il, job, at):
+                        job.anchor = at                # the person's text: rewritten from everything up to the position
+                else:
+                    own = server_written(il, ctx["hash"], style, k, refused)
+                    if not own:
+                        at_position(il, job, at)
                 try:
                     pr = il.soften(job, refused, reason, finished=None if fin is None else set(fin))
                 except artmod.NotVisible as e:
@@ -2167,12 +2221,29 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 # person's text is drawn); a miss writes it once.
                 pr, made_in = recall_prompt(prompt_key(key, job, fin), with_slug=True)
                 missed = pr is None
+                placed = None
+                if job.kind == "comic" and missed:
+                    # a page the server wrote at another frontier is found (or refused) before anything is written
+                    placed = comic_place(il, ctx["hash"], style, prompt_key(key, job, fin), job, text_, at)
+                    if isinstance(placed, tuple):
+                        pr, made_in, missed = placed[0], "", False   # its references are taken again at its anchor
                 if missed:
                     job, pr = prompt_for(il, args)
                     remember_prompt(prompt_key(key, job, fin), copy.copy(pr), slug_)
                     made_in = slug_
                 k = prompt_key(key, job, fin)
                 own = server_written(il, ctx["hash"], style, k, text_, fresh=copy.copy(pr))
+                if job.kind == "comic" and not isinstance(placed, tuple):
+                    placed = comic_place(il, ctx["hash"], style, k, job, text_, at, fresh=copy.copy(pr))
+                    if isinstance(placed, tuple):       # the page the sheet kept while the reader moved on
+                        pr, made_in = placed[0], ""     # its references are taken again at its anchor
+                    elif placed == "position":
+                        # the person's own text, or a page written for another set of finished books: shown from where it
+                        # was drawn, and its words hidden until every earlier book is finished, on a cache hit too, since
+                        # it may carry what the cached prompt's `inherits` does not
+                        if later_than(il, job, at):
+                            job.anchor = pr.anchor = at
+                        pr.inherits = sorted(set(pr.inherits) | set(earlier_keys(ctx)))
                 pr = restyled(il, job, pr, slug_, made_in)
                 if missed and text_ != " ".join(pr.text.split()):
                     # The text drawn is not the prompt just written for this reader, so it may come from one written for a
@@ -2309,14 +2380,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in il.books[-1].ord_of:
                     raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
-                job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
+                panels = [x for x in rec.get("panels") or [] if isinstance(x, str)] if rec["kind"] == "comic" else []
+                job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "",
+                                 panels=panels)
                 refs = redraw_references(il, rec, pid)
                 if body.get("p", body.get("anchor")) is not None:
                     given, at = art_position(ctx, body)
                     job.reach = (job.bi, il.books[job.bi].ord_of[at] if at is not None else -1)
                     refs = [(j, r) for j, r in refs if il.reference_reached(job, j, r)]
                 figures = None      # older records and non-scenes: no labels, drawn as before
-                if rec.get("kind") in ("plate", "event") and isinstance(rec.get("figures"), list):
+                if rec.get("kind") in artmod.SCENE_KINDS and isinstance(rec.get("figures"), list):
                     figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]
                                if isinstance(f, dict) and isinstance(f.get("label"), str) and isinstance(f.get("entity"), str)]
                 # a portrait drawn with the older half-length frame is drawn again with the mid-chest one
@@ -2330,7 +2403,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
                                    version=rec.get("notes"), body=text_, figures=figures,
-                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None)
+                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None,
+                                   panels=panels if rec["kind"] == "comic" else None,
+                                   **({"no_text": artmod.COMIC_NO_TEXT} if rec["kind"] == "comic" else {}))
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)

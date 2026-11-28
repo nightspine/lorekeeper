@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { lightboxHides, refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { cleanPanels, lightboxHides, panelCaptions, refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -147,6 +147,19 @@ test("an open lightbox closes only when a picture has none of its ids shown", ()
   assert.equal(lightboxHides([["pold", undefined]], new Set()), true);
   assert.equal(lightboxHides([], shown), false);
   assert.equal(lightboxHides(null, shown), false);
+});
+
+test("a comic's panels and their captions come only from the view the reader has now", () => {
+  assert.deepEqual(cleanPanels(["e1", "e2", "e1", 3, "", null, "e3"]), ["e1", "e2", "e3"]);   // strings, each once
+  assert.deepEqual(cleanPanels(["a", "b", "c", "d", "e", "f", "g"]), ["a", "b", "c", "d", "e", "f"]);   // at most six
+  for (const bad of [null, undefined, "e1", { 0: "e1" }]) assert.deepEqual(cleanPanels(bad), []);
+  const view = new Map([["e1", "Harker reaches the castle."], ["e3", "The Count reads the map."]]);
+  const text = (id) => view.get(id) ?? null;
+  // a panel whose event is not in the view is left out, and the others keep their own panel numbers
+  assert.deepEqual(panelCaptions(["e1", "e2", "e3"], text), [{ n: 1, text: "Harker reaches the castle." }, { n: 3, text: "The Count reads the map." }]);
+  assert.deepEqual(panelCaptions(["e1"], () => ""), []);
+  assert.deepEqual(panelCaptions(["e1"], null), []);
+  assert.deepEqual(panelCaptions(undefined, text), []);
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.30.0](https://github.com/nightspine/lorekeeper/compare/v0.29.0...v0.30.0) (2026-11-28)
+
+
+### Features
+
+* make a comic page of a chapter's moments from the Timeline, captioned under the panels ([#164](https://github.com/nightspine/lorekeeper/issues/164)) ([bdc7f0c](https://github.com/nightspine/lorekeeper/commit/bdc7f0c0b12b0cbe7ef54224385399bc2382293c))
+
 ## [0.29.0](https://github.com/nightspine/lorekeeper/compare/v0.28.0...v0.29.0) (2026-11-27)
 
 

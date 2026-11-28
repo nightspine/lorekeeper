@@ -33,7 +33,7 @@ from . import anchors as A
 from . import epub, gating, images, llm
 from . import portraits as P
 from .common_words import SENTENCE_FIRST
-from .generate import ABOUT_THE_TEXT
+from .generate import ABOUT_THE_TEXT as _ABOUT_THE_TEXT
 
 VERSION = "0.1"
 
@@ -52,7 +52,9 @@ STYLES: dict[str, str] = {
 # deleted one included so its art sets still draw in its words); a style is passed around by its slug like a listed one
 SAVED_STYLES: dict[str, str] = {}
 NO_TEXT = "No text, captions, lettering, titles or signatures anywhere in the picture."
-SHAPE_OF = {"plate": "landscape", "event": "landscape", "portrait": "portrait", "place": "landscape", "thing": "landscape"}
+SHAPE_OF = {"plate": "landscape", "event": "landscape", "comic": "portrait", "portrait": "portrait", "place": "landscape",
+            "thing": "landscape"}
+SCENE_KINDS = ("plate", "event", "comic")   # the kinds drawn as scenes: figure labels, scene references, the scene image model
 ENTITY_KINDS = ("portrait", "place", "thing")
 LEVELS = ("main", "all", "none")   # chapter pictures: the main moment of each chapter, every drawable moment, none
 PORTRAIT_TYPES = ("person", "creature")
@@ -88,6 +90,13 @@ MAIN_CAST_MAX = 12     # main cast: at most this many characters per book, most 
 CASTS = ("main", "all")  # whose portraits a run draws: the main cast, or everyone with a part (the older rule)
 WORKERS = 3
 SCENE_WORDS = (35, 170)
+# A comic page (on demand only): one picture of a chapter's moments, one panel each, in reading order. Code chooses the moments
+# (`comic_panels`), the writer describes each panel, code puts the page together (COMIC_FRAME, "Panel 1: ...", the style, the
+# no-text line). The captions are the moments' own summaries, shown by the Reader under the picture, never drawn in it.
+MAX_PANELS = 6
+MIN_PANELS = 2
+COMIC_PANEL_WORDS = (15, 80)   # what the checks accept of one panel; the writer is asked for 25 to 60
+COMIC_WORDS = (120, 380)       # the panels together; the lower bound is at most COMIC_PANEL_WORDS[0] per panel (a short page)
 # What the writer reads. The entry to draw is its latest visible profile in full, then its visible details, latest first,
 # up to ENTRY_CHARS in all. A main character's profile runs 400 to 900 characters and a detail 100 to 200, and the index marks
 # no detail as a look, so the budget is what keeps a look told chapters ago in reach: at 2,000 (the 12 latest details) Red
@@ -285,11 +294,53 @@ SCENE_HANDS = """- Two hands each: a figure holds or uses at most two things in 
 SCENE_WRITER = SCENE_WRITER.replace(_NO_TEXT_RULE, SCENE_HANDS + _NO_TEXT_RULE)
 assert SCENE_WRITER.count("Two hands each") == 1
 
+# The writer of a comic page: SCENE_WRITER with one text per panel. The page's layout is code's (COMIC_FRAME), so a style
+# change is still one sentence swapped; the captions are the Reader's, so no text is drawn.
+_MOMENT_LINE = "<moment>: the moment of the story the picture shows, as the companion records it, and where it happens when that is known. The picture shows this moment."
+assert _MOMENT_LINE in SCENE_WRITER
+_SCENE_RETURN = 'Return "text": the prompt.'
+assert SCENE_WRITER.endswith(_SCENE_RETURN)
+COMIC_WRITER = SCENE_WRITER.replace(_MOMENT_LINE, (
+    "<moment n=...>: one moment of the chapter for each panel of a comic page, numbered in reading order, as the companion "
+    "records it, and where it happens when that is known. Panel n shows moment n.\n"
+    "<passage n=...>: paragraphs of the book that tell moment n.")).replace(
+    "English, one paragraph, " + _SCENE_FORM, (
+    "English. For each panel, 25 to 60 words, plain sentences in the present tense: what is in frame in that panel, the "
+    "figures first, then the setting as far as the material gives it, then the light.")).replace(
+    _SCENE_RETURN, """This prompt is for one comic page of several panels, one panel for each <moment>, in the order given:
+- Each panel shows its own moment and nothing else. The page's layout, the gutters and the reading order are put around your text by code: never describe the page, the grid, borders, panel numbers or the order.
+- Each panel's text stands on its own: say again in each panel who is in frame and where. A labelled figure is called by its label in every panel they are in ("figure A"), with who they are in a few words the first time; never a pronoun for a figure named only in another panel.
+- A figure keeps the same look, dress and gear from panel to panel unless the material says it changed.
+- No speech balloons, captions, sound words or thought bubbles: the companion shows each panel's caption under the picture.
+Return "panels": one entry for each <moment>, in order, each {"n": the moment's number, "text": that panel's prompt}.""")
+assert COMIC_WRITER.count("This prompt is for one comic page") == 1 and COMIC_WRITER.count("<moment n=...>") == 1
+assert "For each panel, 25 to 60 words" in COMIC_WRITER
+COMIC_SCHEMA = {"type": "object", "required": ["panels"], "properties": {
+    "panels": {"type": "array", "items": {"type": "object", "required": ["n", "text"],
+                                          "properties": {"n": {"type": "integer"}, "text": {"type": "string"}}}},
+    "shows": {"type": "array", "items": {"type": "string"}}}}
+COMIC_FRAME = ("A comic page of {n} panels in a grid, read left to right and top to bottom, with thin white gutters between "
+               "them. Each panel shows one moment, and a figure looks the same in every panel they are in.")
+_COMIC_FRAME_RX = re.compile("^" + r"\d+".join(re.escape(x) for x in COMIC_FRAME.split("{n}")) + r"\s*")
+COMIC_NO_TEXT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture."
+
+
+def comic_frame(n: int) -> str:
+    """The first sentences of a comic page's body, by code: the layout of `n` panels."""
+    return COMIC_FRAME.format(n=n)
+
+
+def comic_body(panels: list[str]) -> str:
+    """A comic page's body: the frame, then "Panel 1: ..." to "Panel n: ...", all by code around the writer's panel texts."""
+    return " ".join([comic_frame(len(panels))] + [f"Panel {k}: {t}" for k, t in enumerate(panels, 1)])
+
 
 def unframed(text: str) -> str:
-    """A prompt body without what code put around a portrait's text (the frame, an older frame, the crop line): what the
-    writer wrote, for a rewrite. Anything else is returned as given."""
+    """A prompt body without what code put around a portrait's text (the frame, an older frame, the crop line) or a comic
+    page's (its frame; the "Panel n:" lines stay): what the writer wrote, for a rewrite. Anything else is returned as given."""
     text = " ".join(str(text or "").split())
+    if m := _COMIC_FRAME_RX.match(text):
+        return text[m.end():]
     for frame in (PORTRAIT_FRAME, PORTRAIT_FRAME_OLD):
         if text.startswith(frame):
             text = text[len(frame):].lstrip()
@@ -318,6 +369,33 @@ def reframed(kind: str, prompt: str, style: str = "") -> str:
     return f"{text.rstrip()} {PORTRAIT_CROP}"
 
 
+# Talk about the material in a picture prompt ("this passage", "the excerpt", "the passage reveals"). The generator's
+# ABOUT_THE_TEXT with one exemption: in a picture "the passage" and "the section" are also a corridor and a part of a
+# building ("doors line the passage"), so those two count only when what follows tells about the text (the passage says,
+# reveals, shows, later describes...; never "goes on" or "ends with", which a corridor does). "The material" counts the
+# same way, never before "gives" or "shows" ("the dark material gives at the shoulder", "shows wear" are cloth).
+_TELLS = (r"(?:(?:later|also|then|first|only|never|clearly|plainly|already|earlier|soon|now)\s+)?"
+          r"(?:says?|said|describ\w*|tells?|told|mention\w*|stat(?:es?|ed|ing)|notes?|noted|records?|recorded|reveal\w*|"
+          r"shows?|showed|shown|explain\w*|suggest\w*|impl(?:y|ies|ied)|hint\w*|indicat\w*|depict\w*|portray\w*|"
+          r"recount\w*|narrat\w*|confirm\w*|establish\w*|makes? (?:it )?clear)\b")
+ABOUT_THE_TEXT = re.compile(r"\b(?:this|the) (?:excerpt|chunk)s?\b|\bthis (?:passage|section)\b"
+                            r"|\b(?:in|from|of|by) this material\b"
+                            r"|\bthe (?:passage|section)s?\s+(?:later\b|" + _TELLS + ")"
+                            r"|\bthe material\s+(?!gives?\b|show(?:s|ed|n)?\b)" + _TELLS, re.IGNORECASE)
+assert _ABOUT_THE_TEXT.pattern.startswith(r"\b(this|the) (passage|section|excerpt|chunk)")
+_LABEL_CAPS = re.compile(rf"\bFigure ([{LABELS}])\b")
+
+
+def lower_labels(text: str) -> str:
+    """A figure label written with a capital inside a sentence ("dots mark Figure C's throat") as "figure C": the label is
+    a word of code's, never a name, and a capital there reads as a name the book has not used. At the start of the text or
+    of a sentence it stays as written."""
+    def sub(m: re.Match) -> str:
+        before = text[:m.start()].rstrip(" \"“‘'(")
+        return m.group(0) if not before or before[-1] in ".!?" else f"figure {m.group(1)}"
+    return _LABEL_CAPS.sub(sub, text)
+
+
 def labels_in(text: str) -> list[str]:
     """The figure labels a text uses ("figure A", "Figure B"), each once, in label order."""
     return sorted(set(FIGURE.findall(text or "")))
@@ -329,6 +407,7 @@ TASKS = {
     "thing": "Write the prompt for a picture of the thing to draw as it looks at this point, in a plain setting or the place the material puts it.",
     "event": "Write the prompt for one picture of the moment: one scene, what is in frame, the composition and the light.",
     "plate": "Write the prompt for one picture of the main moment of this chapter: one scene, what is in frame, the composition and the light.",
+    "comic": "Write the prompt for a comic page of this chapter's moments: one panel for each numbered moment, in order, each what is in frame in that panel.",
 }
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
 name may appear; leave out any entry you do not draw)."""
@@ -363,12 +442,14 @@ anyone young: say "young". No tricks to get past a filter (misspellings, code wo
 of the same moment, in plain English. Where the prompt calls a figure by a label ("figure A"), keep that label for each figure you still
 draw."""
 SOFTEN_TEXT_CHARS = 900
+SOFTEN_COMIC_CHARS = 2400   # a comic page's panels are longer than one scene
 SOFTEN_REASON_CHARS = 200
 
 
-def soften_request(text: str, reason: str = "") -> str:
-    """The SOFTEN request for a refused prompt and the provider's reason (both trimmed; the reason may be empty)."""
-    text = " ".join(str(text or "").split())[:SOFTEN_TEXT_CHARS]
+def soften_request(text: str, reason: str = "", limit: int = SOFTEN_TEXT_CHARS) -> str:
+    """The SOFTEN request for a refused prompt and the provider's reason (both trimmed, the text to `limit` characters; the
+    reason may be empty)."""
+    text = " ".join(str(text or "").split())[:limit]
     reason = " ".join(str(reason or "").split())[:SOFTEN_REASON_CHARS].replace('"', "'")
     return SOFTEN.format(text=text.replace('"', "'"), reason=f' (the reason it gave: "{reason}")' if reason else "")
 
@@ -959,8 +1040,8 @@ class Book:
 
 @dataclass
 class Job:
-    kind: str                 # plate, event, portrait, place, thing
-    target: str               # chapter title, event id or entity id
+    kind: str                 # plate, event, comic, portrait, place, thing
+    target: str               # chapter title (plate, comic), event id or entity id
     bi: int                   # book index in the run
     anchor: str               # the anchor the picture shows from
     event: dict | None = None
@@ -971,6 +1052,7 @@ class Job:
     # the reader's frontier (book index, anchor ordinal) when the job was asked for at a position (`Illustrator.job` with `at`);
     # None: no reader (a run, whose limit is its `until`), or no position given
     reach: tuple[int, int] | None = None
+    panels: list[str] = field(default_factory=list)   # a comic page's event ids, one per panel, in reading order
 
 
 @dataclass
@@ -1000,6 +1082,7 @@ class Prompt:
     figures: list[dict] | None = None
     # the text model that wrote it, {"provider", "model"} (None: not known, an older prompt or a model with no name)
     written_by: dict | None = None
+    panels: list[str] | None = None   # a comic page's event ids, one per panel in panel order (None: not a comic)
 
 
 @dataclass
@@ -1203,6 +1286,13 @@ class NotVisible(ValueError):
     """The picture asked for sits after the reader's position."""
 
 
+class TooFewMoments(ValueError):
+    """A comic page asked for a chapter with fewer than MIN_PANELS moments the reader has reached."""
+
+    def __init__(self) -> None:
+        super().__init__("too few moments")
+
+
 class Dropped(ValueError):
     """No usable prompt came out: the message is the report's reason, `detail` the check's own words ("unknown name: Vlad")."""
 
@@ -1332,6 +1422,7 @@ def _reason(why: str) -> str:
                         ("too short", "dropped: prompt too short"),
                         ("unknown figure label", "dropped: unknown figure label in prompt"),
                         ("lost the figure labels", "dropped: lost the figure labels"), ("too long", "dropped: prompt too long"),
+                        ("wrong panel count", "dropped: wrong panel count"),
                         ("empty", "dropped: empty prompt")):
         if why.startswith(start):
             return name
@@ -1345,7 +1436,8 @@ _EXPLAIN = (("name in the text: ", "a name the picture must not show: {}"),
             ("tie not in the text: ", "a tie the book does not state: {}"),
             ("copies the book: ", "words copied from the book: {}"),
             ("unknown figure label: ", "a figure label the picture has no reference for: {}"),
-            ("lost the figure labels", "a rewrite that no longer labels the figures it draws{}"))
+            ("lost the figure labels", "a rewrite that no longer labels the figures it draws{}"),
+            ("wrong panel count", "a page with another number of panels than the moments it was given"))
 
 
 def explain(why: str) -> str:
@@ -1613,7 +1705,7 @@ class Illustrator:
         """(text, "") when a written text is usable at an anchor, else (None, reason): its length, a word the book has not
         used by the anchor, hindsight or "now" wording, a tie the material does not state, talk about "the passage", a
         person's or creature's name, and `check` (a scene's figure labels, `_label_check`)."""
-        text = " ".join(str(text or "").split())
+        text = lower_labels(" ".join(str(text or "").split()))
         n = _words(text)
         if n and n < words[0]:
             return None, "too short"
@@ -1824,10 +1916,72 @@ class Illustrator:
         return got, why
 
     @staticmethod
+    def _panel_texts(out: dict, n: int) -> list[str] | None:
+        """A comic reply's panel texts in panel order, None when it does not hold exactly `n` panels. The panels are put in the
+        order of their numbers when those are 1..n, else kept in the order given."""
+        raw = out.get("panels")
+        if not isinstance(raw, list) or len(raw) != n or not all(isinstance(x, dict) for x in raw):
+            return None
+        nums = [x.get("n") for x in raw]
+        if sorted(k for k in nums if isinstance(k, int) and not isinstance(k, bool)) == list(range(1, n + 1)):
+            raw = sorted(raw, key=lambda x: x["n"])
+        return [str(x.get("text") or "") for x in raw]
+
+    def _vet_comic(self, out: dict, n: int, bi: int, anchor: str, source: str, finished: frozenset[str] | None,
+                   check: Callable[[str], str] | None, fix: bool = False) -> tuple[str | None, str, str]:
+        """(the page's body, "", "") when a comic reply is usable, else (None, the reason, where: "" or "panel k: "): exactly
+        `n` panels, each passing `_vet` on its own (COMIC_PANEL_WORDS), and the panels together (COMIC_WORDS, the lower bound
+        at most COMIC_PANEL_WORDS[0] a panel) with `check`, the page's figure labels. With `fix`, a panel failing only on a
+        name has it replaced by a role (`_fix`), as a scene's last try."""
+        texts = self._panel_texts(out, n)
+        if texts is None:
+            raw = out.get("panels")
+            got = len(raw) if isinstance(raw, list) else 0
+            return None, f"wrong panel count: {got} panels for {n} moments", ""
+        done: list[str] = []
+        for k, t in enumerate(texts, 1):
+            got, why = self._vet(t, bi, anchor, source, COMIC_PANEL_WORDS, finished)
+            if got is None and fix and why != "empty":
+                got = self._fix(t, why, bi, anchor, source, COMIC_PANEL_WORDS, finished)
+            if got is None:
+                return None, why, f"panel {k}: "
+            done.append(got)
+        whole = (min(COMIC_WORDS[0], n * COMIC_PANEL_WORDS[0]), COMIC_WORDS[1])
+        got, why = self._vet(" ".join(done), bi, anchor, source, whole, finished, check)
+        if got is None:
+            return None, why, ""
+        return comic_body(done), "", ""
+
+    def _write_comic(self, prompt: str, bi: int, anchor: str, source: str, n: int, finished: frozenset[str] | None,
+                     check: Callable[[str], str] | None, model=None) -> tuple[str | None, str, dict]:
+        """One writer call for a comic page of `n` panels (COMIC_WRITER, COMIC_SCHEMA), one rewrite naming what a check
+        caught (a panel's fault, or a wrong panel count), then, when only a name is wrong, code replaces it by a role. (the
+        page's body with its frame, "", the reply) or (None, reason, the reply)."""
+        model = model or self.text
+        out = self._complete(prompt, COMIC_SCHEMA, COMIC_WRITER, model)
+        body, why, where = self._vet_comic(out, n, bi, anchor, source, finished, check)
+        if body is None and why != "empty":
+            tries = [out]
+            raw = out.get("panels") if isinstance(out.get("panels"), list) else []
+            shown = " ".join(f"Panel {k}: {x.get('text') if isinstance(x, dict) else x}" for k, x in enumerate(raw, 1))
+            out = self._complete(prompt + REWRITE.format(text=shown[:1800], why=where + why), COMIC_SCHEMA, COMIC_WRITER, model)
+            body, why, where = self._vet_comic(out, n, bi, anchor, source, finished, check)
+            if body is None:
+                for out_ in [out] + tries:
+                    fixed, _, _ = self._vet_comic(out_, n, bi, anchor, source, finished, check, fix=True)
+                    if fixed is not None:
+                        with self.lock:
+                            self.report.dropped["fixed: name replaced by a role"] += 1
+                        return fixed, "", out_
+        return body, why, out
+
+    @staticmethod
     def _form(kind: str) -> tuple[str, tuple[int, int]]:
         """The writer's system text and the word range its text is checked against, for a kind of picture."""
         if kind == "portrait":
             return PORTRAIT_WRITER, PORTRAIT_WORDS
+        if kind == "comic":
+            return COMIC_WRITER, COMIC_WORDS
         return (SCENE_WRITER if kind in ("plate", "event") else WRITER), SCENE_WORDS
 
     @staticmethod
@@ -1970,6 +2124,44 @@ class Illustrator:
             m["screened"][chapter["title"]] = {"key": key, "events": ids}
             self._save(bi)
         return ids
+
+    @staticmethod
+    def _spread(xs: list, k: int) -> list:
+        """`k` of `xs` evenly spaced, the first and the last kept (all of them when there are no more than `k`)."""
+        if k >= len(xs):
+            return list(xs)
+        if k <= 0:
+            return []
+        if k == 1:
+            return [xs[(len(xs) - 1) // 2]]
+        return [xs[math.floor(i * (len(xs) - 1) / (k - 1) + 0.5)] for i in range(k)]
+
+    def comic_panels(self, bi: int, chapter: dict, at: str | None = None) -> list[str]:
+        """The event ids a comic page of a chapter shows, one per panel, in reading order, chosen by code with no call: the
+        chapter's non-minor events at or before anchor `at` (the whole chapter with no `at`), those a fresh screening keeps
+        when it keeps at least MIN_PANELS of them; at most MAX_PANELS, turning points first, the rest evenly spaced through
+        the chapter. Raises NotVisible when the reader has reached none of the chapter's moments, TooFewMoments when fewer
+        than MIN_PANELS are reached."""
+        b = self.books[bi]
+        evs = sorted((e for e in chapter["events"] if e.get("kind") != "minor"), key=lambda e: b.ord_of[e["from"]])
+        lim = b.ord_of[at] if at is not None else None
+        seen = [e for e in evs if lim is None or b.ord_of[e["from"]] <= lim]
+        if evs and not seen:
+            raise NotVisible(chapter["title"])
+        pool = seen
+        screened = self.screened(bi, chapter)
+        if screened is not None:
+            keep = set(screened)
+            if len(chosen := [e for e in seen if e["id"] in keep]) >= MIN_PANELS:
+                pool = chosen
+        if len(pool) < MIN_PANELS:
+            raise TooFewMoments()
+        turns = [e for e in pool if e.get("kind") == "turn"]
+        if len(turns) >= MAX_PANELS:
+            picked = self._spread(turns, MAX_PANELS)
+        else:
+            picked = turns + self._spread([e for e in pool if e.get("kind") != "turn"], MAX_PANELS - len(turns))
+        return [e["id"] for e in sorted(picked, key=lambda e: b.ord_of[e["from"]])]
 
     def _main_moment(self, bi: int, chapter: dict, moments: list[str]) -> str | None:
         """The event id of the one picture of a chapter: its turning point, else the drawable event its recap gives the most
@@ -2584,8 +2776,8 @@ class Illustrator:
         """Whether a scene's stored reference (book j, its record) may be sent again for the job's reader (a same-prompt
         redraw): one at or before the scene, as always; one after it only within the reader's frontier (`_reach`: `job.reach`,
         else the run's limit) and with no look change of its entity recorded between the scene and it (`_changes_after`), as
-        `earliest_later_picture` chose it. Anything but a plate or event keeps its references."""
-        if job.kind not in ("plate", "event"):
+        `earliest_later_picture` chose it. Anything but a scene (plate, event, comic) keeps its references."""
+        if job.kind not in SCENE_KINDS:
             return True
         pos = self._pos(job.bi, job.anchor)
         k = (j, self.books[j].ord_of.get(rec.get("from"), -1))
@@ -2694,7 +2886,7 @@ class Illustrator:
         bi = job.bi
         fin = self._finished(bi, finished if finished is not None else job.finished)
         pos = self._pos(bi, job.anchor)
-        if job.kind in ("plate", "event"):
+        if job.kind in SCENE_KINDS:
             if figures is not None:
                 upto = self._reach(job)
                 # only a figure the material told the writer has a picture (no "portrait": False) gets one sent
@@ -2994,6 +3186,14 @@ class Illustrator:
                 moments = [e["id"] for e in ch["events"] if e.get("kind") != "minor"]
             main = self._main_moment(bi, ch, moments)
             job = Job("plate", target, bi, ch["last"], event=b.events[main] if main else None, chapter=ch, shape=shape)
+        elif kind == "comic":
+            ch = next((c for c in b.chapters if c["title"] == target), None)
+            if ch is None:
+                raise ValueError("no such chapter")
+            panels = self.comic_panels(bi, ch, at)
+            # the page shows from its last panel's moment: never before every panel is reached
+            last = max((b.events[x]["from"] for x in panels), key=b.ord_of.__getitem__)
+            job = Job("comic", target, bi, last, chapter=ch, shape=shape, panels=panels)
         else:
             if target not in b.ents:       # an entity of an earlier book only: its picture is that (finished) book's
                 bi = next((j for j in range(bi - 1, -1, -1) if target in self.books[j].ents), -1)
@@ -3067,9 +3267,15 @@ class Illustrator:
         return anchor or start
 
     def _figures(self, job: Job) -> list[str]:
-        """The entities a picture shows: the ones its event names (a plate with no event, the chapter's most named), no others."""
+        """The entities a picture shows: the ones its event names (a plate with no event, the chapter's most named; a comic
+        page, the ones its panels' events name, the most named first), no others."""
         if job.kind in ENTITY_KINDS:
             return [job.target]
+        if job.kind == "comic":
+            evs = [self.books[job.bi].events[x] for x in job.panels if x in self.books[job.bi].events]
+            named = Counter(x for e in evs for x in dict.fromkeys(e.get("entities", [])))
+            order = list(dict.fromkeys(x for e in evs for x in e.get("entities", [])))
+            return sorted(order, key=lambda x: (-named[x], order.index(x)))
         if job.event:
             return list(dict.fromkeys(job.event.get("entities", [])))
         ids = [x for e in (job.chapter or {}).get("events", []) if e.get("kind") != "minor" for x in e.get("entities", [])]
@@ -3110,12 +3316,13 @@ class Illustrator:
         The person asks for it on the Reader's sheet and reads the result before anything is drawn."""
         style = self._style(job.bi)
         refused = " ".join(str(text or "").split())
-        for tail in (NO_TEXT, style):       # what code appended is not the writer's to rewrite
+        for tail in (COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT, style):   # what code appended is not the writer's
             if tail and refused.endswith(tail):
                 refused = refused[:-len(tail)].rstrip()
         refused = unframed(refused)
         # the figures the refused text labelled keep their labels (and at least one of them must stay labelled)
-        return self._make_prompt(job, finished, soften_request(refused, reason), set(labels_in(refused)))
+        limit = SOFTEN_COMIC_CHARS if job.kind == "comic" else SOFTEN_TEXT_CHARS
+        return self._make_prompt(job, finished, soften_request(refused, reason, limit), set(labels_in(refused)))
 
     def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "",
                      keep: set[str] | None = None) -> Prompt:
@@ -3214,40 +3421,66 @@ class Illustrator:
             ids = [job.target]
         else:
             at = b.ord_of[anchor]
-            ev = job.event
             ch = job.chapter or {}
             where = f' chapter="{_attr(ch["title"])}"' if ch.get("title") else ""
-            if ev:
-                setting = (ev.get("setting") or {}).get("text")
-                moment = ev["summary"] + (f" (where: {setting})" if setting else "")
-                sources |= {ev["from"]} | {a for a in ev.get("evidence", []) if a in b.ord_of}
-            else:   # a plate with no event: the chapter as its recaps tell it
-                moment = " ".join(r["text"] for r in ch.get("recaps", []) if b.ord_of[r["from"]] <= at)
-                sources |= {e2["from"] for e2 in ch.get("events", []) if e2.get("kind") != "minor"}
-                sources |= {e2["from"] for e2 in ch.get("events", [])[:6]}
-            material.append(f"<moment{where}>{_esc(moment)}</moment>")
-            plain.append(moment)
-            # this chapter's own recaps and events up to the anchor, by its own book's ordinals: ids can repeat across books
-            recaps = [r for r in ch.get("recaps", []) if b.ord_of[r["from"]] <= at] if ev else []
-            if recaps:
-                so_far = " ".join(r["text"] for r in recaps)
-                material.append(f"<chapter_so_far>{_esc(so_far)}</chapter_so_far>")
-                plain.append(so_far)
-                sources |= {r["from"] for r in recaps}
-            before = [e2 for e2 in ch.get("events", []) if b.ord_of[e2["from"]] <= at and e2["id"] != (ev or {}).get("id")
-                      and (not ev or b.ord_of[e2["from"]] < b.ord_of[ev["from"]])][-5:]
-            if before:
-                material.append("<earlier_in_chapter>" + _esc(" / ".join(e2["summary"] for e2 in before)) + "</earlier_in_chapter>")
-                plain += [e2["summary"] for e2 in before]
-                sources |= {e2["from"] for e2 in before}
-            cited = ev["evidence"] if ev else [a for e2 in ch.get("events", [])[:6] for a in e2["evidence"]]
-            passage, blocks = self.passage(bi, [b.seq_of[a] for a in cited if a in b.seq_of and b.seq_of[a] <= upto], upto)
+            if job.kind == "comic":
+                # one <moment n=...> per panel, then the chapter so far, then each panel's own paragraphs (the passage
+                # budget shared between the panels); the figures are the panels' together, so one figure keeps one label
+                evs = [b.events[x] for x in job.panels]
+                for k, e2 in enumerate(evs, 1):
+                    setting = (e2.get("setting") or {}).get("text")
+                    moment = e2["summary"] + (f" (where: {setting})" if setting else "")
+                    material.append(f'<moment n="{k}"{where}>{_esc(moment)}</moment>')
+                    plain.append(moment)
+                    sources |= {e2["from"]} | {a for a in e2.get("evidence", []) if a in b.ord_of}
+                recaps = [r for r in ch.get("recaps", []) if b.ord_of[r["from"]] <= at]
+                if recaps:
+                    so_far = " ".join(r["text"] for r in recaps)
+                    material.append(f"<chapter_so_far>{_esc(so_far)}</chapter_so_far>")
+                    plain.append(so_far)
+                    sources |= {r["from"] for r in recaps}
+                for k, e2 in enumerate(evs, 1):
+                    seqs = [b.seq_of[a] for a in e2.get("evidence", []) if a in b.seq_of and b.seq_of[a] <= upto]
+                    told, used_ = self.passage(bi, seqs, upto, PASSAGE_WORDS // len(evs))
+                    if told:
+                        material.append(f'<passage n="{k}">{_esc(told)}</passage>')
+                        plain.append(told)
+                        sources |= {b.anchor_at(x) for x in used_}
+                passage, blocks = "", []
+                summaries = [e2["summary"] for e2 in evs]
+            else:
+                ev = job.event
+                if ev:
+                    setting = (ev.get("setting") or {}).get("text")
+                    moment = ev["summary"] + (f" (where: {setting})" if setting else "")
+                    sources |= {ev["from"]} | {a for a in ev.get("evidence", []) if a in b.ord_of}
+                else:   # a plate with no event: the chapter as its recaps tell it
+                    moment = " ".join(r["text"] for r in ch.get("recaps", []) if b.ord_of[r["from"]] <= at)
+                    sources |= {e2["from"] for e2 in ch.get("events", []) if e2.get("kind") != "minor"}
+                    sources |= {e2["from"] for e2 in ch.get("events", [])[:6]}
+                material.append(f"<moment{where}>{_esc(moment)}</moment>")
+                plain.append(moment)
+                # this chapter's own recaps and events up to the anchor, by its own book's ordinals: ids can repeat across books
+                recaps = [r for r in ch.get("recaps", []) if b.ord_of[r["from"]] <= at] if ev else []
+                if recaps:
+                    so_far = " ".join(r["text"] for r in recaps)
+                    material.append(f"<chapter_so_far>{_esc(so_far)}</chapter_so_far>")
+                    plain.append(so_far)
+                    sources |= {r["from"] for r in recaps}
+                before = [e2 for e2 in ch.get("events", []) if b.ord_of[e2["from"]] <= at and e2["id"] != (ev or {}).get("id")
+                          and (not ev or b.ord_of[e2["from"]] < b.ord_of[ev["from"]])][-5:]
+                if before:
+                    material.append("<earlier_in_chapter>" + _esc(" / ".join(e2["summary"] for e2 in before)) + "</earlier_in_chapter>")
+                    plain += [e2["summary"] for e2 in before]
+                    sources |= {e2["from"] for e2 in before}
+                cited = ev["evidence"] if ev else [a for e2 in ch.get("events", [])[:6] for a in e2["evidence"]]
+                passage, blocks = self.passage(bi, [b.seq_of[a] for a in cited if a in b.seq_of and b.seq_of[a] <= upto], upto)
+                summaries = [ev["summary"]] if ev else []
             ids = [x for x in self._figures(job) if x in vis]
             # a thing the moment's summary names as written, by a name it has at the anchor, is in the scene too: events
             # seldom list things among their entities ("Darrow fights with his slingBlade")
-            if ev:
-                ids += [x["id"] for x in view["entities"] if x["type"] == "object" and x["id"] not in ids
-                        and self._names_in(self._visible_names(x), ev["summary"], whole=True)]
+            ids += [x["id"] for x in view["entities"] if x["type"] == "object" and x["id"] not in ids
+                    and any(self._names_in(self._visible_names(x), t, whole=True) for t in summaries)]
             setting_id = self._setting_place(job, vis)
             # the figures (people and creatures) first, then the other entries the event names, then the figures' groups: an
             # entry past MAX_ENTRIES is cut, and the place the moment happens at has its own <setting_entry>
@@ -3323,11 +3556,15 @@ class Illustrator:
         labels = self._label_check(set(label_of.values()), keep) if scene else None
         want = self._label_want(label_of, keep, vis) if scene else None
         model = self.writer_for(job.kind)
-        body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin, system,
-                                          labels, model, want)
+        if job.kind == "comic":
+            body, why, out = self._write_comic(writer + extra, bi, anchor, check, len(job.panels), fin, labels, model)
+        else:
+            body, why, out = self._write_full(writer + extra, bi, anchor, check, words, SCENE_SCHEMA if scene else SCHEMA, fin,
+                                              system, labels, model, want)
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         body = self._framed(job.kind, body)
+        no_text = COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT
         figures = None
         if scene:                          # an entity's own picture always shows it
             entity_of = {lab: eid for eid, lab in label_of.items()}
@@ -3341,10 +3578,10 @@ class Illustrator:
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         style = self._style(bi)
-        return Prompt(self._assemble(body, bi, style), body, anchor, job.shape or SHAPE_OF[job.kind], [], refs,
+        return Prompt(self._assemble(body, bi, style, no_text), body, anchor, job.shape or SHAPE_OF[job.kind], [], refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
-                      sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, NO_TEXT, list(ids),
-                      figures, model_ref(model))
+                      sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, no_text, list(ids),
+                      figures, model_ref(model), list(job.panels) if job.kind == "comic" else None)
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
         """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
@@ -3405,9 +3642,10 @@ class Illustrator:
         return names.strip(s) if names is not None and names.find(s) else s
 
     @staticmethod
-    def _assemble(body: str, bi: int = -1, style: str = "") -> str:
-        """What the image model gets: the writer's checked text, the style sentence and the no-text line, all by code."""
-        return " ".join(p for p in (body.rstrip(), style, NO_TEXT) if p)
+    def _assemble(body: str, bi: int = -1, style: str = "", no_text: str = NO_TEXT) -> str:
+        """What the image model gets: the writer's checked text, the style sentence and the no-text line (a comic page's,
+        COMIC_NO_TEXT, names speech balloons too), all by code."""
+        return " ".join(p for p in (body.rstrip(), style, no_text) if p)
 
     # ---- cost and the cap
 
@@ -3712,7 +3950,7 @@ class Illustrator:
         order or None, the record's `figures` or None). A scene with labelled figures (`pr.figures`) sends, in label order, the
         reference of each label its text still uses, and nothing for a label taken out or a figure it never labelled; every
         other picture (an older prompt included) sends its references as before."""
-        if job.kind in ("plate", "event") and pr.figures is not None:
+        if job.kind in SCENE_KINDS and pr.figures is not None:
             got, labels, figures = [], [], []
             for f, hit in self.pair_figures(pr.figures, pr.references, pr.text):
                 data = self.reference_bytes(*hit) if hit else None
@@ -3773,6 +4011,8 @@ class Illustrator:
                **({"notes": pr.version} if pr.version is not None else {})}
         if figures is not None:
             rec["figures"] = figures
+        if job.kind == "comic":            # the page's moments, one per panel: the Reader captions each from the view
+            rec["panels"] = list(pr.panels if pr.panels is not None else job.panels)
         if pr.partial:
             rec["partial"] = True
         _, provider, model = self.image_for(job.kind)
@@ -3843,10 +4083,14 @@ class Illustrator:
                         refused = unframed(pr.scene)
                         given = {f["label"] for f in pr.figures or []}
                         keep = set(labels_in(refused)) & given
-                        soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
-                                              self._finished(bi, job.finished), system,
-                                              self._label_check(given, keep) if pr.figures is not None else None,
-                                              self.writer_for(job.kind))
+                        labels = self._label_check(given, keep) if pr.figures is not None else None
+                        if job.kind == "comic":
+                            soft, _, _ = self._write_comic(pr.writer + soften_request(refused, e.reason, SOFTEN_COMIC_CHARS),
+                                                           bi, pr.anchor, pr.check, len(pr.panels or job.panels), self._finished(bi, job.finished),
+                                                           labels, self.writer_for(job.kind))
+                        else:
+                            soft, _ = self._write(pr.writer + soften_request(refused, e.reason), bi, pr.anchor, pr.check, words,
+                                                  self._finished(bi, job.finished), system, labels, self.writer_for(job.kind))
                         soft = self._framed(job.kind, soft) if soft else soft
                     except TextFailed:
                         soft = None
@@ -3854,7 +4098,7 @@ class Illustrator:
                     self._skip(bi, job.target, "refused: provider declined", final=True, kind=job.kind, anchor=job.anchor,
                                detail=e.reason[:160], refused=True)
                     return None
-                text_ = self._assemble(soft, bi, pr.style or self._style(bi))
+                text_ = self._assemble(soft, bi, pr.style or self._style(bi), pr.no_text)
                 if hit := self.names[bi].find(text_):     # the same last check as make_prompt's
                     self._skip(bi, job.target, "dropped: name in prompt", final=True, kind=job.kind, anchor=job.anchor,
                                detail=f"name in the text: {hit}")
