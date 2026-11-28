@@ -265,3 +265,24 @@ def test_describe_reference_checks_the_words_with_one_rewrite():
             return {"text": "x"}
     with pytest.raises(llm.NoVision):
         art.describe_reference(NoEyes(), b"img", "image/png")
+
+
+def test_a_description_opening_with_a_name_is_caught_and_rewritten():
+    assert art.ref_faults("A long green velvet dress with a lace collar.") == []
+    assert art.ref_faults("Long sleeves puffed at the shoulder. Two rows of brass buttons down the front.") == []
+    assert any("Lucy" in f for f in art.ref_faults("Lucy wears a long green velvet dress with a lace collar."))
+    assert any("Whitby" in f for f in art.ref_faults("A grey stone abbey on a cliff. Whitby lies below it in fog."))
+    eye = Eye("Lucy wears a long green velvet dress with a lace collar.", "a long green velvet dress with a lace collar.")
+    assert art.describe_reference(eye, b"img", "image/png", "her dress") == "a long green velvet dress with a lace collar."
+    assert len(eye.calls) == 2 and "Lucy" in eye.calls[1]["prompt"]
+
+
+def test_the_automatic_check_reads_the_text_as_sent_with_the_described_lines(blind_image):
+    from tests.test_art import Seeing
+    seeing = Seeing(faults=[])
+    il, sink, im = drawn(image=blind_image(), cheap_text=seeing, check=True,
+                         describer=Eye("a tall man with one arm, in a long grey coat."))
+    rec = il.draw(il.job("event", "e1", at="a11"), user_refs=[uref(1, "the coat")])
+    assert "Also: the coat: a tall man with one arm, in a long grey coat." in rec["prompt"]
+    checked, _ = seeing.looked[-1]
+    assert rec["prompt"] in checked and im.calls[-1]["prompt"] == rec["prompt"]
