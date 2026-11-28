@@ -1403,15 +1403,6 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-picker", str(e)) from e
         return jobs.vision_model(choice)
 
-    def verify_price(provider: str | None, model: str | None) -> float:
-        """USD for one fix verification on a text model: `art.VERIFY_TOKENS` (two pictures in) at its price, else
-        `art.CHECK_FALLBACK`, as a check's."""
-        price = llm.model_price(provider or "", model or "")
-        if not price:
-            return artmod.CHECK_FALLBACK
-        tin, tout = artmod.VERIFY_TOKENS
-        return (tin * price[0] + tout * price[1]) / 1e6
-
     def art_checker(body: dict):
         """The text backend that judges a picture's drawing faults and whether a fix put them right (the lightbox's check
         and fix): the request's `picker` when it sends one (`art_picker`, kept for API callers), else the strong tier of
@@ -1885,7 +1876,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         `art.MAX_VERSIONS` here (the pipeline's `portraits_max`); all three equal the plain numbers when every counted entity
         is checked. With `check`, every price adds the drawing-fault check: one call per picture on the model that would
         make it and, for the share of pictures the bench found a major fault in (`art.FIX_RATE`), a fix and its verification
-        (`verify_price`), answered as `check` {each, verify, fixRate, price, priceMax, provider, model}. The model is the one the run checks with, its choosing-calls model
+        (`art.verify_price`, else `art.VERIFY_FALLBACK`), answered as `check` {each, verify, fixRate, price, priceMax, provider, model}. The model is the one the run checks with, its choosing-calls model
         (`pickerProvider` / `pickerModel`, else the cheap tier), priced by `art.check_price`, else `art.CHECK_FALLBACK`; a
         model that cannot see pictures leaves the run unchecked, so nothing is added and there is no `check` key."""
         ctx = art_index(key)
@@ -1972,7 +1963,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if check and ref and llm.vision(ref["provider"], ref["model"]) is not False:
             one = artmod.check_price(ref.get("provider"), ref.get("model"))
             one = artmod.CHECK_FALLBACK if one is None else one
-            verify = verify_price(ref.get("provider"), ref.get("model"))
+            verify = artmod.verify_price(ref.get("provider"), ref.get("model"))
+            verify = artmod.VERIFY_FALLBACK if verify is None else verify
 
             def with_check(total, n_plates: int, n_ports: int):
                 if total is None:

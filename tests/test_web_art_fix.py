@@ -16,33 +16,6 @@ from .test_art import HEAD, Seeing  # noqa: E402
 from .test_web_art import GEMINI, KEY, env, pictures, run_set, series_env, short_world, undo  # noqa: E402,F401
 
 
-import inspect  # noqa: E402
-from types import SimpleNamespace  # noqa: E402
-
-PIPELINE = hasattr(art, "FixUnchanged")      # the pipeline's half of the contract (verify_fix, FixUnchanged) is in
-
-
-class Unchanged(Exception):
-    """`art.FixUnchanged` as the contract has it, for the tests that script `Illustrator.fix` (and stand-in for it until
-    the pipeline's half is merged)."""
-
-    def __init__(self, verdict, cost=0.0):
-        super().__init__("the fix changed nothing")
-        self.verdict, self.cost = verdict, cost
-
-
-@pytest.fixture(autouse=True)
-def contract(monkeypatch):
-    """Until the pipeline's half of the contract is merged: the names the routes use, and an `Illustrator.fix` that takes
-    (and ignores) `verify` and `checker`. Does nothing once the pipeline provides them."""
-    monkeypatch.setattr(art, "VERIFY_TOKENS", getattr(art, "VERIFY_TOKENS", (5600, 200)), raising=False)
-    if not PIPELINE:
-        monkeypatch.setattr(art, "FixUnchanged", Unchanged, raising=False)
-    real = art.Illustrator.fix
-    if "checker" not in inspect.signature(real).parameters:
-        def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
-            return real(self, rec, faults, note, bi=bi)
-        monkeypatch.setattr(art.Illustrator, "fix", fix)
 
 
 @pytest.fixture
@@ -155,7 +128,7 @@ def test_fix_edits_the_picture_in_its_place_and_undo_brings_it_back(env):
     assert len(call["references"]) == 1 and call["references"][0] == old_bytes
     assert new["replaces"] == old["id"] and new["prompt"] == old["prompt"] and new["from"] == old["from"]
     assert new["provider"] == old["provider"] and new["quality"] == old["quality"] and new["shape"] == old["shape"]
-    assert [{k: f[k] for k in ("what", "where")} for f in new["fixes"][-1]["faults"]] == [HEAD]
+    assert new["fixes"][-1]["faults"] == [{**HEAD, "severity": "major"}]       # sent without one: fixed in full
     assert new["fixes"][-1]["note"] == "keep the lantern"
     assert new["fixCost"] == new["fixes"][-1]["cost"] and new["undo"] and new["slug"] == "ink"
     assert new["cost"] == pytest.approx((old["cost"] or 0) + new["fixCost"])
@@ -416,8 +389,7 @@ def test_the_check_answers_each_faults_severity(env, eye):
     old = one_picture(env)
     eye.faults = [{**HEAD, "severity": "minor"}, {"what": "a sword passes through the hand", "where": "the man"}]
     got = env.c.post(f"/api/library/{KEY}/art/{old['id']}/check", json={}).json()["faults"]
-    if PIPELINE:
-        assert [f["severity"] for f in got] == ["minor", "major"]
+    assert [f["severity"] for f in got] == ["minor", "major"]
     assert all(f["severity"] in ("major", "minor") for f in got) and got[1]["severity"] == "major"
 
 
@@ -428,12 +400,11 @@ def journal(env):
 def test_a_fix_that_changed_nothing_is_422_unchanged_and_files_nothing(env, eye, monkeypatch):
     old = one_picture(env)
     before, entries = pictures(env), journal(env)
-    verdict = SimpleNamespace(results=[{"n": 1, "fixed": "no"}], changed=False, new=[], checked=True, cost=0.002, why="")
+    verdict = art.Verdict(results=[{"n": 1, "fixed": "no"}], changed=False, new=[], checked=True, cost=0.002)
 
     def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
         raise art.FixUnchanged(verdict, 0.042)
     monkeypatch.setattr(art.Illustrator, "fix", fix)
-    monkeypatch.setattr(art, "FixUnchanged", Unchanged)
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD], "note": "the hand"})
     assert r.status_code == 422, r.text
     body = r.json()
@@ -443,7 +414,6 @@ def test_a_fix_that_changed_nothing_is_422_unchanged_and_files_nothing(env, eye,
     assert pictures(env) == before and journal(env) == entries
 
 
-@pytest.mark.skipif(not PIPELINE, reason="needs the pipeline's FixUnchanged and verify_fix")
 def test_an_image_model_that_echoes_the_picture_is_422_unchanged(env, eye):
     old = one_picture(env)
     before, entries = pictures(env), journal(env)
@@ -560,3 +530,21 @@ def test_the_before_route_is_behind_sign_in(tmp_path):
     app = web_app.create_app(tmp_path / "data", [], [], ollama_url="http://127.0.0.1:9", allowed_hosts=("testserver",))
     with TestClient(app) as c:
         assert c.get(f"/api/library/{KEY}/art/p00000000/before").status_code == 401
+
+
+def test_the_verdict_numbers_the_faults_from_one_end_to_end(env, eye):
+    """`results[].n` is the fault's place in the list sent, counted from 1 (the Reader's `cleanVerified` drops 0): the real
+    verification, through the route, as filed and as answered."""
+    old = one_picture(env)
+    eye.verdict = {"results": [{"n": 2, "fixed": "yes"}, {"n": 1, "fixed": "partly"}], "changed": True, "new": []}
+    two = [HEAD, {"what": "a sword passes through the hand", "where": "the man", "severity": "minor"}]
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": two})
+    assert r.status_code == 200, r.text
+    v = r.json()["verified"]
+    assert v["of"] == 2 and v["fixed"] == 1 and v["partly"] == 1
+    assert v["results"] == [{"n": 1, "fixed": "partly"}, {"n": 2, "fixed": "yes"}]
+    assert next(p for p in pictures(env) if p["id"] == r.json()["id"])["fixes"][-1]["verified"]["results"] == v["results"]
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}], "changed": True, "new": []}
+    r = env.c.post(f"/api/library/{KEY}/art/{r.json()['id']}/fix", json={"faults": two})
+    assert r.status_code == 422 and r.json()["code"] == "unchanged"
+    assert r.json()["verified"]["results"] == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
