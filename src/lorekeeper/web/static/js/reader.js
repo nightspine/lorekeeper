@@ -12,7 +12,7 @@ import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
-import { createAsk, passageLabel, passageOpenable } from "./ask.js";
+import { createAsk, passageBlocks, passageLabel, passageOpenable } from "./ask.js";
 import { createReading } from "./read.js";
 import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
@@ -2931,10 +2931,8 @@ export function mountReader(root) {
    *  number, else its title; an earlier book's carries that book's short title. */
   function askCiteLabel(c) {
     if (c?.kind !== "passage") return null;
-    // A passage of this book at or past the position is never named by its chapter (the server sends none; this is the
-    // second line of defence, so a label can never say how far the book goes).
-    if ((c.book ?? null) === (s.book ?? null) && !passageOpenable(c, { book: s.book ?? null, frontier: askFrontierSeq() })) return "The book";
-    return passageLabel(c, { book: s.book ?? null, short: (k) => bookShort(k), chapter: (x) => {
+    // A passage of this book at or past the position is only "The book" (passageLabel), never its chapter.
+    return passageLabel(c, { book: s.book ?? null, frontier: askFrontierSeq(), short: (k) => bookShort(k), chapter: (x) => {
       const current = (x.book ?? null) === (s.book ?? null);
       let ch = null;
       if (current && Number.isInteger(x.seq)) for (const g of s.map?.chapters || []) if (g.start <= x.seq) ch = g; else break;
@@ -2993,8 +2991,9 @@ export function mountReader(root) {
   async function openPassage(c) {
     const body = h("div.ask-passage", loading("Opening the passage…"));
     const go = h("button.btn", { type: "button", on: { click: async () => {
-      if (!canOpenCite(c)) { sh.close(); return; }
-      sh.close();
+      // Closed at once, not with the slide-out: after the move the cited paragraphs are no longer before the position.
+      sh.close(true);
+      if (!canOpenCite(c)) return;
       await moveTo(s.map.blockStart(c.seq));
       if (disposed || Math.abs(s.p - s.map.blockStart(c.seq)) > 1e-9) return;
       s.tab = "read"; saveUrl(); paintTabs();
@@ -3009,9 +3008,7 @@ export function mountReader(root) {
     catch { if (!sh.finished) sh.set(h("p.ask-err", "The passage could not be loaded.")); return; }
     if (sh.finished || disposed) return;
     if (!canOpenCite(c)) { sh.close(true); return; }
-    const front = askFrontierSeq(), end = Number.isInteger(c.end) ? c.end : c.seq;
-    const blocks = (Array.isArray(r?.blocks) ? r.blocks : []).filter((b) => Number.isInteger(b?.seq) && typeof b.text === "string"
-      && b.seq >= c.seq && b.seq <= end && b.seq < front);
+    const blocks = passageBlocks(r?.blocks, c, askFrontierSeq());
     sh.set(h("div.ask-passage", blocks.length ? blocks.map((b) => h(b.heading ? "h3.ask-passage-h" : "p.ask-passage-p", b.text)) : h("p.hint", "The passage could not be found in the book.")));
   }
   /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */

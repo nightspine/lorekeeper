@@ -11,6 +11,15 @@ const MAX_Q = 500;
 const KEEP_TURNS = 6;
 export const CLEARED = "Cleared, because your position moved back.";
 
+/** The paragraphs of a chapter reply (`api.readChapter`) a passage sheet may show: the cited ones, `seq..end`, that are
+ *  also before the frontier block at the time of showing. */
+export function passageBlocks(blocks, c, frontier) {
+  if (!Number.isInteger(frontier) || !Number.isInteger(c?.seq)) return [];
+  const end = Number.isInteger(c.end) ? c.end : c.seq;
+  return (Array.isArray(blocks) ? blocks : []).filter((b) => Number.isInteger(b?.seq) && typeof b.text === "string"
+    && b.seq >= c.seq && b.seq <= end && b.seq < frontier);
+}
+
 // Where answers come from: the index's notes, the book's own text before the position, or both. Offered only when the
 // book file is here; remembered per viewer.
 export const SOURCES = ["both", "index", "book"];
@@ -33,8 +42,11 @@ export function passageOpenable(c, { book = null, frontier = null } = {}) {
   return true;
 }
 /** "Chapter VI" for a passage of the book being read (chapter(c) gives the label from the book's own number, else
- *  null), else its title; an earlier book's passage is prefixed with that book's short title. */
-export function passageLabel(c, { book = null, chapter = () => null, short = (k) => k } = {}) {
+ *  null), else its title; an earlier book's passage is prefixed with that book's short title. A passage of the book being
+ *  read that is not wholly before `frontier` is only "The book": a label never names a chapter past the position (the
+ *  server sends none; this is the second line of defence). */
+export function passageLabel(c, { book = null, frontier = null, chapter = () => null, short = (k) => k } = {}) {
+  if ((c?.book ?? null) === (book ?? null) && !passageOpenable(c, { book, frontier })) return "The book";
   const title = typeof c?.chapter === "string" ? c.chapter.replace(/\s+/g, " ").trim() : "";
   const ch = chapter(c) || title || null;
   const other = c?.book != null && c.book !== (book ?? null);
@@ -361,9 +373,15 @@ export function createAsk(ctx) {
     check() {
       const snaps = [...turns.map((t) => t.at), busy?.at, draft].filter(Boolean);
       if (snaps.length && anyRevealsLess(snaps, ctx.view(), ctx.position())) { reset(); return; }
-      // The thread stays: a source whose item has left the view (a replaced recap, an edit) becomes plain text now.
+      // The thread stays: a source whose item has left the view (a replaced recap, an edit, a passage now at or past the
+      // position) becomes plain text now, focused or not; focus stays on the replacement, inside the thread.
       for (const t of turns) for (const x of t.links || []) {
-        if (x.btn.isConnected && document.activeElement !== x.btn && !ctx.canOpen(x.c)) x.btn.replaceWith(x.plain());
+        if (!x.btn.isConnected || ctx.canOpen(x.c)) continue;
+        const had = document.activeElement === x.btn;
+        const plain = x.plain();
+        if (had) plain.tabIndex = -1;
+        x.btn.replaceWith(plain);
+        if (had) plain.focus({ preventScroll: true });
       }
     },
     reset,
