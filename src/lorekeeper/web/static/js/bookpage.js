@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { parseHash } from "./app.js";
 import { bookNo, buildDialog, builtWith, cover, modal, NO_EPUB, numWord, startBuild, statusChip } from "./build.js";
 import { loadArt, picturesForm } from "./art.js";
+import { previewsRow } from "./bookpreviews.js";
 import { openShare } from "./community.js";
 import { clear, crumbs, fmtInt, h, icon, loadError, loading, STATUS_LABEL, toast } from "./dom.js";
 import { rowAction } from "./library.js";
@@ -16,6 +17,7 @@ export function mountBook(root) {
   const wrap = h("div.page.book-page");
   root.append(wrap);
   let timer, painted = false, building = false, disposed = false, sig = "";
+  let previews = null;   // the Style previews row of the version shown (its own poll while a previews run draws)
   clear(wrap, loading("Opening the book…"));
 
   /** `force` repaints even while the series form has focus (after the form or a version change saved). */
@@ -50,6 +52,8 @@ export function mountBook(root) {
     const chapters = b.chapters || [];
     const story = chapters.filter((c) => c.story !== false);
     const kind = d?.bookKind;
+    previews?.dispose();
+    previews = d ? previewsRow(d.key, row) : null;
 
     const seriesForm = b.source === "upload" ? (() => {
       const name = h("input.input", { id: "s-name", value: b.series?.name || "", placeholder: "Series name, e.g. Sherlock Holmes", "aria-label": "Series name" });
@@ -109,7 +113,8 @@ export function mountBook(root) {
         kind ? row("Kind", KIND_LABEL[kind] || kind) : null,
         row("From", b.source === "bookorbit" ? "Book Orbit" : "Uploaded here"),
         row(b.seriesInfo ? "In this series" : "Series", seriesValue || seriesForm || "Standalone"),
-        b.seriesInfo && seriesForm ? row("Change series", seriesForm) : null),
+        b.seriesInfo && seriesForm ? row("Change series", seriesForm) : null,
+        previews?.el),
 
       h("section.page-sec", { "aria-labelledby": "versions-h" },
         h("h2#versions-h", "Versions"),
@@ -153,7 +158,7 @@ export function mountBook(root) {
     // Start is off while nothing would be drawn; the form's estimate line says why ("Choose at least one chapter, or portraits.").
     let start = null, sending = false;
     const err = h("p.hint.field-error", { role: "alert" });
-    const form = picturesForm({ always: true, idPrefix: "bk-art", chapters: true, estimate: (q) => api.artEstimate({ key: d.key, ...q }),
+    const form = picturesForm({ always: true, idPrefix: "bk-art", chapters: true, book: d.key, estimate: (q) => api.artEstimate({ key: d.key, ...q }),
       onChange: () => { if (start && !sending) { start.disabled = Boolean(form.reason()); err.textContent = ""; } } });
     start = h("button.btn.primary", { type: "button", disabled: Boolean(form.reason()), on: { click: async () => {
       const art = form.config();
@@ -173,7 +178,7 @@ export function mountBook(root) {
   }
 
   load();
-  return () => { disposed = true; clearTimeout(timer); };
+  return () => { disposed = true; clearTimeout(timer); previews?.dispose(); };
 }
 
 export function mountSeries(root) {
