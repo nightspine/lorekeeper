@@ -934,7 +934,7 @@ def test_settings_lists_and_removes_a_books_pictures_with_undo(env):
     env.key()
     run_set(env, portraits=False)
     listed = env.c.get("/api/art").json()
-    assert listed == [{"key": KEY, "title": "Millbrook", "textHash": env.hash, "bytes": listed[0]["bytes"],
+    assert listed == [{"key": KEY, "title": "Millbrook", "textHash": env.hash, "bytes": listed[0]["bytes"], "refsBytes": 0,
                        "styles": [{"style": "ink", "slug": "ink", "pictures": len(pictures(env)), "bytes": listed[0]["bytes"]}]}]
     n = len(pictures(env))
     busy = jobs_mod.Job(id="art2", book_id="", book_title="M", config={"text_hash": env.hash}, output="", status="running", kind="art")

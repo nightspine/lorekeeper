@@ -2128,7 +2128,8 @@ export function mountReader(root) {
   /** Redraw with a new prompt: the picture sheet for the same kind and target at the position, replacing `rec`. */
   function redrawPicture(rec, title, slug) {
     if (!canRewrite(rec)) return;
-    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : rec.kind === "comic" ? tidyTitle(String(title).replace(/^Comic: /, "")) : title, replaces: rec.id, replacesStyle: slug });
+    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : rec.kind === "comic" ? tidyTitle(String(title).replace(/^Comic: /, "")) : title, replaces: rec.id, replacesStyle: slug,
+      refs: Array.isArray(rec.userRefs) ? rec.userRefs : null });   // the person's own reference pictures start in the row
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {
@@ -2228,11 +2229,11 @@ export function mountReader(root) {
     return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
-  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false }) {
+  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false, refs = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through, refs,
       panelText: (id) => eventSummary(id, s.series ? s.book : null),
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
