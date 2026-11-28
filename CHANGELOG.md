@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.31.1](https://github.com/nightspine/lorekeeper/compare/v0.31.0...v0.31.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* a chapter's recap sits in its own chapter's row, so the Chapters tab and the ruler agree on the current chapter ([#174](https://github.com/nightspine/lorekeeper/issues/174)) ([ecd11d8](https://github.com/nightspine/lorekeeper/commit/ecd11d8650b206b665c5afa2bf12e0c374dd56f2))
+
 ## [0.31.0](https://github.com/nightspine/lorekeeper/compare/v0.30.0...v0.31.0) (2026-11-28)
 
 
