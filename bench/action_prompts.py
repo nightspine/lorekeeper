@@ -234,7 +234,8 @@ def write_side(name: str, books: dict, moments, a, spend: Spend, img: Path, log)
                 spend.add(name, "images", pic.cost if pic.cost is not None else price)
                 f = img / f"{name}-{eid.rsplit('.', 2)[0][:4]}-{eid.rsplit('.', 1)[1]}-{k}-{hashlib.sha256(pic.data).hexdigest()[:6]}.{art._ext(pic.mime)}"
                 f.write_bytes(pic.data)
-                c = art.check_picture(spend.model(text_model(a.checker, "strong"), name, "checks"), pic.data, pic.mime, text)
+                c = (art.Check([], False, 0.0, "not run (--no-check)") if a.no_check else
+                     art.check_picture(spend.model(text_model(a.checker, "strong"), name, "checks"), pic.data, pic.mime, text))
                 row["draws"].append({"file": f.name, "mime": pic.mime, "cost": pic.cost, "softened": softened,
                                      **({"prompt": text} if softened else {}),
                                      "check": {"checked": c.checked, "faults": c.faults, "why": c.why}})
@@ -399,7 +400,7 @@ def summarise(results: dict, names: list[str], pairs: list[tuple[str, str]], spe
             c[g] = {"pairs": len(got), **per, "prefer": {"cand": prefs.count("cand"), "base": prefs.count("base"),
                                                          "tie": prefs.count("tie")}}
         out["pairs"][f"{name}|{base}"] = c
-    out["changes"] = {n: cands.describe(n) for n in names if n != "old"}
+    out["changes"] = {n: cands.describe(n) for n in names if n in cands.CANDIDATES and n != "old"}
     out["spent"] = {"images": round(spend.images, 4), "text": round(spend.text(), 4), "total": round(spend.total(), 4),
                     "by_arm": spend.report()}
     return out
@@ -476,8 +477,8 @@ def main() -> int:
     a = ap.parse_args()
     names = [n for n in a.candidates.split(",") if n]
     for n in names:
-        if n not in cands.CANDIDATES:
-            ap.error(f"unknown candidate {n}")
+        if n not in cands.CANDIDATES and not (a.reuse or a.restyle):
+            ap.error(f"unknown candidate {n} (an arm not on this art.py can only be reused from an earlier DIR)")
     out, img = a.out, a.out / "img"
     img.mkdir(parents=True, exist_ok=True)
     lines: list[str] = []

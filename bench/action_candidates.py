@@ -13,7 +13,9 @@ import contextlib
 from lorekeeper import art
 
 OLD_FORM = "English, one paragraph, " + art._SCENE_FORM
-assert OLD_FORM in art.SCENE_WRITER
+# Since Phase B the branch's art.py carries the staging (art.STAGING, the plain-words c2): the Phase A candidates, built on
+# the writer from before it, exist only on such a writer. "new" is always the branch's own text.
+PHASE_A = OLD_FORM in art.SCENE_WRITER
 
 # -- the parts the candidates share ------------------------------------------------------------------------------------
 
@@ -46,6 +48,8 @@ STAGING = _INSTANT + _BODIES + _CAMERA + _YOURS
 
 
 def _scene_writer(form: str, staging: str) -> str:
+    if not PHASE_A:
+        return ""
     out = art.SCENE_WRITER.replace(OLD_FORM, form).replace(art.SCENE_HANDS, staging + art.SCENE_HANDS)
     assert out.count(staging) == 1 and form in out
     return out
@@ -53,6 +57,8 @@ def _scene_writer(form: str, staging: str) -> str:
 
 def _comic_writer(staging: str) -> str:
     """The comic writer with the same staging rules, for each panel (its own form and its panel rules unchanged)."""
+    if not PHASE_A:
+        return ""
     out = art.COMIC_WRITER.replace(art.SCENE_HANDS, staging.replace("The picture freezes", "Each panel freezes")
                                    + art.SCENE_HANDS)
     assert out != art.COMIC_WRITER
@@ -95,12 +101,15 @@ _REAL_LINE = ("<real_world>: how real-world things in the moment (a weapon, armo
 
 
 def _with_real(writer: str) -> str:
+    if not PHASE_A:
+        return ""
     anchor = "<book>:"
     assert writer.count(anchor) == 1
     return writer.replace(anchor, _REAL_LINE + anchor)
 
 
-CANDIDATES: dict[str, dict] = {
+CANDIDATES: dict[str, dict] = {"new": {}} if not PHASE_A else {
+    "new": {},
     "old": {},
     "c1": {"SCENE_WRITER": _scene_writer(C1_FORM, STAGING), "TASKS": _tasks(), "COMIC_WRITER": _comic_writer(STAGING)},
     "c2": {"SCENE_WRITER": _scene_writer(C2_FORM, STAGING), "TASKS": _tasks(), "COMIC_WRITER": _comic_writer(STAGING)},
@@ -127,5 +136,7 @@ def patched(name: str):
 
 def describe(name: str) -> dict:
     """What a candidate changes, for the bench's summary."""
+    if name == "new":
+        return {"SCENE_WRITER": "art.py on this branch", "PROMPT_VERSION": art.PROMPT_VERSION}
     return {k: (v if isinstance(v, str) else {t: v[t] for t in ("event", "plate")}) for k, v in CANDIDATES[name].items()
             if k != "COMIC_WRITER"}
