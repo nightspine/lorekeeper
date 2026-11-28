@@ -1744,7 +1744,7 @@ export function mountReader(root) {
     const anyPic = latest.some((r) => (plates.get(r) || []).length);
     const chCard = (r) => {
       const pic = (plates.get(r) || []).at(-1);
-      const thumb = pic ? artImg(picSrc(pic), "", "ov-ch-img", { sizes: SIZES.chapter, px: 160 }) : null;
+      const thumb = pic ? artImg(picSrc(pic), "", "ov-ch-img", { sizes: SIZES.chapter, px: 104 }) : null;
       const label = rowLabel(r, book);
       // Beside a chapter with a picture, one without shows more of its recap.
       return h("li", h(`button.ov-chapter${thumb ? ".has-pic" : anyPic ? ".long" : ""}`, { type: "button", on: { click: () => openChapter(r.group.key) } },
@@ -1811,7 +1811,7 @@ export function mountReader(root) {
     const text = [ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
       chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : book ? bookLabel(ev.book) : null,
       s.edit ? editor.eventRowActions(ev, li) : null];
-    const thumb = pic ? pictureButton([pic], 0, () => ev.summary.length > 80 ? `${ev.summary.slice(0, 79)}…` : ev.summary, "art-thumb.tl-thumb", { sizes: SIZES.tl, px: 64 }) : null;
+    const thumb = pic ? pictureButton([pic], 0, () => ev.summary.length > 80 ? `${ev.summary.slice(0, 79)}…` : ev.summary, "art-thumb.tl-thumb", chips ? { sizes: SIZES.tl, px: 64 } : { sizes: SIZES.list, px: 48 }) : null;   // the entry's lists draw it at 48px
     const more = canDraw ? h("button.icon-btn.small.tl-draw", { type: "button", "aria-label": "Draw a picture of this moment", title: "Draw a picture",
       on: { click: () => drawPicture({ kind: "event", target: ev.id, title: tidyTitle(eventChapter(ev)?.title || "") || "This moment" }) } }, icon("sparkle")) : null;
     if (thumb || more) clear(li, thumb, h("div.tl-text", text), more);

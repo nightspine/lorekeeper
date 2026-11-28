@@ -29,7 +29,7 @@ export const SIZES = {
   list: "48px",                                                    // the entry's lists
   tile: "(max-width: 640px) 76px, 72px",                           // the entry's version tiles
   who: "(max-width: 640px) 25vw, 160px",                           // the Overview's who's who
-  chapter: "(max-width: 640px) 40vw, 240px",                       // the Overview's chapter thumbs
+  chapter: "(max-width: 640px) 104px, 360px",                      // the Overview's chapter thumbs: 104px beside the recap on a phone, a card (230px up) above
   thumbs: "(max-width: 640px) 33vw, 240px",                        // a chapter's two or three plates
   plate: "(max-width: 640px) 100vw, 720px",                         // a plate or comic at the column's width
   hero: "(max-width: 640px) 100vw, 420px",                         // the picture-first entry

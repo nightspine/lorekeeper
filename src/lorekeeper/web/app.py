@@ -235,7 +235,8 @@ class JsonGzip:
                 headers += [(b"content-encoding", b"gzip")]
             vary = [i for i, (k, _) in enumerate(headers) if k.lower() == b"vary"]
             if vary:
-                headers[vary[0]] = (b"vary", headers[vary[0]][1] + b", Accept-Encoding")
+                if b"accept-encoding" not in headers[vary[0]][1].lower():
+                    headers[vary[0]] = (b"vary", headers[vary[0]][1] + b", Accept-Encoding")
             else:
                 headers.append((b"vary", b"Accept-Encoding"))
             headers.append((b"content-length", str(len(body)).encode()))
@@ -2142,8 +2143,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if texts and len(texts) == len([x for x in r.get("panels") or [] if isinstance(x, str)]):
                     r["panelTexts"] = texts
         out = {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
+        # Weak: the same content is sent gzipped or not by JsonGzip, so the bytes are not the one thing the tag names.
         tag = '"' + hashlib.sha256(json.dumps(out, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:32] + '"'
-        headers = {"ETag": tag, "Cache-Control": "no-cache"}
+        headers = {"ETag": "W/" + tag, "Cache-Control": "no-cache", "Vary": "Accept-Encoding"}   # a 304 says what the 200 says
         if any(t.strip() in (tag, "W/" + tag) for t in request.headers.get("if-none-match", "").split(",")):
             return Response(status_code=304, headers=headers)
         return JSONResponse(out, headers=headers)
@@ -2317,7 +2319,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if p is None:
             raise HTTPException(404, "no such picture")
         media = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(p.suffix, "application/octet-stream")
-        return FileResponse(p, media_type=media, headers={"Cache-Control": "private, max-age=31536000, immutable",
+        # A copy that could not be made answers with the original: that is not what `?w=` names, so it is never kept for good.
+        fell_back = bool(width) and not p.is_relative_to(arts.cache)
+        return FileResponse(p, media_type=media, headers={"Cache-Control": "no-cache" if fell_back else "private, max-age=31536000, immutable",
                                                           "X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/library/{key}/art/run")

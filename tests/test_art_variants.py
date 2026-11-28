@@ -88,6 +88,9 @@ def test_a_picture_that_will_not_decode_serves_the_original(env):
     store.put(H, "ink", {"id": pid, "file": f"{pid}.jpg"}, junk)
     r = c.get(f"/api/art/{H}/ink/{pid}", params={"w": 320})
     assert r.status_code == 200 and r.content == junk
+    # not what ?w= names, so never kept for good: the browser asks again once the server can resize
+    assert r.headers["cache-control"] == "no-cache"
+    assert c.get(f"/api/art/{H}/ink/{pid}").headers["cache-control"] == "private, max-age=31536000, immutable"
 
 
 def test_removing_a_picture_or_a_set_clears_its_copies(env):

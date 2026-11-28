@@ -13,7 +13,17 @@ import argparse, json, shutil, subprocess, sys, time, urllib.request
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-WORK = Path("/Users/gperrone/projects/lorekeeper/.claude/work")
+def _main_checkout() -> Path:
+    """The main checkout: this one, or for a git worktree the folder holding the shared .git."""
+    try:
+        common = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"], cwd=ROOT, capture_output=True, text=True, check=True).stdout.strip()
+        return Path(common).parent
+    except Exception:
+        return ROOT
+
+
+# the bench art sets live in .claude/work (gitignored) of the main checkout
+WORK = next((q / ".claude/work" for q in (ROOT, _main_checkout()) if (q / ".claude/work/anatomy-check").is_dir()), _main_checkout() / ".claude/work")
 SOURCES = [WORK / "anatomy-check/bench/sets/dracula/ink", WORK / "consistent-scene-places/bench/dracula/set",
            *sorted((WORK / "portrait-chest-up/bench/sets/drac").glob("*"))]
 DRACULA = ROOT / "examples/dracula/dracula.json"
@@ -43,7 +53,10 @@ def build_set(data: Path, sources):
                 continue
             shutil.copy(f, dest / p["file"])
             merged["pictures"].append(p)
-    assert merged and len(merged["pictures"]) >= 25, f"only {len(merged['pictures']) if merged else 0} pictures"
+    if merged is None:
+        raise SystemExit("no art set found: the bench sets are not under " + str(WORK) + "; pass --source DIR (holding art.json and "
+                         "its pictures, for the bundled Dracula index) once or more")
+    assert len(merged["pictures"]) >= 25, f"only {len(merged['pictures']) if merged else 0} pictures"
     (dest / "art.json").write_text(json.dumps(merged))
     return th
 

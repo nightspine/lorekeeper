@@ -2131,3 +2131,15 @@ def test_the_art_manifest_has_an_etag_and_answers_304(env):
     again = env.c.get(f"/api/library/{KEY}/art", headers={"If-None-Match": r.headers["etag"]})
     assert again.status_code == 304 and again.headers["etag"] == r.headers["etag"] and not again.content
     assert env.c.get(f"/api/library/{KEY}/art", headers={"If-None-Match": '"other"'}).status_code == 200
+
+
+def test_the_art_manifest_304_says_what_the_200_says(env):
+    env.key()
+    plain = env.c.get(f"/api/library/{KEY}/art", headers={"Accept-Encoding": "identity"})
+    gz = env.c.get(f"/api/library/{KEY}/art", headers={"Accept-Encoding": "gzip"})
+    again = env.c.get(f"/api/library/{KEY}/art", headers={"If-None-Match": plain.headers["etag"], "Accept-Encoding": "gzip"})
+    assert again.status_code == 304
+    for r in (plain, gz, again):
+        assert r.headers["vary"].lower().count("accept-encoding") == 1
+        assert r.headers["etag"].startswith("W/")       # the same tag names the gzip and the plain body
+    assert plain.headers["etag"] == gz.headers["etag"]
