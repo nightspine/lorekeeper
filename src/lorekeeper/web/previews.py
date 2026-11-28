@@ -14,7 +14,8 @@ none), so a saved style whose words or picture changed reads as stale, as its sh
 
 The scene comes only from the opening, the first `OPENING_CHAPTERS` story chapters (`jobs.is_story`), so the previews are
 safe to show before the book is begun: `opening` asks the pipeline (`Illustrator.opening_moments`) and then keeps only
-moments whose anchor lies inside those chapters, whatever it returned. The prompt body is written once per scene by the
+moments of those chapters, whatever it returned (an event by its anchor, a plate by the chapter its anchor's recap
+belongs to, `chapters.recap_chapter`). The prompt body is written once per scene by the
 scene writer with no earlier series book finished and no reference pictures, then drawn with each style's sentence.
 """
 
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Callable
 
 from .. import art
+from ..chapters import ANCHOR_WORDS, recap_chapter
 
 HASH = re.compile(r"[0-9a-f]{64}")
 PROVIDER = re.compile(r"[a-z0-9]{1,32}")          # image provider ids (no dash: the file name is <provider>-<slug>)
@@ -193,8 +195,8 @@ def _field(m, name: str, default=None):
 
 def opening(il, is_story: Callable[[str, int], bool]) -> list[dict]:
     """The opening's drawable moments as dicts {kind, target, chapter, storyChapter, anchor, summary, moment} (`moment` the
-    pipeline's own object, for `preview_body`), in the pipeline's order. Only moments whose anchor lies in the first
-    `OPENING_CHAPTERS` story chapters are kept, whatever the pipeline returned."""
+    pipeline's own object, for `preview_body`), in the pipeline's order. Only moments of the first `OPENING_CHAPTERS`
+    story chapters are kept, whatever the pipeline returned (`_story_chapter`)."""
     b = il.books[-1]
     story = [c for c in b.chapters if is_story(c["title"], c.get("words", 0))][:OPENING_CHAPTERS]
     if not story:
@@ -205,16 +207,55 @@ def opening(il, is_story: Callable[[str, int], bool]) -> list[dict]:
         anchor = _field(m, "anchor")
         if anchor not in b.seq_of:
             continue
-        s = b.seq_of[anchor]
-        at = next((i for i, c in enumerate(story) if c["lo"] <= s <= c["hi"]), None)
-        if at is None:
-            continue
         kind, target = _field(m, "kind"), _field(m, "target")
         if kind not in ("plate", "event") or not isinstance(target, str) or not target:
+            continue
+        at = _story_chapter(b, story, kind, target, b.seq_of[anchor])
+        if at is None:
             continue
         out.append({"kind": kind, "target": target, "chapter": _field(m, "chapter") or story[at]["title"],
                     "storyChapter": at + 1, "anchor": anchor, "summary": str(_field(m, "summary") or ""), "moment": m})
     return out
+
+
+_REPEAT = re.compile(r" \(\d+\)$")      # the plan's " (2)" on a repeated chapter title
+
+
+def _story_chapter(b, story: list[dict], kind: str, target: str, s: int) -> int | None:
+    """The place among the opening's story chapters of a moment whose anchor is block `s`, else None. An event goes by its
+    anchor's blocks. A plate goes by the chapter it is of, as #181 places a chapter's recap (`chapters.recap_chapter`): its
+    anchor is the chapter's last, often its recap's, which lands in the next chapter's first long paragraph, so the chapter
+    the anchor's blocks fall in would drop the opening's last plate. It counts only when the plate names that same story
+    chapter (`target` is the plan's title), so a later chapter's plate never passes as an opening one, and only up to the
+    first block after that chapter that can carry an anchor, and only when nothing revealed there comes from after the
+    chapter (`_past`): never anything of the next chapter."""
+    if kind == "plate" and b.epub is not None and b.epub.chapters:
+        toc, words = b.epub.chapters, [len(x.words) for x in b.epub.blocks]
+        k = recap_chapter(toc, s, _REPEAT.sub("", target), words)
+        at = next((i for i, c in enumerate(story) if k is not None and c["n"] == k + 1 and c["title"] == target), None)
+        end = toc[k + 1].start if at is not None and k + 1 < len(toc) else None
+        if end is not None and s >= end and (any(w >= ANCHOR_WORDS for w in words[end:s]) or _past(b, end, s)):
+            return None
+        return at
+    return next((i for i, c in enumerate(story) if c["lo"] <= s <= c["hi"]), None)
+
+
+def _past(b, end: int, s: int) -> bool:
+    """Whether anything the index reveals in blocks end..s (a plate's anchor past its chapter) comes from the text after
+    the chapter: an item with evidence at or after block `end`, or a new name there for an entity met earlier (names carry
+    no evidence). An entity first met there does not count by itself: whatever would tie it to the plate's material (an
+    event, a tie, a detail) carries evidence and is checked. Such a plate is not offered, since its body is written from
+    everything revealed at its anchor."""
+    seq = b.seq_of
+    here = lambda a: a in seq and end <= seq[a] <= s                      # noqa: E731
+    late = lambda x: any(a not in seq or seq[a] >= end for a in x.get("evidence") or ())  # noqa: E731
+    d = b.doc
+    for e in d.get("entities") or ():
+        if any(here(n.get("from")) and n.get("from") != e.get("from") for n in e.get("names") or ()):
+            return True                    # a new name for someone already met: the entry's "also" would carry it
+        if any(here(f.get("from")) and late(f) for f in e.get("facets") or ()):
+            return True
+    return any(here(x.get("from")) and late(x) for k in ("events", "relations", "recaps") for x in d.get(k) or ())
 
 
 def public_moment(m: dict) -> dict:
