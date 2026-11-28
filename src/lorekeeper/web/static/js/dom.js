@@ -286,7 +286,8 @@ export function sheet({ title = "", content = null, footer = null, onClose = nul
     setTitle: (t) => { titleEl.textContent = t; if (!label) dlg.setAttribute("aria-label", t || "Panel"); },
     close(force = false) {
       if (finished) return true;
-      if (closing) return true;
+      // A forced close during the slide-out ends it now: what the sheet shows may have to go at once (a spoiler rule).
+      if (closing) { if (force && dlg.open) closeLocked(dlg); return true; }
       if (!force && beforeClose && beforeClose() === false) return false;
       if (!dlg.open) { finish(); return true; }
       // Slide out for 200 ms (not under reduced motion, and not when another sheet replaces this one), then close.
