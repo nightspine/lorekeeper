@@ -30,7 +30,7 @@ def test_a_comic_prompt_is_of_the_moments_reached_with_its_panels(env):
     assert r.status_code == 200, r.text
     got = r.json()
     assert got["kind"] == "comic" and got["target"] == CH and got["panels"] == ["e4", "e5", "e6"]
-    assert got["shape"] == "portrait" and got["noText"] == art.COMIC_NO_TEXT and got["prompt"].endswith(art.COMIC_NO_TEXT)
+    assert got["shape"] == "portrait" and got["noText"] == f"{art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}" and got["prompt"].endswith(art.LABEL_NOT_TEXT)
     assert got["body"].startswith(art.comic_frame(3)) and got["anchor"] == anchor_of(env, "e6") and env.image.calls == []
     # the current chapter so far: only the moments up to the position, shown from the last of them
     got = ask(env, "prompt", p=anchor_of(env, "e5")).json()
@@ -114,7 +114,7 @@ def test_a_refused_comic_is_softened_with_its_panels(env):
     r = ask(env, "soften", p=at, text=got["prompt"], reason="IMAGE_SAFETY")
     assert r.status_code == 200, r.text
     out = r.json()
-    assert out["kind"] == "comic" and out["panels"] == ["e4", "e5"] and out["noText"] == art.COMIC_NO_TEXT
+    assert out["kind"] == "comic" and out["panels"] == ["e4", "e5"] and out["noText"] == f"{art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}"
     assert out["body"].startswith(art.comic_frame(2)) and env.image.calls == []
 
 
@@ -126,7 +126,7 @@ def test_a_comic_redraw_keeps_its_panels_and_its_no_text_line(env):
     assert r.status_code == 200, r.text
     new = r.json()
     assert new["kind"] == "comic" and new["panels"] == ["e4", "e5"] and new["replaces"] == old["id"]
-    assert new["from"] == at and new["prompt"].startswith("Make it night. ") and new["prompt"].endswith(art.COMIC_NO_TEXT)
+    assert new["from"] == at and new["prompt"].startswith("Make it night. ") and new["prompt"].endswith(art.LABEL_NOT_TEXT)
     assert [f["label"] for f in new.get("figures") or []] == [f["label"] for f in old.get("figures") or []]
 
 

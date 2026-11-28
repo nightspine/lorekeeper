@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTextsOf, panelBody, panelFixLine, panelWish, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
+const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTextsOf, panelBody, panelFixLine, panelWish, severityOf, kindOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -64,6 +64,15 @@ test("the sheet's line shows only after an automatic fix", () => {
   assert.equal(autoFixed(null), false);
 });
 
+test("kind: text and style kept, unknown dropped, carried by fixBody", () => {
+  assert.equal(kindOf({ kind: "text" }), "text");
+  assert.equal(kindOf({ kind: "Style" }), undefined);
+  assert.deepEqual(cleanFaults([{ what: "a letter A", kind: "text" }, { what: "b", kind: "weird" }, { what: "c", kind: "style", severity: "minor" }]),
+    [{ what: "a letter A", where: "", severity: "major", kind: "text" }, { what: "b", where: "", severity: "major" },
+     { what: "c", where: "", severity: "minor", kind: "style" }]);
+  assert.equal(fixBody([{ what: "x", kind: "style" }]).faults[0].kind, "style");
+  assert.ok(!("kind" in fixBody([{ what: "x" }]).faults[0]));
+});
 test("severity: minor only when it says so, else major", () => {
   assert.equal(severityOf({ severity: "minor" }), "minor");
   assert.equal(severityOf({ severity: "major" }), "major");

@@ -325,6 +325,34 @@ COMIC_FRAME = ("A comic page of {n} panels in a grid, read left to right and top
                "them. Each panel shows one moment, and a figure looks the same in every panel they are in.")
 _COMIC_FRAME_RX = re.compile("^" + r"\d+".join(re.escape(x) for x in COMIC_FRAME.split("{n}")) + r"\s*")
 COMIC_NO_TEXT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture."
+# Joined right after the no-text line of a prompt whose body uses a figure label ("figure A"): an image model sometimes draws a
+# label as a letter beside the figure it names (a diagram's "A", "B"). General words, written by code, never by the writer. It
+# says what the labels are, then what the picture holds (the models' guides prefer to be told what is wanted). It never spells
+# a label ("figure A"): the text's labels are read back out of the prompt (`labels_in`), and the line must name none.
+LABEL_NOT_TEXT = ("Each figure in this description is called by a label (the word figure and a letter) only so that the figures "
+                  "can be told apart. Nothing is written in the picture: no letter, label, number or caption beside, above or "
+                  "on anyone.")
+assert not re.search(r"\b[Ff]igure [A-F]\b", LABEL_NOT_TEXT)
+
+
+def no_text_for(no_text: str, body: str) -> str:
+    """The closing no-text part of a prompt: `no_text` (NO_TEXT, or COMIC_NO_TEXT for a comic) followed by LABEL_NOT_TEXT when
+    the `body` uses a figure label. Anything else (a person's own words), or a part that already carries it, as given."""
+    if no_text in (NO_TEXT, COMIC_NO_TEXT) and labels_in(body):
+        return f"{no_text} {LABEL_NOT_TEXT}"
+    return no_text
+
+
+def with_label_note(prompt: str, kind: str = "plate") -> str:
+    """A stored prompt to draw again as it is ("same prompt"): one that ends with its no-text line and labels a figure but
+    lacks LABEL_NOT_TEXT (drawn before it existed) gets it after the no-text line, like `reframed`'s crop line; anything else,
+    the person's own words included, as given."""
+    no_text = COMIC_NO_TEXT if kind == "comic" else NO_TEXT
+    text = str(prompt or "")
+    tail = text.rstrip()
+    if LABEL_NOT_TEXT in text or not tail.endswith(no_text) or not labels_in(tail[:-len(no_text)]):
+        return prompt
+    return f"{tail} {LABEL_NOT_TEXT}"
 
 
 def comic_frame(n: int) -> str:
@@ -425,8 +453,7 @@ def panel_fix_prompt(n: int, k: int, where: str, text: str = "", note: str = "",
     text = " ".join(str(text or "").split())[:PANEL_TEXT_CHARS]
     if text:
         lines.append(f"Panel {k} should show: {text}")
-    lines += [f"- {f['where']}: {f['what']}." if f["where"] else f"- {f['what']}."
-              for f in clean_faults(list(faults), limit=len(faults))]
+    lines += [_fault_line(f) for f in clean_faults(list(faults), limit=len(faults))]
     note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
     if note:
         lines.append(f"Also: {note.rstrip('.')}.")
@@ -448,7 +475,10 @@ def _panel_spans(prompt: str, style_text: str = "") -> list[tuple[int, int]] | N
         if i < 0:
             break
         cur, k = i + 1, k + 1
-    end = len(s) - len(COMIC_NO_TEXT) if s.endswith(COMIC_NO_TEXT) else len(s)
+    end = len(s)
+    for part in (LABEL_NOT_TEXT, COMIC_NO_TEXT):       # code's closing lines, the last first
+        if s[:end].rstrip().endswith(part):
+            end = len(s[:end].rstrip()) - len(part)
     tail = s[:end].rstrip()
     for sentence in [x for x in (style_text, *STYLES.values(), *SAVED_STYLES.values()) if x]:
         if tail.endswith(sentence) and len(tail) - len(sentence) > starts[-1]:
@@ -649,13 +679,16 @@ Then look for these faults, on every figure and every object:
 - a doubled or broken object (a sword with two blades or two hilts, a chair with a leg missing, a cup fused into the table, a candle melting into what it stands on);
 - furniture or a building that could not stand (a table whose legs do not reach the floor, a stair leading nowhere, a wall that bends through itself);
 - figures at an impossible scale to each other or to the room (a man as tall as the door is wide, a child twice the size of the adults beside it);
-- one person the prompt describes drawn twice.
+- one person the prompt describes drawn twice;
+- letters, words, numbers, a label, a caption or a signature drawn in the picture (a letter beside or on a figure, a caption strip, readable writing on a sign, a page or a wall, a monogram in a corner): "kind" is "text". It is "major" when it can be read at a glance, "minor" when it is small or hard to read. Marks that only suggest writing (a scribble on a page that reads as no letter) are no fault. Every prompt forbids writing, so any readable writing is a fault.
 
-Judge how things are drawn, not whether the picture follows the prompt: a thing the prompt mentions that is missing, placed elsewhere or posed otherwise is not a fault, and neither is a figure doing something else than the prompt says. A part that is only sketchy, vague or hard to make out is not a fault either: a fault is something drawn wrong, and you can say what is wrong with it. These are never faults: style, taste, mood, colour, composition; how well anyone resembles anyone; text or lettering; a pose or a long reach; foreshortening; a limb or a hand hidden behind something or cut off by the frame; a hand that is small or rough because the drawing style is loose; a crowd or a team of animals whose legs overlap but can be counted; and anything the prompt asks for (a figure the prompt says has lost an arm is drawn without it, a creature the prompt gives four arms has four).
+When the message gives the style the picture was meant to be drawn in (<style>), also say whether the picture is plainly not in that style: another kind of picture altogether (a photograph, or a painted full-colour picture where the style is an ink drawing; a flat cartoon where it is an oil painting; a plain digital render where it is a watercolour). Report that as one fault, "kind" "style", "where" "the whole picture", "major" when a reader would say at a glance that it is the wrong kind of picture, "minor" for a slight drift (a wash of colour in an ink drawing, a softer line than the style says). The look of the style itself (how rough, loose or stylised it is) is never a fault. With no <style> in the message, never report one.
+
+Judge how things are drawn, not whether the picture follows the prompt: a thing the prompt mentions that is missing, placed elsewhere or posed otherwise is not a fault, and neither is a figure doing something else than the prompt says. A part that is only sketchy, vague or hard to make out is not a fault either: a fault is something drawn wrong, and you can say what is wrong with it. These are never faults: taste, mood, colour choices, composition; how well anyone resembles anyone; a pose or a long reach; foreshortening; a limb or a hand hidden behind something or cut off by the frame; a hand that is small or rough because the drawing style is loose; a crowd or a team of animals whose legs overlap but can be counted; and anything the prompt asks for (a figure the prompt says has lost an arm is drawn without it, a creature the prompt gives four arms has four).
 
 Report what a careful viewer would find wrong on a second look. A fault you can point to is reported even when it is small. "severity" is "major" for a fault a reader notices at a glance: a wrong number of heads, limbs, hands or fingers, bodies merged, a melted or doubled face, a joint bent backwards, an object through a body, a broken or doubled object in the middle of the picture; it is major even when the figure is small in the picture. It is "minor" when it takes a second look: a grip that does not quite close, a slightly wrong proportion, a small object a little out of shape.
 
-For each fault, "what" is a short phrase of at most about 150 characters saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "the sword passes through the man's hand"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
+Every fault has a "kind": "drawing" for the body, face and object faults, "text" for writing, "style" for the style. For each fault, "what" is a short phrase of at most about 150 characters saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "a letter A is drawn beside the man's head", "the picture is a photograph, not an ink drawing"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
 Return "figures", then "faults"."""
 ANATOMY_SCHEMA = {"type": "object", "required": ["figures", "faults"], "properties": {
     "figures": {"type": "array", "items": {
@@ -663,23 +696,31 @@ ANATOMY_SCHEMA = {"type": "object", "required": ["figures", "faults"], "properti
         "properties": {"where": {"type": "string"}, "heads": {"type": "integer"}, "arms": {"type": "integer"},
                        "hands": {"type": "integer"}, "legs": {"type": "integer"}}}},
     "faults": {"type": "array", "items": {
-        "type": "object", "required": ["what", "where", "severity"],
+        "type": "object", "required": ["what", "where", "severity", "kind"],
         "properties": {"what": {"type": "string"}, "where": {"type": "string"},
-                       "severity": {"type": "string", "enum": ["major", "minor"]}}}}}}
+                       "severity": {"type": "string", "enum": ["major", "minor"]},
+                       "kind": {"type": "string", "enum": ["drawing", "text", "style"]}}}}}}
 ANATOMY_PROMPT = """The picture above was drawn from this prompt (context only: what it asks for is not a fault):
 <prompt>{prompt}</prompt>
-
-Take stock of its figures, then list its drawing faults, if any."""
+{style}
+Take stock of its figures, then list its faults, if any."""
+ANATOMY_STYLE = "\nIt was meant to be drawn in this style:\n<style>{style}</style>\n"
 MAX_FAULTS = 6             # what the check keeps of one answer
 SEVERITIES = ("major", "minor")
+KINDS = ("drawing", "text", "style")   # what a fault is: a body or object drawn wrong, writing in the picture, a wrong style
 FAULT_CHARS = 200          # one fault's "what", and its "where" (the web route's limits for a person's own list)
 WHERE_CHARS = 120
 CHECK_PROMPT_CHARS = 3000  # the stored prompt sent with the picture
 # The fix: an edit of the picture itself (its one reference), with code's words. The stored prompt is never changed.
-FIX = ("Correct the drawing faults listed below in this picture: redraw each part named so that it is drawn right, with "
-       "natural proportions and the right number of heads, arms, hands, fingers and legs, attached where they belong. Leave "
-       "everything else exactly as it is: the composition and framing, every face, the clothing, the colours, the light and "
-       "the drawing style. The faults:")
+FIX_HEAD = ("Correct the drawing faults listed below in this picture: redraw each part named so that it is drawn right, with "
+            "natural proportions and the right number of heads, arms, hands, fingers and legs, attached where they belong. "
+            "A line about writing (a letter, label or caption) is removed, painted over with what was behind it.")
+FIX_KEEP = (" Leave everything else exactly as it is: the composition and framing, every face, the clothing, the colours, the "
+            "light and the drawing style. The faults:")
+# a "style" fault: the keep-list's "the drawing style" becomes a request to redraw it all in the picture's own style sentence
+FIX_KEEP_STYLE = (" Leave the composition and framing, every face, the clothing and the light as they are, and redraw it all "
+                  "in this style: {style} The faults:")
+FIX = FIX_HEAD + FIX_KEEP
 FIX_NOTE_CHARS = 300
 FIX_UNPRICED = 1.5         # a fix on a token-billed model is held at this times the picture's cost (the picture goes back in)
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
@@ -694,7 +735,10 @@ MAX_NEW_FAULTS = 3         # faults the verification may say a fix added
 # `verify_price` price for the estimate and what the cap reserves. Of 8 edits Sonnet called 2 unchanged, 5 partly fixed and
 # 1 fixed; Haiku 0, 8 and 0.
 FIX_RATE = 0.2
-CHECK_TOKENS = (3800, 400)
+# 2026-11-28, the check with writing and style faults (ANATOMY longer, the style sentence in the message), Sonnet 5.5, 34 pictures
+# (the anatomy bench's 20 and 14 more): 4,209 tokens in and 347 out on average (732 out at most), $0.0119 a check, so the
+# tokens held for a check went from (3800, 400) to
+CHECK_TOKENS = (4600, 450)
 CHECK_FALLBACK = 0.002     # USD for one check when the picker's price is unknown, so the cap still reserves something
 VERIFY_TOKENS = (4200, 200)  # one verification: two pictures in, the verdict out
 VERIFY_FALLBACK = 0.004
@@ -702,7 +746,7 @@ VERIFY_FALLBACK = 0.004
 
 @dataclass
 class Check:
-    """What the check found: `faults` [{"what", "where", "severity"}] (empty: clean), `checked` False when the call failed or
+    """What the check found: `faults` [{"what", "where", "severity", "kind"}] (empty: clean), `checked` False when the call failed or
     the model cannot see pictures (`why` says which), never a fault. `cost` is the call's, in USD."""
     faults: list[dict]
     checked: bool = True
@@ -726,9 +770,10 @@ def _cut_words(text, limit: int) -> str:
 
 
 def clean_faults(raw, limit: int = MAX_FAULTS) -> list[dict]:
-    """A list of faults as code keeps them: each {"what", "where", "severity"} with whitespace collapsed and cut to
+    """A list of faults as code keeps them: each {"what", "where", "severity", "kind"} with whitespace collapsed and cut to
     FAULT_CHARS and WHERE_CHARS at a word boundary (`_cut_words`), one with no "what" left out, at most `limit`. A missing or
-    unknown severity is "major", so an older client's list and a person's own lines are fixed in full."""
+    unknown severity is "major", so an older client's list and a person's own lines are fixed in full; a missing or unknown
+    kind is "drawing" (a body or an object drawn wrong, as before), the others being "text" and "style" (KINDS)."""
     out = []
     for f in raw if isinstance(raw, list) else []:
         if not isinstance(f, dict):
@@ -736,8 +781,9 @@ def clean_faults(raw, limit: int = MAX_FAULTS) -> list[dict]:
         what = _cut_words(f.get("what"), FAULT_CHARS)
         where = _cut_words(f.get("where"), WHERE_CHARS)
         severity = f.get("severity") if f.get("severity") in SEVERITIES else "major"
+        kind = f.get("kind") if f.get("kind") in KINDS else "drawing"
         if what and len(out) < limit:
-            out.append({"what": what, "where": where, "severity": severity})
+            out.append({"what": what, "where": where, "severity": severity, "kind": kind})
     return out
 
 
@@ -752,14 +798,18 @@ def _seeing_call(model, system: str, prompt: str, schema: dict, pictures: list[t
         raise
 
 
-def check_picture(model, data: bytes, mime: str, prompt: str) -> Check:
-    """One call on `model` (a text model that sees pictures): the picture, then its prompt as context, under ANATOMY. Raises
+def check_picture(model, data: bytes, mime: str, prompt: str, style: str = "") -> Check:
+    """One call on `model` (a text model that sees pictures): the picture, then its prompt as context and, when given, the
+    style sentence it was meant to be drawn in, under ANATOMY. A style fault is kept only when it is "major", and only one;
+    with no `style` the check never reports one. Raises
     llm.NoVision when the model cannot take the picture (the caller stops checking) and llm.Cancelled; any other failure is
     a Check that was not checked."""
     before = _cost_of(model)
     prompt = " ".join(str(prompt or "").split())[:CHECK_PROMPT_CHARS]
     try:
-        out = _seeing_call(model, ANATOMY, ANATOMY_PROMPT.format(prompt=prompt), ANATOMY_SCHEMA, [(data, mime)])
+        style = " ".join(str(style or "").split())
+        out = _seeing_call(model, ANATOMY, ANATOMY_PROMPT.format(
+            prompt=prompt, style=ANATOMY_STYLE.format(style=style) if style else ""), ANATOMY_SCHEMA, [(data, mime)])
     except (llm.NoVision, llm.Cancelled):
         raise
     except Exception as e:      # noqa: BLE001 - a failed check leaves the picture as it is
@@ -767,7 +817,14 @@ def check_picture(model, data: bytes, mime: str, prompt: str) -> Check:
     cost = _cost_of(model) - before
     if not isinstance(out, dict) or not isinstance(out.get("faults"), list):
         return Check([], False, cost, "no list of faults in the reply")
-    return Check(clean_faults(out["faults"]), True, cost)
+    faults, styled = [], False
+    for f in clean_faults(out["faults"]):
+        if f["kind"] == "style":        # only a plain mismatch with a style that was given, once
+            if not style or f["severity"] != "major" or styled:
+                continue
+            styled = True
+        faults.append(f)
+    return Check(faults, True, cost)
 
 
 # ---- the verification of a fix: one call with both pictures, the original first. Code reads only the verdict: per fault
@@ -777,8 +834,9 @@ VERIFY_FIX = """You check whether an image model fixed a picture. Picture 1 is t
 Compare the two pictures closely. Be strict: image models often send a picture back with nothing corrected, or with the fault moved, or only half put right.
 - For each listed fault, by its number "n", say whether picture 2 fixes it: "yes" when the part is now drawn right, "partly" when it is better but still visibly wrong, "no" when it is as wrong as before or wrong in a new way.
 - "changed": true only when picture 2 visibly differs from picture 1 where the faults are (or, with no faults listed, where the request asks for a change). A picture that is the same, or differs only in noise, sharpness or colour, has not changed.
-- "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged), each as a short "what" (at most about 150 characters) written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
-Style, colour, composition and likeness are not faults. Return "results", "changed" and "new"."""
+- A listed fault about letters or writing is fixed when picture 2 shows no such writing any more ("no" when it is still there). A listed fault about the picture's style is fixed when picture 2 now looks like the style named (an ink drawing, an oil painting), "partly" when it is closer but still not.
+- "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged, letters or words drawn), each as a short "what" (at most about 150 characters) written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
+Taste, composition and likeness are not faults, and style is one only where a listed fault names it. Return "results", "changed" and "new"."""
 VERIFY_FIX_SCHEMA = {"type": "object", "required": ["results", "changed", "new"], "properties": {
     "results": {"type": "array", "items": {
         "type": "object", "required": ["n", "fixed"],
@@ -862,12 +920,24 @@ class FixUnchanged(Exception):
         self.verdict, self.cost = verdict, cost
 
 
-def fix_prompt(faults: list[dict], note: str = "") -> str:
+def _fault_line(f: dict) -> str:
+    """One fault as the image model reads it: "- figure B, the robed man: the head is far too small." A "text" fault also says
+    to remove the writing and paint over it (an edit has no other way to know a letter is to go, not to be kept)."""
+    line = f"- {f['where']}: {f['what']}." if f["where"] else f"- {f['what']}."
+    return line + " Remove it and paint over what was behind it." if f.get("kind") == "text" else line
+
+
+def fix_prompt(faults: list[dict], note: str = "", style: str = "") -> str:
     """What the image model is asked when it fixes a picture: FIX, one line per fault ("figure B, the robed man: the head is
-    far too small"), the person's own note, then NO_TEXT. Written by code only."""
-    lines = [FIX]
-    for f in clean_faults(faults, limit=len(faults) if isinstance(faults, list) else 0):
-        lines.append(f"- {f['where']}: {f['what']}." if f["where"] else f"- {f['what']}.")
+    far too small"; a "text" fault also says to remove it and paint over it), the person's own note, then NO_TEXT. With a
+    "style" fault and the picture's style sentence (`style`), FIX asks to redraw it all in that style and keep the
+    composition, framing, faces, clothing and light. Written by code only."""
+    faults = clean_faults(faults, limit=len(faults) if isinstance(faults, list) else 0)
+    style = " ".join(str(style or "").split())
+    keep = FIX_KEEP_STYLE.format(style=style) if style and any(f["kind"] == "style" for f in faults) else FIX_KEEP
+    lines = [FIX_HEAD + keep]
+    for f in faults:
+        lines.append(_fault_line(f))
     note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
     if note:
         lines.append(f"Also: {note.rstrip('.')}.")
@@ -3761,7 +3831,7 @@ class Illustrator:
         The person asks for it on the Reader's sheet and reads the result before anything is drawn."""
         style = self._style(job.bi)
         refused = " ".join(str(text or "").split())
-        for tail in (COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT, style):   # what code appended is not the writer's
+        for tail in (LABEL_NOT_TEXT, COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT, style):   # what code appended is not the writer's
             if tail and refused.endswith(tail):
                 refused = refused[:-len(tail)].rstrip()
         refused = unframed(refused)
@@ -4011,7 +4081,7 @@ class Illustrator:
         if body is None:
             raise Dropped(_reason(why), why, self._say(why, bi, anchor, fin))
         body = self._framed(job.kind, body)
-        no_text = COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT
+        no_text = no_text_for(COMIC_NO_TEXT if job.kind == "comic" else NO_TEXT, body)
         figures = None
         if scene:                          # an entity's own picture always shows it
             entity_of = {lab: eid for eid, lab in label_of.items()}
@@ -4091,8 +4161,9 @@ class Illustrator:
     @staticmethod
     def _assemble(body: str, bi: int = -1, style: str = "", no_text: str = NO_TEXT) -> str:
         """What the image model gets: the writer's checked text, the style sentence and the no-text line (a comic page's,
-        COMIC_NO_TEXT, names speech balloons too), all by code."""
-        return " ".join(p for p in (body.rstrip(), style, no_text) if p)
+        COMIC_NO_TEXT, names speech balloons too, and either is followed by LABEL_NOT_TEXT when the body labels a
+        figure), all by code."""
+        return " ".join(p for p in (body.rstrip(), style, no_text_for(no_text, body)) if p)
 
     # ---- cost and the cap
 
@@ -4192,10 +4263,11 @@ class Illustrator:
         names = self.names.get(nb)
         if names is None:
             return faults
-        return [{k: names.strip(v) if k != "severity" and v and names.find(v) else v for k, v in f.items()} for f in faults]
+        return [{k: names.strip(v) if k not in ("severity", "kind") and v and names.find(v) else v for k, v in f.items()}
+                for f in faults]
 
     def check_picture(self, rec_or_bytes: dict | bytes, mime: str | None = None, prompt: str | None = None,
-                      bi: int | None = None, model=None) -> Check:
+                      bi: int | None = None, model=None, style: str | None = None) -> Check:
         """Look at one picture for drawing faults: a record of this run's sets (its file, mime and stored prompt), or the
         bytes with their mime and prompt. One call on `model` when given (the web app's check: a strong model that sees
         pictures), else on the checker (the picker unless `checker` was given), counted in the cap and in the text costs as a
@@ -4215,7 +4287,8 @@ class Illustrator:
         if model is None and self.no_vision:
             return Check([], False, 0.0, self.no_vision)
         try:
-            c = check_picture(model if model is not None else self.checker, data, mime or "image/png", prompt or "")
+            c = check_picture(model if model is not None else self.checker, data, mime or "image/png", prompt or "",
+                              self._style(nb) if style is None else style)
             c.faults = self._nameless(c.faults, nb)
         except llm.NoVision as e:
             self._blind(e)
@@ -4242,11 +4315,11 @@ class Illustrator:
         return v
 
     def _draw_fix(self, image, data: bytes, mime: str, faults: list[dict], note: str, shape: str, quality: str,
-                  text: str | None = None) -> images.Drawn:
+                  text: str | None = None, style: str = "") -> images.Drawn:
         """One edit call: the picture as the only reference, `fix_prompt` (or `text`, a panel fix's own) as the prompt. A
         ProviderError is sent again once only when the request surely never reached the provider, as `draw` does;
         ImageRefused is raised."""
-        text = fix_prompt(faults, note) if text is None else text
+        text = fix_prompt(faults, note, style) if text is None else text
         for attempt in (0, 1):
             try:
                 return image.draw(text, shape=shape, quality=quality, references=[(data, mime)])
@@ -4291,7 +4364,7 @@ class Illustrator:
         quality = llm.nearest_quality(prov, name, rec["quality"]) if rec.get("quality") in images.QUALITIES else self.quality_for(kind)
         shape = rec["shape"] if rec.get("shape") in images.SHAPES else SHAPE_OF[kind]
         old_mime = rec.get("mime") or "image/png"
-        pic = self._draw_fix(image, data, old_mime, faults, note, shape, quality)
+        pic = self._draw_fix(image, data, old_mime, faults, note, shape, quality, style=self._style(j))
         with self.lock:
             self.report.cost += pic.cost        # billed whatever the verdict
             self.last_cost = pic.cost or self.last_cost
@@ -4451,7 +4524,8 @@ class Illustrator:
             return pic, {"check": info}
         try:
             try:
-                fixed = self._draw_fix(image, pic.data, pic.mime or "image/png", major, "", pr.shape, quality)
+                fixed = self._draw_fix(image, pic.data, pic.mime or "image/png", major, "", pr.shape, quality,
+                                       style=self._style(job.bi))
             except images.ImageRefused as e:
                 with self.lock:
                     self.report.fix_refused += 1

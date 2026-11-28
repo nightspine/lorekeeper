@@ -2860,7 +2860,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]
                                if isinstance(f, dict) and isinstance(f.get("label"), str) and isinstance(f.get("entity"), str)]
                 # a portrait drawn with the older half-length frame is drawn again with the mid-chest one
-                text_ = (note.rstrip(".") + ". " if note else "") + artmod.reframed(rec["kind"], rec["prompt"], il.style_sentence())
+                text_ = (note.rstrip(".") + ". " if note else "") + artmod.with_label_note(
+                    artmod.reframed(rec["kind"], rec["prompt"], il.style_sentence()), rec["kind"])
                 # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
                 # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from
                 # before `inherits` existed gets none on the new one either, so the Reader keeps treating it as unknown.
@@ -2902,18 +2903,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "not-visible", "You haven't reached that picture yet.")
 
     SEVERITIES = ("major", "minor")
+    FAULT_KINDS = ("drawing", "text", "style")
 
     def fault_json(f: dict) -> dict:
-        """A fault as the routes answer it: {what, where, severity}, a missing or unknown severity read as major (an older
-        pipeline's list, a person's own line)."""
-        sev = f.get("severity")
-        return {"what": f.get("what", ""), "where": f.get("where", ""), "severity": sev if sev in SEVERITIES else "major"}
+        """A fault as the routes answer it: {what, where, severity, kind}, a missing or unknown severity read as major and
+        a missing or unknown kind as drawing (an older pipeline's list, a person's own line)."""
+        sev, kind = f.get("severity"), f.get("kind")
+        return {"what": f.get("what", ""), "where": f.get("where", ""), "severity": sev if sev in SEVERITIES else "major",
+                "kind": kind if kind in FAULT_KINDS else "drawing"}
 
     @app.post("/api/library/{key}/art/{pid}/check")
     async def art_check(key: str, pid: str, request: Request):
         """Look at one picture for drawing faults (an extra hand, a melted face, a sword through a hand...): one call on a
         text model that can see pictures (`picker` when the body sends one, else the strong tier, `art_checker`), with the
-        picture's stored prompt as context. Answers {faults: [{what, where, severity}], cost, model: {provider, model}};
+        picture's stored prompt as context. Answers {faults: [{what, where, severity, kind}], cost, model: {provider, model}};
         nothing is written."""
         body = await json_body(request) if int(request.headers.get("content-length") or 0) else {}
 
@@ -2942,7 +2945,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def fix_request(body: dict, need: bool = True) -> tuple[list[dict], str]:
         """The faults and note of a fix request, checked: 0 to 8 faults, each {what: 1 to 200 characters, where: 0 to
-        120, severity: major or minor (missing: major)}, a note of at most 300, and (with `need`) at least one fault or a
+        120, severity: major or minor (missing: major), kind: drawing, text or style (missing: drawing, and then not
+        passed on)}, a note of at most 300, and (with `need`) at least one fault or a
         note. Raises 422 `bad-fix`."""
         raw = body.get("faults", [])
         note = body.get("note") or ""
@@ -2959,10 +2963,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 sev = "major"
             if sev not in SEVERITIES:
                 raise ArtRefusal(422, "bad-fix", "A fault's severity is major or minor.")
+            kind = f.get("kind")
+            if kind is not None and kind not in FAULT_KINDS:
+                raise ArtRefusal(422, "bad-fix", "A fault's kind is drawing, text or style.")
             what, where = " ".join(what.split()), " ".join((where or "").split())
             if not 1 <= len(what) <= artmod.FAULT_CHARS or len(where) > artmod.WHERE_CHARS:
                 raise ArtRefusal(422, "bad-fix", "Say what is wrong in at most 200 characters, and where in at most 120.")
-            faults.append({"what": what, "where": where, "severity": sev})
+            faults.append({"what": what, "where": where, "severity": sev, **({"kind": kind} if kind else {})})
         note = " ".join(note.split())
         if len(note) > artmod.FIX_NOTE_CHARS:
             raise ArtRefusal(422, "bad-fix", "Keep the note to 300 characters.")

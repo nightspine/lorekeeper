@@ -207,7 +207,7 @@ def test_without_image_input_each_is_described_once_into_the_prompt_and_nothing_
     style = art.style_sentence("moody")
     also = ("Also: use this for her dress: a long dark green velvet dress with a high lace collar and narrow sleeves. "
             "Also: a tall narrow stone house with a steep slate roof and two round towers.")
-    assert also + " " + style + " " + art.NO_TEXT in call["prompt"] and call["prompt"].endswith(art.NO_TEXT)
+    assert also + " " + style + " " + art.NO_TEXT in call["prompt"] and call["prompt"].endswith(art.LABEL_NOT_TEXT)
     assert rec["prompt"] == call["prompt"]                              # the stored prompt is what was sent
     assert rec["userRefs"][0]["description"].startswith("a long dark green velvet dress")
     assert rec["userRefs"][1]["description"].startswith("a tall narrow stone house")
