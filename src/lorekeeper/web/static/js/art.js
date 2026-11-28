@@ -43,7 +43,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -380,6 +380,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   });
   function go(n) {
     if (n < 0 || n >= items.length || n === i) return;
+    settleFix();
     i = n; paint();
   }
   function paint() {
@@ -442,12 +443,15 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     cancel.focus();
     let found = [], said = "";
     try {
-      const provs = await textProviders();
-      const picker = textChoice(provs, artDefaults().picker);
-      const r = await api.artCheck(it.key, rec.id, atNow(it), picker, ctl.signal);
+      // The server's checker (its strong model that can see pictures), not the Settings picker: the providers list is
+      // only asked for so the model can be named.
+      await textProviders().catch(() => null);
+      const r = await api.artCheck(it.key, rec.id, atNow(it), null, ctl.signal);
       found = cleanFaults(r?.faults);
-      said = found.length ? (found.length === 1 ? "Found one drawing fault. Change it, remove it or add your own." : `Found ${found.length} drawing faults. Change or remove any, or add your own.`)
-        : "No drawing faults found. If something is wrong, say what and it is fixed.";
+      const m = r?.model && typeof r.model.model === "string" && r.model.model ? textModelLabel(r.model.provider, r.model.model) : "";
+      const who = m || "The check";
+      said = found.length ? (found.length === 1 ? `${who} found one drawing fault. Change it, remove it or add your own.` : `${who} found ${found.length} drawing faults. Change or remove any, or add your own.`)
+        : `${m ? `${m} found no` : "No"} drawing faults. If something is wrong, say what and it is fixed.`;
     } catch (e) {
       if (gone || e.name === "AbortError") return;
       said = e.code === "no-vision" ? "No model set up here can look at pictures. Say what is wrong and it is fixed."
@@ -466,7 +470,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paintActs() } }, "Cancel");
     const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
     const price = h("p.hint.lb-fix-price");
-    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where }));
+    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where, severity: severityOf(r) }));
     const ready = () => { go_.disabled = !fixBody(read(), note.value); };
     function row(r, n) {
       r.input = h("textarea.input.lb-fault", { rows: "2", maxlength: String(WHAT_CHARS), "aria-label": `What to fix, ${n + 1}`,
@@ -479,7 +483,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         (rows[Math.min(k, rows.length - 1)]?.input || add).focus();
         ready();
       } } }, icon("x"));
-      return h("li.lb-fault-row", h("div.lb-fault-text", r.input, r.where ? h("span.subtle.lb-where", r.where) : null), del);
+      // "minor": the check's own grade, a quiet tag (noticed on a second look); a line the person adds is fixed in full.
+      const minor = severityOf(r) === "minor" ? h("span.lb-minor", "minor") : null;
+      const meta = r.where || minor ? h("span.subtle.lb-where", r.where ? h("span", r.where) : null, minor) : null;
+      return h("li.lb-fault-row", h("div.lb-fault-text", r.input, meta), del);
     }
     function paintRows() {
       // the typed text survives a repaint: it is read back into the rows first
@@ -487,7 +494,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       clear(list, rows.map(row));
       add.hidden = rows.length >= MAX_FAULTS;
     }
-    add.addEventListener("click", () => { const r = { what: "", where: "" }; rows.push(r); paintRows(); r.input.focus(); ready(); });
+    add.addEventListener("click", () => { const r = { what: "", where: "", severity: "major" }; rows.push(r); paintRows(); r.input.focus(); ready(); });
     note.addEventListener("input", ready);
     paintRows();
     const p = drawers?.find((x) => x.id === it.rec.provider);
@@ -497,27 +504,82 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       const body = fixBody(read(), note.value);
       if (!body) return;
       const keep = { faults: read().filter((f) => f.what.trim() || f.where), note: note.value };
+      const old = { rec: it.rec, src: it.src };
+      const at = atNow(it);
       clear(acts, h("div.lb-fix", loading("Fixing the picture…")));
       try {
-        const r = await api.artFix(it.key, it.rec.id, { ...body, ...atNow(it) });
+        const r = await api.artFix(it.key, it.rec.id, { ...body, ...at });
         forgetArt(it.key);
         const rec = r?.record || r;
         if (rec && ID_RE.test(rec.id || "")) { it.rec = rec; it.src = it.srcFor ? it.srcFor(rec) : it.src; }
+        onChanged?.();
         // The fix is filed even when the lightbox closed meanwhile: the toast with Undo then goes where it was opened
         // from (undoable picks the host), and the page fetches the art set again either way.
-        if (dlg.open && items[i] === it) paint();
-        undoable(it, r, "Picture fixed");
-        onChanged?.();
+        if (!dlg.open || items[i] !== it) { undoable(it, r, "Picture fixed"); return; }
+        paint();
+        fixResult(it, r, { sent: body.faults, old, before: beforeSrc(r?.beforeUrl, at) });
       } catch (e) {
-        if (!dlg.open) { toast(e.code === "refused" ? `The provider would not draw it: ${e.message}` : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
+        const why = e.code === "unchanged" ? "The model sent the picture back without the fix, so your picture is kept. Try again, or say it differently."
+          : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
+        if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
         if (items[i] !== it) return;
-        fixForm(it, keep.faults, said, { note: keep.note, error: e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message });
+        fixForm(it, keep.faults, said, { note: keep.note, error: why });
       }
     });
     clear(acts, h("div.lb-fix", h("p.hint", said), list, add,
       h("label.label", { for: "lb-fix-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
     ready();
     (error ? go_ : rows[0].input).focus();
+  }
+  /** After a fix: what it put right in one sentence, Before / After over the picture, Keep the fix and Keep the original
+   *  (the journal's Undo, then the old picture on screen again). Left undecided (closed, or another picture stepped to),
+   *  the fix stands and the usual toast with Undo is offered. */
+  let pending = null;   // { it, r } while the result is on screen and not decided
+  function settleFix() {
+    if (!pending) return;
+    const { it, r } = pending;
+    pending = null;
+    undoable(it, r, "Picture fixed");
+  }
+  dlg.addEventListener("close", settleFix);
+  function fixResult(it, r, { sent, old, before }) {
+    const id = r?.undo ?? r?.journal ?? null;
+    pending = { it, r };
+    const after = it.src;
+    const err = h("p.hint.field-error", { role: "alert" });
+    const bBefore = h("button", { type: "button", "aria-pressed": "false", on: { click: () => show("before") } }, "Before");
+    const bAfter = h("button", { type: "button", "aria-pressed": "true", on: { click: () => show("after") } }, "After");
+    const seg = before ? h("div.seg.lb-ba", { role: "group", "aria-label": "Show the picture" }, bBefore, bAfter) : null;
+    function show(which) {
+      for (const b of [bBefore, bAfter]) b.setAttribute("aria-pressed", String(b === (which === "before" ? bBefore : bAfter)));
+      const img = artImg(which === "before" ? before : after, `${it.caption || "Picture"}${which === "before" ? ", before the fix" : ""}`, "lb-img", { eager: true });
+      // a "before" that cannot be fetched (undone elsewhere, or the server has none): the toggle goes, the fix stays shown
+      if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
+      clear(stage, img);
+    }
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); } } }, "Keep the fix");
+    const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
+    keepOld?.addEventListener("click", async () => {
+      keepOld.disabled = keepFix.disabled = true;
+      err.textContent = "";
+      try {
+        await api.undo(it.key, id);
+        pending = null;
+        forgetArt(it.key);
+        it.rec = old.rec; it.src = old.src;
+        onChanged?.();
+        if (!dlg.open || items[i] !== it) return;
+        paint();
+        toast("The original is back.", "ok", { host: toasts });
+      } catch (e) {
+        if (!dlg.open) return;
+        err.textContent = `Couldn't put the original back: ${e.message}`;
+        keepOld.disabled = keepFix.disabled = false;
+      }
+    });
+    clear(acts, h("div.lb-fix.lb-fixed", { role: "group", "aria-label": "The fix" },
+      h("p.lb-verdict", { role: "status" }, verdictLine(r?.verified, sent)), seg, err, h("div.btns", keepOld, keepFix)));
+    keepFix.focus();
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */

@@ -110,6 +110,12 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .lb-add { justify-self: start; }
 .lb-add[hidden] { display: none; }
 .lb-fix-price { color: var(--text-3); }
+/* The check's grade on a fault it found: a quiet word after where it is, never a colour of its own. */
+.lb-where:has(.lb-minor) { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; }
+.lb-minor { flex: none; padding: 0 6px; border: 1px solid var(--line-2); border-radius: 999px; font-size: var(--text-xs); line-height: 1.5; color: var(--text-3); }
+/* After a fix: the verdict, Before / After over the picture, then keep the fix or the original. */
+.lb-verdict { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
+.lb-ba { justify-self: start; }
 .lb-fixes { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: var(--text-sm); line-height: 1.5; color: var(--text-2); overflow-wrap: anywhere; }
 .art-done .art-fixed { margin: 0; }
 .lb-details > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; font-size: var(--text-sm); font-weight: 600; color: var(--text-2); min-height: 32px; }
@@ -206,6 +212,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .art-prompt, .lb-note, .lb-fault, .art-custom, .art-world-edit textarea { font-size: 16px; }
   .lb-fix .btn, .lb-fault { min-height: 44px; }
   .lb-fault-del { width: 44px; height: 44px; }
+  .lb-ba button { min-height: 44px; min-width: 44px; justify-content: center; }
   .art-row { gap: 12px 20px; }
   .art-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; gap: 2px 14px; }
   .art-chips::-webkit-scrollbar { display: none; }
