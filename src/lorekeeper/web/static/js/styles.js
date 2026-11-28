@@ -3,7 +3,11 @@
 //
 // Every built-in style has a preview shipped with the app, all of one shared scene, so the styles compare like for like;
 // a custom style saved on this server may draw its own preview of the same scene. Names and descriptions of custom styles
-// are the person's own text: they only ever go through h(). Preview files come only from the two URL shapes checked here.
+// are the person's own text: they only ever go through h(). Preview files come only from the URL shapes checked here.
+//
+// Given a book (`{book, provider}`: the index's library key and the image provider of the flow), the cards show that book's
+// own previews instead: one scene from its first two story chapters in every style, per image provider (web/previews.py).
+// A style the book has no preview of for that provider keeps the shared one.
 import { api } from "./api.js";
 import { artDefaults, fitQuality, imagePrice, imageProviders, modalToasts, modelFor, modelProviders, money, STYLES, writerFact } from "./art.js";
 import { confirmDialog } from "./build.js";
@@ -68,6 +72,75 @@ export const savedStyle = (slug) => known.get(slug) || null;
 export const galleryName = (slug) => { const s = known.get(slug); return s && !s.builtin ? s.name : null; };
 /** The style sentence of a saved style (a custom one's own words), else null. */
 export const gallerySentence = (slug) => { const s = known.get(slug); return s && s.text ? s.text : null; };
+
+// ---- a book's own previews ----------------------------------------------------------------------------
+
+/** A book preview's file: /api/previews/<textHash>/<provider>/<slug>?v=<created>, the only shape one is shown from. */
+const BOOK_PREVIEW = /^\/api\/previews\/[0-9a-f]{64}\/([a-z0-9]{1,32})\/([a-z0-9-]{1,64})(\?v=\d{1,20})?$/;
+const PROVIDER_RE = /^[a-z0-9]{1,32}$/;
+/** The image providers by name, for the switch and the book page ("Gemini", "OpenAI"). */
+export const PROVIDER_NAME = { gemini: "Gemini", openai: "OpenAI" };
+export const providerName = (id) => PROVIDER_NAME[id] || String(id || "");
+const str = (v, max = 400) => (typeof v === "string" ? squash(v).slice(0, max) : "");
+const storyNo = (v) => (Number.isInteger(v) && v > 0 && v < 100 ? v : null);
+
+/** The previews answer, checked: { scene, providers: { id: { slug: { url, stale } } }, moments, drawing }. Every text is
+ *  index content, shown through h() only; a file whose URL is not the shape above, or names another provider or style
+ *  than the key it is listed under, is left out. */
+export function cleanPreviews(r) {
+  if (!r || typeof r !== "object") return null;
+  const sc = r.scene && typeof r.scene === "object" ? r.scene : null;
+  const scene = sc && typeof sc.target === "string" && sc.target ? { kind: sc.kind === "event" ? "event" : "plate", target: sc.target,
+    chapter: str(sc.chapter, 200), storyChapter: storyNo(sc.storyChapter), chosen: sc.chosen === "person" ? "person" : "auto" } : null;
+  const providers = {};
+  if (scene && r.providers && typeof r.providers === "object") {
+    for (const [p, row] of Object.entries(r.providers)) {
+      if (!PROVIDER_RE.test(p) || !row || typeof row !== "object") continue;
+      const out = {};
+      for (const [slug, it] of Object.entries(row)) {
+        const m = SLUG_RE.test(slug) && it && typeof it.url === "string" ? BOOK_PREVIEW.exec(it.url) : null;
+        if (m && m[1] === p && m[2] === slug) out[slug] = { url: it.url, stale: it.stale === true };
+      }
+      if (Object.keys(out).length) providers[p] = out;
+    }
+  }
+  const moments = (Array.isArray(r.moments) ? r.moments : []).filter((m) => m && typeof m.target === "string" && m.target)
+    .map((m) => ({ kind: m.kind === "event" ? "event" : "plate", target: m.target, chapter: str(m.chapter, 200), storyChapter: storyNo(m.storyChapter), summary: str(m.summary, 600) }));
+  return { scene, providers, moments, drawing: r.drawing === true };
+}
+/** "Chapter 1" from a scene or moment's place among the story chapters (never its summary); its title without one. */
+export const sceneChapter = (m) => (m?.storyChapter ? `Chapter ${m.storyChapter}` : m?.chapter || "the opening chapters");
+/** "Drawn from a scene in Chapter 1." */
+export const sceneLine = (scene) => `Drawn from a scene in ${sceneChapter(scene)}.`;
+
+const bookCache = new Map();   // library key → { at, promise }
+/** A book's previews, cached a minute. Null for no book, an older server or a failed request (that one is not kept). */
+export function bookPreviews(key, { fresh = false } = {}) {
+  if (!key || typeof key !== "string") return Promise.resolve(null);
+  const c = bookCache.get(key);
+  if (!fresh && c && Date.now() - c.at < 60000) return c.promise;
+  const promise = api.previews(key).then(cleanPreviews).catch(() => null).then((r) => {
+    if (!r && bookCache.get(key)?.promise === promise) bookCache.delete(key);
+    return r;
+  });
+  bookCache.set(key, { at: Date.now(), promise });
+  return promise;
+}
+export const forgetBookPreviews = (key) => { bookCache.delete(key); };
+const providerId = (p) => (typeof p === "string" ? p : p && typeof p.id === "string" ? p.id : null);
+/** The provider whose previews to show: the flow's own when the book has previews for it; with no provider named, the
+ *  first that has some. Null: the shared previews. */
+function shownProvider(data, want) {
+  const have = Object.keys(data?.providers || {});
+  if (!have.length) return null;
+  if (want) return have.includes(want) ? want : null;
+  return have[0];
+}
+/** A style with the book's preview in place of the shared one, when the book has one for that provider. */
+function withBook(s, data, prov) {
+  const it = prov ? data?.providers?.[prov]?.[s.slug] : null;
+  return it ? { ...s, preview: it.url, stale: it.stale, ofBook: true } : s;
+}
 
 // ---- the preview viewer ------------------------------------------------------------------------------
 
@@ -145,35 +218,58 @@ function previewOf(s, cls = "style-prev", { marks = false } = {}) {
  *   manage         Settings: custom cards get Edit and Delete
  *   pickNew        choose a style as soon as it is saved (true in the sheet and dialogs, false in Settings)
  *   onChanged()    after a style was saved, edited or deleted
+ *   book           the index's library key: the cards show that book's own previews where it has them
+ *   provider       the flow's image provider (an id or a provider object): whose previews of the book to show first
  * Returns { el, set(value), refresh() }.
  */
-export function stylePicker({ value = null, extra = [], onPick = null, manage = false, pickNew = true, onChanged = null } = {}) {
-  const el = h("div.style-grid", { role: "group", "aria-label": "Styles" });
+export function stylePicker({ value = null, extra = [], onPick = null, manage = false, pickNew = true, onChanged = null, book = null, provider = null } = {}) {
+  const grid = h("div.style-grid", { role: "group", "aria-label": "Styles" });
+  // With a book: a head over the grid (the provider switch when it has previews for two, and where the scene is from).
+  const head = book ? h("div.style-book", { hidden: true }) : null;
+  const el = book ? h("div.style-picker", head, grid) : grid;
   let list = null, chosen = value;
+  let bookData = null, prov = null;
+  const want = providerId(provider);
   const extras = () => (extra || []).filter((x) => x && typeof x.slug === "string" && !(list || []).some((s) => s.slug === x.slug))
     .map((x) => ({ slug: x.slug, name: x.name || x.slug.replace(/-/g, " "), text: squash(x.text), builtin: false, preview: null, stale: false, reference: null, useReference: false, legacy: true }));
-  function card(s) {
+  function card(style) {
+    // The style as listed (what onPick and Edit get), and as shown: with the book's preview when it has one.
+    const s = withBook(style, bookData, prov);
     const on = s.slug === chosen;
-    const pick = h("button.style-pick", { type: "button", "aria-pressed": String(on), on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); chosen = s.slug; paint(); onPick?.(s); } } },
+    const pick = h("button.style-pick", { type: "button", "aria-pressed": String(on), on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); chosen = s.slug; paint(); onPick?.(style); } } },
       previewOf(s, "style-prev", { marks: true }), h("span.style-name", s.name));
     const expand = s.preview || s.reference ? h("button.icon-btn.style-expand", { type: "button", "aria-label": `Show ${s.name} larger`, title: "Show larger",
       // Focused first: Safari does not focus a button on click, and the viewer gives focus back to it.
       on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); viewStyle(s); } } }, icon("expand")) : null;
     const acts = manage && !s.builtin && !s.legacy ? h("div.style-acts",
-      h("button.linkish", { type: "button", "aria-label": `Edit ${s.name}`, on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); editStyle(s); } } }, "Edit"),
-      h("button.linkish.danger", { type: "button", "aria-label": `Delete ${s.name}`, on: { click: () => removeStyle(s) } }, "Delete")) : null;
+      h("button.linkish", { type: "button", "aria-label": `Edit ${s.name}`, on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); editStyle(style); } } }, "Edit"),
+      h("button.linkish.danger", { type: "button", "aria-label": `Delete ${s.name}`, on: { click: () => removeStyle(style) } }, "Delete")) : null;
     return h(`div.style-card${on ? ".on" : ""}`, { dataset: { slug: s.slug } }, pick, expand,
       s.stale ? h("p.style-stale", "Preview is out of date") : null, acts);
   }
+  function paintHead() {
+    if (!head) return;
+    const have = Object.keys(bookData?.providers || {});
+    const focusProv = head.contains(document.activeElement) ? document.activeElement.dataset.prov : null;
+    // The switch only when the book has previews for two providers; the line only when its previews are the ones shown.
+    const sw = have.length > 1 ? h("div.seg.style-prov", { role: "group", "aria-label": "Previews drawn by" },
+      have.map((p) => h("button", { type: "button", "aria-pressed": String(p === prov), dataset: { prov: p },
+        on: { click: () => { if (prov === p) return; prov = p; paint(); } } }, providerName(p)))) : null;
+    const line = prov && bookData?.scene ? h("p.hint.style-book-line", sceneLine(bookData.scene)) : null;
+    clear(head, sw, line);
+    head.hidden = !sw && !line;
+    if (focusProv) head.querySelector(`button[data-prov="${CSS.escape(focusProv)}"]`)?.focus({ preventScroll: true });
+  }
   function paint() {
-    if (!list) { clear(el, loading("Loading styles…")); return; }
-    const focusSlug = el.contains(document.activeElement) ? document.activeElement.closest(".style-card")?.dataset.slug : null;
-    const focusNew = el.contains(document.activeElement) && document.activeElement.classList.contains("style-new");
-    clear(el, [...list, ...extras()].map(card),
+    paintHead();
+    if (!list) { clear(grid, loading("Loading styles…")); return; }
+    const focusSlug = grid.contains(document.activeElement) ? document.activeElement.closest(".style-card")?.dataset.slug : null;
+    const focusNew = grid.contains(document.activeElement) && document.activeElement.classList.contains("style-new");
+    clear(grid, [...list, ...extras()].map(card),
       h("button.style-card.style-new", { type: "button", on: { click: (e) => { e.currentTarget.focus({ preventScroll: true }); newStyle(); } } },
         h("span.style-prev.no-pic", icon("plus")), h("span.style-name", "New style")));
-    if (focusSlug) el.querySelector(`.style-card[data-slug="${CSS.escape(focusSlug)}"] .style-pick`)?.focus({ preventScroll: true });
-    else if (focusNew) el.querySelector(".style-new")?.focus({ preventScroll: true });
+    if (focusSlug) grid.querySelector(`.style-card[data-slug="${CSS.escape(focusSlug)}"] .style-pick`)?.focus({ preventScroll: true });
+    else if (focusNew) grid.querySelector(".style-new")?.focus({ preventScroll: true });
   }
   async function refresh(fresh = true) { list = await loadStyles({ fresh }); paint(); }
   function newStyle() {
@@ -191,33 +287,45 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
   }
   paint();
   loadStyles().then((l) => { list = l; paint(); });
+  if (book) bookPreviews(book).then((d) => { if (!d) return; bookData = d; prov = shownProvider(d, want); paint(); });
   return { el, set: (v) => { chosen = v; paint(); }, refresh };
 }
 
 /**
  * The compact row the sheet and the dialogs show: the chosen style's thumbnail and name, opening the grid as a bottom
- * sheet titled "Styles". Choosing a card closes it. `opts` as stylePicker, plus `disabled` and `id`.
+ * sheet titled "Styles". Choosing a card closes it. `opts` as stylePicker, plus `disabled` and `id`; `book` may also be a
+ * function giving the key (asked when the row paints and when it opens: a build form learns the key late).
  * Returns { el, set(value) }.
  */
-export function styleRow({ value = null, extra = [], onPick = null, disabled = false, id = null } = {}) {
-  let chosen = value;
+export function styleRow({ value = null, extra = [], onPick = null, disabled = false, id = null, book = null, provider = null } = {}) {
+  let chosen = value, bookData = null, bookAsked = null;
+  const bookKey = () => { const k = typeof book === "function" ? book() : book; return typeof k === "string" && k ? k : null; };
+  /** The book's previews for the thumbnail, asked once per key. */
+  const askBook = () => {
+    const k = bookKey();
+    if (!k || k === bookAsked) return;
+    bookAsked = k;
+    bookPreviews(k).then((d) => { if (d && bookAsked === k) { bookData = d; paint(); } });
+  };
   const btn = h("button.style-row", { type: "button", id, disabled, "aria-haspopup": "dialog" });
   const find = () => savedStyle(chosen) || (extra || []).map((x) => ({ slug: x.slug, name: x.name || x.slug, text: squash(x.text), preview: null })).find((x) => x.slug === chosen)
     || { slug: chosen || "", name: chosen ? chosen.replace(/-/g, " ") : "Choose a style", text: "", preview: null };
   function paint() {
-    const s = find();
+    const s = withBook(find(), bookData, shownProvider(bookData, providerId(provider)));
     clear(btn, previewOf(s, "style-row-prev"), h("span.style-row-name", h("span.sr-only", "Style: "), s.name), h("span.style-row-change", "Change", icon("chevron")));
   }
   btn.addEventListener("click", () => {
     btn.focus({ preventScroll: true });   // Safari does not focus a button on click; the sheet gives focus back to it
     let sh = null;
-    const picker = stylePicker({ value: chosen, extra, onPick: (s) => { chosen = s.slug; paint(); onPick?.(s); sh?.close(true); } });
+    askBook();
+    const picker = stylePicker({ value: chosen, extra, book: bookKey(), provider, onPick: (s) => { chosen = s.slug; paint(); onPick?.(s); sh?.close(true); } });
     sh = sheet({ title: "Styles", content: picker.el, className: "style-sheet", stack: true });
     // Focus the chosen card once the list is there (the title holds it until then).
     loadStyles().then(() => { if (sh.el.open) (sh.el.querySelector(".style-card.on .style-pick") || sh.el.querySelector(".style-pick"))?.focus({ preventScroll: true }); });
   });
   paint();
   loadStyles().then(paint);
+  askBook();
   return { el: btn, set: (v) => { chosen = v; paint(); } };
 }
 

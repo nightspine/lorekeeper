@@ -4,7 +4,7 @@ import { announce, clear, crumbs, fmtDuration, fmtInt, foldList, h, icon, loadEr
 import { confirmDialog, cover, partLine } from "./build.js";
 import { openShare, readyMade } from "./community.js";
 import { registerProvider } from "./palette.js";
-import { picturesForm, styleLabel } from "./art.js";
+import { artDefaults, picturesForm, styleLabel } from "./art.js";
 
 const PHASES = [
   { key: "extract", label: "Reading", icon: "book-open" },
@@ -18,6 +18,12 @@ const PHASES = [
 const ART_PHASE = { key: "art", label: "Drawing pictures", icon: "sparkle" };
 /** An "Add pictures" run: no reading, only the pictures stage, on an index that already exists (`index` is its library key). */
 const isArtJob = (job) => job.kind === "art" || job.config?.kind === "art";
+/** A book's style previews (web/previews.py): every style drawn on one opening scene, per image provider. Like an "Add
+ *  pictures" run it reads nothing and writes no index; its events are of type "previews". */
+const isPreviewsJob = (job) => job.kind === "previews" || job.config?.kind === "previews";
+/** A run that only draws (pictures or style previews): no reading, totals, discoveries or parts. */
+const isSideJob = (job) => isArtJob(job) || isPreviewsJob(job);
+const PREVIEWS_PHASE = { key: "previews", label: "Drawing style previews", icon: "sparkle" };
 const PICTURE_PROVIDER = { gemini: "Gemini", openai: "OpenAI" };
 /** "Ink, draft, drawn by Gemini" from a run's `art` config. */
 const artLine = (job) => {
@@ -25,14 +31,16 @@ const artLine = (job) => {
   const prov = PICTURE_PROVIDER[a.provider || job.config?.image_provider] || a.provider || job.config?.image_provider;
   return [styleLabel(a.style || ""), a.quality, prov ? `drawn by ${prov}` : null].filter(Boolean).join(", ");
 };
-const phasesOf = (job) => (isArtJob(job) ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
+const phasesOf = (job) => (isPreviewsJob(job) ? [PREVIEWS_PHASE] : isArtJob(job) ? [ART_PHASE] : job.config?.art ? [...PHASES, ART_PHASE] : PHASES);
+/** What a drawing-only run is, in the runs table and the monitor's head. */
+const sideLine = (job) => (isPreviewsJob(job) ? "Style previews" : artLine(job));
 const DROP_COLORS = ["var(--t-person)", "var(--t-group)", "var(--t-concept)", "var(--t-object)", "var(--t-term)",
   "var(--t-place)", "var(--rose)", "var(--text-3)"];
 const statusBadge = (s) => h(`span.badge.${s}`, STATUS_LABEL[s] || s);
 // Provider id → label, fetched once, for the run's chip ("gemini-2.5-flash on Gemini").
 let providerLabels = null;
 const loadProviderLabels = () => (providerLabels ||= api.providers().then((r) => Object.fromEntries(r.providers.map((p) => [p.id, p.label]))).catch(() => ({})));
-export const libraryKey = (job) => (isArtJob(job) && (job.index || job.config?.index_key) ? job.index || job.config.index_key
+export const libraryKey = (job) => (isSideJob(job) && (job.index || job.config?.index_key) ? job.index || job.config.index_key
   : "generated--" + String(job.output_name || "").replace(/\.json$/, ""));
 
 // ---- the build form ---------------------------------------------------------------------------
@@ -320,6 +328,9 @@ function configure(target, book, ctx, fromJob = null) {
         ...cfg, chapters: [...picked].sort((a, b) => a - b),
         series_id: cfg.series_id || null, book_key: cfg.book_key || null,
         ...(pics.config() ? { art: pics.config() } : {}),
+        // Settings, Pictures: draw the book's own style previews once its first build finishes (the server skips it when
+        // the book already has them or no image provider has a key).
+        stylePreviews: artDefaults().previews,
         // From the Library: the server fills in the series and builds on earlier books' indexes.
         ...(catalogKey ? { catalog_key: catalogKey } : {}),
       });
@@ -387,6 +398,7 @@ function configure(target, book, ctx, fromJob = null) {
     estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", ...q }),
     onChange: () => { if (pics) update(); },   // the form paints once while it is made, before `pics` is set
     runProvider: () => cfg.provider,   // "ollama" matches no picture writer, so Default is then the first working provider's
+    book: () => indexKey,   // a rebuild's style cards show the book's own previews when it has them
     fallback: (st) => {
       const n = [...picked].filter((n) => storySet.has(n)).length;
       if (st.level === "none") return `${st.cast === "main" ? "Portraits of the main characters" : "Portraits of everyone with a part"}, no chapter pictures; the count is set once the index is written.`;
@@ -493,7 +505,7 @@ export function mountStudio(root) {
   const partText = (j) => partLine(j.progress, j.status);
   // "15 min ago" within a day, then a short date: the column stays narrow.
   const when = (t) => (Date.now() / 1000 - t < 86400 ? relTime(t) : new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" }));
-  const rowCells = (j) => [isArtJob(j) ? h("span.subtle", artLine(j))
+  const rowCells = (j) => [isSideJob(j) ? h("span.subtle", sideLine(j))
     : h("span.subtle", { title: j.config.model || "default model" }, (j.config.model || "default model").split(":")[0]), statusBadge(j.status), partText(j), when(j.created)];
   let tableSig = "";
   /** The runs table. A poll that only changes a run's state or progress updates those cells in place, so focus and
@@ -604,7 +616,8 @@ export function mountStudio(root) {
             h("p.run-meta",
               el.badge,
               // A pictures run has no reading model of its own: its style, quality and the provider that draws.
-              isArtJob(job) ? [el.model = h("span.run-model", artLine(job)), h("span", "pictures for the index as it is")]
+              isSideJob(job) ? [el.model = h("span.run-model", sideLine(job)),
+                h("span", isPreviewsJob(job) ? "every style on one scene from the opening, for this book's style cards" : "pictures for the index as it is")]
                 : [el.model = h("span.run-model", job.config.model || "default model"),
                   h("span", job.config.chunk_mode === "chapter" ? "whole chapters" : `${fmtInt(job.config.chunk_words || 1200)}-word parts`),
                   h("span", job.config.verify === false ? "no fact-check" : "fact-checked"),
@@ -613,9 +626,9 @@ export function mountStudio(root) {
         el.error,
         h("div.progress-hero",
           h("div.progress-top", el.pct, el.where), el.bar, el.phases)),
-      isArtJob(job) ? null : el.stats,
+      isSideJob(job) ? null : el.stats,
       // A pictures run reads nothing, so it has no discoveries, recap, quality gate or parts: only its progress and log.
-      isArtJob(job) ? null : h("div.split",
+      isSideJob(job) ? null : h("div.split",
         h("section.mon-sec", el.foundHead, el.shield, el.feed),
         h("div.monitor-right",
           el.recapCard,
@@ -624,7 +637,7 @@ export function mountStudio(root) {
       h("div.console",
         h("div.console-bar", h("span.title", icon("terminal"), "Log"), h("div.ctrls", filter, followBtn, copyBtn)),
         el.log));
-    if ((job.config.provider || "ollama") !== "ollama" && !isArtJob(job)) {
+    if ((job.config.provider || "ollama") !== "ollama" && !isSideJob(job)) {
       loadProviderLabels().then((labels) => {
         const label = labels[job.config.provider];
         if (label && el.model.isConnected) el.model.append(` on ${label}`);
@@ -673,11 +686,12 @@ export function mountStudio(root) {
       }
       if (["done", "stopped", "interrupted", "failed"].includes(m.status)) {
         // A pictures run drew for an index that was already there: re-running it is "Add pictures" on the book page, not a build.
-        if (!isArtJob(job)) a.push(h("a.btn.quiet", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
+        if (!isSideJob(job)) a.push(h("a.btn.quiet", { href: `#/build/${job.book_id}?from=${jobId}` }, icon("pen"), "Edit and re-run"));
         a.push(h("button.btn.quiet.danger", { type: "button", on: { click: async () => {
           if (!await confirmDialog({ title: "Delete this run?",
             // The server deletes a build's index with its run, but never the index a pictures run drew for, nor its pictures.
-            message: isArtJob(job) ? "Only this run's record and log go. The index and the pictures it drew stay; remove pictures in Settings, Pictures."
+            message: isPreviewsJob(job) ? "Only this run's record and log go. The index and the previews it drew stay; remove previews on the book's page."
+              : isSideJob(job) ? "Only this run's record and log go. The index and the pictures it drew stay; remove pictures in Settings, Pictures."
               : "Its generated index is deleted too. This can't be undone.", confirmLabel: "Delete run" })) return;
           try { await api.deleteJob(jobId); toast("Run deleted"); location.hash = "#/studio"; } catch (e) { toast(e.message, "error"); }
         } } }, icon("trash"), "Delete run"));
@@ -692,7 +706,7 @@ export function mountStudio(root) {
 
     function paint() {
       clear(el.badge, statusBadge(m.status));
-      const pct = isArtJob(job) && m.art?.[1] ? (m.art[0] / m.art[1]) * 100
+      const pct = isSideJob(job) && m.art?.[1] ? (m.art[0] / m.art[1]) * 100
         : m.wordsTotal ? (m.wordsDone / m.wordsTotal) * 100 : m.status === "done" ? 100 : 0;
       clear(el.pct, pct >= 10 || pct === 0 ? Math.round(pct) : pct.toFixed(1), h("small", "%"));
       el.fill.style.width = `${pct}%`;
@@ -705,16 +719,16 @@ export function mountStudio(root) {
       const describing = m.status === "running" && m.phase === "portraits" && m.portraits;
       const arcing = m.status === "running" && m.phase === "arcs" && m.arcs;
       // Drawing pictures: a count and the money spent on pictures, never what they show (that would reveal the book).
-      const drawing = m.status === "running" && m.phase === "art" && m.art;
+      const drawing = m.status === "running" && (m.phase === "art" || m.phase === "previews") && m.art;
       clear(el.where,
-        isArtJob(job) ? null : h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
-        m.art && (drawing || isArtJob(job) || m.status !== "running") ? h("span", drawing ? "Drawing pictures " : "Pictures ", h("b.num", `${m.art[0]} of ${m.art[1]}`),
+        isSideJob(job) ? null : h("span", "Part ", h("b.num", m.chunks ? `${Math.min(m.chunkTimes.length + (m.status === "running" ? 1 : 0), m.chunks)} / ${m.chunks}` : "—")),
+        m.art && (drawing || isSideJob(job) || m.status !== "running") ? h("span", drawing ? "Drawing pictures " : "Pictures ", h("b.num", `${m.art[0]} of ${m.art[1]}`),
           m.art[2] ? [", ", h("b.num", `$${m.art[2].toFixed(m.art[2] < 1 ? 3 : 2)}`), " on pictures"] : null) : null,
         describing && h("span", "Describing the cast ", h("b.num", `${m.portraits[0]} / ${m.portraits[1]}`), " chapters"),
         arcing && h("span", "Writing book arcs ", h("b.num", `${m.arcs[0]} / ${m.arcs[1]}`), " chapters"),
         cur && m.status === "running" && !describing && !arcing && !drawing && h("span", "Reading ", h("b", cur.chapter)),
         h("span", "Elapsed ", h("b.num", fmtDuration(elapsed))),
-        m.status === "running" && !describing && !arcing && !drawing && !isArtJob(job) && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
+        m.status === "running" && !describing && !arcing && !drawing && !isSideJob(job) && h("span", "Remaining ", h("b.num", isFinite(remaining) ? `≈ ${fmtDuration(remaining)}` : (job.config.provider || "ollama") === "ollama" ? "estimating…" : "a few minutes")),
         rate ? h("span", h("b.num", `${Math.round(rate * 60)}`), " words/min") : null,
         m.usage && m.usage.seconds ? h("span", h("b.num", `${(m.usage.output_tokens / m.usage.seconds).toFixed(1)}`), " tokens/s") : null,
         m.usage && m.usage.cost_usd ? h("span", h("b.num", `$${m.usage.cost_usd.toFixed(m.usage.cost_usd < 1 ? 3 : 2)}`), " spent") : null,
@@ -783,6 +797,8 @@ export function mountStudio(root) {
         case "portraits": m.phase = "portraits"; m.portraits = [e.done, e.total]; break;
         case "arcs": m.phase = "arcs"; m.arcs = [e.done, e.total]; break;
         case "art": m.phase = "art"; m.art = [Number(e.done) || 0, Number(e.total) || 0, Number(e.cost) || 0]; break;
+        // A style previews run: its pictures counted the same way (nothing of what they show).
+        case "previews": m.phase = "previews"; m.art = [Number(e.done) || 0, Number(e.total) || 0, Number(e.cost) || 0]; break;
         case "chunk_done":
           m.wordsDone += e.words; m.runWords += e.words; m.runSeconds += e.seconds; m.chunkTimes.push(e.seconds);
           m.stats = e.stats; m.lastDelta = e.delta || {}; m.usage = e.usage;
