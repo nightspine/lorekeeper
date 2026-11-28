@@ -269,6 +269,11 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 /* A 44px hit area round the small button. */
 .style-expand::after { content: ""; position: absolute; inset: -8px; }
 .style-stale { margin: 0; color: var(--text-3); font-size: var(--text-xs); }
+/* With a book: the head over the grid, the provider switch when the book has previews for two, and where the scene is from. */
+.style-picker { display: grid; gap: 12px; min-width: 0; }
+.style-book { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; min-width: 0; }
+.style-book[hidden] { display: none; }
+.style-book-line { margin: 0; }
 .style-acts { display: flex; gap: 14px; font-size: var(--text-xs); }
 .style-acts .linkish { min-height: 32px; }
 .style-acts .linkish.danger { color: var(--rose); }
@@ -338,6 +343,7 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 @media (max-width: 640px) {
   /* Three across on a phone, as the sheet's full width allows. */
   .style-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 8px; }
+  .style-prov button { min-height: 44px; }
   .style-name { font-size: var(--text-xs); }
   .style-row { max-width: none; }
   .style-acts { gap: 10px; }

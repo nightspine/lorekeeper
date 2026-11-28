@@ -239,6 +239,15 @@ export const api = {
   /** Describe a picture's drawing style in a sentence, storing nothing: { text, provider, model, cost }.
    *  409 `no-vision-model` when no configured model can see pictures. */
   styleDescribe: (file, opts = {}) => request("POST", "/api/styles/describe", fileForm(file), opts),
+  // ---- a book's own style previews: one opening scene in every style, per image provider (web/previews.py) ----
+  /** { scene, providers: { gemini: { slug: { url, model, quality, stale } } }, moments: [{ kind, target, chapter, storyChapter, summary }], drawing }. */
+  previews: (key) => request("GET", `/api/library/${encodeURIComponent(key)}/previews`),
+  /** { pictures, price (null: unknown), styles, providers: [{ provider, label, model, quality, price, pictures }] }. */
+  previewsEstimate: (key, { scene = null, redraw = false } = {}) => request("GET", `/api/library/${encodeURIComponent(key)}/previews/estimate?${new URLSearchParams([
+    ...(scene ? [["scene", scene]] : []), ...(redraw ? [["redraw", "true"]] : [])])}`),
+  /** Queue the previews job ({ scene?, redraw? }): the job back. */
+  previewsDraw: (key, body = {}) => request("POST", `/api/library/${encodeURIComponent(key)}/previews`, body),
+  previewsRemove: (key) => request("DELETE", `/api/library/${encodeURIComponent(key)}/previews`),
   /** Every art set on disk, per book: [{ key, title, textHash, styles: [{ style, slug, pictures, bytes }], bytes }]. */
   artSets: () => request("GET", "/api/art"),
   /** Remove a book's pictures (one style with `style`); 409 while a run draws them; undoable. */
