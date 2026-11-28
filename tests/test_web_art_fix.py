@@ -174,7 +174,8 @@ def test_the_sheets_draw_can_check_and_fix_once(env, eye):
     r = env.c.post(f"/api/library/{KEY}/art/draw", json={**body, "check": True})
     assert r.status_code == 200, r.text
     rec = r.json()
-    assert rec["check"] == {"faults": [HEAD], "fixed": True} and len(rec["fixes"]) == 1
+    assert rec["check"] == {"faults": [HEAD], "fixed": True, "verified": rec["fixes"][-1]["verified"]} and len(rec["fixes"]) == 1
+    assert rec["fixes"][-1]["verified"]["fixed"] == 1
     assert rec["prompt"] == body["prompt"]               # the person's words are not rewritten
     assert len(eye.looked) == 1                           # never checked again
     n = len(eye.looked)
