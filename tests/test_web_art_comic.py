@@ -1,0 +1,126 @@
+"""Comic pages in the web app: the prompt, draw, soften and redraw routes accept the `comic` kind, always at the reader's
+position, drawn with the scene image model, with `panels` in every answer. Scripted models (tests/test_art.py)."""
+
+import pytest
+
+pytest.importorskip("fastapi")
+
+from lorekeeper import art  # noqa: E402
+
+from .test_web_art import GEMINI, KEY, env, short_world  # noqa: E402,F401
+
+CH = "Chapter Two"     # e4 (a turning point), e5, e6
+
+
+def anchor_of(e, eid: str) -> str:
+    return next(x for x in e.doc["events"] if x["id"] == eid)["from"]
+
+
+def ask(e, route: str, **body):
+    return e.c.post(f"/api/library/{KEY}/art/{route}", json={"kind": "comic", "target": CH, "style": "ink", **body})
+
+
+def test_a_comic_prompt_is_of_the_moments_reached_with_its_panels(env):
+    env.key()
+    r = ask(env, "prompt", p=1.0)
+    assert r.status_code == 200, r.text
+    got = r.json()
+    assert got["kind"] == "comic" and got["target"] == CH and got["panels"] == ["e4", "e5", "e6"]
+    assert got["shape"] == "portrait" and got["noText"] == art.COMIC_NO_TEXT and got["prompt"].endswith(art.COMIC_NO_TEXT)
+    assert got["body"].startswith(art.comic_frame(3)) and got["anchor"] == anchor_of(env, "e6") and env.image.calls == []
+    # the current chapter so far: only the moments up to the position, shown from the last of them
+    got = ask(env, "prompt", p=anchor_of(env, "e5")).json()
+    assert got["panels"] == ["e4", "e5"] and got["anchor"] == anchor_of(env, "e5") and "silver coin" not in got["prompt"]
+    # a scene's answer says it has no panels
+    ev = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"}).json()
+    assert ev["panels"] is None
+
+
+def test_a_comic_needs_the_position_and_two_moments_reached(env):
+    env.key()
+    for route in ("prompt", "draw", "soften"):
+        r = ask(env, route, prompt="A page.", text="A page.", reason="IMAGE_SAFETY")
+        assert r.status_code == 422 and r.json()["code"] == "bad-position", route
+    r = ask(env, "prompt", p=anchor_of(env, "e4"))                    # one moment of the chapter reached
+    assert r.status_code == 422 and r.json()["code"] == "too-few-moments"
+    r = ask(env, "prompt", p=anchor_of(env, "e2"))                    # none of it reached
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+    r = ask(env, "draw", p=anchor_of(env, "e4"), prompt="A page.")
+    assert r.status_code == 422 and r.json()["code"] == "too-few-moments" and env.image.calls == []
+    assert ask(env, "prompt", p=1.0, target="Chapter Nine").status_code == 404
+    r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "strip", "target": CH, "style": "ink"})
+    assert r.status_code == 422 and "comic" in r.json()["detail"]
+
+
+def test_a_comic_is_drawn_with_the_scene_image_model(env):
+    env.key()
+    # a portrait image model chosen for portraits, places and things never draws a page
+    got = ask(env, "prompt", p=1.0, portraitProvider="gemini", portraitModel="gemini-3-pro-image").json()
+    assert got["model"] == GEMINI
+
+
+def test_a_comic_is_drawn_and_served_with_its_panels_and_never_moved_to_the_position(env):
+    env.key()
+    at = anchor_of(env, "e5")
+    got = ask(env, "prompt", p=at).json()
+    n = len(env.text.prompts)
+    edited = "Rain falls on every panel. " + got["prompt"]
+    # an edited text and a position further on: a page stays at its last panel's moment (only entities move)
+    r = ask(env, "draw", p=at, prompt=edited)
+    assert r.status_code == 200, r.text
+    rec = r.json()
+    assert len(env.text.prompts) == n                        # the cached prompt is reused, no second call
+    assert rec["kind"] == "comic" and rec["panels"] == ["e4", "e5"] and rec["from"] == at and rec["shape"] == "portrait"
+    assert env.image.calls[-1]["shape"] == "portrait" and env.image.calls[-1]["prompt"] == " ".join(edited.split())
+    served = next(p for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"] if p["id"] == rec["id"])
+    assert served["panels"] == ["e4", "e5"]
+    # a style change reuses the page's prompt and draws into the other set, panels kept
+    other = ask(env, "draw", p=at, style="watercolour", prompt=got["body"] + " " + art.style_sentence("watercolour") + " "
+                + got["noText"]).json()
+    assert other["panels"] == ["e4", "e5"] and len(env.text.prompts) == n
+
+
+def test_a_comic_takes_the_place_of_a_comic_of_the_same_chapter_with_undo(env):
+    env.key()
+    at = anchor_of(env, "e5")
+    first = ask(env, "draw", p=at, prompt=ask(env, "prompt", p=at).json()["prompt"]).json()
+    r = ask(env, "draw", p=1.0, prompt="Rain on the mill, in two panels.", replaces=first["id"])
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["replaces"] == first["id"] and new["panels"] == ["e4", "e5", "e6"]
+    ids = {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert first["id"] not in ids and new["id"] in ids
+    assert env.c.post(f"/api/library/{KEY}/undo/{new['undo']}").status_code == 200
+    ids = {p["id"] for p in env.c.get(f"/api/library/{KEY}/art?style=ink").json()["pictures"]}
+    assert first["id"] in ids and new["id"] not in ids
+    # never a comic in place of another chapter's or another kind's picture, nor one past the position
+    ev = env.c.post(f"/api/library/{KEY}/art/draw", json={"kind": "event", "target": "e5", "style": "ink",
+                                                          "prompt": "A gate."}).json()
+    r = ask(env, "draw", p=1.0, prompt="A page.", replaces=ev["id"])
+    assert r.status_code == 422 and r.json()["code"] == "bad-replaces"
+    later = ask(env, "draw", p=1.0, prompt="A page of three.").json()
+    r = ask(env, "draw", p=at, prompt="A page.", replaces=later["id"])
+    assert r.status_code == 422 and r.json()["code"] == "not-visible"
+
+
+def test_a_refused_comic_is_softened_with_its_panels(env):
+    env.key()
+    at = anchor_of(env, "e5")
+    got = ask(env, "prompt", p=at).json()
+    r = ask(env, "soften", p=at, text=got["prompt"], reason="IMAGE_SAFETY")
+    assert r.status_code == 200, r.text
+    out = r.json()
+    assert out["kind"] == "comic" and out["panels"] == ["e4", "e5"] and out["noText"] == art.COMIC_NO_TEXT
+    assert out["body"].startswith(art.comic_frame(2)) and env.image.calls == []
+
+
+def test_a_comic_redraw_keeps_its_panels_and_its_no_text_line(env):
+    env.key()
+    at = anchor_of(env, "e5")
+    old = ask(env, "draw", p=at, prompt=ask(env, "prompt", p=at).json()["prompt"]).json()
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/redraw", json={"note": "Make it night", "p": 1.0})
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["kind"] == "comic" and new["panels"] == ["e4", "e5"] and new["replaces"] == old["id"]
+    assert new["from"] == at and new["prompt"].startswith("Make it night. ") and new["prompt"].endswith(art.COMIC_NO_TEXT)
+    assert [f["label"] for f in new.get("figures") or []] == [f["label"] for f in old.get("figures") or []]

@@ -1523,13 +1523,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def art_job(il, kind: str, target, given: bool, at: str | None, shape=None, finished: list[str] | None = None,
                 looks: str = "make"):
         if kind not in artmod.SHAPE_OF:
-            raise ArtRefusal(422, "bad-kind", "kind must be plate, event, portrait, place or thing.")
+            raise ArtRefusal(422, "bad-kind", "kind must be plate, event, comic, portrait, place or thing.")
         if not isinstance(target, str) or not target:
             raise ArtRefusal(422, "bad-target", "Say what the picture is of.")
         if shape is not None and shape not in ("square", "portrait", "landscape"):
             raise ArtRefusal(422, "bad-shape", "shape must be square, portrait or landscape.")
         if given and at is None:
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.")
+        if kind == "comic" and not given:
+            # with no position the pipeline would take the whole chapter: a comic is only ever of what the reader reached
+            raise ArtRefusal(422, "bad-position", "A comic needs the reader's position.")
         try:
             fin_ = None if finished is None else set(finished)
             if looks == "make":
@@ -1539,6 +1542,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "not-visible", "You haven't reached that yet.") from e
         except artmod.TextFailed as e:      # the on-demand plate's screening call failed twice
             raise ArtRefusal(502, "model-failed", str(e)[:200] or "The text model failed.") from e
+        except artmod.TooFewMoments as e:   # a comic of a chapter with fewer than two moments reached
+            raise ArtRefusal(422, "too-few-moments", "A comic needs at least two moments of this chapter that you have "
+                                                     "reached.") from e
         except (KeyError, StopIteration, ValueError) as e:
             raise ArtRefusal(404, "no-target", "There is no such chapter, event or entry in this index.") from e
 
@@ -1598,7 +1604,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return pick(job, list(pr.shows), fin, figures=pr.figures) if pr.figures is not None else pick(job, list(pr.shows), fin)
         # until `Illustrator.references` lands: the same rule from the pipeline's own parts
         pos = (job.bi, il.books[job.bi].ord_of[pr.anchor])
-        if job.kind in ("plate", "event"):
+        if job.kind in artmod.SCENE_KINDS:
             return il._references(list(pr.shows), pos, il.view(job.bi, pr.anchor, fin), fin)
         if job.kind == "portrait" and job.change:
             prev = il.latest_picture(job.target, pos, ("portrait",), strict=True, finished=fin, current=True)
@@ -2054,7 +2060,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                "kind": job.kind, "target": job.target, "references": ref_json(il, pr.references, slug_),
                "figures": figures_json(il, pr, slug_), "provider": prov, "model": name, "quality": llm.nearest_quality(prov, name, quality),
                "price": llm.image_price(prov, name, llm.nearest_quality(prov, name, quality), pr.shape), "slug": slug_,
-               "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin}
+               "inherits": list(pr.inherits), "partial": pr.partial, "finished": fin,
+               # a comic page's event ids in panel order (the Reader captions them from its own view); null otherwise
+               "panels": list(pr.panels) if getattr(pr, "panels", None) is not None else None}
         return out
 
     @app.post("/api/library/{key}/art/soften")
@@ -2289,14 +2297,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw pictures.")
                 if rec.get("kind") not in artmod.SHAPE_OF or rec.get("from") not in il.books[-1].ord_of:
                     raise ArtRefusal(409, "stale", "This picture no longer fits the index, so it can't be drawn again.")
-                job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "")
+                panels = [x for x in rec.get("panels") or [] if isinstance(x, str)] if rec["kind"] == "comic" else []
+                job = artmod.Job(rec["kind"], rec["target"], len(il.books) - 1, rec["from"], shape=rec.get("shape") or "",
+                                 panels=panels)
                 refs = redraw_references(il, rec, pid)
                 if body.get("p", body.get("anchor")) is not None:
                     given, at = art_position(ctx, body)
                     job.reach = (job.bi, il.books[job.bi].ord_of[at] if at is not None else -1)
                     refs = [(j, r) for j, r in refs if il.reference_reached(job, j, r)]
                 figures = None      # older records and non-scenes: no labels, drawn as before
-                if rec.get("kind") in ("plate", "event") and isinstance(rec.get("figures"), list):
+                if rec.get("kind") in artmod.SCENE_KINDS and isinstance(rec.get("figures"), list):
                     figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]
                                if isinstance(f, dict) and isinstance(f.get("label"), str) and isinstance(f.get("entity"), str)]
                 # a portrait drawn with the older half-length frame is drawn again with the mid-chest one
@@ -2310,7 +2320,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
                                    version=rec.get("notes"), body=text_, figures=figures,
-                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None)
+                                   written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None,
+                                   panels=panels if rec["kind"] == "comic" else None,
+                                   **({"no_text": artmod.COMIC_NO_TEXT} if rec["kind"] == "comic" else {}))
                 new = draw_given(il, job, pr, text_)
                 if "inherits" not in rec:
                     new.pop("inherits", None)
