@@ -36,6 +36,7 @@ ARMS = {
            "picture. No letter, label, number or caption is drawn beside, above or on anyone."),
     "v3": ('The words "figure A", "figure B" and so on only tell the figures apart in this description. Nothing is written in the '
            "picture: no letter, label, number or caption beside, above or on anyone."),
+    "shipped": art.LABEL_NOT_TEXT,
     "v4": ("Each figure in this description is called by a label (the word figure and a letter) only so that the figures can be "
            "told apart. Nothing is written in the picture: no letter, label, number or caption beside, above or on anyone."),
     "v2": ('"Figure A", "figure B" and so on are only names for telling the people apart in this description. Around every '
@@ -105,9 +106,10 @@ def cmd_draw(a) -> None:
         if rows.get(key, {}).get("judge"):
             return
         row = rows.setdefault(key, {"scene": sid, "style": style, "arm": arm, "i": i})
-        text = art.Illustrator._assemble(body, style=art.style_sentence(style), no_text=art.NO_TEXT)
-        if ARMS[arm]:
-            text = f"{text} {ARMS[arm]}"
+        # built by hand: `_assemble` adds LABEL_NOT_TEXT itself to a labelled body, which would put the shipped sentence in the
+        # "old" arm. A scene in a comic-strip style is a plate, so it closes with NO_TEXT, as a real prompt does.
+        text = " ".join(x for x in (body.rstrip(), art.style_sentence(style), art.NO_TEXT, ARMS[arm]) if x)
+        assert text.count(art.LABEL_NOT_TEXT) == (arm in ("shipped", "v4"))   # v4 is the shipped wording: once; old, v1-v3: never
         row["prompt"] = text
         file = img / f"{sid}-{style}-{arm}-{i}.jpg"
         if not file.is_file():
