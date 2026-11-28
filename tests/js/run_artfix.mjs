@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { autoFixed, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
+const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -16,6 +16,21 @@ test("a check answer is cleaned: empty what dropped, text trimmed and cut", () =
   assert.equal(cleanFaults([{ what: "a", where: "b".repeat(500) }])[0].where.length, 120);
   assert.deepEqual(cleanFaults({ faults: [] }), []);
   assert.deepEqual(cleanFaults([{ what: 3, where: {} }]), []);
+});
+test("faults are cut at a word boundary, as art._cut_words cuts them", () => {
+  const long = "the left hand of the man in the dark coat has six fingers and the thumb grows out of the wrist ".repeat(4);
+  const what = cleanFaults([{ what: long }])[0].what;
+  assert.ok(what.length <= 200 && long.startsWith(what) && long[what.length] === " ", what);
+  const where = cleanFaults([{ what: "a", where: long }])[0].where;
+  assert.ok(where.length <= 120 && long.startsWith(where) && long[where.length] === " ", where);
+  // the same cases as the Python
+  assert.equal(cutWords("one two three", 7), "one two");
+  assert.equal(cutWords("one two, three", 8), "one two");
+  assert.equal(cutWords("abcdefghij klm", 8), "abcdefgh");      // the only space is before half the limit: a hard cut
+  assert.equal(cutWords("ab cdefghijkl", 8), "ab cdefg");
+  assert.equal(cutWords("  a   sword \n through the hand. ", 200), "a sword through the hand");
+  assert.equal(cutWords("one two \u2014 three", 9), "one two");
+  assert.equal(cutWords(3, 10), "");
 });
 test("at most eight faults are kept", () => {
   assert.equal(cleanFaults(Array.from({ length: 12 }, (_, i) => ({ what: `f${i}` }))).length, MAX_FAULTS);
