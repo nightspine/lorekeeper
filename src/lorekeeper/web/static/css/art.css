@@ -59,6 +59,16 @@
 .art-panels li, .lb-panels li { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); }
 .panel-n { color: var(--text-3); font-weight: 700; text-align: right; }
 .lb-panels li { color: var(--text); }
+.lb-panels li:has(.lb-panel-fix) { grid-template-columns: 2ch minmax(0, 1fr) auto; }
+.lb-panel-fix { white-space: nowrap; }
+.lb-fix-title { margin: 0; font: 600 var(--text-md)/1.4 var(--font-ui); }
+/* Over a comic page: one button per panel, top right of its box, only with a hover pointer. */
+.lb-pagebox { position: relative; display: flex; max-width: 100%; line-height: 0; }
+.lb-panel-hover { display: none; }
+@media (hover: hover) {
+  .lb-panel-hover { display: inline-flex; align-items: center; gap: 4px; position: absolute; transform: translate(calc(-100% - 6px), 6px); min-height: 28px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--pane); color: var(--text); font: 600 var(--text-sm)/1 var(--font-ui); cursor: pointer; opacity: 0; transition: opacity var(--dur, 120ms); }
+  .lb-pagebox:hover .lb-panel-hover, .lb-pagebox:focus-within .lb-panel-hover { opacity: 1; }
+}
 
 /* ---- Cast rows: a 24px portrait in the type mark's place, the type colour as its ring ---- */
 .ent-row.has-face .ent-name .nm::before { display: none; }

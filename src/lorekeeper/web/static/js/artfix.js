@@ -99,6 +99,7 @@ export function verdictLine(verified, sent = []) {
 /** "Fixed: the head is far too small for the body; the left hand has six fingers (1 of 2 put right). Also: brighter."
  *  for one `fixes` entry, or null when it says nothing. The count shows only for a checked fix. */
 export function fixLine(fix) {
+  if (Number.isInteger(fix?.panel) && fix.panel >= 1) return panelFixLine(fix);
   const whats = cleanFaults(fix?.faults).map((f) => bare(f.what));
   const note = text(fix?.note, NOTE_CHARS).replace(/[.\s]+$/, "");
   if (!whats.length && !note) return null;
@@ -128,4 +129,60 @@ export function beforeSrc(url, at = {}) {
   if (!q.has("finished") && Array.isArray(at?.finished)) q.set("finished", at.finished.join(","));
   const s = q.toString();
   return s ? `${path}?${s}` : path;
+}
+
+// ---- fixing one panel of a comic page ----------------------------------------------------------------
+
+/** art.PANEL_TEXT_CHARS: the longest panel text the route takes. */
+export const PANEL_TEXT_CHARS = 600;
+const FRAME_RE = /^A comic page of \d+ panels in a grid, read left to right and top to bottom, with thin white gutters between them\. Each panel shows one moment, and a figure looks the same in every panel they are in\.\s*/;
+const NO_TEXT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture.";
+
+/** A port of art.panel_texts: the "Panel k: ..." texts of a stored comic prompt (the frame, then the panels, then the style
+ *  sentence and the no-text line), in order, or null when the prompt is not one. `style` (the style's sentence, when the
+ *  caller knows it) is cut from the last panel; without it the last text may end with the style sentence. */
+export function panelTexts(prompt, style = "") {
+  if (typeof prompt !== "string") return null;
+  let t = prompt.split(/\s+/).filter(Boolean).join(" ");
+  const m = FRAME_RE.exec(t);
+  if (!m) return null;
+  t = t.slice(m[0].length);
+  const end = t.lastIndexOf(NO_TEXT);
+  if (end >= 0) t = t.slice(0, end).trim();
+  const st = typeof style === "string" ? style.split(/\s+/).filter(Boolean).join(" ") : "";
+  if (st && t.endsWith(st)) t = t.slice(0, t.length - st.length).trim();
+  // panels are numbered 1..n in order: look for each "Panel k: " in turn, so a "Panel 7: " inside a text does not split it
+  const starts = [];
+  for (let want = 1, at = 0; ; want++) {
+    const tag = `Panel ${want}: `;
+    const i = t.indexOf(tag, at);
+    if (i < 0 || (want === 1 && i !== 0)) break;
+    starts.push([i, i + tag.length]);
+    at = i + tag.length;
+  }
+  if (!starts.length) return null;
+  const out = [];
+  starts.forEach(([, from], j) => out.push(t.slice(from, j + 1 < starts.length ? starts[j + 1][0] : t.length).trim()));
+  return out;
+}
+
+/** The body of POST /art/{id}/panel: { k, text?, note? } or null when nothing changed (the text equals the one drawn, or
+ *  none is given, and there is no note). `was` is the panel's text now ("" when not shown). */
+export function panelBody(k, value, was = "", note = "") {
+  const t = text(value, PANEL_TEXT_CHARS), w = text(was, 1e6), n = text(note, NOTE_CHARS);
+  const changed = Boolean(t) && t !== w;
+  if (!changed && !n) return null;
+  return { k, ...(changed ? { text: t } : {}), ...(n ? { note: n } : {}) };
+}
+
+/** What the verdict names for a panel fix: the wish as one fault line. */
+export const panelWish = (k, body) => ({ what: cutWords(body?.text ? `panel ${k} should show: ${body.text}` : (body?.note || `panel ${k}`), WHAT_CHARS) });
+
+/** "Fixed panel 3: <new text, cut to 120 characters, or the note>." with the tally when checked. */
+export function panelFixLine(fix) {
+  const k = fix?.panel;
+  const said = cutWords(typeof fix?.text === "string" && fix.text.trim() ? fix.text : text(fix?.note, NOTE_CHARS), 120);
+  const v = cleanVerified(fix?.verified);
+  const tally = v && v.of ? ` (${v.fixed} of ${v.of} put right${v.partly ? `, ${v.partly} partly` : ""})` : "";
+  return `Fixed panel ${k}${said ? `: ${said}` : ""}${tally}.`;
 }

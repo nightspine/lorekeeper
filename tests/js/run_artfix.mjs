@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
+const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTexts, panelBody, panelFixLine, panelWish, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -111,6 +111,35 @@ test("the before picture's address: the API's own route only, the position added
   assert.equal(beforeSrc("/api/library/k1/art/p0a1b2c3/before", { finished: [] }), "/api/library/k1/art/p0a1b2c3/before?finished=");
   for (const bad of ["https://evil.test/api/library/k/art/p1/before", "//evil.test/x", "/api/art/h/s/p1", "javascript:alert(1)", null, 3,
     "/api/library/k/art/../before", "/api/library/k/art/p1/before#x"]) assert.equal(beforeSrc(bad, { p: "a" }), null, String(bad));
+});
+
+const FRAME = "A comic page of 3 panels in a grid, read left to right and top to bottom, with thin white gutters between them. Each panel shows one moment, and a figure looks the same in every panel they are in.";
+const NT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture.";
+test("panelTexts reads the Panel k lines of a stored comic prompt", () => {
+  const body = `${FRAME} Panel 1: A man at a door. Panel 2: Figure A runs. Panel 3: A cart at dusk.`;
+  assert.deepEqual(panelTexts(`${body} Soft ink drawing. ${NT}`, "Soft ink drawing."), ["A man at a door.", "Figure A runs.", "A cart at dusk."]);
+  assert.deepEqual(panelTexts(`${body} ${NT}`), ["A man at a door.", "Figure A runs.", "A cart at dusk."]);
+  assert.equal(panelTexts("A portrait of a man."), null);
+  assert.equal(panelTexts(null), null);
+  assert.equal(panelTexts(`${FRAME} no panels here`), null);
+  // numbers inside a text do not split it
+  assert.deepEqual(panelTexts(`${FRAME} Panel 1: Panel 7: a sign. Panel 2: x.`), ["Panel 7: a sign.", "x."]);
+});
+test("panelBody: only a changed text or a note is something to fix", () => {
+  assert.equal(panelBody(2, "same", "same", ""), null);
+  assert.equal(panelBody(2, "  ", "was", ""), null);
+  assert.deepEqual(panelBody(2, "new  text", "was", ""), { k: 2, text: "new text" });
+  assert.deepEqual(panelBody(2, "same", "same", "brighter"), { k: 2, note: "brighter" });
+  assert.deepEqual(panelBody(1, "x", "", "n"), { k: 1, text: "x", note: "n" });
+  assert.equal(panelBody(1, "x".repeat(700), "", "").text.length, 600);
+  assert.equal(panelWish(3, { text: "a boy awake" }).what, "panel 3 should show: a boy awake");
+  assert.equal(panelWish(3, { note: "brighter" }).what, "brighter");
+});
+test("How this was drawn names the fixed panel", () => {
+  assert.equal(panelFixLine({ panel: 3, text: "The boy sits up.", verified: { fixed: 1, partly: 0, of: 1 } }), "Fixed panel 3: The boy sits up (1 of 1 put right).");
+  assert.equal(panelFixLine({ panel: 2, note: "brighter" }), "Fixed panel 2: brighter.");
+  assert.equal(panelFixLine({ panel: 1, text: "w ".repeat(100) }).length < 140, true);
+  assert.deepEqual(fixLines({ fixes: [{ panel: 3, text: "x y", created: "2026-11-28T10:00:00Z" }] }), [{ line: "Fixed panel 3: x y.", created: "2026-11-28T10:00:00Z" }]);
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
