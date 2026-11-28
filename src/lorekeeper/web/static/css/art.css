@@ -59,6 +59,16 @@
 .art-panels li, .lb-panels li { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); }
 .panel-n { color: var(--text-3); font-weight: 700; text-align: right; }
 .lb-panels li { color: var(--text); }
+.lb-panels li:has(.lb-panel-fix) { grid-template-columns: 2ch minmax(0, 1fr) auto; }
+.lb-panel-fix { white-space: nowrap; }
+.lb-fix-title { margin: 0; font: 600 var(--text-md)/1.4 var(--font-ui); }
+/* Over a comic page: one button per panel, top right of its box, only with a hover pointer. */
+.lb-pagebox { position: relative; display: flex; max-width: 100%; line-height: 0; }
+.lb-panel-hover { display: none; }
+@media (hover: hover) {
+  .lb-panel-hover { display: inline-flex; align-items: center; gap: 4px; position: absolute; margin: 6px 6px 0 0; white-space: nowrap; min-height: 28px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: 6px; background: var(--pane); color: var(--text); font: 600 var(--text-sm)/1 var(--font-ui); cursor: pointer; opacity: 0; transition: opacity var(--dur, 120ms); }
+  .lb-pagebox:hover .lb-panel-hover, .lb-pagebox:focus-within .lb-panel-hover { opacity: 1; }
+}
 
 /* ---- Cast rows: a 24px portrait in the type mark's place, the type colour as its ring ---- */
 .ent-row.has-face .ent-name .nm::before { display: none; }
@@ -364,12 +374,20 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .art-ref.uploading .art-ref-thumb img { opacity: .45; }
 .art-ref-thumb .spinner { position: absolute; margin: 0; }
 .art-ref-note { min-width: 0; width: 100%; }
+.art-ref-fields { display: grid; gap: 6px; min-width: 0; }
+.art-ref-applies-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.art-ref-applies-row[hidden] { display: none; }
+.art-ref-applies-label { flex: none; font-size: var(--text-xs); }
+.art-ref-applies { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+.art-ref-fallback { margin: 0; color: var(--text-3); }
+.art-ref-fallback:empty { display: none; }
+.art-ref:has(.art-ref-fallback:not(:empty)), .art-ref:has(.art-ref-applies-row:not([hidden])) { align-items: start; }
 .art-refs-drop { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px; border: 1px dashed var(--line-2); border-radius: 6px; }
 .art-refs-drop-hint { font-size: var(--text-xs); line-height: 1.45; min-width: 0; }
 .art-refs.over .art-refs-drop { border-color: var(--beacon); background: var(--hover); }
 .art-refs-path { margin: 0; color: var(--text-3); }
 .art-refs .field-error:empty, .art-refs-path:empty { display: none; }
-.art-left-out { margin: 0; }
+.art-left-out, .art-applies-fallback { margin: 0; }
 
 .lb-refs { display: grid; gap: 6px; }
 .lb-refs-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
@@ -379,7 +397,8 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
 .lb-ref-img { display: block; width: 100%; height: 100%; object-fit: cover; }
 .lb-ref-text { display: grid; gap: 2px; min-width: 0; }
 .lb-ref-text p { margin: 0; font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); overflow-wrap: anywhere; }
-.lb-ref-text .lb-ref-desc { color: var(--text-3); }
+.lb-ref-text .lb-ref-desc, .lb-ref-text .lb-ref-for { color: var(--text-3); }
+.lb-ref-text .lb-ref-for:empty { display: none; }
 .lb-refs-hint, .lb-redraw-refs { margin: 0; }
 
 @media (max-width: 640px) {
@@ -389,6 +408,9 @@ dialog.lightbox::backdrop { background: var(--backdrop); }
   .art-refs-add-btn { width: 100%; justify-content: center; min-height: 44px; }
   .art-ref { grid-template-columns: 56px minmax(0, 1fr) 44px; gap: 8px; }
   .art-ref-note { font-size: 16px; min-height: 44px; }
+  /* "Applies to" full width under the note, 16px so iOS does not zoom */
+  .art-ref-applies-row { flex-direction: column; align-items: stretch; gap: 4px; }
+  .art-ref-applies { width: 100%; font-size: 16px; min-height: 44px; }
   .art-ref-del, .lb-ref-del { width: 44px; height: 44px; }
   .lb-ref { grid-template-columns: 48px minmax(0, 1fr) 44px; }
 }

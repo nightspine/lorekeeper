@@ -10,7 +10,8 @@ import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 import { galleryName, gallerySentence, loadStyles, savedStyle, styleRow } from "./styles.js";
 import { cleanUserRefs, describeCost, describeModel, earlyProblem, leftOutLine, MAX_REFS, pathLine, REF_ACCEPT, REF_NOTE_CHARS,
-  refPath, refsBody, roomFor, sameRefs, sniff, takesReferences, uploadError, withRefsPhrase } from "./artrefs.js";
+  refPath, refsBody, roomFor, sameRefs, sniff, takesReferences, uploadError, withRefsPhrase,
+  appliesLine, appliesOptions, fallbackDoneLine, resolveApplies } from "./artrefs.js";
 
 export { loadStyles, stylePicker, styleRow, viewStyle } from "./styles.js";
 
@@ -46,7 +47,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -340,8 +341,17 @@ export function cleanFigures(list) {
  * name from the reader's own view (null: not visible there, so just "Figure A"), `thumb(figure)` the picture's URL or null
  * (the caller decides what may show). Only labels in `text` (when given) are listed. Null when there is nothing to list.
  */
-const panelList = (caps, cls, label) => (caps.length ? h(`ol.${cls}`, { "aria-label": label },
-  caps.map((c) => h("li", { value: String(c.n) }, h("span.panel-n.num", `${c.n}`), h("span", c.text)))) : null);
+const panelList = (caps, cls, label, action = null) => (caps.length ? h(`ol.${cls}`, { "aria-label": label },
+  caps.map((c) => h("li", { value: String(c.n) }, h("span.panel-n.num", `${c.n}`), h("span", c.text), action ? action(c) : null))) : null);
+
+/** A comic's panel boxes as the record stores them ([[x0, y0, x1, y1]] as fractions of the page), accepted only when there is
+ *  one per panel and each is a real box inside the page; else null (no buttons over the picture). */
+export function gridBoxes(rec) {
+  const g = rec?.grid, n = Array.isArray(rec?.panels) ? rec.panels.length : 0;
+  if (!Array.isArray(g) || !n || g.length !== n) return null;
+  const ok = g.every((b) => Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && v >= 0 && v <= 1) && b[2] > b[0] && b[3] > b[1]);
+  return ok ? g : null;
+}
 
 export function figureLines(figures, { text = null, name = () => null, thumb = () => null } = {}) {
   const used = text == null ? null : new Set(labelsIn(text));
@@ -407,7 +417,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   function paint() {
     const it = items[i], r = it.rec;
     title.textContent = it.caption || "Picture";
-    clear(stage, artImg(it.src, it.caption, "lb-img", { eager: true }));
+    paintStage();
     caption.textContent = it.caption || "";
     paintPanels();
     count.textContent = items.length > 1 ? `${i + 1} of ${items.length}` : "";
@@ -434,6 +444,17 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.styleRef === "string" && r.styleRef ? h("p.lb-styleref", "Style from your reference picture.") : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
     paintActs();
+  }
+  /** The picture, and over a comic page with known panel boxes a "Fix panel N" button per panel (shown on hover or focus of
+   *  the picture, and only with a hover pointer: on a touch screen the list below is the way there). */
+  function paintStage() {
+    const it = items[i];
+    const img = artImg(it.src, it.caption, "lb-img", { eager: true });
+    const boxes = it.rec.kind === "comic" && fixable(it) ? gridBoxes(it.rec) : null;
+    if (!img || !boxes) { clear(stage, img); return; }
+    clear(stage, h("div.lb-pagebox", img, boxes.map(([x0, y0, x1, y1], n) => h("button.lb-panel-hover", {
+      type: "button", style: { right: `${((1 - x1) * 100).toFixed(2)}%`, top: `${(y0 * 100).toFixed(2)}%` },
+      "aria-label": `Fix panel ${n + 1}`, title: `Fix panel ${n + 1}`, on: { click: () => panelForm(it, n + 1) } }, icon("sparkle"), `Fix panel ${n + 1}`))));
   }
   /** The actions under the picture: Fix, Redraw and Delete. Fix needs the image provider that drew this picture set up
    *  here (the list arrives after the lightbox opens: `drawers`), since the fix is drawn by that same model. */
@@ -554,6 +575,54 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     ready();
     (error ? go_ : rows[0].input).focus();
   }
+  /** Fix one panel of a comic page: its text as drawn (editable) and a note; the model edits the page and only that panel is
+   *  taken from the result. The result view is the picture Fix's. */
+  function panelForm(it, k, { value = null, note: noteText = "", error = "" } = {}) {
+    const rec = it.rec;
+    const shown = !(it.promptHiddenUntil && it.promptHiddenUntil(rec));
+    const was = shown ? (panelTextsOf(rec) || [])[k - 1] || "" : "";
+    const text = h("textarea.input.lb-note#lb-panel-text", { rows: "4", maxlength: String(PANEL_TEXT_CHARS), "aria-label": `What panel ${k} shows`, placeholder: "What this panel should show" });
+    text.value = value ?? was;
+    const note = h("textarea.input.lb-note#lb-panel-note", { rows: "2", maxlength: String(NOTE_CHARS), placeholder: "For example: keep the candle lit" });
+    note.value = noteText;
+    const err = h("p.hint.field-error", { role: "alert" }, error);
+    const cancel = h("button.btn.quiet", { type: "button", on: { click: () => { paintActs(); } } }, "Cancel");
+    const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
+    const ready = () => { go_.disabled = !panelBody(k, text.value, was, note.value); };
+    text.addEventListener("input", ready); note.addEventListener("input", ready);
+    const p = drawers?.find((x) => x.id === rec.provider);
+    const one = p ? imagePrice(p, rec.quality || "standard", rec.shape || "landscape", rec.model || null) : undefined;
+    const price = h("p.hint.lb-fix-price", `${one != null ? `${money(one)[0].toUpperCase()}${money(one).slice(1)}` : "Price unknown"} for one picture with ${modelLabel(rec.provider, rec.model) || "the model that drew it"}. Only panel ${k} changes; the others stay as they are.`);
+    go_.addEventListener("click", async () => {
+      const body = panelBody(k, text.value, was, note.value);
+      if (!body) return;
+      const keep = { value: text.value, note: note.value };
+      const old = { rec: it.rec, src: it.src };
+      const at = atNow(it);
+      clear(acts, h("div.lb-fix", loading(`Fixing panel ${k}…`)));
+      try {
+        const r = await api.artPanel(it.key, it.rec.id, { ...body, ...at });
+        forgetArt(it.key);
+        const nr = r?.record || r;
+        if (nr && ID_RE.test(nr.id || "")) { it.rec = nr; it.src = it.srcFor ? it.srcFor(nr) : it.src; }
+        onChanged?.();
+        if (!dlg.open || items[i] !== it) { undoable(it, r, "Panel fixed"); return; }
+        paint();
+        fixResult(it, r, { sent: [panelWish(k, body)], old, before: beforeSrc(r?.beforeUrl, at) });
+      } catch (e) {
+        const why = e.code === "unchanged" ? "The model sent the page back without the change, so your picture is kept. Try again, or say it differently."
+          : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
+        if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
+        if (items[i] !== it) return;
+        panelForm(it, k, { ...keep, error: why });
+      }
+    });
+    clear(acts, h("div.lb-fix", h("h3.lb-fix-title", `Panel ${k}`),
+      h("label.label", { for: "lb-panel-text" }, `What panel ${k} shows`), text,
+      h("label.label", { for: "lb-panel-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
+    ready();
+    (error ? go_ : text).focus();
+  }
   /** "Your reference pictures": the person's own pictures this one was drawn with, each opening its file in a new tab,
    *  with its note and what it was described as. Remove changes only what a redraw sends, never the picture drawn. */
   function userRefsBox(it) {
@@ -566,6 +635,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
           artImg(r.url, "", "lb-ref-img")) : h("span.lb-ref-thumb"),
         h("div.lb-ref-text",
           r.note ? h("p.lb-ref-note", r.note) : h("p.lb-ref-note.subtle", "No note."),
+          // which figure (or the subject) it was for, named from the reader's view now; nothing for the whole scene
+          h("p.lb-ref-for.subtle", { dataset: { sha: r.sha } }, appliesLine(r.appliesTo, it.rec, it.figureName || undefined)),
           r.description ? h("p.lb-ref-desc.subtle", `Described as: ${r.description}`) : null),
         removable ? h("button.icon-btn.lb-ref-del", { type: "button", "aria-label": `Remove reference picture ${n + 1}`, title: "Remove",
           on: { click: (e) => removeRef(it, r.sha, e.currentTarget) } }, icon("x")) : null))),
@@ -638,7 +709,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
       clear(stage, img);
     }
-    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); refocus(); } } }, "Keep the fix");
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; paintStage(); paintActs(); refocus(); } } }, "Keep the fix");
     const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
@@ -676,11 +747,26 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
-  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); paintPanels(); }
+  function refresh() {
+    const box = how.querySelector(".lb-figs");
+    if (box) clear(box, lbFigures(items[i]));
+    // "For figure A, Mina": the name comes and goes with the view, as the figure lines do
+    const refsNow = new Map(cleanUserRefs(items[i]?.rec?.userRefs).map((r) => [r.sha, r]));
+    for (const p of how.querySelectorAll(".lb-ref-for")) p.textContent = appliesLine(refsNow.get(p.dataset.sha)?.appliesTo, items[i].rec, items[i].figureName || undefined);
+    paintPanels();
+    // the hover buttons follow `fixable` like the list; not while a result (Before / After) is on the stage
+    // A form open (not a result) when the picture stops being fixable: the form goes with its buttons.
+    if (pending) return;
+    if (!acts.querySelector(".lb-fix")) paintStage();
+    else if (!fixable(items[i])) { paintActs(); paintStage(); }
+  }
   /** A comic's captions under the picture: never drawn into it, so they come from the view at the position now. */
   function paintPanels() {
     const it = items[i];
-    clear(panelsBox, it?.rec?.kind === "comic" ? panelList(panelCaptions(it.rec.panels, it.panelText), "lb-panels", "Panels") : null);
+    const act = it && it.rec.kind === "comic" && fixable(it)
+      ? (c) => h("button.btn.quiet.lb-panel-fix", { type: "button", "aria-label": `Fix panel ${c.n}`, on: { click: () => panelForm(it, c.n) } }, icon("sparkle"), "Fix panel")
+      : null;
+    clear(panelsBox, it?.rec?.kind === "comic" ? panelList(panelCaptions(it.rec.panels, it.panelText), "lb-panels", "Panels", act) : null);
   }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
@@ -757,7 +843,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   imageProviders().then((list) => {
     drawers = list;
     // Fix appears once the providers are known, unless a flow is already on screen there.
-    if (dlg.isConnected && !acts.querySelector(".lb-redraw, .lb-fix")) paintActs();
+    if (dlg.isConnected && !acts.querySelector(".lb-redraw, .lb-fix")) { paintActs(); paintStage(); paintPanels(); }
     const r = dlg.isConnected ? items[i]?.rec : null;
     if (!r) return;
     const dd = how.querySelector(".lb-model"), wd = how.querySelector(".lb-writer");
@@ -800,15 +886,28 @@ async function inspectRef(file) {
 
 /**
  * The picture sheet's "Reference pictures" row: up to MAX_REFS of the person's own pictures, each uploaded as soon as it
- * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it") and Remove.
+ * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it: this dress") and Remove.
  * `initial` is a record's `userRefs` (a redraw starts from them). The element is made once and kept across the sheet's
  * repaints, so a change of style, shape, quality, model or moment keeps it as it is. Returns
- * { el, refs() [{sha, note?}], count(), busy(), dirty(), drop(sentence), setPath(text), dispose() }.
+ * { el, refs() [{sha, note?, appliesTo?}], count(), busy(), dirty(), drop(sentence), setPath(text), setFigures(rows),
+ * dispose() }.
+ * Each picture has an "Applies to" choice: the whole scene, one labelled figure the prompt uses now (`setFigures`, rows
+ * [{ label, name }] from the figure lines, or null while no prompt is written yet), or for a portrait, place or thing
+ * (`kind`) its subject (`subject()`, the name from the reader's view, null when not visible). A chosen figure that leaves
+ * the text falls back to the whole scene with one quiet line, and comes back if the label does.
  */
-function refsRow({ key, initial = [], onChange = null }) {
+/** The note names the thing to take, never who wears it: "Applies to" says who (a note naming the other sex changes the
+ *  figure). Shorter on a phone, where the field is about 170px wide at 16px and the longer one would be cut off. */
+const notePlaceholder = () => (globalThis.matchMedia?.("(max-width: 640px)").matches ? "Take from it: this dress" : "What to take from it: this dress");
+
+function refsRow({ key, kind = null, subject = () => null, initial = [], onChange = null }) {
   let seq = 0;
-  // { id, sha, ext, note, description, url, local (object URL while uploading), uploading, ctrl, done (Promise) }
-  const items = cleanUserRefs(initial).map((r) => ({ ...r, id: ++seq, uploading: false }));
+  // { id, sha, ext, note, description, url, local (object URL while uploading), uploading, ctrl, done (Promise),
+  //   wanted (what the person chose), appliesTo (what is sent: `wanted`, or "scene" after a fallback), sel, fall }
+  const items = cleanUserRefs(initial).map((r) => ({ ...r, wanted: r.appliesTo, id: ++seq, uploading: false }));
+  const forSubject = ENTITY_KINDS.has(kind);
+  let figureRows = null;   // the labelled figures in the prompt now; null: no prompt yet (a chosen figure waits for it)
+  const choices = () => (forSubject ? appliesOptions({ kind, subject: subject() }) : figureRows ? appliesOptions({ kind, figures: figureRows }) : null);
   let start = items.map((r) => ({ ...r }));
   const fileIn = h("input.sr-only.art-refs-file", { type: "file", accept: REF_ACCEPT, multiple: true, tabindex: "-1", "aria-hidden": "true" });
   const addBtn = h("button.btn.art-refs-add-btn", { type: "button", "aria-describedby": "art-refs-err", on: { click: () => fileIn.click() } },
@@ -831,23 +930,53 @@ function refsRow({ key, initial = [], onChange = null }) {
       img.addEventListener("error", () => img.remove());
       thumb.prepend(img);
     }
-    const note = h("input.input.art-ref-note", { type: "text", maxlength: String(REF_NOTE_CHARS), placeholder: "What to take from it",
+    const note = h("input.input.art-ref-note", { type: "text", maxlength: String(REF_NOTE_CHARS), placeholder: notePlaceholder(),
       "aria-label": `What to take from picture ${n + 1}`, dataset: { ref: String(it.id) },
       on: { input: (e) => { it.note = e.target.value; changed(); } } });
     note.value = it.note || "";
     const del = h("button.icon-btn.art-ref-del", { type: "button", "aria-label": `Remove picture ${n + 1}`, title: "Remove", dataset: { del: String(it.id) },
       on: { click: () => remove(it) } }, icon("x"));
-    return h(`li.art-ref${it.uploading ? ".uploading" : ""}`, thumb, note, del);
+    const selId = `art-ref-applies-${it.id}`;
+    it.sel = h("select.select.art-ref-applies", { id: selId, "aria-label": `Applies to, reference picture ${n + 1}`, dataset: { sel: String(it.id) },
+      on: { change: (e) => { it.wanted = e.target.value; paintApplies(); changed(); } } });
+    it.fall = h("p.hint.art-ref-fallback");
+    it.wrap = h("div.art-ref-applies-row", h("label.art-ref-applies-label.subtle", { for: selId }, "Applies to"), it.sel);
+    it.sel.__opts = "";
+    return h(`li.art-ref${it.uploading ? ".uploading" : ""}`, thumb, h("div.art-ref-fields", note, it.wrap, it.fall), del);
+  }
+  /** Each picture's choice against the figures now: the select's options rebuilt only when they change (focus and an open
+   *  select survive typing in the prompt), the quiet line when a chosen figure left the text. True when a sent value moved. */
+  function paintApplies() {
+    const opts = choices();
+    let moved = false;
+    for (const it of items) {
+      const r = resolveApplies(it.wanted, opts);
+      if (r.value !== it.appliesTo) moved = true;
+      it.appliesTo = r.value;
+      if (!it.sel) continue;
+      const sig = JSON.stringify(r.options);
+      if (it.sel.__opts !== sig) {
+        it.sel.__opts = sig;
+        clear(it.sel, r.options.map((o) => h("option", { value: o.value }, o.label)));
+      }
+      it.sel.value = r.value;
+      it.fall.textContent = r.fallback;
+      // one choice only (a scene with no labelled figure): nothing to choose, so no select
+      it.wrap.hidden = r.options.length < 2;
+    }
+    return moved;
   }
   function paint() {
     // Typing and focus survive: the notes are read from the items, and focus goes back to the same item's field.
     const act = document.activeElement;
-    const focusRef = list.contains(act) ? act.dataset.ref || (act.dataset.del ? `del:${act.dataset.del}` : null) : null;
+    const focusRef = list.contains(act) ? act.dataset.ref || (act.dataset.del ? `del:${act.dataset.del}` : act.dataset.sel ? `sel:${act.dataset.sel}` : null) : null;
     clear(list, items.map(row));
+    paintApplies();
     list.hidden = !items.length;
     drop.hidden = items.length >= MAX_REFS;
     if (focusRef) {
-      const t = focusRef.startsWith("del:") ? list.querySelector(`[data-del="${focusRef.slice(4)}"]`) : list.querySelector(`[data-ref="${focusRef}"]`);
+      const t = focusRef.startsWith("del:") ? list.querySelector(`[data-del="${focusRef.slice(4)}"]`)
+        : focusRef.startsWith("sel:") ? list.querySelector(`[data-sel="${focusRef.slice(4)}"]`) : list.querySelector(`[data-ref="${focusRef}"]`);
       t?.focus({ preventScroll: true });
     }
   }
@@ -869,7 +998,8 @@ function refsRow({ key, initial = [], onChange = null }) {
     const room = roomFor(items, chosen.length);
     if (room < chosen.length) err.textContent = `Up to ${MAX_REFS} pictures: ${chosen.length - room === 1 ? "one was" : `${chosen.length - room} were`} left out.`;
     for (const file of chosen.slice(0, room)) {
-      const it = { id: ++seq, sha: null, ext: null, note: "", description: null, url: null, local: URL.createObjectURL(file), uploading: true, ctrl: new AbortController() };
+      const it = { id: ++seq, sha: null, ext: null, note: "", description: null, url: null, wanted: "scene", appliesTo: "scene",
+        local: URL.createObjectURL(file), uploading: true, ctrl: new AbortController() };
       items.push(it);
       upload(it, file);
     }
@@ -922,6 +1052,8 @@ function refsRow({ key, initial = [], onChange = null }) {
     /** Take every picture out (the server could not use them) and say why under the row. */
     drop: (sentence) => { for (const it of [...items]) { it.ctrl?.abort(); if (it.local) URL.revokeObjectURL(it.local); } items.length = 0; paint(); err.textContent = sentence || ""; changed(); },
     setPath: (text) => { path.textContent = text || ""; },
+    /** The labelled figures the prompt uses now ([{ label, name }], names from the reader's view), or null: no prompt yet. */
+    setFigures: (rows) => { figureRows = Array.isArray(rows) ? rows : null; if (paintApplies()) changed(); },
     /** Drawn with these: nothing left to ask about on close. */
     settle: () => { start = items.map((r) => ({ ...r })); },
     dispose: () => { for (const it of items) { it.ctrl?.abort(); if (it.local) URL.revokeObjectURL(it.local); } },
@@ -1045,7 +1177,8 @@ export async function openPictureSheet(opts) {
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
   // The person's own reference pictures (not for "Through the book so far", a run). A redraw starts from the old picture's.
-  let refs = refsRow({ key: opts.key, initial: replaces ? opts.refs || [] : [], onChange: () => { paintPath(); paintFoot(); } });
+  let refs = refsRow({ key: opts.key, kind: opts.kind, subject: () => (opts.figureName && typeof opts.target === "string" ? opts.figureName(opts.target) : null),
+    initial: replaces ? opts.refs || [] : [], onChange: () => { paintPath(); paintFoot(); } });
   /** Which way the pictures go with the image model chosen now, as one quiet line under the row. */
   function refRoute() {
     const takes = takesReferences(st.provider, st.model);
@@ -1213,6 +1346,12 @@ export async function openPictureSheet(opts) {
     // the reply's `ref` is the reference's URL (a string; `{url}` accepted too), only ever an /api/art/<hash>/<set>/<id> address
     const pic = (f) => refParts(f.ref)?.url || null;
     clear(figuresBox, figureLines(st.figures, { text: st.prompt, name: opts.figureName || undefined, thumb: pic }));
+    // the reference pictures' "Applies to" choices follow the same figures: labels in the text now, names from the view
+    if (refs) {
+      const used = new Set(labelsIn(st.prompt));
+      const rows = cleanFigures(st.figures).filter((f) => used.has(f.label)).map((f) => ({ label: f.label, name: opts.figureName ? opts.figureName(f.entity) || null : null }));
+      refs.setFigures(st.written || st.prompt ? rows : null);
+    }
   }
   /** A comic's panels in place of the moment list: "5 panels", then each panel's moment as the reader's view says it. */
   const panelsBox = h("div.art-panels-box");
@@ -1557,6 +1696,8 @@ export async function openPictureSheet(opts) {
         h("p", src ? added : `${added} It shows where it belongs in the book.`),
         autoFixed(rec) ? h("p.hint.art-fixed", "Redrawn: the first try had a drawing fault.") : null,
         leftOutLine(r?.refsLeftOut ?? rec?.refsLeftOut) ? h("p.hint.art-left-out", leftOutLine(r?.refsLeftOut ?? rec?.refsLeftOut)) : null,
+        // a picture tied to a figure the text drawn no longer used went to the whole scene: said once
+        fallbackDoneLine(userRefs, rec?.appliesFallback ?? r?.appliesFallback, st.kind) ? h("p.hint.art-applies-fallback", fallbackDoneLine(userRefs, rec?.appliesFallback ?? r?.appliesFallback, st.kind)) : null,
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
       // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).

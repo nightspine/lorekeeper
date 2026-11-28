@@ -37,8 +37,8 @@ test("cleanUserRefs keeps well-formed, distinct items, at most four", () => {
     { sha: sha("c") }, { sha: sha("d") }, { sha: sha("e") },
   ]);
   assert.equal(out.length, R.MAX_REFS);
-  assert.deepEqual(out[0], { sha: sha("a"), ext: "png", note: "her dress", description: "A long red dress.", url: url("a") });
-  assert.deepEqual(out[1], { sha: sha("b"), ext: null, note: "", description: null, url: null });
+  assert.deepEqual(out[0], { sha: sha("a"), ext: "png", note: "her dress", description: "A long red dress.", url: url("a"), appliesTo: "scene" });
+  assert.deepEqual(out[1], { sha: sha("b"), ext: null, note: "", description: null, url: null, appliesTo: "scene" });
   assert.deepEqual(out.map((x) => x.sha), [sha("a"), sha("b"), sha("c"), sha("d")]);
 });
 test("refsBody sends sha and note only, never an upload still in flight", () => {
@@ -155,6 +155,80 @@ test("roomFor keeps the row at four", () => {
   assert.equal(R.roomFor([{}, {}, {}], 2), 1);
   assert.equal(R.roomFor([{}, {}, {}, {}], 1), 0);
   assert.equal(R.roomFor(null, 2), 2);
+});
+
+// ---- Applies to ----
+test("cleanApplies keeps scene, subject and one label A to F; anything else is the whole scene", () => {
+  for (const v of ["scene", "subject", "A", "C", "F"]) assert.equal(R.cleanApplies(v), v);
+  for (const v of [undefined, null, "", "G", "a", "AB", "figure A", "mina-murray", 1, {}, ["A"]]) assert.equal(R.cleanApplies(v), "scene");
+});
+test("cleanUserRefs reads appliesTo, missing as the whole scene (an older record)", () => {
+  const out = R.cleanUserRefs([{ sha: sha("a"), appliesTo: "B" }, { sha: sha("b") }, { sha: sha("c"), appliesTo: "mina" }, { sha: sha("d"), appliesTo: "subject" }]);
+  assert.deepEqual(out.map((x) => x.appliesTo), ["B", "scene", "scene", "subject"]);
+});
+test("refsBody sends appliesTo only when it is not the whole scene", () => {
+  assert.deepEqual(R.refsBody([{ sha: sha("a"), note: "her dress", appliesTo: "B" }, { sha: sha("b"), appliesTo: "scene" }, { sha: sha("c"), appliesTo: "subject" }, { sha: sha("d") }]),
+    [{ sha: sha("a"), note: "her dress", appliesTo: "B" }, { sha: sha("b") }, { sha: sha("c"), appliesTo: "subject" }, { sha: sha("d") }]);
+  // a changed choice is a change (the sheet asks before discarding it)
+  assert.ok(!R.sameRefs([{ sha: sha("a"), appliesTo: "A" }], [{ sha: sha("a") }]));
+  assert.ok(R.sameRefs([{ sha: sha("a"), appliesTo: "scene" }], [{ sha: sha("a") }]));
+});
+test("appliesOptions: a scene lists the whole scene, then each labelled figure in label order, named from the view", () => {
+  assert.deepEqual(R.appliesOptions({ kind: "plate", figures: [{ label: "B", name: null }, { label: "A", name: "Mina" }, { label: "A", name: "again" }, { label: "Z", name: "x" }] }), [
+    { value: "scene", label: "The whole scene" }, { value: "A", label: "Figure A, Mina" }, { value: "B", label: "Figure B" }]);
+  assert.deepEqual(R.appliesOptions({ kind: "comic", figures: [] }), [{ value: "scene", label: "The whole scene" }]);
+  assert.deepEqual(R.appliesOptions({ kind: "event" }), [{ value: "scene", label: "The whole scene" }]);
+});
+test("appliesOptions: a portrait, place or thing offers the whole picture and its subject", () => {
+  assert.deepEqual(R.appliesOptions({ kind: "portrait", subject: "Mina", figures: [{ label: "A", name: "x" }] }),
+    [{ value: "scene", label: "The whole picture" }, { value: "subject", label: "Mina" }]);
+  assert.equal(R.appliesOptions({ kind: "place" })[1].label, "This place");
+  assert.equal(R.appliesOptions({ kind: "thing", subject: "" })[1].label, "This thing");
+  assert.equal(R.appliesOptions({ kind: "portrait", subject: null })[1].label, "The person drawn");
+});
+test("resolveApplies falls back to the whole scene when the figure left the text, and comes back with it", () => {
+  const two = R.appliesOptions({ kind: "plate", figures: [{ label: "A", name: "Jonathan" }, { label: "B", name: "Mina" }] });
+  const one = R.appliesOptions({ kind: "plate", figures: [{ label: "A", name: "Jonathan" }] });
+  assert.deepEqual(R.resolveApplies("B", two), { value: "B", options: two, fallback: "" });
+  const gone = R.resolveApplies("B", one);
+  assert.equal(gone.value, "scene");
+  assert.equal(gone.fallback, "Figure B is no longer in the prompt, so this picture now applies to the whole scene.");
+  assert.equal(R.resolveApplies("B", two).value, "B");
+  // subject on a scene: the whole scene, with nothing to say (it only comes from an odd record)
+  assert.deepEqual(R.resolveApplies("subject", one), { value: "scene", options: one, fallback: "" });
+  assert.equal(R.resolveApplies("scene", one).fallback, "");
+  assert.equal(R.resolveApplies(undefined, one).value, "scene");
+});
+test("resolveApplies before any prompt keeps a chosen figure waiting (a redraw's choice), with no fallback line", () => {
+  const r = R.resolveApplies("C", null);
+  assert.equal(r.value, "C");
+  assert.equal(r.fallback, "");
+  assert.deepEqual(r.options.map((o) => o.value), ["scene", "C"]);
+  assert.equal(r.options[1].label, "Figure C");   // no name before the figures are known
+  assert.deepEqual(R.resolveApplies("subject", null).value, "scene");
+});
+test("fallbackDoneLine names the figures sent, once", () => {
+  const sent = [{ sha: sha("a"), appliesTo: "B" }, { sha: sha("b"), appliesTo: "A" }, { sha: sha("c") }];
+  assert.equal(R.fallbackDoneLine(sent, null), "");
+  assert.equal(R.fallbackDoneLine(sent, []), "");
+  assert.equal(R.fallbackDoneLine(sent, [sha("a")]), "Figure B is no longer in the prompt, so this picture now applies to the whole scene.");
+  assert.equal(R.fallbackDoneLine(sent, [sha("a"), sha("b")]), "Figure A and Figure B are no longer in the prompt, so those pictures now apply to the whole scene.");
+  assert.equal(R.fallbackDoneLine([{ sha: sha("a"), appliesTo: "subject" }], [sha("a")], "plate"), "One of your pictures was used for the whole scene.");
+  assert.equal(R.fallbackDoneLine([], [sha("e")]), "One of your pictures was used for the whole scene.");
+});
+test("appliesLine names the figure through the record's own figures, from the view only", () => {
+  const rec = { kind: "plate", target: "Chapter I", figures: [{ label: "A", entity: "mina" }, { label: "B", entity: "count" }] };
+  const name = (id) => ({ mina: "Mina" }[id] || null);
+  assert.equal(R.appliesLine("A", rec, name), "For figure A, Mina");
+  assert.equal(R.appliesLine("B", rec, name), "For figure B");      // not visible at the position: no name
+  assert.equal(R.appliesLine("C", rec, name), "For figure C");      // a label the record does not map
+  assert.equal(R.appliesLine("scene", rec, name), "");
+  assert.equal(R.appliesLine(undefined, rec, name), "");
+  assert.equal(R.appliesLine("subject", rec, name), "");            // subject on a scene says nothing
+  assert.equal(R.appliesLine("subject", { kind: "portrait", target: "mina" }, name), "For Mina");
+  assert.equal(R.appliesLine("subject", { kind: "place", target: "castle" }, name), "For this place");
+  assert.equal(R.appliesLine("subject", { kind: "portrait", target: "count" }, name), "For the person drawn");
+  assert.equal(R.appliesLine("A", rec, () => { throw new Error("x"); }), "For figure A");
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

@@ -216,6 +216,8 @@ export const api = {
   /** Fix a picture's drawing faults with one edit by the model that drew it: { faults, note? } plus { p, finished };
    *  answers like a redraw (the new record, `replaces`, `undo`, `cost`) plus `verified` and `beforeUrl`; 422 "unchanged" when the fix changed nothing (nothing filed). */
   artFix: (key, id, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/fix`, body),
+  /** Fix one panel of a comic page: { k, text?, note? } plus { p, finished }; answers like the fix route. 422 "unchanged" when nothing changed. */
+  artPanel: (key, id, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/panel`, body),
   /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
   artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
   /** { pictures, price, chapters } for the Pictures choices; `key` may be empty before a first build (the server then counts roughly or 404s). */

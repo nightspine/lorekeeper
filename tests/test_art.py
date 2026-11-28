@@ -4392,3 +4392,256 @@ def test_dracula_chapter_v_has_its_own_recap_and_chapter_vi_no_longer_uses_it():
     told = words(" ".join(r["text"] for r in mine))
     best = max(len(words(b.events[x]["summary"]) & told) for x in ids)
     assert len(words(b.events[il._main_moment(0, v, ids)]["summary"]) & told) == best
+
+
+# ---- fixing one panel of a comic page (fix-comic-panel)
+
+def page(n, fills=None, w=448, h=600, gut=16, fmt="PNG", cols=2, jitter=0):
+    """A comic page of n panels in rows of `cols`, white gutters, each panel a distinct flat colour (`fills` overrides)."""
+    from PIL import Image as PI
+    import io as _io
+    rows = -(-n // cols)
+    img = PI.new("RGB", (w, h), (255, 255, 255))
+    pw, ph = (w - gut * (cols + 1)) // cols, (h - gut * (rows + 1)) // rows
+    for i in range(n):
+        r, c = divmod(i, cols)
+        col = (fills or {}).get(i + 1) or (40 + 30 * i, 90 + 10 * i, 160 - 20 * i)
+        if jitter:
+            col = tuple(min(254, v + jitter) for v in col)
+        x0, y0 = gut + c * (pw + gut), gut + r * (ph + gut)
+        img.paste(col, (x0, y0, x0 + pw, y0 + ph))
+    buf = _io.BytesIO()
+    img.save(buf, fmt)
+    return buf.getvalue()
+
+
+class Paged(Image):
+    """An image model that draws comic pages with Pillow, and edits the panel a panel-fix prompt names: `edit(k, page)` gives
+    the edited page's bytes (default: panel k a new colour, every other panel a hair off, as a real re-render is)."""
+
+    def __init__(self, n=3, fmt="PNG", edit=None, **kw):
+        super().__init__(**kw)
+        self.n, self.fmt, self.edit = n, fmt, edit
+
+    def draw(self, prompt, *, shape="landscape", quality="standard", references=(), **kw):
+        d = super().draw(prompt, shape=shape, quality=quality, references=references, **kw)
+        mime = "image/jpeg" if self.fmt == "JPEG" else "image/png"
+        if prompt.startswith("This is a comic page"):
+            k = int(re.search(r"Change only panel (\d+)", prompt).group(1))
+            data = self.edit(k, references[0][0]) if self.edit else page(self.n, {k: (250, 10, 10)}, fmt=self.fmt, jitter=1)
+            return images.Drawn(data, mime, d.model, d.cost)
+        if "comic page of" in prompt:
+            return images.Drawn(page(self.n, fmt=self.fmt), mime, d.model, d.cost)
+        return d
+
+
+def comic_page(image=None, eye=None, **kw):
+    """A drawn comic of chapter Two (3 panels), and the Illustrator holding its set."""
+    bk, d = comic_doc()
+    sink = Mem()
+    im = image or Paged()
+    il = art.Illustrator([art.Book(d, bk, sink)], eye or Seeing(), im, "ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0, **kw)
+    rec = il.draw(il.job("comic", "Two", at="a9"))
+    return il, sink, im, rec
+
+
+def test_a_comic_page_is_drawn_with_its_grid_and_the_grid_is_found_in_reading_order():
+    il, sink, im, rec = comic_page()
+    assert len(rec["panels"]) == 3 and rec["grid"] and len(rec["grid"]) == 3
+    assert rec["grid"] == art.comic_grid(sink.files[rec["file"]], 3)
+    (a, b, c) = rec["grid"]
+    assert a[0] < b[0] and a[1] == b[1] < c[1] and c[0] == a[0] and all(0 <= v <= 1 for box in rec["grid"] for v in box)
+    assert all(round(v, 4) == v for box in rec["grid"] for v in box)
+    assert art.comic_grid(sink.files[rec["file"]], 4) is None and art.comic_grid(sink.files[rec["file"]], 2) is None
+    assert art.comic_grid(b"not a picture", 3) is None
+    assert len(art.comic_grid(page(6, cols=2), 6)) == 6
+    g = art.comic_grid(page(4, cols=1, h=900), 4)
+    assert g[3][1] > g[0][1]
+    assert "grid" not in il.draw(il.job("event", "e6", at="a11"))
+
+
+def test_a_panel_fix_prompt_is_code_only_and_names_where_the_panel_is():
+    p = art.panel_fix_prompt(6, 4, "row 2 of 3, left", "A man sits up in bed.", "keep the lamp lit",
+                             [{"what": "an extra hand", "where": "the man at the door"}])
+    assert p.split("\n") == [
+        "This is a comic page of 6 panels in a grid, read left to right and top to bottom. Change only panel 4 (row 2 of 3, left):",
+        "Panel 4 should show: A man sits up in bed.", "- the man at the door: an extra hand.", "Also: keep the lamp lit.",
+        art.PANEL_KEEP, art.COMIC_NO_TEXT]
+    assert art.panel_fix_prompt(2, 1, "x").split("\n")[1:] == [art.PANEL_KEEP, art.COMIC_NO_TEXT]
+    grid = [[0, 0, .5, .3], [.5, 0, 1, .3], [0, .3, .5, .6], [.5, .3, 1, .6], [0, .6, .5, 1], [.5, .6, 1, 1]]
+    assert [art._where(grid, k) for k in (1, 4, 5)] == ["row 1 of 3, left", "row 2 of 3, right", "row 3 of 3, left"]
+    assert art._where(None, 2) == "counting left to right and top to bottom" and art._where(grid, 9) == art._where(None, 1)
+
+
+def test_the_panel_texts_of_a_stored_comic_prompt_are_read_back():
+    texts = ["A man at a gate.", "A woman runs along the road. Dust rises.", "Nobody is there."]
+    body = art.comic_body(texts)
+    for style in ("ink", "oil-painting", "a chalky pastel look"):
+        prompt = f"{body} {art.style_sentence(style)} {art.COMIC_NO_TEXT}"
+        assert art.panel_texts(prompt, art.style_sentence(style)) == texts, style
+    assert art.panel_texts(f"{body} {art.COMIC_NO_TEXT}") == texts and art.panel_texts(body) == texts
+    assert art.panel_texts("A portrait of a woman. " + art.COMIC_NO_TEXT) is None and art.panel_texts("") is None
+
+
+def test_a_panel_fix_pastes_only_that_panel_so_the_others_stay_the_original_pixels():
+    from PIL import Image as PI, ImageChops
+    import io as _io
+    il, sink, im, rec = comic_page()
+    before = sink.files[rec["file"]]
+    new = il.fix_panel(rec, 2, text="A man sits up in bed, awake.", note="keep the lamp")
+    call = im.calls[-1]
+    grid = rec["grid"]
+    assert call["references"] == [before] and call["shape"] == "portrait" and call["quality"] == rec["quality"]
+    assert call["prompt"] == art.panel_fix_prompt(3, 2, "row 1 of 2, right", "A man sits up in bed, awake.", "keep the lamp")
+    a, b = PI.open(_io.BytesIO(before)).convert("RGB"), PI.open(_io.BytesIO(sink.files[new["file"]])).convert("RGB")
+    W, H = a.size
+
+    def crop(img, k):
+        x0, y0, x1, y1 = grid[k - 1]
+        return img.crop((round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H)))
+    assert ImageChops.difference(crop(a, 1), crop(b, 1)).getbbox() is None       # panels 1 and 3: the original pixels
+    assert ImageChops.difference(crop(a, 3), crop(b, 3)).getbbox() is None
+    assert ImageChops.difference(crop(a, 2), crop(b, 2)).getbbox() is not None   # panel 2: the new drawing
+    assert b.getpixel((round((grid[1][0] + grid[1][2]) / 2 * W), round((grid[1][1] + grid[1][3]) / 2 * H))) == (251, 11, 11)   # the edited page's colour (jittered by 1)
+    assert new["grid"] == grid and new["mime"] == "image/png" and new["id"] != rec["id"] and sink.files[new["file"]]
+    e = new["fixes"][-1]
+    assert e["panel"] == 2 and e["pasted"] is True and e["text"] == "A man sits up in bed, awake." and e["note"] == "keep the lamp"
+    assert e["verified"] and e["verified"]["of"] == 1 and e["faults"] == []
+    assert new["cost"] == pytest.approx(rec["cost"] + e["cost"]) and new["panels"] == rec["panels"] and new["from"] == rec["from"]
+    assert any(r["id"] == rec["id"] for r in sink.m["pictures"]) and sink.m["pictures"][-1]["id"] == new["id"]
+
+
+def test_a_jpeg_page_comes_back_a_jpeg():
+    il, sink, im, rec = comic_page(image=Paged(fmt="JPEG"))
+    new = il.fix_panel(rec, 1, note="the door shut")
+    assert rec["mime"] == "image/jpeg" and new["mime"] == "image/jpeg" and new["file"].endswith(".jpg")
+    assert sink.files[new["file"]][:2] == b"\xff\xd8" and new["fixes"][-1]["pasted"] is True
+
+
+def test_the_panel_text_replaces_that_panels_in_the_stored_prompt_only():
+    il, sink, im, rec = comic_page()
+    texts = art.panel_texts(rec["prompt"], art.style_sentence("ink"))
+    assert texts and len(texts) == 3
+    new = il.fix_panel(rec, 2, text="  A man   sits up in bed.  ")
+    assert art.panel_texts(new["prompt"], art.style_sentence("ink")) == [texts[0], "A man sits up in bed.", texts[2]]
+    assert new["prompt"].endswith(f" {art.style_sentence('ink')} {art.COMIC_NO_TEXT}") and new["prompt"].startswith(art.comic_frame(3))
+    assert rec["prompt"] != new["prompt"] and "text" in new["fixes"][-1]
+    assert rec["panelTexts"] == texts and new["panelTexts"] == [texts[0], "A man sits up in bed.", texts[2]]
+    again = il.fix_panel(new, 3, note="the road wet")
+    assert again["prompt"] == new["prompt"] and "text" not in again["fixes"][-1]
+    same = il.fix_panel(again, 1, text=texts[0], note="x")
+    assert same["prompt"] == new["prompt"] and "text" not in same["fixes"][-1] and "should show" not in im.calls[-1]["prompt"]
+    assert [f["panel"] for f in same["fixes"]] == [2, 3, 1]
+
+
+def test_a_misaligned_edit_keeps_the_whole_edited_page():
+    il, sink, im, rec = comic_page(image=Paged(edit=lambda k, src: page(3, {k: (250, 10, 10)}, gut=40)))
+    new = il.fix_panel(rec, 3, note="x")
+    assert new["fixes"][-1]["pasted"] is False and sink.files[new["file"]] == page(3, {3: (250, 10, 10)}, gut=40)
+    assert new["grid"] == art.comic_grid(page(3, gut=40), 3) and new["grid"] != rec["grid"]
+    il, sink, im, rec = comic_page(image=Paged(edit=lambda k, src: page(4, cols=2)))
+    new = il.fix_panel(rec, 1, note="x")
+    assert new["fixes"][-1]["pasted"] is False and new["grid"] is None
+    il, sink, im, rec = comic_page(image=Paged(edit=lambda k, src: b"\x89PNG\r\n\x1a\n" + b"junk"))
+    assert il.fix_panel(rec, 1, note="x", verify=False)["fixes"][-1]["pasted"] is False
+
+
+def test_an_edit_of_another_size_is_matched_by_resizing_it_first():
+    il, sink, im, rec = comic_page(image=Paged(edit=lambda k, src: page(3, {k: (250, 10, 10)}, w=896, h=1200, gut=32)))
+    new = il.fix_panel(rec, 1, note="x")
+    assert new["fixes"][-1]["pasted"] is True and (new["width"], new["height"]) == (rec["width"], rec["height"])
+
+
+def test_a_panel_that_came_back_as_it_was_is_unchanged_with_no_verification():
+    eye = Seeing()
+    il, sink, im, rec = comic_page(eye=eye, image=Paged(edit=lambda k, src: page(3, jitter=0)))
+    before, n, cost0 = list(sink.m["pictures"]), len(eye.verified), il.report.cost
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, note="sit up")
+    assert sink.m["pictures"] == before and len(eye.verified) == n
+    assert not e.value.verdict.changed and e.value.cost == pytest.approx(0.05)
+    assert il.report.cost == pytest.approx(cost0 + 0.05) and il.report.checks["not fixed: the fix changed nothing"] == 1
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]                  # the panel's own item
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, text="A man sits up.", faults=[HAND])               # the panel item first, then the fault
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, faults=[HAND])                                      # a fault alone: no panel item
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]
+    il, sink, im, rec = comic_page(eye=eye, image=Paged(edit=lambda k, src: src))
+    with pytest.raises(art.FixUnchanged):
+        il.fix_panel(rec, 2, note="sit up", verify=False)
+
+
+def test_a_changed_panel_the_verification_calls_unchanged_files_nothing():
+    eye = Seeing(verdict={"results": [{"n": 1, "fixed": "no"}], "changed": False, "new": []})
+    il, sink, im, rec = comic_page(eye=eye)
+    before = list(sink.m["pictures"])
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, text="A man sits up.")
+    assert sink.m["pictures"] == before and e.value.cost == pytest.approx(0.052) and il.report.fixed == 0
+
+
+def test_the_verification_lists_the_panels_own_change_first():
+    eye = Seeing()
+    il, sink, im, rec = comic_page(eye=eye)
+    il.fix_panel(rec, 2, text="A man sits up.", note="lamp lit", faults=[HAND])
+    prompt, (before, after) = eye.verified[-1]
+    assert before == sink.files[rec["file"]] and after != before
+    assert "1. panel 2: panel 2 should show: A man sits up" in prompt and "lamp lit" in prompt
+    assert "2. the miller in the doorway: the left hand has six fingers" in prompt
+    il.fix_panel(rec, 1, note="the door shut")
+    assert "1. panel 1: the door shut" in eye.verified[-1][0]
+    assert il.fix_panel(rec, 3, note="x", verify=False)["fixes"][-1]["verified"] is None
+    assert il.fix_panel(rec, 3, faults=[HAND])["fixes"][-1]["faults"] == [HAND]
+
+
+def test_a_panel_fix_refuses_what_is_not_a_comic_a_bad_panel_and_nothing_to_fix():
+    il, sink, im, rec = comic_page()
+    for k in (0, 4, -1, 1.5, True, None, "1"):
+        with pytest.raises(ValueError, match="no such panel"):
+            il.fix_panel(rec, k, note="x")
+    with pytest.raises(ValueError, match="nothing to fix"):
+        il.fix_panel(rec, 1, text=" ", note="  ", faults=[{"what": " ", "where": "x"}])
+    scene = il.draw(il.job("event", "e6", at="a11"))
+    n = len(im.calls)
+    with pytest.raises(ValueError, match="not a comic"):
+        il.fix_panel(scene, 1, note="x")
+    with pytest.raises(ValueError, match="missing"):
+        il.fix_panel({**rec, "file": "nope.png"}, 1, note="x")
+    assert len(im.calls) == n
+    im.refuse.append(lambda prompt, n: prompt.startswith("This is a comic page"))
+    with pytest.raises(images.ImageRefused):
+        il.fix_panel(rec, 1, note="x")
+
+
+def test_a_panel_fix_without_pillow_keeps_the_whole_edited_page(monkeypatch):
+    import builtins
+    edited = page(3, {2: (250, 10, 10)})
+    il, sink, im, rec = comic_page(image=Paged(edit=lambda k, src: edited))
+    data = sink.files[rec["file"]]
+    real = builtins.__import__
+
+    def deny(name, *a, **k):
+        if name == "PIL" or name.startswith("PIL."):
+            raise ImportError(name)
+        return real(name, *a, **k)
+    monkeypatch.setattr(builtins, "__import__", deny)
+    assert art.comic_grid(data, 3) is None
+    new = il.fix_panel(rec, 2, note="x")
+    assert new["fixes"][-1]["pasted"] is False and new["grid"] is None
+
+
+def test_a_panel_text_is_replaced_in_a_prompt_whose_style_sentence_had_a_name_replaced(monkeypatch):
+    monkeypatch.setitem(art.SAVED_STYLES, "mira-ink", "Inked in the manner Mira would sketch it, with bold lines.")
+    bk, d = comic_doc()
+    il = art.Illustrator([art.Book(d, bk, Mem())], Seeing(), Paged(), "mira-ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    rec = il.draw(il.job("comic", "Two", at="a9"))
+    stored = il._style(0)
+    assert stored != art.style_sentence("mira-ink") and "Mira" not in stored and rec["prompt"].endswith(f" {stored} {art.COMIC_NO_TEXT}")
+    new = il.fix_panel(rec, 3, text="Nobody is at the mill.")                     # the last panel: the style stays after it
+    assert new["prompt"].endswith(f" Panel 3: Nobody is at the mill. {stored} {art.COMIC_NO_TEXT}")
+    assert art.panel_texts(new["prompt"], stored)[2] == "Nobody is at the mill."
+    assert new["panelTexts"][2] == "Nobody is at the mill."
