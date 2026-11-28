@@ -435,3 +435,68 @@ def test_chapter_one_after_front_matter_is_the_opening_and_is_drawn(tmp_path, mo
     assert all(s["story"] is jobs_mod.is_story for s in pipeline["seen"])
     assert pipeline["body_story"] == [jobs_mod.is_story] * 2
     assert all(isinstance(m, art.Moment) and m.bi == 0 for m, _ in pipeline["bodies"])
+
+
+def test_the_openings_last_plate_anchored_just_inside_the_next_chapter_is_kept_and_nothing_later_is(monkeypatch):
+    """Chapter I's recap is anchored in chapter II's first long paragraph (a short heading opens each chapter), so its
+    plate's anchor's blocks are chapter II's. The plate is chapter I's (chapters.recap_chapter, as #181 places it) and stays
+    a preview choice when the opening is chapter I only; chapter II's plate and events are never offered."""
+    from .test_art import HEAD_I, HEAD_II, book, headed_doc
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 1)
+    one = {"id": "r1", "from": "a5", "text": "Mira hears news from the hills that a storm rides with Gabriel.",
+           "evidence": ["a3"], "scope": "chapter", "title": "Chapter I"}
+    two = {"id": "r2", "from": "a7", "text": "A hooded stranger keeps his hood up by the fire.", "evidence": ["a7"],
+           "scope": "chapter", "title": "Chapter II"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    il = pv.illustrator(headed_doc(bk, [one, two]), bk, [], Text())
+    got = pv.opening(il, lambda title, words: True)
+    assert [(m["kind"], m["target"], m["anchor"], m["storyChapter"]) for m in got] == [("plate", "Chapter I", "a5", 1)]
+    # the gate alone: chapter II's plate, and chapter I's plate claimed at an anchor recap_chapter puts in chapter II
+    for kind, target, anchor in (("plate", "Chapter II", "a7"), ("plate", "Chapter I", "a7"), ("event", "e2", "a6")):
+        monkeypatch.setattr(il, "opening_moments", lambda *a, **kw: [Moment(kind, target, "Chapter I", anchor, "x")])
+        assert pv.opening(il, lambda title, words: True) == [], (kind, target, anchor)
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 2)
+    del il.opening_moments
+    assert {m["target"] for m in pv.opening(il, lambda title, words: True)} >= {"Chapter I", "Chapter II"}
+
+
+def test_a_plate_whose_anchor_reveals_something_of_the_next_chapter_is_not_offered(monkeypatch):
+    """The plate's body is written from everything revealed at its anchor, so when chapter II's first long paragraph also
+    carries a detail cited from chapter II (or a name first used there) the plate past its chapter is not offered."""
+    from .test_art import HEAD_I, HEAD_II, book, headed_doc
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 1)
+    one = {"id": "r1", "from": "a5", "text": "Mira hears news from the hills that a storm rides with Gabriel.",
+           "evidence": ["a3"], "scope": "chapter", "title": "Chapter I"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, [one])
+    d["entities"][0]["facets"] = [{"id": "bk.mira.f1", "kind": "look", "from": "a5", "basis": "stated", "evidence": ["a5"],
+                                   "text": "Mira wears a grey cloak given by a stranger."}]
+    il = pv.illustrator(d, bk, [], Text())
+    assert pv.opening(il, lambda title, words: True) == []
+    d["entities"][0]["facets"][0]["evidence"] = ["a3"]           # cited from chapter I: the plate is offered again
+    il = pv.illustrator(d, bk, [], Text())
+    assert [m["target"] for m in pv.opening(il, lambda title, words: True)] == ["Chapter I"]
+
+
+def test_a_new_name_at_the_plates_anchor_for_someone_met_earlier_keeps_the_plate_out(monkeypatch):
+    from .test_art import HEAD_I, HEAD_II, book, headed_doc
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 1)
+    one = {"id": "r1", "from": "a5", "text": "Mira waits at the mill gate.", "evidence": ["a3"], "scope": "chapter",
+           "title": "Chapter I"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, [one])
+    d["entities"][0]["names"].append({"value": "the Gatewatcher", "kind": "alias", "from": "a5"})
+    assert pv.opening(pv.illustrator(d, bk, [], Text()), lambda title, words: True) == []
+
+
+def test_an_entity_first_met_at_the_plates_anchor_but_linked_earlier_keeps_the_plate_out(monkeypatch):
+    from .test_art import HEAD_I, HEAD_II, book, headed_doc
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 1)
+    one = {"id": "r1", "from": "a5", "text": "Mira waits at the mill gate.", "evidence": ["a3"], "scope": "chapter",
+           "title": "Chapter I"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, [one])
+    mill = next(e for e in d["entities"] if e["id"] == "mill")     # chapter I's event names it
+    mill["from"] = mill["names"][0]["from"] = "a5"
+    mill["names"].append({"value": "the Guild Hall", "kind": "alias", "from": "a5"})
+    assert pv.opening(pv.illustrator(d, bk, [], Text()), lambda title, words: True) == []
