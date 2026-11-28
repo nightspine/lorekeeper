@@ -565,7 +565,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         # and the quality levels each offers. None for a provider that cannot draw.
         images = {"default": img["default"], "cheap": img["cheap"], "strong": img["strong"],
                   "models": [{"id": m["id"], "label": m["label"], "tier": m["tier"], "price": m["price"],
-                              "levels": list(m.get("levels") or img["quality"])} for m in img["models"]]} if img else None
+                              "levels": list(m.get("levels") or img["quality"]),
+                              # whether the person's own reference pictures go to it as pictures (else described in words)
+                              "references": image_takes(pid, m["id"])} for m in img["models"]]} if img else None
         return {"id": pid, "label": spec["label"], "kind": spec["kind"], "key_url": spec["key_url"], "key_env": spec["key_env"],
                 "configured": configured, "source": keys.source(pid), "masked": keys.masked(pid),
                 "ok": bool(cached and cached["ok"]), "error": cached["error"] if cached else None,
@@ -586,10 +588,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return {m["id"] for m in st["models"] + st["liveModels"]} | ({st["model"]} if st.get("model") else set())
     jobs.text_models = text_models
 
+    def image_takes(provider: str, model: str) -> bool:
+        """Whether an image model takes pictures as input (`llm.image_takes_references`; every listed one does today)."""
+        fn = getattr(llm, "image_takes_references", None)
+        return True if fn is None else bool(fn(provider, model))
+
+    def describer_ref() -> dict | None:
+        """{provider, model} of the model that would describe the person's reference pictures for an image model that takes
+        none (`JobManager.describe_model`), or None when no model set up here can see pictures."""
+        try:
+            return artmod.model_ref(jobs.describe_model())
+        except Exception:
+            return None
+
     @app.get("/api/providers")
     def list_providers(fresh: bool = False):
         return {"providers": [provider_status(p, fresh) for p in llm.PROVIDERS],
-                "throughput": {**DEFAULT_THROUGHPUT, **jobs.throughput()}}
+                "throughput": {**DEFAULT_THROUGHPUT, **jobs.throughput()}, "describe": describer_ref()}
 
     @app.get("/api/claude")
     def claude_status(fresh: bool = False):
@@ -1326,7 +1341,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def art_revert(entry: dict, snap: Path) -> None:
         """Undo one pictures entry, touching only the records it names: what it added is taken out, what it removed is put
-        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay."""
+        back with its file from the snapshot, a world note goes back to what it was. Pictures drawn since stay. Every upload
+        the entry names is renewed first, so none is pruned while its record comes back and the entry goes."""
+        try:
+            h_ = entry["art"]["textHash"]
+            for sha in artstore.user_ref_shas(entry):
+                arts.touch_ref(h_, sha)
+        except Exception:
+            pass
+        _art_revert(entry, snap)
+
+    def _art_revert(entry: dict, snap: Path) -> None:
         a = entry["art"]
         h = a["textHash"]
         if a.get("op") == "remove-sets":
@@ -1342,11 +1367,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     else:
                         arts.put_back(h, slug_, json.loads((src / "art.json").read_text()).get("pictures", []), src)
             if a.get("refs") and (snap / artstore.REFS).is_dir():      # the uploads went with every set
-                dst = arts.refs_dir(h)
-                dst.mkdir(parents=True, exist_ok=True)
-                for f in (snap / artstore.REFS).iterdir():
-                    if artstore.REF_FILE.fullmatch(f.name) and not (dst / f.name).exists():
-                        shutil.copy2(f, dst / f.name)
+                with arts.refs_lock:
+                    dst = arts.refs_dir(h)
+                    dst.mkdir(parents=True, exist_ok=True)
+                    for f in (snap / artstore.REFS).iterdir():
+                        if artstore.REF_FILE.fullmatch(f.name) and not (dst / f.name).exists():
+                            shutil.copy2(f, dst / f.name)
+                            os.utime(dst / f.name)      # back in use: a day before it may be pruned
             return
         if a.get("op") == "world" and "sets" in a:
             for sl, was in a["sets"].items():
@@ -1364,8 +1391,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 m = arts.manifest(h, a["style"])
                 for r in (m or {}).get("pictures", []):
                     if r.get("id") == a["id"]:
-                        if a.get("before"):
-                            r["userRefs"] = a["before"]
+                        was = (a.get("was") or {}).get("userRefs")
+                        if was:
+                            r["userRefs"] = was
                         else:
                             r.pop("userRefs", None)
                 if m is not None:
@@ -1886,9 +1914,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                         shutil.copytree(folder, identity.dir / entry["id"] / slug_)
                     shutil.rmtree(folder)
             if every:
-                if entry:
-                    shutil.copytree(refs_dir, identity.dir / entry["id"] / artstore.REFS)
-                shutil.rmtree(refs_dir)
+                with arts.refs_lock:       # no upload lands between the copy for undo and the removal
+                    if entry:
+                        shutil.copytree(refs_dir, identity.dir / entry["id"] / artstore.REFS)
+                    shutil.rmtree(refs_dir, ignore_errors=True)
             parent = arts.root / text_hash
             if parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
@@ -2346,13 +2375,16 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     # ---- the person's own reference pictures (`refs`): uploads kept by content per edition (`ArtStore.put_ref`)
 
-    def refs_request(ctx: dict, raw) -> list[dict]:
+    GONE_REF = "That reference picture is no longer here. Add it again."
+
+    def refs_request(ctx: dict, raw, absent_ok: bool = True) -> list[dict]:
         """The `refs` of a draw, redraw or `PUT .../refs`, checked before any call: at most 4, distinct shas, each one the
         edition's `refs/` holds, a note of at most 120 characters after collapsing whitespace. [{sha, ext, note}];
-        422 `bad-refs` with a sentence."""
+        422 `bad-refs` with a sentence. None (no `refs`) is none, unless `absent_ok` is off (redraw's `"refs": null`, PUT).
+        Each one checked is renewed (`ArtStore.touch_ref`), so it is never pruned while it is being drawn with."""
         def bad(why: str):
             return ArtRefusal(422, "bad-refs", why)
-        if raw is None:
+        if raw is None and absent_ok:
             return []
         if not isinstance(raw, list):
             raise bad("refs must be a list of reference pictures.")
@@ -2372,9 +2404,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if sha in seen:
                 raise bad("Each reference picture can be sent once.")
             seen.add(sha)
-            p = arts.ref_path(ctx["hash"], sha)
+            p = arts.touch_ref(ctx["hash"], sha)
             if p is None:
-                raise bad("A reference picture is no longer here. Add it again.")
+                raise bad(GONE_REF)
             out.append({"sha": sha, "ext": p.suffix[1:], "note": note})
         return out
 
@@ -2382,8 +2414,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         """A record's `userRefs` as stored, each still in `refs/` (one that is gone is left out, as a reference that is)."""
         out = []
         for r in rec.get("userRefs") or []:
-            if isinstance(r, dict) and isinstance(r.get("sha"), str) and arts.ref_path(ctx["hash"], r["sha"]) is not None:
-                out.append({"sha": r["sha"], "ext": arts.ref_path(ctx["hash"], r["sha"]).suffix[1:],
+            p = arts.touch_ref(ctx["hash"], r["sha"]) if isinstance(r, dict) and isinstance(r.get("sha"), str) else None
+            if p is not None:
+                out.append({"sha": r["sha"], "ext": p.suffix[1:],
                             "note": " ".join(str(r.get("note") or "").split())[:artstore.REF_NOTE_CHARS],
                             **({"description": r["description"]} if isinstance(r.get("description"), str) else {})})
         return out
@@ -2402,9 +2435,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         return out
 
     def takes_references(image) -> bool:
-        """Whether the image model takes pictures as input (`llm.image_takes_references`; every listed one does today)."""
-        fn = getattr(llm, "image_takes_references", None)
-        return True if fn is None or image is None else bool(fn(image.provider, image.name))
+        """Whether the image backend takes pictures as input (`image_takes`)."""
+        return True if image is None else image_takes(image.provider, image.name)
 
     def ref_describer(image, items: list[dict], known: dict):
         """The vision model that describes the person's pictures for an image model that takes none (the one Describe
@@ -2426,7 +2458,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         for r in items:
             got = arts.ref_bytes(ctx["hash"], r["sha"])
             if got is None:
-                raise ArtRefusal(422, "bad-refs", "A reference picture is no longer here. Add it again.")
+                raise ArtRefusal(422, "bad-refs", GONE_REF)
             data, mime, _ = got
             desc = None
             if not takes:
@@ -2471,7 +2503,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             art_busy(ctx["hash"])
             if "refs" not in body:
                 raise ArtRefusal(422, "bad-refs", "Send the reference pictures to keep as refs.")
-            items = refs_request(ctx, body.get("refs"))
+            items = refs_request(ctx, body.get("refs"), absent_ok=False)
             fin = art_finished(ctx, body)
             with arts.lock(ctx["hash"], slug_):
                 slug_, rec = art_record(ctx, pid)       # read again under the lock
@@ -2482,8 +2514,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 new = [{**r, **({"description": known[(r["sha"], r["note"])]} if (r["sha"], r["note"]) in known else {})}
                        for r in items]
                 before = rec.get("userRefs")
+                # `was` keeps the old list under a `userRefs` key, so the uploads it names stay while the undo can bring them back
                 entry = journal_art(key, [], {"op": "refs", "textHash": ctx["hash"], "style": slug_, "id": pid,
-                                              "before": before, "userRefs": new}, "changed a picture's reference pictures")
+                                              "was": {"userRefs": before} if before else {}, "userRefs": new},
+                                    "changed a picture's reference pictures")
                 try:
                     man = arts.manifest(ctx["hash"], slug_)
                     for r in man["pictures"]:
@@ -2555,9 +2589,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             ctx = art_index(key)
             slug_, rec = art_record(ctx, pid)
             # the person's pictures: the record's own as stored, unless `refs` replaces them (`[]` drops them all)
-            given_refs = refs_request(ctx, body["refs"]) if "refs" in body else None
+            given_refs = refs_request(ctx, body["refs"], absent_ok=False) if "refs" in body else None
             art_busy(ctx["hash"])
             with arts.lock(ctx["hash"], slug_):
+                slug_, rec = art_record(ctx, pid)       # read again under the lock: a `PUT .../refs` that came first stands
                 prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
                 mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
                 qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"

@@ -12,7 +12,7 @@ import pytest
 
 pytest.importorskip("fastapi")
 
-from lorekeeper import art, llm  # noqa: E402
+from lorekeeper import art, epub, llm  # noqa: E402
 from lorekeeper.web import art as store_mod  # noqa: E402
 from lorekeeper.web import jobs as jobs_mod  # noqa: E402
 from lorekeeper.web import styles as styles_mod  # noqa: E402
@@ -413,19 +413,157 @@ def test_removing_one_style_keeps_refs_for_the_others(refs):
     assert e.c.get(f"/api/art/{e.hash}/refs/{a}").status_code == 200
 
 
-# ---- never shared
+# ---- never shared, and allowed on every kind of index
 
 
-def test_the_protocol_and_a_share_bundle_never_carry_them(refs):
+def copy_index(e, folder: str, name: str) -> str:
+    """The Millbrook index again under another library source (`generated`, `community`); its key."""
+    d = e.data / folder
+    d.mkdir(parents=True, exist_ok=True)
+    doc = json.loads(e.index.read_text())
+    if folder == "indexes":     # made shareable: the schema's provenance and work fields, no anchor on a heading
+        doc.setdefault("provenance", {}).update(created="2026-11-01T00:00:00Z", license="CC0-1.0")
+        doc.setdefault("work", {}).update(authors=["A. Writer"], language="en")
+        blocks = epub.read(e.data.parent / "epubs" / "mill.epub").blocks
+        short = {f"a{b.seq}" for b in blocks if len(b.words) < 6}
+        doc["anchors"] = [a for a in doc["anchors"] if a["id"] not in short]
+    (d / f"{name}.json").write_text(json.dumps(doc))
+    src = folder.split("/")[0] if folder == "indexes" else "community"
+    key = f"{'generated' if src == 'indexes' else 'community'}--{name}"
+    assert any(x["key"] == key for x in e.c.get("/api/library").json()["indexes"]), key
+    return key
+
+
+def test_uploads_are_allowed_on_example_and_community_indexes(refs):
     e = refs
-    _, (a,) = drawn_with_refs(e, "her dress")
-    seen = []
-    for path in ["/.well-known/lorekeeper", f"/v0/indexes/{KEY}", f"/v0/indexes/{KEY}/view?anchor=a5",
-                 f"/v0/lookup?textHash=sha256:{e.hash}", f"/api/library/{KEY}/download"]:
-        r = e.c.get(path)
-        seen.append((path, r.status_code))
-        assert a not in r.text and "userRefs" not in r.text, path
-    assert any(code == 200 for p, code in seen if p.startswith("/v0/indexes")), seen
-    r = e.c.post(f"/api/library/{KEY}/share/bundle", json={"license": "CC0-1.0", "publisher": "someone"})
-    assert a not in r.text and "userRefs" not in r.text
-    assert a not in e.index.read_text()
+    for key in (KEY, copy_index(e, "community/indexes", "theirs")):
+        r = upload(e, pic(7), key=key)
+        assert r.status_code == 200, (key, r.text)
+        assert r.json()["url"] == f"/api/art/{e.hash}/refs/{r.json()['sha']}"
+
+
+def test_the_protocol_the_index_and_a_share_bundle_never_carry_them(refs):
+    e = refs
+    key = copy_index(e, "indexes", "mine")          # only an index built here can be shared
+    a = sha_of(e, pic(1))
+    r = e.c.post(f"/api/library/{key}/art/draw", json={**DRAW, "refs": [{"sha": a, "note": "her dress"}]})
+    assert r.status_code == 200, r.text
+    assert r.json()["userRefs"][0]["sha"] == a
+    for path in ["/.well-known/lorekeeper", f"/v0/indexes/{key}", f"/v0/indexes/{key}/view?anchor=a5",
+                 f"/api/library/{key}", f"/api/community/share/{key}/bundle"]:
+        got = e.c.get(path)
+        assert got.status_code == 200, (path, got.status_code, got.text[:200])
+        assert a not in got.text and "userRefs" not in got.text, path
+    assert a not in (e.data / "indexes" / "mine.json").read_text()
+
+
+# ---- round 2: a file in use is never pruned; strict refs; what the sheet needs from /api/providers
+
+
+def mtime_age(path) -> float:
+    return time.time() - path.stat().st_mtime
+
+
+def test_every_use_renews_an_upload_so_a_prune_never_takes_it(refs):
+    e = refs
+    s = store_mod.ArtStore(e.data)
+    a = sha_of(e, pic(1))
+    f = s.ref_path(e.hash, a)
+    age(f, 30)
+    assert e.c.post(f"/api/library/{KEY}/art/draw", json={**DRAW, "refs": [{"sha": a}]}).status_code == 200
+    assert mtime_age(f) < 60                                # checked for the draw: renewed
+    rec = pictures(e)[-1]
+    age(f, 30)
+    assert e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": [{"sha": a, "note": "x"}]}).status_code == 200
+    assert mtime_age(f) < 60                                # kept by PUT: renewed
+    age(f, 30)
+    assert e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).status_code == 200
+    assert mtime_age(f) < 60                                # reused by a redraw: renewed
+    rec = pictures(e)[-1]
+    gone = e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": []}).json()
+    age(f, 30)
+    undo(e, gone["undo"])
+    assert mtime_age(f) < 60                                # brought back by undo: renewed
+    assert s.prune_refs(e.hash) == 0 and s.ref_path(e.hash, a)
+
+
+def test_a_journal_entry_that_cant_be_read_keeps_everything(tmp_path):
+    s = store_mod.ArtStore(tmp_path)
+    h = "ab" * 32
+    a = s.put_ref(h, pic(1))
+    age(s.ref_path(h, a["sha"]), 30)
+    (tmp_path / "merges" / "half").mkdir(parents=True)       # being written, or being removed by an undo
+    assert s.prune_refs(h) == 0 and s.ref_path(h, a["sha"])
+    (tmp_path / "merges" / "half" / "entry.json").write_text("{not json")
+    assert s.prune_refs(h) == 0 and s.ref_path(h, a["sha"])
+    (tmp_path / "merges" / "half" / "entry.json").write_text("{}")
+    assert s.prune_refs(h) == 1
+
+
+def test_a_prune_tolerates_the_folder_going(tmp_path, monkeypatch):
+    s = store_mod.ArtStore(tmp_path)
+    h = "ab" * 32
+    s.put_ref(h, pic(1))
+    import shutil
+    shutil.rmtree(s.refs_dir(h))
+    assert s.prune_refs(h) == 0
+
+
+def test_a_ref_that_goes_before_its_bytes_are_read_is_422_not_500(refs, monkeypatch):
+    e = refs
+    a = sha_of(e, pic(1))
+    monkeypatch.setattr(store_mod.ArtStore, "ref_bytes", lambda self, h, sha: None)
+    r = e.c.post(f"/api/library/{KEY}/art/draw", json={**DRAW, "refs": [{"sha": a}]})
+    assert r.status_code == 422 and r.json() == {"detail": "That reference picture is no longer here. Add it again.",
+                                                 "code": "bad-refs"}
+
+
+def test_refs_null_on_redraw_or_put_is_refused_and_only_an_absent_key_reuses(refs):
+    e = refs
+    rec, (a,) = drawn_with_refs(e, "her dress")
+    n = len(e.image.calls)
+    r = e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={"refs": None})
+    assert r.status_code == 422 and r.json()["code"] == "bad-refs" and len(e.image.calls) == n
+    r = e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": None})
+    assert r.status_code == 422 and r.json()["code"] == "bad-refs"
+    assert e.c.post(f"/api/library/{KEY}/art/draw", json={**DRAW, "refs": None}).status_code == 200   # a draw: none
+
+
+def test_a_redraw_uses_the_refs_a_put_left_on_the_picture(refs):
+    e = refs
+    rec, (a, b) = drawn_with_refs(e, "her dress", "the house")
+    assert e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": [{"sha": b, "note": "only this"}]}).status_code == 200
+    e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={})
+    assert [(x.sha, x.note) for x in e.sent[-1]] == [(b, "only this")]
+
+
+def test_providers_say_which_image_models_take_pictures_and_who_would_describe_them(refs, monkeypatch):
+    e = refs
+    got = e.c.get("/api/providers").json()
+    gem = next(p for p in got["providers"] if p["id"] == "gemini")
+    assert gem["images"]["models"] and all(m["references"] is True for m in gem["images"]["models"])
+    assert "describe" in got
+    monkeypatch.setattr(llm, "image_takes_references", lambda provider, model: model != gem["images"]["default"],
+                        raising=False)
+
+    class Seer:
+        provider, name = "claude", "claude-sonnet-5-5"
+    monkeypatch.setattr(jobs_mod.JobManager, "describe_model", lambda self: Seer())
+    got = e.c.get("/api/providers").json()
+    gem = next(p for p in got["providers"] if p["id"] == "gemini")
+    flags = {m["id"]: m["references"] for m in gem["images"]["models"]}
+    assert flags[gem["images"]["default"]] is False
+    assert got["describe"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
+    monkeypatch.setattr(jobs_mod.JobManager, "describe_model", lambda self: None)
+    assert e.c.get("/api/providers").json()["describe"] is None
+
+
+def test_a_put_refs_undo_entry_holds_the_uploads_it_can_bring_back(refs):
+    e = refs
+    rec, (a,) = drawn_with_refs(e, "her dress")
+    gone = e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": []}).json()
+    s = store_mod.ArtStore(e.data)
+    age(s.ref_path(e.hash, a), 30)
+    assert s.prune_refs(e.hash) == 0 and s.ref_path(e.hash, a)
+    undo(e, gone["undo"])
+    assert next(p for p in pictures(e) if p["id"] == rec["id"])["userRefs"][0]["sha"] == a
