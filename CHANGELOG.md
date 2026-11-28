@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.32.1](https://github.com/nightspine/lorekeeper/compare/v0.32.0...v0.32.1) (2026-11-28)
+
+
+### Bug Fixes
+
+* a hand fix is never thrown away unseen, and the note is judged like a fault ([#186](https://github.com/nightspine/lorekeeper/issues/186)) ([f3e8d98](https://github.com/nightspine/lorekeeper/commit/f3e8d98ff0b257d32d88c23cf14f2d5166ed0a84))
+
 ## [0.32.0](https://github.com/nightspine/lorekeeper/compare/v0.31.1...v0.32.0) (2026-11-28)
 
 
