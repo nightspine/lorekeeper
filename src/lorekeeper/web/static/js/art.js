@@ -46,7 +46,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, kindOf, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -513,7 +513,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paintActs() } }, "Cancel");
     const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
     const price = h("p.hint.lb-fix-price");
-    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where, severity: severityOf(r) }));
+    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where, severity: severityOf(r), kind: kindOf(r) }));
     const ready = () => { go_.disabled = !fixBody(read(), note.value); };
     function row(r, n) {
       r.input = h("textarea.input.lb-fault", { rows: "2", maxlength: String(WHAT_CHARS), "aria-label": `What to fix, ${n + 1}`,
@@ -528,7 +528,9 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       } } }, icon("x"));
       // "minor": the check's own grade, a quiet tag (noticed on a second look); a line the person adds is fixed in full.
       const minor = severityOf(r) === "minor" ? h("span.lb-minor", "minor") : null;
-      const meta = r.where || minor ? h("span.subtle.lb-where", r.where ? h("span", r.where) : null, minor) : null;
+      // "text" and "style": what kind of fault the check found when it is not a drawing fault, same quiet tag.
+      const kind = kindOf(r) === "text" || kindOf(r) === "style" ? h("span.lb-minor", kindOf(r)) : null;
+      const meta = r.where || minor || kind ? h("span.subtle.lb-where", r.where ? h("span", r.where) : null, kind, minor) : null;
       return h("li.lb-fault-row", h("div.lb-fault-text", r.input, meta), del);
     }
     function paintRows() {
