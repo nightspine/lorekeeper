@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from lorekeeper import ask
+from lorekeeper import ask, epub
+from lorekeeper import text as textmod
 from lorekeeper.gating import Position, view
 
 EX = Path(__file__).resolve().parents[1] / "examples" / "sherlock-holmes"
@@ -1073,7 +1074,6 @@ def test_an_oversized_arc_id_is_never_sent_or_citable():
 
 # ---- the book's own text (source "both" and "book")
 
-from lorekeeper import epub, text as textmod  # noqa: E402
 
 LATER = "quexfig"        # in the frontier block and after it: never in any prompt
 FRONT = "zorblax"
