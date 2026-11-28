@@ -175,3 +175,56 @@ def numbering(entries) -> list[dict]:
 def label(number: int | None) -> str:
     """"Chapter 3", or "" for no number."""
     return f"Chapter {number}" if number is not None else ""
+
+
+# ---- where a chapter recap sits in a book's chapter map (the Reader's twin is `recapChapter` in js/chapters.js) ------
+
+ANCHOR_WORDS = 6          # SPEC §3.5: a block of fewer words never carries an anchor
+
+
+def _same_title(t) -> str:
+    return re.sub(r"\s+", " ", str(t or "")).strip().lower()
+
+
+def recap_chapter(chapters, seq, title, block_words, tidy=lambda t: t) -> int | None:
+    """The index in `chapters` of the chapter a chapter recap summarises, or None when the anchor is before the first
+    chapter or unknown. A recap's `from` is the first anchor-eligible block after its chapter's last paragraph, and a
+    chapter usually opens with a short heading, so the anchor often lands in the next chapter's second block.
+
+    1. A chapter whose title is the recap's (case and spacing aside, after `tidy`), at the anchor's chapter or back to
+       the chapter before it (the last one before it holding a block that can carry an anchor; chapters made only of
+       short blocks in between, a "Part Two" divider, are passed over). Never later than the anchor's chapter.
+    2. Else, or when both match: the chapter before when no block between the anchor's chapter start and the anchor
+       could carry an anchor (the anchor was snapped past a chapter end), else the anchor's chapter.
+
+    `chapters` is the whole map in book order, objects or dicts with `title` and `start`; `seq` the block the anchor is
+    in; `block_words` the word count of every block, or None (then rule 2 never goes back). The same vectors as the
+    Reader's port: `tests/fixtures/recap_chapter.json`."""
+    if not chapters or not isinstance(seq, int) or isinstance(seq, bool) or seq < 0:
+        return None
+    get = (lambda c, k: c[k]) if isinstance(chapters[0], dict) else getattr
+    starts = [get(c, "start") for c in chapters]
+    i = -1
+    for k, s in enumerate(starts):
+        if s > seq:
+            break
+        i = k
+    if i < 0:
+        return None
+    words = block_words or None
+
+    def eligible(a: int, b: int) -> bool:
+        return any((words[k] if k < len(words) else 0) >= ANCHOR_WORDS for k in range(max(a, 0), b))
+
+    j = i - 1
+    if words:
+        while j >= 0 and not eligible(starts[j], starts[j + 1]):
+            j -= 1
+    snapped = bool(words) and j >= 0 and not eligible(starts[i], seq)
+    key = _same_title(tidy(title))
+    matches = [k for k in range(i, max(j, 0) - 1, -1) if _same_title(tidy(get(chapters[k], "title"))) == key] if key else []
+    if len(matches) == 1:
+        return matches[0]
+    if matches:
+        return i if matches[0] == i and not snapped else next(k for k in matches if k != i)
+    return j if snapped else i
