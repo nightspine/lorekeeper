@@ -32,6 +32,7 @@ from typing import Callable, Protocol, Sequence
 from . import anchors as A
 from . import epub, gating, images, llm
 from . import portraits as P
+from .chapters import recap_chapter
 from .common_words import SENTENCE_FIRST
 from .generate import ABOUT_THE_TEXT as _ABOUT_THE_TEXT
 
@@ -1526,11 +1527,23 @@ class _B:
                 if not marks or marks[-1][0] != r.get("title"):
                     marks.append((r.get("title") or f"Part {len(marks) + 1}", start))
                 start = self.seq_of[r["from"]] + 1
+        ends = [marks[n + 1][1] - 1 if n + 1 < len(marks) else max(self.hi, start) for n, (_, start) in enumerate(marks)]
+        own: dict[int, list[dict]] = {}
+        words = [len(x.words) for x in self.epub.blocks] if self.epub and self.epub.chapters else None
+        for r in recaps:
+            s = self.seq_of[r["from"]]
+            n = next((k for k, (_, start) in enumerate(marks) if start <= s <= ends[k]), None)
+            if n is not None and words is not None:
+                # a recap's anchor is the first eligible block after its chapter, often the next chapter's second block:
+                # it summarises the chapter the Reader puts it in (chapters.recap_chapter), never one after the anchor's
+                n = recap_chapter(self.epub.chapters, s, r.get("title"), words)
+            if n is not None:
+                own.setdefault(n, []).append(r)
         out, seen = [], Counter()
         for n, (title, start) in enumerate(marks):
-            end = marks[n + 1][1] - 1 if n + 1 < len(marks) else max(self.hi, start)
+            end = ends[n]
             evs = [e for e in d.get("events", []) if e["from"] in self.seq_of and start <= self.seq_of[e["from"]] <= end]
-            rcs = [r for r in recaps if start <= self.seq_of[r["from"]] <= end]
+            rcs = own.get(n, [])
             if not evs and not rcs:
                 continue
             seen[title] += 1
@@ -2345,7 +2358,9 @@ class Illustrator:
         b = self.books[bi]
         lim = self._limit(bi)
         end = max((c["hi"] for c in b.chapters if c["n"] in self.chapter_filter), default=-1) if self.chapter_filter else None
-        out = [j for j in jobs if (lim is None or b.ord_of[j.anchor] <= lim) and (end is None or b.seq_of[j.anchor] <= end)]
+        # a chosen chapter's plate may sit just past its last block (its recap's anchor, snapped into the next chapter)
+        out = [j for j in jobs if (lim is None or b.ord_of[j.anchor] <= lim) and (
+            end is None or b.seq_of[j.anchor] <= end or (j.kind == "plate" and (j.chapter or {}).get("n") in self.chapter_filter))]
         for j in out:
             j.finished = self._run_finished(bi)
         return out

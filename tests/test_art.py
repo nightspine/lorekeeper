@@ -4301,3 +4301,94 @@ def test_only_a_figure_marked_portrait_yes_gets_a_reference_even_when_a_label_be
     call = im.calls[-1]
     assert len(call["references"]) == 3 and "figure E" not in call["note"]
     assert [(f["label"], bool(f["ref"])) for f in rec["figures"]] == [("A", True), ("B", True), ("C", True), ("E", False)]
+
+
+# ---- a chapter's recap belongs to its own chapter (chapters.recap_chapter), as the Reader places it -----------------
+
+HEAD_I = ["Chapter I"] + CH1[:3]          # a short heading opens each chapter, so a recap anchored after chapter I's last
+HEAD_II = ["Chapter II"] + CH2[:3]        # paragraph snaps to chapter II's first long paragraph (block 5)
+
+
+def headed_doc(bk, recaps):
+    evs = [event(1, 1, "Mira walks to the mill with a basket and waits at the gate.", ["mira", "mill"]),
+           event(2, 6, "A hooded stranger sits by the fire and keeps his hood up.", ["stranger"]),
+           event(3, 7, "Gabriel rides in from the hills with news of a storm.", ["gabriel"])]
+    ents = [ent("mira", "Mira", frm="a1"), ent("mill", "the mill", "place", frm="a1"), ent("stranger", "the Stranger", frm="a5"),
+            ent("gabriel", "Gabriel", frm="a7")]
+    return doc(bk, entities=ents, events=evs, recaps=recaps)
+
+
+def headed_il(recaps):
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, recaps)
+    return art.Illustrator([art.Book(d, bk, Mem(), None)], Text(), Image(), "ink", portraits=None, workers=1,
+                           log=lambda *_: None, pause=0)
+
+
+def test_a_recap_anchored_in_the_next_chapters_first_paragraph_belongs_to_its_own_chapter():
+    # chapter I's recap shares its words with chapter II's second event: counted in chapter II (its anchor's blocks), it
+    # used to choose chapter II's main moment
+    one = {"id": "r1", "from": "a5", "text": "Mira hears news from the hills that a storm rides with Gabriel.", "evidence": ["a3"],
+           "scope": "chapter", "title": "Chapter I"}
+    il = headed_il([one])
+    b = il.books[0]
+    c1, c2 = b.chapters
+    assert [r["id"] for r in c1["recaps"]] == ["r1"] and c2["recaps"] == []
+    # the plate stays at or after its own recap's anchor, here chapter II's first long paragraph: later, never earlier
+    assert c1["last"] == "a5" and b.ord_of[c1["last"]] >= b.ord_of[one["from"]]
+    assert il._main_moment(0, c2, ["e2", "e3"]) == "e2"            # no recap words of its own: the earliest moment
+    two = {"id": "r2", "from": "a7", "text": "A hooded stranger keeps his hood up by the fire.", "evidence": ["a7"],
+           "scope": "chapter", "title": "Chapter II"}
+    il = headed_il([one, two])
+    c1, c2 = il.books[0].chapters
+    assert [r["id"] for r in c2["recaps"]] == ["r2"] and il._main_moment(0, c2, ["e2", "e3"]) == "e2"
+    assert il.books[0].chapter_of("a6") is c2 and [e["id"] for e in c2["events"]] == ["e2", "e3"]   # events by their anchors
+
+
+def test_a_hand_titled_recap_after_a_short_heading_goes_back_one_but_one_in_a_long_paragraph_stays():
+    snapped = {"id": "r1", "from": "a4", "text": "Mira waits at the gate.", "evidence": ["a3"], "scope": "chapter", "title": "x"}
+    il = headed_il([snapped])
+    assert [r["id"] for r in il.books[0].chapters[0]["recaps"]] == ["r1"]
+    inside = dict(snapped, **{"from": "a6"})
+    il = headed_il([inside])
+    assert il.books[0].chapters[0]["recaps"] == [] and [r["id"] for r in il.books[0].chapters[1]["recaps"]] == ["r1"]
+
+
+def test_a_recap_is_never_used_for_a_chapter_after_its_anchor():
+    late = {"id": "r1", "from": "a3", "text": "Mira waits.", "evidence": ["a3"], "scope": "chapter", "title": "Chapter II"}
+    il = headed_il([late])
+    assert [r["id"] for r in il.books[0].chapters[0]["recaps"]] == ["r1"] and il.books[0].chapters[1]["recaps"] == []
+
+
+def test_the_cli_chapter_cut_keeps_a_plate_anchored_just_past_its_chapter():
+    one = {"id": "r1", "from": "a5", "text": "Mira waits at the mill gate.", "evidence": ["a3"], "scope": "chapter", "title": "Chapter I"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, [one])
+    il = art.Illustrator([art.Book(d, bk, Mem(), "main")], Text(), Image(), "ink", portraits=None, chapters={1}, workers=1,
+                         log=lambda *_: None, pause=0)
+    jobs = [j for j in il.plan(0, record=False) if j.kind == "plate"]
+    assert [(j.target, j.anchor) for j in jobs] == [("Chapter I", "a5")]
+
+
+def test_dracula_chapter_v_has_its_own_recap_and_chapter_vi_no_longer_uses_it():
+    """pg345: "CHAPTER V"'s recap is anchored in Chapter VI's first long paragraph (after its heading). It is chapter V's,
+    so V's main moment is chosen by its words and VI's never is."""
+    from pathlib import Path
+    from .conftest import corpus_epub
+    bk = epub.read(corpus_epub("pg345/pg345.epub"))
+    d = json.loads((Path(__file__).parent.parent / "examples" / "dracula" / "dracula.json").read_text("utf-8"))
+    il = art.Illustrator([art.Book(d, bk, Mem(), None)], Text(), Image(), "ink", portraits=None, workers=1,
+                         log=lambda *_: None, pause=0)
+    b = il.books[0]
+    v = next(c for c in b.chapters if c["title"] == "CHAPTER V")
+    vi = next(c for c in b.chapters if c["title"].startswith("CHAPTER VI "))
+    mine = [r for r in d["recaps"] if r.get("scope") == "chapter" and r["title"] == "CHAPTER V"]
+    assert mine and all(vi["lo"] <= b.seq_of[r["from"]] <= vi["hi"] for r in mine)    # anchored in VI's blocks
+    assert v["recaps"] == mine and not any(r in vi["recaps"] for r in mine)
+    assert all(r["title"].startswith("CHAPTER VI ") for r in vi["recaps"])
+    assert b.ord_of[v["last"]] >= max(b.ord_of[r["from"]] for r in mine)              # the plate never before its recap
+    ids = [e["id"] for e in v["events"] if e.get("kind") != "minor"]
+    words = lambda t: set(re.findall(r"[a-z]{4,}", t.lower()))
+    told = words(" ".join(r["text"] for r in mine))
+    best = max(len(words(b.events[x]["summary"]) & told) for x in ids)
+    assert len(words(b.events[il._main_moment(0, v, ids)]["summary"]) & told) == best
