@@ -1,4 +1,4 @@
-// chapters.js against the shared vectors (tests/fixtures/chapter_numbering.json) and, when a cases file is given,
+// chapters.js against the shared vectors (tests/fixtures/chapter_numbering.json, recap_chapter.json) and, when a cases file is given,
 // against titles chapters.py was run on (tests/test_js_chapters.py writes it).
 //   node tests/js/run_chapters.mjs [cases.json]
 import { readFileSync } from "node:fs";
@@ -80,59 +80,18 @@ test("recaps: a book that numbers its chapters keeps the numbers whichever recap
   assert.equal(recapNumbers(null).size, 0);
 });
 
-// recapChapter: which map chapter a chapter recap sits in. Blocks: a short heading (2 words) opens each chapter.
+// recapChapter: which map chapter a chapter recap sits in, against the vectors chapters.py's recap_chapter also runs.
 {
-  //            ch XIV: 10..19          ch XV: 20..29          Part Two: 30   ch XVI: 31..40
-  const map = [{ title: "Chapter XIV. Father of Whispers", start: 10 }, { title: "Chapter XV. The Bridge", start: 20 },
-    { title: "Part Two", start: 30 }, { title: "Chapter XVI", start: 31 }];
-  const words = Array.from({ length: 41 }, (_, k) => (map.some((c) => c.start === k) ? 2 : 120));
-  const at = (seq, title) => recapChapter(map, seq, title, words)?.start ?? null;
-  test("recapChapter: anchored on the next chapter's second block, goes to its own chapter", () => {
-    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(21, "  chapter xiv.   father OF whispers "), 10);   // case and spacing do not matter
-  });
-  test("recapChapter: parts of one long chapter stay together", () => {
-    assert.equal(at(14, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(18, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
-  });
-  test("recapChapter: anchored in a chapter's first long paragraph with no matching title, stays there", () => {
-    assert.equal(at(22, "Something else"), 20);
-    assert.equal(at(22, ""), 20);
-  });
-  test("recapChapter: a hand-titled recap after an all-short opening goes back one", () => {
-    assert.equal(at(21, "What happened at the bridge"), 10);
-    assert.equal(at(20, "What happened at the bridge"), 10);   // on the heading itself
-  });
-  test("recapChapter: a short divider between is passed over, never more than one real chapter back", () => {
-    assert.equal(at(32, "Chapter XV. The Bridge"), 20);
-    assert.equal(at(32, "My own title"), 20);
-    assert.equal(at(32, "Chapter XIV. Father of Whispers"), 20);   // XIV is out of reach: rule 2, one back
-  });
-  test("recapChapter: never after the anchor's chapter, null before the first", () => {
-    assert.equal(at(14, "Chapter XV. The Bridge"), 10);
-    assert.equal(at(5, "Chapter XIV. Father of Whispers"), null);
-    assert.equal(recapChapter([], 5, "x", words), null);
-    assert.equal(recapChapter(map, null, "x", words), null);
-  });
-  test("recapChapter: the first chapter has nothing to go back to", () => {
-    assert.equal(at(11, "Anything"), 10);
-  });
-  test("recapChapter: two chapters with one title, decided by where the anchor is", () => {
-    const twin = [{ title: "Interlude", start: 0 }, { title: "Interlude", start: 10 }];
-    const w = Array.from({ length: 20 }, (_, k) => (k === 0 || k === 10 ? 1 : 50));
-    assert.equal(recapChapter(twin, 11, "Interlude", w).start, 0);    // snapped past the first one's end
-    assert.equal(recapChapter(twin, 14, "Interlude", w).start, 10);   // its own text before the anchor
-  });
-  test("recapChapter: without word counts, the title alone decides and nothing goes back by rule 2", () => {
-    assert.equal(recapChapter(map, 21, "Chapter XIV. Father of Whispers", null).start, 10);
-    assert.equal(recapChapter(map, 21, "My own title", null).start, 20);
-  });
-  test("recapChapter: a tidier is applied to both titles", () => {
-    const up = [{ title: "CHAPTER I", start: 0 }, { title: "CHAPTER II", start: 10 }];
-    const w = Array.from({ length: 20 }, (_, k) => (k % 10 ? 50 : 2));
-    assert.equal(recapChapter(up, 11, "Chapter i", w, (t) => t.toLowerCase()).start, 0);
-  });
+  const rc = JSON.parse(readFileSync(join(here, "../fixtures/recap_chapter.json"), "utf8"));
+  const tidiers = { lower: (t) => t.toLowerCase() };
+  for (const c of rc.cases) {
+    test(`recapChapter: ${c.name}`, () => {
+      const map = rc.maps[c.map];
+      const words = c.words === null ? null : rc.blockWords[c.words];
+      const got = recapChapter(map, c.seq, c.title, words, c.tidy ? tidiers[c.tidy] : undefined);
+      assert.equal(got ? got.start : null, c.expected);
+    });
+  }
 }
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

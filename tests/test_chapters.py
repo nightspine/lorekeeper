@@ -75,3 +75,25 @@ def test_toc_command_shows_the_label_beside_the_toc_position(tmp_path, capsys):
     rows = [line for line in capsys.readouterr().out.splitlines() if "seq" in line]
     assert rows[0].split()[0] == "1" and "Chapter" not in rows[0].split("seq")[0]
     assert rows[1].split()[:3] == ["2", "Chapter", "1"] and rows[2].split()[0] == "3"   # the position stays --chapters
+
+
+RECAP = json.loads((Path(__file__).parent / "fixtures" / "recap_chapter.json").read_text("utf-8"))
+TIDIERS = {"lower": str.lower}
+
+
+@pytest.mark.parametrize("case", RECAP["cases"], ids=[c["name"] for c in RECAP["cases"]])
+def test_recap_chapter_vectors(case):
+    """recap_chapter and the Reader's recapChapter run the same vectors (tests/js/run_chapters.mjs)."""
+    from lorekeeper.chapters import recap_chapter
+    chapters = RECAP["maps"][case["map"]]
+    words = None if case["words"] is None else RECAP["blockWords"][case["words"]]
+    kw = {"tidy": TIDIERS[case["tidy"]]} if case.get("tidy") else {}
+    i = recap_chapter(chapters, case["seq"], case["title"], words, **kw)
+    assert (None if i is None else chapters[i]["start"]) == case["expected"]
+
+
+def test_recap_chapter_takes_chapter_objects():
+    from lorekeeper.chapters import recap_chapter
+    from lorekeeper.epub import Chapter
+    chs = [Chapter("CHAPTER I", 0), Chapter("CHAPTER II", 3)]
+    assert recap_chapter(chs, 4, "CHAPTER I", [2, 40, 40, 2, 40]) == 0
