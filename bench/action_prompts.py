@@ -297,8 +297,9 @@ def more_draws(name: str, side: dict, a, spend: Spend, img: Path, log) -> None:
 
     def one(row: dict) -> None:
         first = next((d for d in row["draws"] if d.get("file")), None)
-        if not first:
+        if not first and row["draws"]:
             return
+        first = first or {}
         text = first.get("prompt") or row["prompt"]
         while len(row["draws"]) < a.draws:
             k = len(row["draws"])
@@ -314,7 +315,8 @@ def more_draws(name: str, side: dict, a, spend: Spend, img: Path, log) -> None:
             eid = row["event"]
             f = img / f"{name}-{eid.rsplit('.', 2)[0][:4]}-{eid.rsplit('.', 1)[1]}-{k}-{hashlib.sha256(pic.data).hexdigest()[:6]}.{art._ext(pic.mime)}"
             f.write_bytes(pic.data)
-            c = art.check_picture(spend.model(text_model(a.checker, "strong"), name, "checks"), pic.data, pic.mime, text)
+            c = (art.Check([], False, 0.0, "not run (--no-check)") if a.no_check else
+                 art.check_picture(spend.model(text_model(a.checker, "strong"), name, "checks"), pic.data, pic.mime, text))
             row["draws"].append({"file": f.name, "mime": pic.mime, "cost": pic.cost, "softened": first.get("softened", False),
                                  **({"prompt": text} if first.get("softened") else {}),
                                  "check": {"checked": c.checked, "faults": c.faults, "why": c.why}})
@@ -463,6 +465,10 @@ def main() -> int:
     ap.add_argument("--draws", type=int, default=1, help="pictures per prompt; a reused arm with fewer gets more")
     ap.add_argument("--pairs", default="", help="CAND:BASE,... to judge (default every candidate against the first)")
     ap.add_argument("--no-draw", action="store_true", help="write the prompts only")
+    ap.add_argument("--restyle", type=Path, help="an earlier DIR whose prompts to draw again in --style (the writer never "
+                    "sees the style, so the body stays and only the style sentence changes); its pictures are not reused")
+    ap.add_argument("--style-check", action="store_true", help="the judge also scores how well each picture keeps the style")
+    ap.add_argument("--no-check", action="store_true", help="skip the drawing-fault check on new pictures")
     ap.add_argument("--comics", action="store_true", help="draw comic pages of COMICS instead of the scene moments")
     ap.add_argument("--only", default="", help="comma-separated event ids")
     ap.add_argument("--workers", type=int, default=4)
@@ -482,6 +488,15 @@ def main() -> int:
             lines.append(str(m))
             print(m, flush=True)
 
+    global CRITERIA, JUDGE, JUDGE_SCHEMA
+    if a.style_check:
+        sentence = art.style_sentence(a.style)
+        CRITERIA = (*CRITERIA[:-1], "style", "overall")
+        JUDGE = JUDGE.replace('- "overall":', '- "style": does the picture look like the drawing style asked for: "' + sentence
+                              + '"? 5 = plainly that medium and look throughout; 3 = partly (a photographic or painted look '
+                              'creeping in); 1 = another style altogether.\n- "overall":')
+        scores = {"type": "object", "required": list(CRITERIA), "properties": {c: {"type": "integer"} for c in CRITERIA}}
+        JUDGE_SCHEMA = {**JUDGE_SCHEMA, "properties": {**JUDGE_SCHEMA["properties"], "A": scores, "B": scores}}
     books = load_books()
     only = {x for x in a.only.split(",") if x}
     moments = [m for m in MOMENTS if m[0] in books and (not only or m[1] in only)]
@@ -500,7 +515,21 @@ def main() -> int:
                 old[n] = (d, side)
         for n, vs in prev.get("verdicts", {}).items():
             results["verdicts"].setdefault(n if "|" in n else f"{n}|old", {}).update(vs)
+    if a.restyle:
+        prev = json.loads((a.restyle / "results.json").read_text())
+        sentence = art.style_sentence(a.style)
+        for n in names:
+            side = {eid: {**{k: v for k, v in r.items() if k != "draws"}, "draws": [],
+                          "prompt": " ".join(x for x in (r["body"], sentence, art.NO_TEXT) if x)}
+                    for eid, r in prev["sides"].get(n, {}).items() if r.get("body") and any(m[1] == eid for m in moments)}
+            if side:
+                log(f"{n}: prompts from {a.restyle}, drawn again in {a.style}")
+                results["sides"][n] = side
+                more_draws(n, side, a, spend, img, log)
+                old[n] = None
     for n in names:
+        if n in old and old[n] is None:
+            continue
         if n in old:
             d, side = old[n]
             for r in side.values():
