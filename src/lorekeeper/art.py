@@ -26,7 +26,7 @@ import time
 from bisect import bisect_left
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Protocol, Sequence
 
@@ -1013,6 +1013,25 @@ USER_REF_PLAIN = "Reference picture {n} is from the person: draw what the prompt
 # scenes tried (a nightdress, a stone house); with it both scenes drew the noted dress and house
 USER_REF = ("Take only what the person says from their pictures, never their drawing style; where their note and the prompt "
             "disagree about that thing, draw it as their picture shows.")
+# what each of the person's pictures applies to (`UserRef.applies`): the whole picture ("scene", the default and the lines
+# above), the subject of a portrait, place or thing picture ("subject"), or one labelled figure of a scene ("A".."F"). A
+# picture tied to a figure is read within that figure alone; the closing line is then USER_REF_SCOPED, so what wins over the
+# prompt is what the note names on that figure. Measured on Red Rising and Dracula (2026-11-28, `bench/user_refs_applies.py`,
+# Gemini nano-banana-2.1): tied, the noted dress went to the chosen figure and every other figure stayed as drawn (a boy
+# the whole-picture note turned into a woman in 2 of 2 stayed a boy in 6 of 6); a note naming "the woman's dress" tied to
+# a man still made him a woman (8 of 8), and neither "never who that figure is" in the closing line (4 of 4) nor the
+# figure's sex and age kept in the figure line (3 of 4) stopped it, so neither is here
+APPLIES_SCENE, APPLIES_SUBJECT = "scene", "subject"
+USER_REF_FIGURE_LINE = ("Reference picture {n} is from the person and is only for figure {label}: {note}. Use it for figure "
+                        "{label} alone; nothing else about figure {label}, and nothing about any other figure, changes.")
+USER_REF_FIGURE_PLAIN = ("Reference picture {n} is from the person and is only for figure {label}: draw figure {label} with "
+                         "its help. Nothing about any other figure changes.")
+USER_REF_SUBJECT_LINE = "Reference picture {n} is from the person and is for the subject of this picture: {note}."
+USER_REF_SUBJECT_PLAIN = ("Reference picture {n} is from the person and is for the subject of this picture: draw it with its "
+                          "help.")
+USER_REF_SCOPED = ("Take only what the person says from their pictures, never their drawing style; where their note and the "
+                   "prompt disagree about that thing, draw it as their picture shows, but a picture that is only for one "
+                   "figure changes that thing on that figure alone.")
 
 
 @dataclass
@@ -1025,6 +1044,7 @@ class UserRef:
     sha: str
     note: str = ""
     description: str | None = None
+    applies: str = APPLIES_SCENE   # "scene", "subject" or a figure label "A".."F" (what it applies to; `draw` checks it)
 
 
 def user_note(note: str | None) -> str:
@@ -1091,10 +1111,28 @@ def describe_reference(model, data: bytes, mime: str, note: str = "") -> str:
 
 
 def described_line(ref: UserRef) -> str:
-    """The words a described reference picture adds to the prompt: "Also: <note>: <description>." (or "Also: <description>.")."""
+    """The words a described reference picture adds to the prompt: "Also: <note>: <description>." (or "Also: <description>."),
+    and for a picture tied to a figure "Also, for figure A only: <note>: <description>."."""
     desc = _clause(ref.description or "")
     note = _clause(user_note(ref.note))
-    return f"Also: {note}: {desc}." if note else f"Also: {desc}."
+    head = f"Also, for figure {ref.applies} only:" if _is_label(ref.applies) else "Also:"
+    return f"{head} {note}: {desc}." if note else f"{head} {desc}."
+
+
+def _is_label(applies) -> bool:
+    return isinstance(applies, str) and len(applies) == 1 and applies in LABELS
+
+
+def user_ref_line(n: int, note: str, applies: str = APPLIES_SCENE) -> str:
+    """The note line of the person's picture numbered n: USER_REF_LINE / USER_REF_PLAIN for the whole picture, the figure
+    lines for a picture tied to figure `applies`, the subject lines for the subject of a portrait, place or thing."""
+    t = _clause(user_note(note))
+    if _is_label(applies):
+        return (USER_REF_FIGURE_LINE.format(n=n, label=applies, note=t) if t
+                else USER_REF_FIGURE_PLAIN.format(n=n, label=applies))
+    if applies == APPLIES_SUBJECT:
+        return USER_REF_SUBJECT_LINE.format(n=n, note=t) if t else USER_REF_SUBJECT_PLAIN.format(n=n)
+    return USER_REF_LINE.format(n=n, note=t) if t else USER_REF_PLAIN.format(n=n)
 
 
 def with_described(text: str, lines: list[str], style: str = "", no_text: str = NO_TEXT) -> str:
@@ -3196,7 +3234,7 @@ class Illustrator:
     @staticmethod
     def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None,
                        names: dict[str, str] | None = None, style_ref: bool = False,
-                       user: Sequence[str] = ()) -> str:
+                       user: Sequence[str | tuple[str, str]] = ()) -> str:
         """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
         portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
         labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
@@ -3208,12 +3246,15 @@ class Illustrator:
         cropped at mid-chest and the rest of the figure comes from the prompt. `style_ref`: the style's own picture is sent
         after `refs` as the last reference (numbered len(refs) + 1), and STYLE_REF ends the note, the only words when it is
         the one reference. `user`: the notes of the person's own pictures ("" for one without), sent after `refs` and
-        before the style picture: one line each, numbered on from `refs` (USER_REF_LINE with the note as written, else
-        USER_REF_PLAIN), then USER_REF once, all before STYLE_REF. "" when there are no references."""
+        before the style picture, each a note or (note, applies) as `draw` settled it: one line each, numbered on from `refs`
+        (`user_ref_line`: USER_REF_LINE with the note as written, else USER_REF_PLAIN, for the whole picture; the figure or
+        subject lines for one tied to a figure or the subject), then USER_REF once (USER_REF_SCOPED when one is tied to a
+        figure), all before STYLE_REF. "" when there are no references."""
         tail = [STYLE_REF] if style_ref else []
-        mine = [USER_REF_LINE.format(n=n, note=_clause(t)) if _clause(t) else USER_REF_PLAIN.format(n=n)
-                for n, t in enumerate((user_note(x) for x in user), len(refs) + 1)]
-        tail = mine + ([USER_REF] if mine else []) + tail
+        pairs = [(x, APPLIES_SCENE) if isinstance(x, str) else (x[0], x[1] or APPLIES_SCENE) for x in user]
+        mine = [user_ref_line(n, t, a) for n, (t, a) in enumerate(pairs, len(refs) + 1)]
+        close = USER_REF_SCOPED if any(_is_label(a) for _, a in pairs) else USER_REF
+        tail = mine + ([close] if mine else []) + tail
         if not refs:
             return " ".join(tail)
         out = []
@@ -4524,15 +4565,50 @@ class Illustrator:
             if r.description is None:
                 if self.describer is None:
                     raise llm.NoVision("no model that can see pictures is set up to describe the reference pictures")
-                r = UserRef(r.data, r.mime, r.sha, r.note, describe_reference(self.describer, r.data, r.mime, r.note))
+                r = replace(r, description=describe_reference(self.describer, r.data, r.mime, r.note))
             out.append(r)
         return out
 
     @staticmethod
     def user_refs_record(user_refs: Sequence[UserRef]) -> list[dict]:
-        """The record's `userRefs`: [{sha, ext, note, description?}] in the order given."""
+        """The record's `userRefs`: [{sha, ext, note, description?, appliesTo?}] in the order given; `appliesTo` only when it
+        is not the whole picture, so an older record reads the same."""
         return [{"sha": r.sha, "ext": _ext(r.mime), "note": user_note(r.note),
-                 **({"description": r.description} if r.description is not None else {})} for r in user_refs]
+                 **({"description": r.description} if r.description is not None else {}),
+                 **({"appliesTo": r.applies} if (r.applies or APPLIES_SCENE) != APPLIES_SCENE else {})} for r in user_refs]
+
+    def _applies(self, job: Job, pr: Prompt, user_refs: list[UserRef]) -> tuple[list[UserRef], list[str]]:
+        """The person's pictures with what each applies to as it is used, and the shas of those that fell back to the whole
+        picture. "subject" holds only for a portrait, place or thing; a figure label only while the text being drawn
+        (`pr.text`) still uses it and it is a labelled person or creature of `pr.figures`; anything else, or anything
+        unknown, is the whole picture. A fallback from "subject" on a scene is not reported (it means the same there)."""
+        present = set(labels_in(pr.text))
+        figs = {f.get("label"): f.get("entity") for f in pr.figures or []}
+        out, fell = [], []
+        for u in user_refs:
+            a = u.applies or APPLIES_SCENE
+            if _is_label(a):
+                ent = figs.get(a)
+                if not (a in present and ent and self._kind_of(ent) in ("person", "creature")):
+                    a = APPLIES_SCENE
+                    fell.append(u.sha)
+                    self.log(f"    reference picture {u.sha[:8]} is for figure {u.applies}, which the text no longer "
+                             "draws: it applies to the whole picture")
+            elif a == APPLIES_SUBJECT:
+                if job.kind not in ENTITY_KINDS:
+                    a = APPLIES_SCENE
+            elif a != APPLIES_SCENE:
+                a = APPLIES_SCENE
+                fell.append(u.sha)
+            out.append(u if a == u.applies else replace(u, applies=a))
+        return out, fell
+
+    def _kind_of(self, eid: str) -> str | None:
+        """An entity's type, from the latest book of the run that lists it (None: no book does)."""
+        for b in reversed(self.books):
+            if eid in b.ents:
+                return b.ents[eid].get("type")
+        return None
 
     def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None, soften: bool | None = None,
              user_refs: Sequence[UserRef] = ()) -> dict | None:
@@ -4572,7 +4648,7 @@ class Illustrator:
             pr.text = text
         image, prov, name = self.image_for(job.kind)
         takes = llm.image_takes_references(prov, name)
-        user_refs = list(user_refs)
+        user_refs, fell_back = self._applies(job, pr, list(user_refs))
         if user_refs and not takes:      # described before anything is reserved or drawn
             user_refs = self._described(user_refs)
         quality = self.quality_for(job.kind)
@@ -4597,7 +4673,7 @@ class Illustrator:
             refs = ([(d, r["mime"]) for _, r, d in got] + [(u.data, u.mime) for u in mine]
                     + ([(sref.data, sref.mime)] if sref else []))
             note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels, self._ref_names(job, got),
-                                       style_ref=sref is not None, user=[u.note for u in mine])
+                                       style_ref=sref is not None, user=[(u.note, u.applies) for u in mine])
             sent = pr.text if takes or not user_refs else with_described(
                 pr.text, [described_line(u) for u in user_refs], pr.style or self._style(bi), pr.no_text)
             why, amount = self._reserve(price, held)
@@ -4683,7 +4759,10 @@ class Illustrator:
                 # filed as drawn before the error goes on, and a resume does not draw and pay for it again
                 self._file(job, pr, pic, got, figures, softened, base)
                 raise
-        return self._file(job, pr, pic, got, figures, softened, {**base, **extra})
+        rec = self._file(job, pr, pic, got, figures, softened, {**base, **extra})
+        # the shas whose figure or value fell back to the whole picture: in the reply only (a copy), never filed, so the
+        # set's record reads the same on every later read
+        return {**rec, "appliesFallback": fell_back} if fell_back and rec is not None else rec
 
     def _file(self, job: Job, pr: Prompt, pic: images.Drawn, got, figures, softened: bool, extra: dict) -> dict:
         """File a drawn picture: its record (with what the check added, `extra`), its bytes and the manifest."""

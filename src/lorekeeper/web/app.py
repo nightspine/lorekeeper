@@ -2528,10 +2528,14 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     # ---- the person's own reference pictures (`refs`): uploads kept by content per edition (`ArtStore.put_ref`)
 
     GONE_REF = "That reference picture is no longer here. Add it again."
+    # what one of the person's pictures is for: the whole picture, the subject of a portrait, place or thing, or one figure
+    APPLIES_TO = frozenset({"scene", "subject", *artmod.LABELS})
 
     def refs_request(ctx: dict, raw, absent_ok: bool = True) -> list[dict]:
         """The `refs` of a draw, redraw or `PUT .../refs`, checked before any call: at most 4, distinct shas, each one the
-        edition's `refs/` holds, a note of at most 120 characters after collapsing whitespace. [{sha, ext, note}];
+        edition's `refs/` holds, a note of at most 120 characters after collapsing whitespace, and `appliesTo` "scene" (also
+        for a missing or null one), "subject" or one figure label A to F (the pipeline decides whether it fits the picture).
+        [{sha, ext, note, appliesTo}];
         422 `bad-refs` with a sentence. None (no `refs`) is none, unless `absent_ok` is off (redraw's `"refs": null`, PUT).
         Each one checked is renewed (`ArtStore.touch_ref`), so it is never pruned while it is being drawn with."""
         def bad(why: str):
@@ -2553,23 +2557,36 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             note = " ".join((note or "").split())
             if len(note) > artstore.REF_NOTE_CHARS:
                 raise bad(f"Keep each note to {artstore.REF_NOTE_CHARS} characters.")
+            applies = r.get("appliesTo")
+            if applies is None:
+                applies = "scene"
+            if not isinstance(applies, str) or applies not in APPLIES_TO:
+                raise bad('A reference picture applies to "scene", "subject" or one figure label, A to F.')
             if sha in seen:
                 raise bad("Each reference picture can be sent once.")
             seen.add(sha)
             p = arts.touch_ref(ctx["hash"], sha)
             if p is None:
                 raise bad(GONE_REF)
-            out.append({"sha": sha, "ext": p.suffix[1:], "note": note})
+            out.append({"sha": sha, "ext": p.suffix[1:], "note": note, "appliesTo": applies})
         return out
 
+    def refs_record(items: list[dict]) -> list[dict]:
+        """Checked refs as a record keeps them: `appliesTo` only when it is not "scene", so older records read the same."""
+        return [{k: v for k, v in r.items() if k != "appliesTo"}
+                | ({"appliesTo": r["appliesTo"]} if r.get("appliesTo", "scene") != "scene" else {}) for r in items]
+
     def stored_refs(ctx: dict, rec: dict) -> list[dict]:
-        """A record's `userRefs` as stored, each still in `refs/` (one that is gone is left out, as a reference that is)."""
+        """A record's `userRefs` as stored, each still in `refs/` (one that is gone is left out, as a reference that is), with
+        `appliesTo` as stored, a missing or unknown one read as "scene"."""
         out = []
         for r in rec.get("userRefs") or []:
             p = arts.touch_ref(ctx["hash"], r["sha"]) if isinstance(r, dict) and isinstance(r.get("sha"), str) else None
             if p is not None:
                 out.append({"sha": r["sha"], "ext": p.suffix[1:],
                             "note": " ".join(str(r.get("note") or "").split())[:artstore.REF_NOTE_CHARS],
+                            "appliesTo": (r["appliesTo"] if isinstance(r.get("appliesTo"), str)
+                                          and r["appliesTo"] in APPLIES_TO else "scene"),
                             **({"description": r["description"]} if isinstance(r.get("description"), str) else {})})
         return out
 
@@ -2621,7 +2638,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     except ValueError as e:
                         raise ArtRefusal(502, "model-failed", "A reference picture could not be described. Try again, or "
                                                               "draw without it.") from e
-            out.append(artmod.UserRef(data=data, mime=mime, sha=r["sha"], note=r["note"], description=desc))
+            out.append(artmod.UserRef(data=data, mime=mime, sha=r["sha"], note=r["note"], description=desc,
+                                      applies=r.get("appliesTo") or "scene"))
         return out
 
     @app.post("/api/library/{key}/art/refs")
@@ -2664,7 +2682,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     art_gate(ctx, il, rec, body, fin)
                 known = known_descriptions(ctx, rec)
                 new = [{**r, **({"description": known[(r["sha"], r["note"])]} if (r["sha"], r["note"]) in known else {})}
-                       for r in items]
+                       for r in refs_record(items)]
                 before = rec.get("userRefs")
                 # `was` keeps the old list under a `userRefs` key, so the uploads it names stay while the undo can bring them back
                 entry = journal_art(key, [], {"op": "refs", "textHash": ctx["hash"], "style": slug_, "id": pid,
