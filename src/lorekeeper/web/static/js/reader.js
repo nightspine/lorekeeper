@@ -3,6 +3,7 @@ import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
+import { numbersByStart, recapNumbers } from "./chapters.js";
 import { nextName, SELF_NAMED_SHORT, stepList, stepName, statedAge, stepState as stepStateAt, tickInfo, whereText as whereAt } from "./steps.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -833,7 +834,9 @@ export function mountReader(root) {
       const raw = Array.isArray(j) ? j : j?.chapters;
       if (!Array.isArray(raw) || !raw.length) return;
       list = raw.filter((c) => c && Number.isInteger(c.n) && Number.isInteger(c.firstSeq) && Number.isInteger(c.lastSeq) && c.lastSeq >= c.firstSeq)
-        .map((c) => ({ n: c.n, title: typeof c.title === "string" ? c.title : "", firstSeq: c.firstSeq, lastSeq: c.lastSeq }));
+        .map((c) => ({ n: c.n, title: typeof c.title === "string" ? c.title : "", firstSeq: c.firstSeq, lastSeq: c.lastSeq,
+          // the book's own chapter number (chapters.py); absent from an older server, which steps.js then works out
+          ...(Number.isInteger(c.number) && c.number > 0 ? { number: c.number } : c.number === null ? { number: null } : {}) }));
     } catch { return; }
     if (stale() || !list?.length || s.key !== key) return;
     s.toc = { key, list };
@@ -1422,9 +1425,35 @@ export function mountReader(root) {
       bookBanner(key, { summary: true }), content, toggle);
   }
 
-  /** "Chapter 7" over a title that does not say what it is; no label when the title carries its own number or kind. */
+  /** "Chapter 7" over a title that does not say what it is, 7 being the book's own number (chapters.js), never the row's
+   *  place; no label when the title carries its own number or kind, or the book gives it no number. */
   const SELF_NAMED = /^\s*(chapter|part|book|prologue|epilogue|preface|introduction|foreword|afterword|section|letter)\b/i;
-  const chapterLabel = (title, n) => (SELF_NAMED.test(tidyTitle(title) || "") ? null : `Chapter ${n}`);
+  const chapterLabel = (title, number) => (number == null || SELF_NAMED.test(tidyTitle(title) || "") ? null : `Chapter ${number}`);
+
+  /** The chapter map's numbers by chapter start (chapters.js), worked out once per map. */
+  function mapNumbers() {
+    if (s.numMemo?.map !== s.map) s.numMemo = { map: s.map, byStart: numbersByStart(s.map?.chapters) };
+    return s.numMemo.byStart;
+  }
+  /** A book's numbers from all its chapter recaps (chapters.js), when there is no chapter map; once per document. The
+   *  titles are chapter titles, which name nothing past the position. */
+  const recapNumMemo = new WeakMap();
+  function recapNumbersOf(book) {
+    const d = docOf(book);
+    if (!d) return new Map();
+    if (!recapNumMemo.has(d)) recapNumMemo.set(d, recapNumbers(d));
+    return recapNumMemo.get(d);
+  }
+  /** The number of a chapter row (currentRows or earlierRows) of `book` (null: the book being read). */
+  function rowNumber(r, book) {
+    const current = !s.series || book == null || book === s.book;
+    if (current && (s.map?.chapters || []).length) return r.ch ? mapNumbers().get(r.ch.start) ?? null : null;
+    const ids = r.group?.ids || [];
+    const nums = recapNumbersOf(current ? (s.series ? s.book : null) : book);
+    for (const id of ids) if (nums.has(id)) return nums.get(id);
+    return null;
+  }
+  const rowLabel = (r, book) => chapterLabel(r.title, rowNumber(r, book));
 
   /** Chapter rows of the book being read, oldest first, the same on both tabs: every revealed recap, the chapter the
    *  position is in (title only until its recap is revealed) and any chapter an event happens in. */
@@ -1494,7 +1523,7 @@ export function mountReader(root) {
       const who = parts.length ? mentions(parts.join(" ")) : [];
       const pics = plates.get(r) || [];
       const draw = current ? chapterDrawButton(r, pics) : null;
-      return { id: g ? g.key : null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), cls: r.now ? "now" : fresh ? "fresh" : "",
+      return { id: g ? g.key : null, label: rowLabel(r, book), title: tidyTitle(r.title), cls: r.now ? "now" : fresh ? "fresh" : "",
         badge: r.now ? h("span.chip.ch-ongoing", "So far") : fresh ? h("span.new-badge", "New") : null,
         body: parts.length || pics.length || draw ? h("div.ch-body", platesNode(pics, tidyTitle(r.title)), parts.map((t, k) => {
           if (!s.edit) return h("p", t);
@@ -1687,11 +1716,11 @@ export function mountReader(root) {
     const chCard = (r) => {
       const pic = (plates.get(r) || []).at(-1);
       const thumb = pic ? artImg(picSrc(pic, true), "", "ov-ch-img") : null;
-      const i = rows.indexOf(r);
+      const label = rowLabel(r, book);
       // Beside a chapter with a picture, one without shows more of its recap.
       return h("li", h(`button.ov-chapter${thumb ? ".has-pic" : anyPic ? ".long" : ""}`, { type: "button", on: { click: () => openChapter(r.group.key) } },
         thumb ? h("span.ov-ch-pic", thumb) : null,
-        h("span.ov-ch-text", chapterLabel(r.title, i + 1) ? h("span.ov-ch-label", chapterLabel(r.title, i + 1)) : null,
+        h("span.ov-ch-text", label ? h("span.ov-ch-label", label) : null,
           h("span.ov-ch-title", tidyTitle(r.title)), h("span.ov-ch-recap", r.group.parts.join(" ")))));
     };
     const chapters = h("section.ov-sec", { "aria-labelledby": "ov-ch" },
@@ -1790,7 +1819,7 @@ export function mountReader(root) {
       const current = !s.series || book === s.book;
       const comic = comicNode(comicsOf(r, book), tidyTitle(r.title));
       const body = rowBody(evs, r.events.length);
-      return { id: null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), action: current ? comicButton(r) : null,
+      return { id: null, label: rowLabel(r, book), title: tidyTitle(r.title), action: current ? comicButton(r) : null,
         cls: r.now ? "now" : r.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "", body: comic ? h("div.tl-row-body", comic, body) : body };
     });
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
@@ -1827,11 +1856,14 @@ export function mountReader(root) {
     return h("li", entityChip(r.src), h("span.lbl", r.label), entityChip(r.dst));
   }
 
-  /** Short name for a chapter: "Ch. III" when the title starts with a chapter number, else the title. */
+  /** Short name for a map chapter: "Ch. III" when the title starts with a chapter number, "Ch. 2" for one the book
+   *  numbers ("Two"), else the title. */
   function shortChapter(c) {
     const t = tidyTitle(c.title);
     const m = /^(?:chapter|ch\.?)\s+([\w]+)/i.exec(t);
-    return m ? `Ch. ${m[1]}` : t.length > 26 ? `${t.slice(0, 25)}…` : t;
+    if (m) return `Ch. ${m[1]}`;
+    const n = c.start != null ? mapNumbers().get(c.start) : null;
+    return n != null ? `Ch. ${n}` : t.length > 26 ? `${t.slice(0, 25)}…` : t;
   }
 
   /** The series book that introduces an entity (or relation) and the anchor it is revealed at. */
@@ -2369,7 +2401,7 @@ export function mountReader(root) {
     const title = i >= 0 ? rows[i].title : typeof p.rec.chapter === "string" ? p.rec.chapter : null;
     const full = tidyTitle(title) || null;
     if (!full) return null;
-    const short = (i >= 0 ? chapterLabel(title, i + 1) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
+    const short = (i >= 0 ? rowLabel(rows[i], current ? null : p.book) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
     return { short, full };
   }
   /** "Portraits" under "Who they are": every visible picture of the entry, oldest to newest, each captioned with its

@@ -5,16 +5,22 @@
 // map gives it (the same start the ruler's chapterAt uses). The read route's table of contents can widen the first
 // chapter back to block 0 (text before the first contents entry); that start is where the reading view's text begins,
 // never a reason to name the chapter.
+//
+// Labels use the chapter number the book states (chapters.js, carried as `number` by the read route's table of
+// contents and the chapter map), never a step's place: a prologue or a "Part I" divider never shifts them.
+
+import { numbering } from "./chapters.js";
 
 /** "Chapter XIV" out of "Chapter XIV Mina Harker's Journal", "Prologue" out of "Prologue: The Road". */
 export const SELF_NAMED_SHORT = /^\s*(chapter|part|book|section|letter)\s+[\p{L}\p{N}]+|^\s*(prologue|epilogue|preface|introduction|foreword|afterword)\b/iu;
 
 /**
- * The story chapters as steps, oldest first: { n (position in the map, 1-based), k (1..N among the steps), title, seq
- * (the map's start block, the key every per-chapter lookup uses), from, to } with `from`/`to` the reading positions where
- * the chapter is entered and where it ends.
- * @param map      the Reader's chapter map: [{ title, start, story }]
- * @param toc      the read route's chapters ([{ n, title, firstSeq, lastSeq }]) or null
+ * The story chapters as steps, oldest first: { n (position in the map, 1-based), k (1..N among the steps, never shown
+ * as a chapter number), number (the book's own chapter number, null for none), title, seq (the map's start block, the
+ * key every per-chapter lookup uses), from, to } with `from`/`to` the reading positions where the chapter is entered
+ * and where it ends.
+ * @param map      the Reader's chapter map: [{ title, start, story, number? }]
+ * @param toc      the read route's chapters ([{ n, title, firstSeq, lastSeq, number? }]) or null
  * @param pos      { blockStart(seq), blockEnd(seq) } of the Reader's position map
  * @param tidy     title clean-up (dom.js tidyTitle)
  */
@@ -25,16 +31,30 @@ export function stepList(map, toc, pos, tidy = (t) => t) {
       const m = map[c.n - 1];
       // Entered at the map's start; the toc's firstSeq may sit earlier (text before the first contents entry).
       const seq = m && Number.isInteger(m.start) ? Math.max(m.start, c.firstSeq) : c.firstSeq;
-      return { n: c.n, title: c.title || m?.title, seq, to: pos.blockEnd(c.lastSeq), story: m?.story !== false };
+      return { n: c.n, title: c.title || m?.title, seq, to: pos.blockEnd(c.lastSeq), story: m?.story !== false,
+        number: given(c.number) !== undefined ? given(c.number) : given(m?.number) };
     })
-    : map.map((c, i) => ({ n: i + 1, title: c.title, seq: c.start, to: map[i + 1] ? pos.blockStart(map[i + 1].start) : 1, story: c.story !== false }));
+    : map.map((c, i) => ({ n: i + 1, title: c.title, seq: c.start, to: map[i + 1] ? pos.blockStart(map[i + 1].start) : 1, story: c.story !== false,
+      number: given(c.number) }));
+  // An older server sends no numbers: work them out over the whole list, as the server would.
+  if (src.some((c) => c.number === undefined)) {
+    const nums = numbering(src.map((c) => ({ title: c.title || "", story: c.story })));
+    src.forEach((c, i) => { if (c.number === undefined) c.number = nums[i].number; });
+  }
   const all = src.map((c) => ({ ...c, title: tidy(c.title) || `Section ${c.n}`, from: pos.blockStart(c.seq), to: Math.min(1, c.to) }));
   const story = all.filter((c) => c.story);
   return (story.length ? story : all).map((c, i) => ({ ...c, k: i + 1 }));
 }
 
-/** "Chapter XI" for a title that names itself, "Prologue", else "Chapter 11" by its place among the steps. */
-export const stepName = (c) => (c.title.match(SELF_NAMED_SHORT)?.[0].trim().replace(/^\w/, (x) => x.toUpperCase())) || `Chapter ${c.k}`;
+/** A number from the server: an integer, null for "no number", undefined when the server sent none. */
+const given = (x) => (Number.isInteger(x) && x > 0 ? x : x === null ? null : undefined);
+
+/** "Chapter XI" for a title that names itself, "Prologue", else "Chapter 11" by the book's own number, else the title. */
+export const stepName = (c) => (c.title.match(SELF_NAMED_SHORT)?.[0].trim().replace(/^\w/, (x) => x.toUpperCase()))
+  || (c.number != null ? `Chapter ${c.number}` : c.title);
+
+/** A chapter not entered yet: only its number, else its place among the steps ("Section 2"), never its title. */
+export const aheadName = (c) => (c.number != null ? `Chapter ${c.number}` : `Section ${c.k}`);
 
 /** Where position `p` is: the chapter entered (`cur`), the one to finish next, the last finished. */
 export function stepState(list, p) {
@@ -46,7 +66,7 @@ export function stepState(list, p) {
 }
 
 /** The name of the chapter "I finished …" would finish: its own wording once entered, else only its number. */
-export const nextName = (st) => (!st.next ? null : st.next === st.cur ? stepName(st.next) : `Chapter ${st.next.k}`);
+export const nextName = (st) => (!st.next ? null : st.next === st.cur ? stepName(st.next) : aheadName(st.next));
 
 /** One sentence for where the reader is, naming only chapters entered or finished. */
 export function whereText(st, p) {
@@ -64,7 +84,7 @@ export function tickInfo(c, st, p) {
     state,
     title: state === "ahead" ? "" : c.title,
     label: state === "done" ? `${c.title}, finished` : state === "here" ? `${c.title}, reading now. Mark it finished`
-      : `Chapter ${c.k}, not read yet. Mark it finished`,
+      : `${aheadName(c)}, not read yet. Mark it finished`,
   };
 }
 
