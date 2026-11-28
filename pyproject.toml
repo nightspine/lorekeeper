@@ -12,6 +12,7 @@ lorekeeper = "lorekeeper.cli:main"
 [project.optional-dependencies]
 web = [
     "fastapi>=0.115",
+    "pillow>=10",
     "python-multipart>=0.0.9",
     "uvicorn>=0.30",
 ]

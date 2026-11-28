@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import gzip
 import hashlib
 import json
 import logging
@@ -188,6 +189,60 @@ class Revalidated(StaticFiles):
         return response
 
 
+class JsonGzip:
+    """gzip for JSON answers over 1 KB, when the client accepts it. Nothing else is touched: pictures and EPUBs are already
+    compressed and the run log (`text/event-stream`) must reach the browser event by event."""
+
+    MIN = 1024
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        h = {k.lower(): v for k, v in scope["headers"]}
+        if b"gzip" not in h.get(b"accept-encoding", b"") or b"text/event-stream" in h.get(b"accept", b""):
+            return await self.app(scope, receive, send)
+        start: dict | None = None
+        chunks: list[bytes] = []
+        passthrough = False
+
+        async def wrap(msg):
+            nonlocal start, passthrough
+            if passthrough:
+                return await send(msg)
+            if msg["type"] == "http.response.start":
+                hd = {k.lower(): v for k, v in msg["headers"]}
+                ctype = hd.get(b"content-type", b"")
+                if (msg["status"] in (200, 201, 400, 404, 409, 422) and (ctype.startswith(b"application/json")
+                        or ctype.startswith(b"application/problem+json")) and b"content-encoding" not in hd):
+                    start = msg
+                    return
+                passthrough = True
+                return await send(msg)
+            if msg["type"] != "http.response.body":
+                return await send(msg)
+            chunks.append(msg.get("body", b""))
+            if msg.get("more_body"):
+                return
+            body = b"".join(chunks)
+            headers = [(k, v) for k, v in start["headers"] if k.lower() != b"content-length"]
+            if len(body) >= self.MIN:
+                body = gzip.compress(body, 5)
+                headers += [(b"content-encoding", b"gzip")]
+            vary = [i for i, (k, _) in enumerate(headers) if k.lower() == b"vary"]
+            if vary:
+                headers[vary[0]] = (b"vary", headers[vary[0]][1] + b", Accept-Encoding")
+            else:
+                headers.append((b"vary", b"Accept-Encoding"))
+            headers.append((b"content-length", str(len(body)).encode()))
+            await send({**start, "headers": headers})
+            await send({"type": "http.response.body", "body": body})
+
+        await self.app(scope, receive, wrap)
+
+
 def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: list[Path],
                ollama_url: str = "http://localhost:11434",
                allowed_hosts: tuple[str, ...] | None = LOCAL_HOSTS,
@@ -344,6 +399,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     app.mount("/docs", Revalidated(directory=STATIC / "docs", html=True), name="docs")
     for folder in ("css", "fonts", "vendor"):
         app.mount(f"/{folder}", Revalidated(directory=STATIC / folder), name=f"docs-{folder}")
+
+    app.add_middleware(JsonGzip)
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
@@ -1856,15 +1913,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     if entry:
                         shutil.copytree(folder, identity.dir / entry["id"] / slug_)
                     shutil.rmtree(folder)
+                    arts.clear_variants(text_hash, slug_)
             parent = arts.root / text_hash
             if parent.is_dir() and not any(parent.iterdir()):
                 parent.rmdir()
+            if not parent.is_dir():
+                arts.clear_variants(text_hash)
         except ArtRefusal as e:
             return art_error(e.status, e.code, e.detail)
         return {"removed": slugs, "undo": entry["id"] if entry else None}
 
     @app.get("/api/library/{key}/art")
-    def library_art(key: str, style: str | None = None):
+    def library_art(key: str, request: Request, style: str | None = None):
         """The art set of one style, whole (the Reader gates every picture by its `from`), with the styles present."""
         try:
             ctx = art_index(key)
@@ -1880,7 +1940,12 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             body["world"] = artstore.world_of(bg)
         hashes = edition_hashes(ctx) if m and any(isinstance(r.get("figures"), list) for r in body.get("pictures", [])) else None
         body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
-        return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
+        out = {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
+        tag = '"' + hashlib.sha256(json.dumps(out, sort_keys=True, ensure_ascii=False).encode()).hexdigest()[:32] + '"'
+        headers = {"ETag": tag, "Cache-Control": "no-cache"}
+        if any(t.strip() in (tag, "W/" + tag) for t in request.headers.get("if-none-match", "").split(",")):
+            return Response(status_code=304, headers=headers)
+        return JSONResponse(out, headers=headers)
 
     def story_rows(il, rows: list[dict]) -> list[dict]:
         """The estimate's chapter rows a person can choose from: every chapter that can get a picture, and every story
@@ -2015,15 +2080,22 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 "planned": {"pictures": got["plates"] + got["portraits"], "plates": got["plates"], "portraits": got["portraits"]}}
 
     @app.get("/api/art/{text_hash}/{style}/{pid}")
-    def art_file(text_hash: str, style: str, pid: str):
+    def art_file(text_hash: str, style: str, pid: str, w: int | None = None, thumb: int | None = None):
+        """A picture: the original, or with `?w=` (160, 320, 640 or 1280; `?thumb=1` is 320) a WebP copy no wider than
+        that, made once under `art-cache/`. Any other width is 422. The id is the hash of the bytes, so a URL never
+        changes what it serves."""
+        width = w if w is not None else (320 if thumb else None)
+        if width is not None and width not in artstore.WIDTHS:
+            raise HTTPException(422, f"w must be one of {', '.join(map(str, artstore.WIDTHS))}")
         try:
-            p = arts.path(text_hash, style, pid)
+            p = arts.variant(text_hash, style, pid, width) if width else arts.path(text_hash, style, pid)
         except KeyError:
             p = None
         if p is None:
             raise HTTPException(404, "no such picture")
         media = {".png": "image/png", ".jpg": "image/jpeg", ".webp": "image/webp"}.get(p.suffix, "application/octet-stream")
-        return FileResponse(p, media_type=media, headers={"Cache-Control": "max-age=86400", "X-Content-Type-Options": "nosniff"})
+        return FileResponse(p, media_type=media, headers={"Cache-Control": "private, max-age=31536000, immutable",
+                                                          "X-Content-Type-Options": "nosniff"})
 
     @app.post("/api/library/{key}/art/run")
     async def art_run(key: str, request: Request):
