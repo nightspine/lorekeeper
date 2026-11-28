@@ -379,8 +379,13 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     if (e.key === "ArrowLeft") { e.preventDefault(); go(i - 1); }
     if (e.key === "ArrowRight") { e.preventDefault(); go(i + 1); }
   });
+  let stepLock = false;   // Keep the original's undo is in flight: no stepping, so its result lands on its own picture
+  function lockSteps(on) {
+    stepLock = on;
+    prev.disabled = on || i === 0; next.disabled = on || i === items.length - 1;
+  }
   function go(n) {
-    if (n < 0 || n >= items.length || n === i) return;
+    if (stepLock || n < 0 || n >= items.length || n === i) return;
     settleFix();
     i = n; paint();
   }
@@ -543,6 +548,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     undoable(it, r, "Picture fixed");
   }
   dlg.addEventListener("close", settleFix);
+  // The button pressed is gone with the panel: focus stays in the dialog (so the arrow keys still step), on its first action.
+  const refocus = () => (acts.querySelector("button") || closeBtn).focus({ preventScroll: true });
   function fixResult(it, r, { sent, old, before }) {
     const id = r?.undo ?? r?.journal ?? null;
     pending = { it, r };
@@ -558,23 +565,27 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
       clear(stage, img);
     }
-    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); } } }, "Keep the fix");
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); refocus(); } } }, "Keep the fix");
     const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
       err.textContent = "";
+      lockSteps(true);
       // Decided the moment it is pressed: closing or stepping away while the undo runs must not settle the fix (and
       // toast "Picture fixed" over an original that is coming back).
       pending = null;
       try {
         await api.undo(it.key, id);
+        lockSteps(false);
         forgetArt(it.key);
         it.rec = old.rec; it.src = old.src;
         onChanged?.();
         if (!dlg.open || items[i] !== it) { toast("The original is back.", "ok", { host: dlg.open ? toasts : modalToasts() }); return; }
         paint();
+        refocus();
         toast("The original is back.", "ok", { host: toasts });
       } catch (e) {
+        lockSteps(false);
         // The fix stands: back to undecided where the result is still on screen, else the usual toast with Undo.
         if (dlg.open && items[i] === it && keepOld.isConnected) {
           pending = { it, r };

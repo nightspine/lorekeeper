@@ -13,6 +13,22 @@ export const CHECK_COST = "Checking costs about 5 cents per 100 pictures. In a t
 
 const text = (v, n) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, n) : "");
 
+/** A port of art._cut_words: whitespace collapsed, cut to at most `limit` characters at a word boundary (back to the last
+ *  space when that is past half the limit, else where the limit falls), never keeping a trailing comma, dash or stop. */
+export function cutWords(v, limit) {
+  if (typeof v !== "string") return "";
+  let t = v.split(/\s+/).filter(Boolean).join(" ");
+  if (t.length > limit) {
+    let head = t.slice(0, limit);
+    if (t[limit] !== " ") {
+      const space = head.lastIndexOf(" ");
+      if (space > Math.floor(limit / 2)) head = head.slice(0, space);
+    }
+    t = head.replace(/[ ,;:\-\u2013\u2014]+$/, "");
+  }
+  return t.replace(/[ .]+$/, "");
+}
+
 /** A fault's grade: "minor" only when it says so; anything else (an older answer, a line the person typed) is "major",
  *  so it is fixed in full. */
 export const severityOf = (f) => (f && f.severity === "minor" ? "minor" : "major");
@@ -23,9 +39,9 @@ export function cleanFaults(list) {
   if (!Array.isArray(list)) return [];
   const out = [];
   for (const f of list) {
-    const what = text(f?.what, WHAT_CHARS);
+    const what = cutWords(f?.what, WHAT_CHARS);
     if (!what) continue;
-    out.push({ what, where: text(f?.where, WHERE_CHARS), severity: severityOf(f) });
+    out.push({ what, where: cutWords(f?.where, WHERE_CHARS), severity: severityOf(f) });
     if (out.length >= MAX_FAULTS) break;
   }
   return out;
