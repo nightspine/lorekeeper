@@ -78,8 +78,26 @@ test("describeModel picks a strong model that can see, else a cheap one, never O
   assert.equal(R.describeModel([{ id: "ollama", ok: true, strong: "q", models: [{ id: "q" }] }]), null);
   assert.equal(R.describeModel([blindStrong]).model.label, "Cheap");
   assert.equal(R.describeModel([{ ...claude, ok: false }]), null);
+  // a saved key is enough, as JobManager.describe_model reads configured()
+  assert.equal(R.describeModel([{ ...claude, ok: false, configured: true }]).model.label, "Sonnet");
   assert.equal(R.describeModel([]), null);
   assert.equal(R.describeModel(null), null);
+});
+test("describeModel follows the server's own describe flag when it sends one", () => {
+  const claude = { id: "claude", label: "Claude", ok: true, strong: "s", cheap: "c", models: [{ id: "s", label: "Sonnet", price: [2, 10] }, { id: "c", label: "Haiku", price: [1, 5] }] };
+  const gemini = { id: "gemini", label: "Gemini", ok: true, strong: "gs", cheap: "gc", models: [{ id: "gs", label: "Gemini Pro" }, { id: "gc", label: "Flash" }] };
+  // top level: the answer names the model, or says none
+  assert.equal(R.describeModel([claude, gemini], { provider: "gemini", model: "gc" }).model.label, "Flash");
+  assert.equal(R.describeModel([claude, gemini], null), null);
+  assert.equal(R.describeModel([claude, gemini], false), null);
+  assert.equal(R.describeModel([claude], { provider: "custom", model: "m" }).model.id, "m");   // a model the rows don't list
+  // per row: true, a model id, or { model }; false on every flagged row is none
+  assert.equal(R.describeModel([{ ...claude, describe: false }, { ...gemini, describe: true }]).model.label, "Gemini Pro");
+  assert.equal(R.describeModel([{ ...claude, describe: "c" }]).model.label, "Haiku");
+  assert.equal(R.describeModel([{ ...claude, describe: { model: "s" } }]).model.label, "Sonnet");
+  assert.equal(R.describeModel([{ ...claude, describe: false }, { ...gemini, describe: false }]), null);
+  // the flag wins over the guess: a working provider with no flag is not picked when others carry one
+  assert.equal(R.describeModel([claude, { ...gemini, describe: false }]), null);
 });
 test("describePrice and describeCost never make up a number", () => {
   const m = { price: [3, 15] };
@@ -92,7 +110,10 @@ test("describePrice and describeCost never make up a number", () => {
   assert.equal(R.describeCost({ price: [0.1, 0.5] }, 1), "less than 1 cent");
   assert.equal(R.describeCost({ price: [3, 15] }, 2), "1 cent");
   assert.equal(R.describeCost({ price: [3, 15] }, 4), "3 cents");
-  assert.equal(R.describeCost({ price: [300, 1500] }, 4), "$2.88");
+  assert.equal(R.describeCost({ price: [300, 1500] }, 4), "$2.70");
+  // the bench: about $0.0045 for one picture on Sonnet ($2 in, $10 out)
+  assert.ok(Math.abs(R.describePrice({ price: [2, 10] }, 1) - 0.0045) < 1e-9);
+  assert.equal(R.describeCost({ price: [2, 10] }, 1), "less than 1 cent");
 });
 test("refPath and pathLine say which way the pictures go, and to whom", () => {
   assert.equal(R.refPath({ takes: true, describer: null }), "pictures");
@@ -102,7 +123,9 @@ test("refPath and pathLine say which way the pictures go, and to whom", () => {
     "Sent to Nano Banana 2.1 as pictures. They go to Gemini with this picture.");
   const w = R.pathLine({ path: "words", image: "Paint 1", provider: "OpenAI", describer: "Sonnet", describerProvider: "Claude", price: "2 cents" });
   assert.equal(w, "Paint 1 can't take pictures, so they are described in words first (about 2 cents). They go to Claude to be described, and the words go to OpenAI with this picture.");
-  assert.doesNotMatch(R.pathLine({ path: "words", image: "Paint 1", provider: "OpenAI", describerProvider: "Claude" }), /about/);
+  assert.doesNotMatch(R.pathLine({ path: "words", image: "Paint 1", provider: "OpenAI", describerProvider: "Claude" }), /about|\(/);
+  // "about" only for a priced amount
+  assert.match(R.pathLine({ path: "words", image: "Paint 1", provider: "OpenAI", describerProvider: "Claude", price: "less than 1 cent" }), /first \(less than 1 cent\)\./);
   assert.equal(R.pathLine({ path: "none", image: "Paint 1", provider: "OpenAI" }),
     "Paint 1 can't take pictures, and no model that can see pictures is set up, so they can't be used. Draw goes without them.");
 });

@@ -12,8 +12,9 @@ export const MAX_REFS = 4;
 /** A note's length after collapsing whitespace (the server's limit). */
 export const REF_NOTE_CHARS = 120;
 /** What describing one picture in words costs, roughly: tokens in (the picture and the instructions) and out (one or two
- *  sentences, a rewrite now and then). Only for "about <price>" in the path line; the server bills what it spends. */
-export const DESCRIBE_TOKENS = [1800, 120];
+ *  sentences). Set from the bench: $0.0045 for one picture on Claude Sonnet ($2 in, $10 out per million), one call. Only
+ *  for the price in the path line; the server bills what it spends. */
+export const DESCRIBE_TOKENS = [1750, 100];
 
 const SHA_RE = /^[0-9a-f]{64}$/;
 const EXTS = new Set(["png", "jpg", "webp"]);
@@ -58,16 +59,41 @@ export function takesReferences(provider, modelId) {
   return !(row && row.references === false);
 }
 
-/** The model that would describe the pictures in words, as the server picks it (`JobManager.describe_model`): the strong
- *  model of the first working cloud provider that can see pictures, else a cheap one. `provs` are the text provider rows
- *  (working ones, in the server's order); a preset marked `vision: false` cannot see. { provider, model } or null. */
-export function describeModel(provs) {
-  const list = (provs || []).filter((p) => p && p.ok !== false && p.id !== "ollama" && p.kind !== "ollama");
-  const sees = (p, id) => {
+/** The model that would describe the pictures in words: { provider, model } (the rows, for names and prices) or null.
+ *  `rows` are every provider row of /api/providers; `top` is the answer's own `describe` (undefined when it has none).
+ *  The server says which, in that order:
+ *   - a top-level `describe`: `{ provider, model }`, or null/false for none;
+ *   - else a row's `describe`: true (its strong model, else its cheap one), a model id, or `{ model }`; false on every
+ *     row that has the flag means none;
+ *   - else (an older server) a guess as `JobManager.describe_model` picks: the strong model of the first configured cloud
+ *     provider that can see pictures, else a cheap one; a preset marked `vision: false` cannot see. */
+export function describeModel(rows, top = undefined) {
+  const all = (rows || []).filter((p) => p && typeof p.id === "string" && p.id !== "ollama" && p.kind !== "ollama");
+  const modelOf = (p, id) => {
     if (typeof id !== "string" || !id) return null;
-    const m = [...(Array.isArray(p.models) ? p.models : []), ...(Array.isArray(p.liveModels) ? p.liveModels : [])].find((x) => x && x.id === id);
-    return m && m.vision === false ? null : m || { id, label: id, price: null };
+    return [...(Array.isArray(p.models) ? p.models : []), ...(Array.isArray(p.liveModels) ? p.liveModels : [])].find((x) => x && x.id === id)
+      || { id, label: id, price: null };
   };
+  const sees = (p, id) => { const m = modelOf(p, id); return m && m.vision === false ? null : m; };
+  const named = (pid, mid) => {
+    const p = all.find((x) => x.id === pid) || (typeof pid === "string" && pid ? { id: pid, label: pid } : null);
+    const m = p ? modelOf(p, mid) : null;
+    return p && m ? { provider: p, model: m } : null;
+  };
+  if (top !== undefined) return top && typeof top === "object" ? named(top.provider, top.model) : null;
+  const flagged = all.filter((p) => "describe" in p);
+  if (flagged.length) {
+    for (const p of flagged) {
+      const d = p.describe;
+      if (!d) continue;
+      if (typeof d === "string") return named(p.id, d);
+      if (typeof d === "object") return named(p.id, d.model);
+      const m = sees(p, p.strong) || sees(p, p.cheap);
+      if (m) return { provider: p, model: m };
+    }
+    return null;
+  }
+  const list = all.filter((p) => p.configured || p.ok);
   for (const tier of ["strong", "cheap"]) {
     for (const p of list) {
       const m = sees(p, p[tier]);
@@ -103,7 +129,9 @@ export function pathLine({ path, image, provider, describer = null, describerPro
   const who = image || "This model";
   if (path === "pictures") return `Sent to ${who} as pictures. They go to ${provider || "the image provider"} with this picture.`;
   if (path === "words") {
-    const cost = price ? ` (about ${price.replace(/^about /, "")})` : "";
+    // "about" only for a priced amount: "(about 3 cents)", but "(less than 1 cent)"; nothing when the price is unknown
+    const bare = price ? price.replace(/^about /, "") : "";
+    const cost = bare ? ` (${/^less than /.test(bare) ? bare : `about ${bare}`})` : "";
     return `${who} can't take pictures, so they are described in words first${cost}. They go to ${describerProvider || describer || "the describing model's provider"} to be described, and the words go to ${provider || "the image provider"} with this picture.`;
   }
   return `${who} can't take pictures, and no model that can see pictures is set up, so they can't be used. Draw goes without them.`;
