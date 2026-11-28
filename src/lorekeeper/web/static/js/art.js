@@ -78,6 +78,8 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 export { refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 import { refParts } from "./artgate.js";
+import { fallbackWidth, SIZES, srcsetFor, variantUrl } from "./artsrc.js";
+export { SIZES };
 
 // ---- the manifest cache --------------------------------------------------------------------------
 
@@ -292,15 +294,21 @@ export function imageLine(p, quality = "standard", model = null) {
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** The file of one picture, from the API only. `textHash` and `style` are the art set's (checked by the caller against the
  *  index's own edition); the id must look like an id. Null when anything is off: no picture rather than a guessed URL. */
-export function artUrl(rec, textHash, style, { thumb = false } = {}) {
+export function artUrl(rec, textHash, style, { w = 0 } = {}) {
   if (!rec || !ID_RE.test(rec.id || "") || typeof textHash !== "string" || !textHash || typeof style !== "string" || !style) return null;
-  return `/api/art/${encodeURIComponent(textHash)}/${encodeURIComponent(style)}/${encodeURIComponent(rec.id)}${thumb ? "?thumb=1" : ""}`;
+  const base = `/api/art/${encodeURIComponent(textHash)}/${encodeURIComponent(style)}/${encodeURIComponent(rec.id)}`;
+  return w ? variantUrl(base, w) : base;
 }
 /** An <img> for a picture: alt is the caption (a chapter title or an entry name, never the prompt), lazy and async.
  *  A file that fails to load removes the element, so a broken picture leaves nothing on screen. */
-export function artImg(src, alt, cls = "art-img", { eager = false } = {}) {
+export function artImg(src, alt, cls = "art-img", { eager = false, sizes = null, px = 0 } = {}) {
   if (!src) return null;
-  const img = h(`img.${cls}`, { src, alt: alt || "", loading: eager ? "eager" : "lazy", decoding: "async", draggable: "false" });
+  // With `sizes` a picture file's URL becomes a srcset of the served widths: the browser takes the smallest that fills the
+  // element. Without it the URL is used as given (the lightbox's original, a figure's reference url).
+  const set = sizes ? srcsetFor(src) : null;
+  const img = h(`img.${cls}`, { src: set ? variantUrl(src, fallbackWidth(px || 320)) : src, alt: alt || "", loading: eager ? "eager" : "lazy", decoding: "async", draggable: "false" });
+  if (set) { img.setAttribute("srcset", set); img.setAttribute("sizes", sizes); }
+  if (eager) img.setAttribute("fetchpriority", "high");
   img.addEventListener("error", () => {
     img.closest(".has-face")?.classList.remove("has-face");   // a Cast row gets its type mark back
     const btn = img.closest(".art-thumb, .art-plate, .art-face-btn, .ent-face");
@@ -339,7 +347,7 @@ export function figureLines(figures, { text = null, name = () => null, thumb = (
   if (!rows.length) return null;
   return h("ul.art-figures", { "aria-label": "Which picture is which figure" }, rows.map((f) => {
     const nm = name(f.entity), src = thumb(f);
-    const img = src ? artImg(src, "", "art-fig-img") : null;
+    const img = src ? artImg(src, "", "art-fig-img", { sizes: SIZES.mini, px: 24 }) : null;
     return h("li.art-figure", img ? h("span.art-fig-face", img) : null, h("span", nm ? `Figure ${f.label} is ${nm}` : `Figure ${f.label}`));
   }));
 }
@@ -1219,7 +1227,7 @@ export async function openPictureSheet(opts) {
       // but the server decides the anchor; the Reader checks it as it checks every picture).
       const src = slug && opts.srcFor && (!opts.canShow || opts.canShow(rec)) ? opts.srcFor(rec, slug) : null;
       const added = replacing ? "Drawn. It takes the old picture's place in the art set." : "Drawn and added to the art set.";
-      clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
+      clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true, sizes: "(max-width: 640px) 100vw, 560px", px: 560 }) : null,
         h("p", src ? added : `${added} It shows where it belongs in the book.`),
         autoFixed(rec) ? h("p.hint.art-fixed", "Redrawn: the first try had a drawing fault.") : null,
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
