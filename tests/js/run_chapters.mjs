@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { classify, label, numbering, numbersByStart, ownNumber, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
+const { artChapterKeys, classify, label, numbering, numbersByStart, ownNumber, plateChapter, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -92,6 +92,49 @@ test("recaps: a book that numbers its chapters keeps the numbers whichever recap
       assert.equal(got ? got.start : null, c.expected);
     });
   }
+}
+
+// plateChapter / artChapterKeys: a plate is anchored at its chapter's last anchor, often its own recap's, in the next
+// chapter's first long paragraph; it goes in the row it was drawn for, keyed as art.py keys it.
+{
+  const rc = JSON.parse(readFileSync(join(here, "../fixtures/recap_chapter.json"), "utf8"));
+  const upper = rc.maps.upper, uw = rc.blockWords.upper;   // CHAPTER I at 0, CHAPTER II at 10, each opening on a 2-word heading
+  test("plateChapter: a plate anchored at its own recap in the next chapter's second block goes to its own chapter", () => {
+    assert.equal(plateChapter(upper, 11, "CHAPTER I", uw).start, 0);
+  });
+  test("plateChapter: a plate anchored in its own chapter stays there", () => {
+    assert.equal(plateChapter(upper, 15, "CHAPTER II", uw).start, 10);
+    assert.equal(plateChapter(upper, 11, "CHAPTER II", uw).start, 10);   // an event in II's first long paragraph
+  });
+  test("plateChapter: never later than the anchor's chapter, null before the first", () => {
+    assert.equal(plateChapter(upper, 5, "CHAPTER II", uw).start, 0);
+    assert.equal(plateChapter(upper, -1, "CHAPTER I", uw), null);
+    assert.equal(plateChapter([], 3, "CHAPTER I", uw), null);
+  });
+  test("plateChapter: without block words it falls back on the title near the anchor", () => {
+    assert.equal(plateChapter(upper, 11, "CHAPTER I", null).start, 0);
+  });
+  const twin = rc.maps.twin, tw = rc.blockWords.twin;   // two "Interlude" chapters, at 0 and 10
+  const keys = artChapterKeys(twin, [3, 13], [], tw);
+  test("artChapterKeys: a repeated title is keyed \" (2)\"", () => {
+    assert.deepEqual([...keys], [[0, "Interlude"], [10, "Interlude (2)"]]);
+  });
+  test("plateChapter: a repeated title is told apart by its key", () => {
+    // The first Interlude's plate anchored in the second's first long paragraph (snapped): the first.
+    assert.equal(plateChapter(twin, 11, "Interlude", tw, keys).start, 0);
+    // The second Interlude's plate, anchored at an event in its own first long paragraph: the second, where the title
+    // alone (both match, snapped) would have gone back one.
+    assert.equal(plateChapter(twin, 11, "Interlude (2)", tw, keys).start, 10);
+    assert.equal(plateChapter(twin, 11, "Interlude (2)", tw).start, 0);   // without keys: the recap rule on the bare title
+  });
+  test("artChapterKeys: a recap counts in the chapter it summarises, as art.py counts it", () => {
+    // CHAPTER I has only its recap, anchored in II's second block; II has an event.
+    assert.deepEqual([...artChapterKeys(upper, [15], [{ seq: 11, title: "CHAPTER I" }], uw)], [[0, "CHAPTER I"], [10, "CHAPTER II"]]);
+    // A recap of II anchored in II, no events: only II is listed.
+    assert.deepEqual([...artChapterKeys(upper, [], [{ seq: 15, title: "CHAPTER II" }], uw)], [[10, "CHAPTER II"]]);
+    // Two Interludes, the first with only a recap anchored in the second's first long paragraph: both listed.
+    assert.deepEqual([...artChapterKeys(twin, [13], [{ seq: 11, title: "Interlude" }], tw)], [[0, "Interlude"], [10, "Interlude (2)"]]);
+  });
 }
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
