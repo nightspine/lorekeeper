@@ -4381,8 +4381,6 @@ class Illustrator:
             base["styleRef"] = sref.sha
         if user_refs:
             base["userRefs"] = self.user_refs_record(user_refs)
-        if fell_back:
-            base["appliesFallback"] = fell_back
         if left_out:
             base["refsLeftOut"] = left_out
             with self.lock:
@@ -4396,7 +4394,10 @@ class Illustrator:
                 # filed as drawn before the error goes on, and a resume does not draw and pay for it again
                 self._file(job, pr, pic, got, figures, softened, base)
                 raise
-        return self._file(job, pr, pic, got, figures, softened, {**base, **extra})
+        rec = self._file(job, pr, pic, got, figures, softened, {**base, **extra})
+        # the shas whose figure or value fell back to the whole picture: in the reply only (a copy), never filed, so the
+        # set's record reads the same on every later read
+        return {**rec, "appliesFallback": fell_back} if fell_back and rec is not None else rec
 
     def _file(self, job: Job, pr: Prompt, pic: images.Drawn, got, figures, softened: bool, extra: dict) -> dict:
         """File a drawn picture: its record (with what the check added, `extra`), its bytes and the manifest."""
