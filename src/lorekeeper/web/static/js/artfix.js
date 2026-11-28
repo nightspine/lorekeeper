@@ -33,7 +33,11 @@ export function cutWords(v, limit) {
  *  so it is fixed in full. */
 export const severityOf = (f) => (f && f.severity === "minor" ? "minor" : "major");
 
-/** The faults of a check answer (or a record's `check`/`fixes` entry), cleaned: [{ what, where, severity }], an empty
+/** A fault's kind: "drawing", "text" (letters, labels or writing drawn in the picture) or "style" (not in the chosen
+ *  style); undefined for anything else, so the key is left out and the server defaults it to "drawing". */
+export const kindOf = (f) => (f && ["drawing", "text", "style"].includes(f.kind) ? f.kind : undefined);
+
+/** The faults of a check answer (or a record's `check`/`fixes` entry), cleaned: [{ what, where, severity, kind? }], an empty
  *  `what` dropped, at most MAX_FAULTS. Anything that is not a list is no faults. */
 export function cleanFaults(list) {
   if (!Array.isArray(list)) return [];
@@ -41,7 +45,8 @@ export function cleanFaults(list) {
   for (const f of list) {
     const what = cutWords(f?.what, WHAT_CHARS);
     if (!what) continue;
-    out.push({ what, where: cutWords(f?.where, WHERE_CHARS), severity: severityOf(f) });
+    const kind = kindOf(f);
+    out.push({ what, where: cutWords(f?.where, WHERE_CHARS), severity: severityOf(f), ...(kind ? { kind } : {}) });
     if (out.length >= MAX_FAULTS) break;
   }
   return out;

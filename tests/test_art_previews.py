@@ -123,7 +123,7 @@ def test_the_body_has_nothing_past_the_moment_and_no_reference_pictures():
     assert "Stranger" not in writer and "Zephyr" not in writer and "King" not in writer
     o = {a["id"]: n for n, a in enumerate(d["anchors"])}
     assert all(o[a] <= o["a5"] for a in pr.sources)
-    assert pr.body and art.preview_prompt("ink", pr.body) == f"{pr.body} {art.STYLES['ink']} {art.NO_TEXT}"
+    assert pr.body and art.preview_prompt("ink", pr.body) == f"{pr.body} {art.STYLES['ink']} {art.NO_TEXT} {art.LABEL_NOT_TEXT}"      # its body labels figures
 
 
 def test_a_series_books_body_uses_nothing_of_the_earlier_book():
