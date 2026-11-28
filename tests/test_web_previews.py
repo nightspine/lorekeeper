@@ -3,7 +3,6 @@ pipeline's `opening_moments` and `preview_body` are scripted here (they are art.
 image model is the fake of tests/test_art.py; no network."""
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -22,44 +21,26 @@ from .test_web_art import GEMINI, KEY, GeminiFake, env, short_world, wait_for  #
 NOIR = "Moody film noir, deep shadows, rain-slick streets, one hard light."
 
 
-@dataclass
-class Moment:
-    kind: str
-    target: str
-    chapter: str
-    anchor: str
-    summary: str
+Moment = art.Moment
 
 
 @pytest.fixture(autouse=True)
 def pipeline(monkeypatch):
-    """The pipeline's half, scripted: each chapter's main moment (its turning point, else its first event), then the other
-    non-minor events, of the first `chapters` chapters; `extra` moments are added after them (a gate test's)."""
-    box = {"bodies": [], "extra": [], "seen": []}
+    """The pipeline's real `opening_moments` and `preview_body`, watched: what they were called with, the bodies written,
+    and `extra` moments added after the real ones (a gate test's)."""
+    box = {"bodies": [], "extra": [], "seen": [], "body_story": []}
+    real_open, real_body = art.Illustrator.opening_moments, art.Illustrator.preview_body
 
     def opening_moments(self, bi=-1, chapters=2, story=None):
         box["seen"].append({"chapters": chapters, "story": story})
-        b = self.books[bi]
-        chs = [c for c in b.chapters if story is None or story(c["title"], c["words"])][:chapters]
-        plates, others = [], []
-        for c in chs:
-            evs = [e for e in c["events"] if e.get("kind") != "minor"]
-            if not evs:
-                continue
-            main = next((e for e in evs if e.get("kind") == "turn"), evs[0])
-            plates.append(Moment("plate", c["title"], c["title"], c["last"], main["summary"]))
-            others += [Moment("event", e["id"], c["title"], e["from"], e["summary"]) for e in evs if e is not main]
-        return plates + others + box["extra"]
+        return real_open(self, bi, chapters, story) + box["extra"]
 
-    def preview_body(self, moment, finished=frozenset()):
+    def preview_body(self, moment, finished=frozenset(), story=None, chapters=2):
         box["bodies"].append((moment, finished))
-        if self.text is not None:
-            self.text.prompts.append(f"preview of {moment.target}")
-        body = f"A scene in the mill: {moment.summary}"
-        return art.Prompt(text=body, scene=body, anchor=moment.anchor, shape="square", body=body,
-                          written_by={"provider": "claude", "model": "fake-writer"})
-    monkeypatch.setattr(art.Illustrator, "opening_moments", opening_moments, raising=False)
-    monkeypatch.setattr(art.Illustrator, "preview_body", preview_body, raising=False)
+        box["body_story"].append(story)
+        return real_body(self, moment, finished, story=story, chapters=chapters)
+    monkeypatch.setattr(art.Illustrator, "opening_moments", opening_moments)
+    monkeypatch.setattr(art.Illustrator, "preview_body", preview_body)
     monkeypatch.setattr(jobs_mod.JobManager, "text_choice", lambda self, tier="cheap", jp=None: ("claude", "fake"))
     yield box
     art.SAVED_STYLES.clear()
@@ -125,8 +106,8 @@ def test_previews_draw_the_opening_scene_once_in_every_style_per_provider(env, p
     calls = env.image.calls
     assert len(calls) == len(art.STYLES) and all(c["shape"] == "square" and c["quality"] == q and c["references"] == []
                                                   for c in calls)
-    body = "A scene in the mill: Oren the miller comes out of the mill an"
-    assert all(c["prompt"].startswith(body[:40]) and c["prompt"].endswith(art.NO_TEXT) for c in calls)
+    body = json.loads((env.data / "previews" / env.hash / "previews.json").read_text())["scene"]["body"]
+    assert body and all(c["prompt"] == art.preview_prompt(s, body) for s, c in zip(art.STYLES, calls))
     assert [art.STYLES[s] in c["prompt"] for s, c in zip(art.STYLES, calls)] == [True] * len(art.STYLES)
     g = got(env)
     assert g["scene"]["kind"] == "plate" and g["scene"]["target"] == "Chapter One" and g["scene"]["storyChapter"] == 1
@@ -156,7 +137,8 @@ def test_another_scene_writes_a_new_body_and_clears_the_old_previews(env, pipeli
     assert done["status"] == "done" and len(pipeline["bodies"]) == 2 and pipeline["bodies"][1][0].target == "e5"
     g = got(env)
     assert g["scene"]["target"] == "e5" and g["scene"]["chosen"] == "person" and g["scene"]["storyChapter"] == 2
-    assert "Gabriel rides in" in env.image.calls[-1]["prompt"] and len(env.image.calls) == 2 * len(art.STYLES)
+    first = env.image.calls[0]["prompt"].split(art.STYLES[list(art.STYLES)[0]])[0]
+    assert not env.image.calls[-1]["prompt"].startswith(first) and len(env.image.calls) == 2 * len(art.STYLES)
     assert g["providers"]["gemini"]["ink"]["url"] != old or env.c.get(old).status_code == 200
     # with no scene asked for, the person's scene stays
     draw(env, redraw=True)
@@ -399,6 +381,57 @@ def test_previews_json_shape(env):
     assert set(data) == {"scene", "items"}
     assert set(data["scene"]) == {"kind", "target", "chapter", "storyChapter", "anchor", "summary", "body", "writer",
                                   "chosen", "created"}
-    assert data["scene"]["writer"] == {"provider": "claude", "model": "fake-writer"}
+    assert data["scene"]["body"] and data["scene"]["writer"] is None     # the scripted writer has no model name
     it = data["items"]["gemini"]["ink"]
     assert set(it) == {"file", "model", "quality", "cost", "created", "text", "reference"} and it["file"] == "gemini-ink.png"
+
+
+# ---- a real book's opening after front matter
+
+def test_chapter_one_after_front_matter_is_the_opening_and_is_drawn(tmp_path, monkeypatch, pipeline):
+    """Contents and a part divider come first: with the story test passed to both pipeline calls, the opening is chapters
+    One and Two, and either one is drawn (without it, front matter would take the two slots and Chapter Two be refused)."""
+    import re
+
+    from lorekeeper import epub, text
+    from .test_art import CH1, CH2, base_doc, book
+    from .test_art_previews import FRONT
+    from .test_generate import make_epub
+    epubs, idx = tmp_path / "epubs", tmp_path / "idx"
+    epubs.mkdir()
+    idx.mkdir()
+    path = make_epub(epubs / "mill.epub", title="Millbrook", ch1=CH1, ch2=CH2, front=("Contents", FRONT),
+                     mid=("Part One", ["Part One."]))
+    bk = epub.read(path)
+    seq_of = {b.raw: b.seq for b in bk.blocks}
+    paras = CH1 + CH2
+    d = base_doc(book(("One", CH1), ("Two", CH2)))
+    d = json.loads(re.sub(r'"a(\d+)"', lambda m: f'"a{seq_of[paras[int(m.group(1))]]}"', json.dumps(d)))
+    d["anchors"] = [{"id": f"a{b.seq}", "seq": b.seq, "fp": b.fingerprint} for b in bk.blocks]
+    d["coverage"]["through"] = d["anchors"][-1]["id"]
+    d.update({"lorekeeper": "0.1", "kind": "index", "id": "mill",
+              "editions": [{"textHash": text.text_hash(b.words for b in bk.blocks), "builtFrom": True}]})
+    (idx / "mill.json").write_text(json.dumps(d))
+    im = GeminiFake()
+    t = Text()
+    monkeypatch.setattr(jobs_mod.JobManager, "cheap_model", lambda self, provider=None: t)
+    monkeypatch.setattr(llm, "make_image", lambda *a, **kw: im)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    app = web_app.create_app(tmp_path / "data", [("examples", idx)], [epubs], ollama_url="http://127.0.0.1:9",
+                             allowed_hosts=("testserver",), auth=False)
+    with TestClient(app, headers={"X-Lorekeeper": "1"}) as c:
+        g = c.get(f"/api/library/{KEY}/previews").json()
+        plates = [m for m in g["moments"] if m["kind"] == "plate"]
+        assert [(m["chapter"], m["storyChapter"]) for m in plates] == [("Chapter One", 1), ("Chapter Two", 2)]
+        assert not any("Contents" in m["chapter"] or "Part" in m["chapter"] for m in g["moments"])
+        done = wait_for(c, c.post(f"/api/library/{KEY}/previews", json={}).json()["id"])
+        assert done["status"] == "done", done["error"]
+        assert c.get(f"/api/library/{KEY}/previews").json()["scene"]["chapter"] == "Chapter One"
+        done = wait_for(c, c.post(f"/api/library/{KEY}/previews", json={"scene": "Chapter Two"}).json()["id"])
+        assert done["status"] == "done", done["error"]
+        assert c.get(f"/api/library/{KEY}/previews").json()["scene"]["chapter"] == "Chapter Two"
+    assert len(im.calls) == 2 * len(art.STYLES)
+    # both pipeline calls got the same story test, and the body was written from the Moment opening_moments returned
+    assert all(s["story"] is jobs_mod.is_story for s in pipeline["seen"])
+    assert pipeline["body_story"] == [jobs_mod.is_story] * 2
+    assert all(isinstance(m, art.Moment) and m.bi == 0 for m, _ in pipeline["bodies"])

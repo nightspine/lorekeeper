@@ -1030,7 +1030,7 @@ class JobManager:
                     else:
                         text_model.cancel = flag.is_set
                         before = artmod._cost_of(text_model)
-                        pr = il.preview_body(m["moment"], finished=frozenset())
+                        pr = il.preview_body(m["moment"], finished=frozenset(), story=is_story, chapters=pv.OPENING_CHAPTERS)
                         spent = report["text_cost_usd"] = round(artmod._cost_of(text_model) - before, 6)
                         scene = pv.scene_record(m, pr, artmod.model_ref(text_model),
                                                 "person" if cfg.get("scene") else "auto")
