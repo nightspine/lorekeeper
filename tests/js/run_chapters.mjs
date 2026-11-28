@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { artChapterKeys, classify, label, numbering, numbersByStart, ownNumber, plateChapter, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
+const { artChapterKeys, classify, label, numbering, numbersByStart, ownNumber, plateChapter, plateSpot, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -126,6 +126,14 @@ test("recaps: a book that numbers its chapters keeps the numbers whichever recap
     // alone (both match, snapped) would have gone back one.
     assert.equal(plateChapter(twin, 11, "Interlude (2)", tw, keys).start, 10);
     assert.equal(plateChapter(twin, 11, "Interlude (2)", tw).start, 0);   // without keys: the recap rule on the bare title
+  });
+  test("plateSpot: a plate anchored past its chapter's end goes after its anchor block, else at the chapter's end", () => {
+    const ch1 = plateChapter(upper, 11, "CHAPTER I", uw);
+    assert.deepEqual(plateSpot(upper, ch1, 11), { at: "after", seq: 11 });   // its own recap's anchor, in II
+    assert.deepEqual(plateSpot(upper, plateChapter(upper, 9, "CHAPTER I", uw), 9), { at: "end" });   // inside I
+    assert.deepEqual(plateSpot(upper, plateChapter(upper, 15, "CHAPTER II", uw), 15), { at: "end" });   // the last chapter
+    assert.deepEqual(plateSpot(upper, null, 11), { at: "end" });
+    assert.deepEqual(plateSpot(upper, ch1, null), { at: "end" });
   });
   test("artChapterKeys: a recap counts in the chapter it summarises, as art.py counts it", () => {
     // CHAPTER I has only its recap, anchored in II's second block; II has an event.

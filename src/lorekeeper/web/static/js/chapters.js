@@ -276,3 +276,20 @@ export function plateChapter(chapters, seq, target, blockWords, keys = null) {
   if (keys && t) for (let k = w.i; k >= Math.max(w.j, 0); k--) if (keys.get(chapters[k].start) === t) return chapters[k];
   return recapChapter(chapters, seq, t.replace(/\s+\(\d+\)$/, ""), blockWords);
 }
+
+/**
+ * Where the reading view puts a plate: at the end of the chapter it was drawn for when its anchor is inside that chapter
+ * (revealed as the reader crosses into the next one), else right after its anchor block. A plate anchored at its own
+ * recap's anchor in the next chapter's first long paragraph is revealed only once the reader is past that paragraph, so
+ * at its chapter's end, above the anchor, it could never be revealed and on screen at once.
+ * @param chapters the whole map in book order, [{ title, start }]
+ * @param chapter the plate's chapter (plateChapter), or null when unknown
+ * @param seq the block the plate's anchor is in
+ * @returns { at: "end" } or { at: "after", seq }
+ */
+export function plateSpot(chapters, chapter, seq) {
+  if (!chapter || !Number.isInteger(seq) || !chapters?.length) return { at: "end" };
+  const i = chapters.indexOf(chapter);
+  const next = i >= 0 ? chapters[i + 1] : chapters.find((c) => c.start > chapter.start);
+  return next && seq >= next.start ? { at: "after", seq } : { at: "end" };
+}

@@ -3,7 +3,7 @@ import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
-import { artChapterKeys, numbersByStart, plateChapter, recapChapter, recapNumbers } from "./chapters.js";
+import { artChapterKeys, numbersByStart, plateChapter, plateSpot, recapChapter, recapNumbers } from "./chapters.js";
 import { nextName, SELF_NAMED_SHORT, stepList, stepName, statedAge, stepState as stepStateAt, tickInfo, whereText as whereAt } from "./steps.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -81,6 +81,15 @@ class PositionMap {
     if (!this.cum || !Number.isFinite(at)) return null;
     return plateChapter(this.chapters, this.seqAt(Math.max(0, at - 1e-9)), target, this.words, keys);
   }
+  /** Where the reading view puts a plate (chapters.js plateSpot): { chapter, at: "end" } or { chapter, at: "after", seq },
+   *  null without the book file or a position for its anchor. */
+  plateSpotOf(id, target, keys) {
+    const at = this.anchorPos(id);
+    if (!this.cum || !Number.isFinite(at)) return null;
+    const seq = this.seqAt(Math.max(0, at - 1e-9));
+    const chapter = plateChapter(this.chapters, seq, target, this.words, keys);
+    return chapter ? { chapter, ...plateSpot(this.chapters, chapter, seq) } : null;
+  }
   /** The chapter a chapter recap anchored at `id` summarises (chapters.js recapChapter), null without the book file. */
   recapChapterOf(id, title, tidy) {
     const at = this.anchorPos(id);
@@ -138,7 +147,7 @@ export function mountReader(root) {
     entity: (id) => nameOf(id) || null,
     portrait: (id) => { const p = latestPicture(id); return p ? picSrc(p, true) : null; },
     plates: () => visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)),
-    plateChapter: (p) => plateMapChapter(p),
+    plateSpot: (p) => plateReadSpot(p),
     platesNode: (pics, title) => platesNode(pics, title),
     openEntry: (id, from) => openDrawer(id, { from }),
     canAsk: () => !preview && Boolean(ask.available?.available), ask: (text) => showAsk({ text }),
@@ -2147,6 +2156,17 @@ export function mountReader(root) {
   function plateMapChapter(p) {
     if (!s.map?.exact || p?.rec?.kind !== "plate") return null;
     return s.map.plateChapterOf(p.rec.from, p.rec.target, artKeys());
+  }
+  /** Where the Read tab puts a plate: { chapter, at: "end" }, or { chapter, at: "after", seq, name } after its anchor
+   *  block with its chapter's name ("Chapter V"; the plate's anchor is at or before the position, so the chapter is
+   *  reached); null without the exact map. */
+  function plateReadSpot(p) {
+    if (!s.map?.exact || p?.rec?.kind !== "plate") return null;
+    const spot = s.map.plateSpotOf(p.rec.from, p.rec.target, artKeys());
+    if (!spot) return null;
+    const title = tidyTitle(spot.chapter.title) || "";
+    const number = mapNumbers().get(spot.chapter.start);
+    return { ...spot, title, name: title ? stepName({ title, number: number ?? null }) : number != null ? `Chapter ${number}` : "" };
   }
   /** Lightbox items for pictures, with their captions (a chapter title or the entry's name, never the prompt). */
   function lightboxItems(pics, caption) {
