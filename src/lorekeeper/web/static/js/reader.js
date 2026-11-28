@@ -14,7 +14,8 @@ import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk, passageBlocks, passageLabel, passageOpenable } from "./ask.js";
 import { createReading } from "./read.js";
-import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
+import { variantUrl } from "./artsrc.js";
+import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, SIZES, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -145,7 +146,7 @@ export function mountReader(root) {
     doc: () => s.doc, series: () => Boolean(s.series),
     priorDocs: () => (s.series ? (finishedSet() || []).map((b) => s.seriesDocs.get(b)).filter(Boolean) : []),
     entity: (id) => nameOf(id) || null,
-    portrait: (id) => { const p = latestPicture(id); return p ? picSrc(p, true) : null; },
+    portrait: (id) => { const p = latestPicture(id); return p ? variantUrl(picSrc(p), 160) : null; },
     plates: () => visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)),
     plateSpot: (p) => plateReadSpot(p),
     platesNode: (pics, title) => platesNode(pics, title),
@@ -1330,7 +1331,7 @@ export function mountReader(root) {
     const open = s.drawer === e.id && el.pane && !el.pane.hidden;
     // A visible portrait takes the type mark's place (the type colour stays as a ring round it).
     const face = latestPicture(e.id);
-    const faceImg = face ? h("span.ent-face", artImg(picSrc(face, true), "", "ent-face-img")) : null;
+    const faceImg = face ? h("span.ent-face", artImg(picSrc(face), "", "ent-face-img", { sizes: SIZES.face, px: 24 })) : null;
     const rowEl = h(`button.ent-row.t-${e.type}${fresh ? ".fresh.arrive" : ""}${sleeping ? ".dormant" : ""}${open ? ".sel" : ""}${faceImg ? ".has-face" : ""}`, { type: "button",
       dataset: { ent: e.id }, "aria-current": open ? "true" : null,
       "aria-label": `${e.name}, ${TYPE_LABEL[e.type]}${fresh ? ", new" : ""}${from ? `, from ${bookShort(from)}${sleeping ? ", not in this book yet" : ""}` : ""}`,
@@ -1705,7 +1706,7 @@ export function mountReader(root) {
     // The header picture: the latest visible plate of the book being read, else its cover, else a plain band.
     const plate = visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)).sort((a, b) => a.ord - b.ord).at(-1);
     const cov = plate ? null : bookCover(book);
-    const img = plate ? artImg(picSrc(plate), "", "ov-hero-img", { eager: true }) : cov ? h("img.ov-hero-img", { src: cov, alt: "", decoding: "async" }) : null;
+    const img = plate ? artImg(picSrc(plate), "", "ov-hero-img", { eager: true, sizes: SIZES.overview, px: 640 }) : cov ? h("img.ov-hero-img", { src: cov, alt: "", decoding: "async" }) : null;
     if (img && !plate) img.addEventListener("error", () => img.remove());
     const story = v.recap ? firstSentences(v.recap.text) : "";
     const byline = overviewByline();
@@ -1723,7 +1724,7 @@ export function mountReader(root) {
     const newLabel = last ? `New in ${stepName(last).replace(/^Chapter\b/, "Ch.")}` : "";
     const card = (e) => {
       const pic = latestPicture(e.id);
-      const face = pic ? artImg(picSrc(pic, true), "", "ov-face-img") : null;
+      const face = pic ? artImg(picSrc(pic), "", "ov-face-img", { sizes: SIZES.who, px: 90 }) : null;
       return h("li", h(`button.ov-person.t-${e.type}${face ? ".has-face" : ""}`, { type: "button", dataset: { ent: e.id },
         "aria-label": `${e.name}${fresh.has(e.id) ? `, ${newLabel.toLowerCase()}` : ""}`, on: { click: (ev) => openDrawer(e.id, { from: ev.currentTarget }) } },
         h("span.ov-face", { "aria-hidden": "true" }, face, h("span.ov-initials", initials(e.name))),
@@ -1743,7 +1744,7 @@ export function mountReader(root) {
     const anyPic = latest.some((r) => (plates.get(r) || []).length);
     const chCard = (r) => {
       const pic = (plates.get(r) || []).at(-1);
-      const thumb = pic ? artImg(picSrc(pic, true), "", "ov-ch-img") : null;
+      const thumb = pic ? artImg(picSrc(pic), "", "ov-ch-img", { sizes: SIZES.chapter, px: 104 }) : null;
       const label = rowLabel(r, book);
       // Beside a chapter with a picture, one without shows more of its recap.
       return h("li", h(`button.ov-chapter${thumb ? ".has-pic" : anyPic ? ".long" : ""}`, { type: "button", on: { click: () => openChapter(r.group.key) } },
@@ -1810,7 +1811,7 @@ export function mountReader(root) {
     const text = [ev.kind === "turn" ? h("span.tl-kind", "Turning point") : null, h("p.ev", ev.summary),
       chips ? h("div.ents", ev.entities.map(entityChip), bookLabel(ev.book)) : book ? bookLabel(ev.book) : null,
       s.edit ? editor.eventRowActions(ev, li) : null];
-    const thumb = pic ? pictureButton([pic], 0, () => ev.summary.length > 80 ? `${ev.summary.slice(0, 79)}…` : ev.summary, "art-thumb.tl-thumb") : null;
+    const thumb = pic ? pictureButton([pic], 0, () => ev.summary.length > 80 ? `${ev.summary.slice(0, 79)}…` : ev.summary, "art-thumb.tl-thumb", chips ? { sizes: SIZES.tl, px: 64 } : { sizes: SIZES.list, px: 48 }) : null;   // the entry's lists draw it at 48px
     const more = canDraw ? h("button.icon-btn.small.tl-draw", { type: "button", "aria-label": "Draw a picture of this moment", title: "Draw a picture",
       on: { click: () => drawPicture({ kind: "event", target: ev.id, title: tidyTitle(eventChapter(ev)?.title || "") || "This moment" }) } }, icon("sparkle")) : null;
     if (thumb || more) clear(li, thumb, h("div.tl-text", text), more);
@@ -1988,7 +1989,7 @@ export function mountReader(root) {
       revealed, hereLabel: here ? shortChapter(here) : "this chapter",
       openEntity: (id, from) => openDrawer(id, { from }),
       repaint: () => paintTabs(),
-      portrait: (id) => { const pics = entityPictures(id); return pics.length ? h("div.g-face", pictureButton(pics, pics.length - 1, () => nameOf(id)?.name || "", "art-face-btn", { thumb: false })) : null; },
+      portrait: (id) => { const pics = entityPictures(id); return pics.length ? h("div.g-face", pictureButton(pics, pics.length - 1, () => nameOf(id)?.name || "", "art-face-btn", { sizes: SIZES.map, px: 120 })) : null; },
     });
     // Beside the list (1101px and up) the map's details take the entry's place on the right; narrower they stay under the map.
     const side = el.panel.querySelector(".g-panel");
@@ -2032,11 +2033,13 @@ export function mountReader(root) {
     // The remembered style when this book has it, else the first one it has.
     const want = slugs.includes(s.art.style) ? s.art.style : first?.slug && slugs.includes(first.slug) ? first.slug : slugs[0] || null;
     const sets = new Map();
-    for (const book of pictureBooks()) {
-      const key = s.bookKeys.get(bkKey(book)) || (book == null || book === s.book ? s.key : null);
-      if (!key || !want) continue;
-      const got = key === s.key && first?.slug === want ? first : await loadArt(key, want);
-      if (gone()) return;
+    // Every book's set is asked at once (a series used to wait for each in turn).
+    const wanted = pictureBooks().map((book) => ({ book, key: s.bookKeys.get(bkKey(book)) || (book == null || book === s.book ? s.key : null) }))
+      .filter((w) => w.key && want);
+    const loaded = await Promise.all(wanted.map((w) => (w.key === s.key && first?.slug === want ? first : loadArt(w.key, want))));
+    if (gone()) return;
+    for (const [i, { book, key }] of wanted.entries()) {
+      const got = loaded[i];
       const d = docOf(book);
       const hashes = new Set((d?.editions || []).filter((e) => e.builtFrom).map((e) => e.textHash));
       // The art set must be for this index's own edition: its anchors are the ones its pictures are compared against.
@@ -2100,7 +2103,8 @@ export function mountReader(root) {
     s.art.memo = { view: s.view, rev: s.art.rev, on: s.art.on, list };
     return list;
   }
-  const picSrc = (p, thumb = false) => artUrl(p.rec, p.set.manifest.textHash, p.set.slug, { thumb });
+  /** The plain URL of a picture file; placements add their own `sizes` (artImg) so only a variant is ever asked for. */
+  const picSrc = (p) => artUrl(p.rec, p.set.manifest.textHash, p.set.slug);
   const bookRank = (b) => { if (!s.series) return 0; const o = s.series.orders[s.order] || []; const i = o.indexOf(b); return i < 0 ? -1 : i; };
   /** An entry's visible pictures (portraits, places, things), oldest first: by book in reading order, then by anchor. */
   function entityPictures(id) {
@@ -2193,7 +2197,7 @@ export function mountReader(root) {
     const ref = refParts(f.ref);
     if (!ref || (ref.set && ref.set !== p.set.slug)) return null;
     const hit = visiblePictures().find((x) => x.set === p.set && x.rec.id === ref.id);
-    return hit ? picSrc(hit, true) : null;
+    return hit ? picSrc(hit) : null;
   }
   /** May a picture be redrawn from a new prompt: its kind and target are an item of the book being read, revealed now. */
   function canRewrite(rec) {
@@ -2215,9 +2219,9 @@ export function mountReader(root) {
     s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: box.ids };
   }
   /** A picture as a button that opens the lightbox on it. */
-  function pictureButton(pics, i, caption, cls, { thumb = true } = {}) {
+  function pictureButton(pics, i, caption, cls, { sizes = SIZES.thumbs, px = 80, eager = false } = {}) {
     const p = pics[i];
-    const img = artImg(picSrc(p, thumb), caption(p), "art-img");
+    const img = artImg(picSrc(p), caption(p), "art-img", { sizes, px, eager });
     if (!img) return null;
     return h(`button.${cls}`, { type: "button", "aria-label": `Open the picture: ${caption(p)}`, on: { click: () => showPictures(pics, i, caption) } }, img);
   }
@@ -2225,7 +2229,7 @@ export function mountReader(root) {
   function platesNode(pics, title) {
     if (!pics.length) return null;
     const cap = () => title;
-    if (pics.length === 1) return h("div.art-plates.one", pictureButton(pics, 0, cap, "art-plate", { thumb: false }));
+    if (pics.length === 1) return h("div.art-plates.one", pictureButton(pics, 0, cap, "art-plate", { sizes: SIZES.plate, px: 720 }));
     const shown = pics.slice(0, 3);
     return h("div.art-plates.many", shown.map((p, i) => pictureButton(pics, i, cap, "art-thumb")),
       pics.length > 3 ? h("button.linkish.art-more", { type: "button", on: { click: () => showPictures(pics, 3, cap) } }, `${pics.length - 3} more`) : null);
@@ -2280,7 +2284,7 @@ export function mountReader(root) {
   function comicNode(pics, title) {
     if (!pics.length) return null;
     const cap = () => (title ? `Comic: ${title}` : "Comic");
-    return h("div.tl-comic", h("span.tl-comic-label", "Comic"), pictureButton(pics, pics.length - 1, cap, "art-plate.tl-comic-pic", { thumb: false }));
+    return h("div.tl-comic", h("span.tl-comic-label", "Comic"), pictureButton(pics, pics.length - 1, cap, "art-plate.tl-comic-pic", { sizes: SIZES.plate, px: 720 }));
   }
   /** A panel's caption: its event's summary from the view at the position (an earlier book's by that book), else null. */
   function eventSummary(id, book = null) {
@@ -2414,7 +2418,7 @@ export function mountReader(root) {
     const pics = entityPictures(e.id);
     if (!pics.length) return null;
     const cap = () => e.name;
-    return pictureButton(pics, pics.length - 1, cap, "art-face-btn", { thumb: false });
+    return pictureButton(pics, pics.length - 1, cap, "art-face-btn", { sizes: SIZES.side, px: 140 });
   }
   /** The chapter a picture of a book is from, worded as the Chapters tab words its row ("Chapter 3", or the title when it
    *  carries its own number or kind); null when no listed row holds it. Rows are only chapters the position has reached,
@@ -2459,7 +2463,7 @@ export function mountReader(root) {
     const tile = (p) => {
       const i = pics.indexOf(p);
       const ch = pictureChapter(p);
-      const btn = pictureButton(pics, i, caption, "art-thumb.portrait-thumb");
+      const btn = pictureButton(pics, i, caption, "art-thumb.portrait-thumb", { sizes: SIZES.tile, px: 76 });
       if (!btn) return null;
       if (p === last) btn.setAttribute("aria-current", "true");
       return h(`li.portrait-tile${p === last ? ".current" : ""}`, btn,
@@ -2766,7 +2770,7 @@ export function mountReader(root) {
   /** The top of a picture-first entry: the latest visible portrait filling the width, with the type, the name and
    *  "Also called" over its foot. A picture that fails to load leaves the name on plain ground. */
   function entryHero(e, pics) {
-    const btn = pictureButton(pics, pics.length - 1, () => e.name, "art-face-btn.hero-img", { thumb: false });
+    const btn = pictureButton(pics, pics.length - 1, () => e.name, "art-face-btn.hero-img", { eager: true, sizes: SIZES.hero, px: 420 });
     if (!btn) return null;
     const hero = h(`div.entry-hero.t-${e.type}`, btn, h("div.hero-foot", typeTag(e.type), h("h2#drawer-title", { tabindex: "-1" }, e.name),
       e.aliases.length ? h("p.hero-aka", `Also called ${e.aliases.slice(0, 3).join(", ")}`) : null));

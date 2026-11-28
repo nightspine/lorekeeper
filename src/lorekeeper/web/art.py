@@ -8,10 +8,14 @@ looked up in the manifest, so a file name only ever comes from the manifest and 
 
 from __future__ import annotations
 
+import copy
 import hashlib
+import io
 import json
+import logging
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -24,6 +28,9 @@ HASH = re.compile(r"[0-9a-f]{64}")
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 PID = re.compile(r"p[0-9a-f]{8}")
 FILE = re.compile(r"p[0-9a-f]{8}\.(png|jpg|webp|bin)")
+WIDTHS = (160, 320, 640, 1280)   # the widths a picture is served at besides the original (`?w=`)
+VARIANT_QUALITY = 78
+log = logging.getLogger(__name__)
 MAX_WORLD = 800     # characters of a world note a person may write
 # The person's own reference pictures, one folder per edition beside its style sets (shared by every set), by content.
 REFS = "refs"       # never a style slug (`ArtStore.folder` refuses it)
@@ -97,6 +104,10 @@ class ReadOnlySink(art.FileSink):
 class ArtStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "art"
+        self.cache = data_dir / "art-cache"      # resized copies, derived data: safe to delete, never counted as art
+        self._memo: dict[Path, tuple[tuple[int, int], dict | None]] = {}
+        self._vlocks: dict[Path, threading.Lock] = {}
+        self._warned = False
         self.journal = data_dir / "merges"      # the undo journal (`Identity.dir`): an entry may still need an upload
         self._locks: dict[tuple[str, str], threading.Lock] = {}
         self._guard = threading.Lock()
@@ -157,9 +168,21 @@ class ArtStore:
         except KeyError:
             return None
         try:
-            return json.loads(p.read_text()) if p.is_file() else None
+            st = p.stat()
+        except OSError:
+            return None
+        sig = (st.st_mtime_ns, st.st_size)
+        hit = self._memo.get(p)
+        if hit and hit[0] == sig:
+            return copy.deepcopy(hit[1])
+        try:
+            m = json.loads(p.read_text())
         except (OSError, json.JSONDecodeError):
             return None
+        if len(self._memo) > 256:
+            self._memo.clear()
+        self._memo[p] = (sig, m)
+        return copy.deepcopy(m)
 
     def styles(self, text_hash: str) -> list[dict]:
         """The art sets of an edition, most recently written first: slug, style, picture count, cost."""
@@ -260,6 +283,55 @@ class ArtStore:
             return None
         p = self.folder(text_hash, style) / name
         return p if p.is_file() else None
+
+    def variant(self, text_hash: str, style: str, pid: str, width: int) -> Path | None:
+        """A WebP copy of a listed picture at `min(width, original width)`, made on first request and kept under
+        `art-cache/`. None when the picture is not listed; the original's path when it cannot be resized (never an error)."""
+        src = self.path(text_hash, style, pid)         # the manifest decides; the cache never does
+        if src is None or width not in WIDTHS:
+            return src
+        dest = self.cache / text_hash / style / f"{pid}.w{width}.webp"
+        if dest.is_file():
+            return dest
+        with self._guard:
+            lock = self._vlocks.setdefault(dest, threading.Lock())
+        with lock:
+            if dest.is_file():
+                return dest
+            try:
+                from PIL import Image
+                with Image.open(src) as im:
+                    im.load()
+                    if im.mode not in ("RGB", "RGBA"):
+                        im = im.convert("RGBA" if "A" in im.getbands() or "transparency" in im.info else "RGB")
+                    if im.width > width:
+                        im = im.resize((width, max(1, round(im.height * width / im.width))), Image.LANCZOS)
+                    buf = io.BytesIO()
+                    im.save(buf, "WEBP", quality=VARIANT_QUALITY, method=2)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_name(f"{dest.name}.{uuid.uuid4().hex}.tmp")
+                tmp.write_bytes(buf.getvalue())
+                tmp.replace(dest)
+            except Exception as e:     # Pillow missing, a file it cannot read: serve the original
+                if not self._warned:
+                    self._warned = True
+                    log.warning("cannot make resized pictures (%s: %s); serving originals", type(e).__name__, e)
+                return src
+            finally:
+                with self._guard:
+                    self._vlocks.pop(dest, None)
+        return dest
+
+    def clear_variants(self, text_hash: str, style: str | None = None) -> None:
+        """Delete the resized copies of an edition (or of one set)."""
+        if not HASH.fullmatch(text_hash or ""):
+            return
+        d = self.cache / text_hash
+        if style is not None:
+            if not SLUG.fullmatch(style):
+                return
+            d = d / style
+        shutil.rmtree(d, ignore_errors=True)
 
     def size(self, text_hash: str) -> int:
         """Bytes on disk for every art set of an edition, its uploaded reference pictures included."""
@@ -423,6 +495,8 @@ class ArtStore:
         sink.save(m)
         if p is not None:
             p.unlink(missing_ok=True)
+        for v in (self.cache / text_hash / style).glob(f"{pid}.w*.webp") if SLUG.fullmatch(style or "") and HASH.fullmatch(text_hash or "") else ():
+            v.unlink(missing_ok=True)
         return rec
 
     def prune(self, text_hash: str, style: str) -> int:
