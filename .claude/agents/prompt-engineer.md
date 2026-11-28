@@ -29,7 +29,7 @@ The 8f paragraph of `CLAUDE.md` ("Art sets") is the current contract: read it be
   - the `body` / `style` / `noText` parts that `js/artprompt.js` rebuilds a prompt from;
   - the word limits (`SCENE_WORDS`, `PORTRAIT_WORDS`) and the portrait frame;
   - the drawing-fault check and the fix.
-- **Bump the prompt's material or prompt version when a writer prompt changes**, as the brief says, so older pictures stay distinguishable.
+- **Versions.** `NOTE_VERSION` marks the *material* a prompt was written from; bump it only when that changes (and follow the 8f paragraph on what it means for references). A change to the writer's wording alone does not bump it: the brief names the version field that records it, so older pictures stay distinguishable.
 - Provider-specific wording is allowed where the guides disagree. It goes through code (by provider), never by asking the writer model to guess.
 - Tests use scripted fake models (`tests/test_art.py`) and never call a provider. Update expectations that pin prompt text, and add a test for any new assembly rule.
 
