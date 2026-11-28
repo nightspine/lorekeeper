@@ -4471,6 +4471,13 @@ def test_a_panel_that_came_back_as_it_was_is_unchanged_with_no_verification():
     assert sink.m["pictures"] == before and len(eye.verified) == n
     assert not e.value.verdict.changed and e.value.cost == pytest.approx(0.05)
     assert il.report.cost == pytest.approx(cost0 + 0.05) and il.report.checks["not fixed: the fix changed nothing"] == 1
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]                  # the panel's own item
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, text="A man sits up.", faults=[HAND])               # the panel item first, then the fault
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
+    with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, faults=[HAND])                                      # a fault alone: no panel item
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]
     il, sink, im, rec = comic_page(eye=eye, image=Paged(edit=lambda k, src: src))
     with pytest.raises(art.FixUnchanged):
         il.fix_panel(rec, 2, note="sit up", verify=False)
@@ -4533,3 +4540,17 @@ def test_a_panel_fix_without_pillow_keeps_the_whole_edited_page(monkeypatch):
     assert art.comic_grid(data, 3) is None
     new = il.fix_panel(rec, 2, note="x")
     assert new["fixes"][-1]["pasted"] is False and new["grid"] is None
+
+
+def test_a_panel_text_is_replaced_in_a_prompt_whose_style_sentence_had_a_name_replaced(monkeypatch):
+    monkeypatch.setitem(art.SAVED_STYLES, "mira-ink", "Inked in the manner Mira would sketch it, with bold lines.")
+    bk, d = comic_doc()
+    il = art.Illustrator([art.Book(d, bk, Mem())], Seeing(), Paged(), "mira-ink", portraits="all", workers=1,
+                         log=lambda *_: None, pause=0)
+    rec = il.draw(il.job("comic", "Two", at="a9"))
+    stored = il._style(0)
+    assert stored != art.style_sentence("mira-ink") and "Mira" not in stored and rec["prompt"].endswith(f" {stored} {art.COMIC_NO_TEXT}")
+    new = il.fix_panel(rec, 3, text="Nobody is at the mill.")                     # the last panel: the style stays after it
+    assert new["prompt"].endswith(f" Panel 3: Nobody is at the mill. {stored} {art.COMIC_NO_TEXT}")
+    assert art.panel_texts(new["prompt"], stored)[2] == "Nobody is at the mill."
+    assert new["panelTexts"][2] == "Nobody is at the mill."

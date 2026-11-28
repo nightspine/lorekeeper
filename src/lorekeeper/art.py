@@ -4072,7 +4072,7 @@ class Illustrator:
         text = " ".join(str(text or "").split())[:PANEL_TEXT_CHARS]
         j = self._book_of(rec) if bi is None else bi
         old_prompt = rec.get("prompt") or ""
-        spans = _panel_spans(old_prompt, style_sentence(self.styles[j]))
+        spans = _panel_spans(old_prompt, self._style(j))   # as stored on the prompt (names replaced)
         if text and spans and len(spans) == n and text == old_prompt[spans[k - 1][0]:spans[k - 1][1]]:
             text = ""                                    # what the panel already says is not a change
         if not text and not note and not faults:
@@ -4095,7 +4095,8 @@ class Illustrator:
         if merged is not None:
             final, mime, pasted, new_grid, delta = merged
             if delta < PANEL_UNCHANGED:
-                verdict = Verdict([{"n": i, "fixed": "no"} for i in range(1, len(faults) + 1)], False, [], True, 0.0,
+                items = len(faults) + (1 if text or note else 0)       # the panel's own item first, as the verification lists them
+                verdict = Verdict([{"n": i, "fixed": "no"} for i in range(1, items + 1)], False, [], True, 0.0,
                                   "the panel came back as it was")
                 with self.lock:
                     self.report.checks["not fixed: the fix changed nothing"] += 1
