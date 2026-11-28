@@ -369,13 +369,21 @@ def reframed(kind: str, prompt: str, style: str = "") -> str:
     return f"{text.rstrip()} {PORTRAIT_CROP}"
 
 
-# Talk about the material ("this passage", "the passage describes") in a picture prompt. Narrower than the generator's
-# ABOUT_THE_TEXT, kept for the "this ..." forms: in a picture, "the passage" and "the section" are also a corridor and a part
-# of a wall ("doors line the passage"), so "the ..." counts only when the text then tells, says or describes.
-ABOUT_THE_TEXT = re.compile(r"\bthis (?:passage|section|excerpt|chunk)\b|\bthe (?:passage|section|excerpt|chunk|material)s? "
-                            r"(?:says?|describes?|tells?|mentions?|states?|notes?|gives?|records?)\b", re.IGNORECASE)
+# Talk about the material in a picture prompt ("this passage", "the excerpt", "the passage reveals"). The generator's
+# ABOUT_THE_TEXT with one exemption: in a picture "the passage" and "the section" are also a corridor and a part of a
+# building ("doors line the passage"), so those two count only when what follows tells about the text (the passage says,
+# reveals, shows, later describes...; never "goes on" or "ends with", which a corridor does). "The material" counts the
+# same way, never before "gives" or "shows" ("the dark material gives at the shoulder", "shows wear" are cloth).
+_TELLS = (r"(?:(?:later|also|then|first|only|never|clearly|plainly|already|earlier|soon|now)\s+)?"
+          r"(?:says?|said|describ\w*|tells?|told|mention\w*|stat(?:es?|ed|ing)|notes?|noted|records?|recorded|reveal\w*|"
+          r"shows?|showed|shown|explain\w*|suggest\w*|impl(?:y|ies|ied)|hint\w*|indicat\w*|depict\w*|portray\w*|"
+          r"recount\w*|narrat\w*|confirm\w*|establish\w*|makes? (?:it )?clear)\b")
+ABOUT_THE_TEXT = re.compile(r"\b(?:this|the) (?:excerpt|chunk)s?\b|\bthis (?:passage|section)\b"
+                            r"|\b(?:in|from|of|by) this material\b"
+                            r"|\bthe (?:passage|section)s?\s+(?:later\b|" + _TELLS + ")"
+                            r"|\bthe material\s+(?!gives?\b|show(?:s|ed|n)?\b)" + _TELLS, re.IGNORECASE)
 assert _ABOUT_THE_TEXT.pattern.startswith(r"\b(this|the) (passage|section|excerpt|chunk)")
-_LABEL_CAPS = re.compile(r"\bFigure ([A-D])\b")
+_LABEL_CAPS = re.compile(rf"\bFigure ([{LABELS}])\b")
 
 
 def lower_labels(text: str) -> str:

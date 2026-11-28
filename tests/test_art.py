@@ -3843,6 +3843,40 @@ def test_a_corridor_called_the_passage_and_a_capital_label_inside_a_sentence_pas
         assert art.ABOUT_THE_TEXT.search(talk)
 
 
+def test_talk_about_the_text_is_caught_in_a_picture_and_a_corridor_or_cloth_is_not():
+    # the generator's forms still count ("this passage", "the excerpt", "the chunk"), and "the passage" or "the section"
+    # when what follows tells about the text; a corridor, a part of a wall and cloth are picture words
+    for talk in ("The passage reveals she is already dead.", "In the excerpt he is her son.",
+                 "The passage later describes the killing.", "This passage shows a gate.", "The passage describes a gate.",
+                 "As the section explains, he is old.", "The passages make it clear she is his wife.", "The chunk ends here.",
+                 "the material says so", "The material reveals her as his wife.", "This section shows a gate."):
+        assert art.ABOUT_THE_TEXT.search(talk), talk
+    for word in ("More locked doors line the passage.", "The dark material gives at the shoulder.",
+                 "The material shows wear at the elbows.", "The passage goes on into darkness.", "The passage ends with a door.",
+                 "A lamp burns in the passage, its light low.", "The section of wall is cracked.",
+                 "She walks down the passage toward figure A."):
+        assert not art.ABOUT_THE_TEXT.search(word), word
+
+
+def test_a_scene_saying_the_passage_reveals_is_rewritten_and_cloth_that_gives_is_kept():
+    bk, d = comic_doc()
+    talk = SCENE + " The passage reveals she is already dead."
+    cloth = SCENE + " The dark material of her shawl gives at the shoulder."
+    t = Text(scene=[talk, talk])
+    il, _ = fresh(d, bk, t)
+    with pytest.raises(art.Dropped) as e:
+        il.make_prompt(il.job("event", "e4"))
+    assert str(e.value) == "dropped: hindsight wording in prompt" and len(t.prompts) == 2
+    assert "about the passage" in t.prompts[1]
+    t2 = Text(scene=cloth)
+    il2, _ = fresh(d, bk, t2)
+    pr = il2.make_prompt(il2.job("event", "e4"))
+    assert "The dark material of her shawl gives at the shoulder." in pr.body and len(t2.prompts) == 1
+    assert art.lower_labels("Figure A waits. He sees Figure B; Figure C runs.") == "Figure A waits. He sees figure B; figure C runs."
+    assert art.lower_labels("Figure F waits. He sees Figure E.") == "Figure F waits. He sees figure E."   # every label letter
+    assert set(art.LABELS) == set("ABCDEF")
+
+
 # ---- every figure of a scene is labelled, with or without a portrait (label-every-figure)
 
 FIGS = ["mira", "oren", "stranger", "gabriel", "bram", "lio"]
