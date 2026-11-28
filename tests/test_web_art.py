@@ -700,6 +700,7 @@ def test_the_estimate_counts_without_a_call(env):
     env.key()
     got = env.c.get("/api/art/estimate", params={"key": KEY, "style": "ink", "level": "main"}).json()
     assert env.text.prompts == [] and [c["title"] for c in got["chapters"]] == ["Chapter One", "Chapter Two"]
+    assert [c["number"] for c in got["chapters"]] == [1, 2]          # as the book states them (chapters.numbering)
     assert got["plates"] == 2 and got["portraits"] >= 1 and got["pictures"] == got["plates"] + got["portraits"]
     each = llm.image_price("gemini", GEMINI, "standard", "landscape")
     assert got["price"] == pytest.approx(2 * each + got["portraits"] * llm.image_price("gemini", GEMINI, "standard", "portrait"))

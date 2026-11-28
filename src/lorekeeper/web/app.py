@@ -30,6 +30,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import art as artmod
 from .. import ask as askmod
+from .. import chapters as chaptersmod
 from .. import epub, gating, images, llm, text
 from ..generate import slug
 from . import art as artstore
@@ -1122,11 +1123,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             story_flags[k] = [c["story"] for c in secs]
         return story_flags[k]
 
+    def toc_numbers(p: Path, book) -> list[dict]:
+        """`{kind, number}` per table-of-contents entry (`chapters.numbering` over the whole toc with its story flags):
+        the "Chapter N" the book itself states, never a position among the rows a view lists."""
+        return chaptersmod.numbering([{"title": c.title or f"Section {i + 1}", "story": f}
+                                      for i, (c, f) in enumerate(zip(book.chapters, sections_story(p, book)))])
+
     def mentions_body(book, flags: list[bool], m, eid: str) -> dict:
-        """Chapters are the story chapters, numbered 1..N in reading order. A section between two story chapters that
-        is not story (a part title, an interlude) is counted in the column of the story chapter before it."""
+        """Chapters are the story chapters, numbered 1..N in reading order (`n`, the column); `number` is the chapter
+        number the book states (`chapters.numbering`, null for a prologue or a plain title), the one to show. A section
+        between two story chapters that is not story (a part title, an interlude) is counted in the column of the story
+        chapter before it."""
         from .. import mentions
         story = [i for i, f in enumerate(flags) if f]                 # section index of story chapter n = story[n - 1]
+        nums = chaptersmod.numbering([{"title": c.title or f"Section {i + 1}", "story": f}
+                                      for i, (c, f) in enumerate(zip(book.chapters, flags))])
         body = {"total": len(story), "chapters": [], "current": None,
                 "first": None, "busiest": None, "latest": None}
         cur = m.current
@@ -1140,20 +1151,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             # up to the next story chapter; after the last one, only its own section (back matter is not folded in)
             end = story[n + 1] if n + 1 < len(story) else i + 1
             chapters.append({"n": n + 1, "title": book.chapters[i].title or f"Section {i + 1}",
-                             "count": sum(counts[i:min(end, cur + 1)])})
+                             "number": nums[i]["number"], "count": sum(counts[i:min(end, cur + 1)])})
         body["chapters"] = chapters
         seen = [c for c in chapters if c["count"]]
         if not seen:
             return body
         busiest = max(seen, key=lambda c: (c["count"], -c["n"]))
-        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"]}
-        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "count": busiest["count"]}
-        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"]}
+        body["first"] = {"n": seen[0]["n"], "title": seen[0]["title"], "number": seen[0]["number"]}
+        body["busiest"] = {"n": busiest["n"], "title": busiest["title"], "number": busiest["number"],
+                           "count": busiest["count"]}
+        body["latest"] = {"n": seen[-1]["n"], "title": seen[-1]["title"], "number": seen[-1]["number"]}
         if flags[cur]:                                                # an interlude or back matter has no current chapter
             first = book.chapters[cur].start
             u16 = lambda t, i: len(t[:i].encode("utf-16-le")) // 2   # noqa: E731
             sn = mentions.snippets(book.blocks, m.spans.get(eid, []))
-            body["current"] = {"n": story.index(cur) + 1, "count": counts[cur],
+            body["current"] = {"n": story.index(cur) + 1, "number": nums[cur]["number"], "count": counts[cur],
                                "snippets": [{**x, "para": x["seq"] - first + 1,
                                              "start": u16(x["text"], x["start"]), "end": u16(x["text"], x["end"])}
                                             for x in sn]}
@@ -1218,14 +1230,18 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     def read_toc(key: str):
         """Every chapter of the index's own edition, numbered as the Reader's chapter map (`n`), with the blocks it
         spans and its words. `story` is the build form's front and back matter rule (absent for a book read with no
-        table of contents)."""
+        table of contents). `kind` and `number` are `chapters.numbering` over the whole table of contents: the
+        "Chapter N" to show (null: the title alone); a book with no table of contents is one `other` entry with none."""
         p, book, refusal = read_book(key)
         if refusal:
             return refusal
         spans = readmod.chapter_spans(book)
         if book.chapters:
-            for c, flag in zip(spans, sections_story(p, book)):
-                c["story"] = flag
+            for c, flag, num in zip(spans, sections_story(p, book), toc_numbers(p, book)):
+                c.update(story=flag, kind=num["kind"], number=num["number"])
+        else:
+            for c in spans:
+                c.update(kind="other", number=None)
         return {"chapters": spans, "blocks": len(book.blocks), "words": sum(c["words"] for c in spans)}
 
     @app.get("/api/library/{key}/read")
@@ -1956,10 +1972,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     got[k] += g[k]
                 extra_max += max(0, g.get("portraits_max", g["new_portraits"]) - g["new_portraits"])
         rows = story_rows(il, got["chapters"])
+        # each row's "Chapter N" as the book states it (`chapters.numbering` over the whole toc, keyed by plan number n,
+        # a toc position); with no toc the plan's rows are the recaps' titles in order
+        pe = library.edition_path(ctx["hash"])
+        bk = parsed(pe) if pe else None
+        if bk is not None and bk.chapters:
+            numbers = {i + 1: x for i, x in enumerate(toc_numbers(pe, bk))}
+        else:
+            numbers = dict(zip([c["n"] for c in got["chapters"]],
+                               chaptersmod.numbering([c["title"] for c in got["chapters"]])))
         # the totals and the price are what a run would still draw (it skips what the set holds); `planned` the full plan
         plates = sum(c["pictures"] - c["drawn"] for c in got["chapters"] if c["chosen"])
         chapters_ = [{"n": c["n"], "title": c["title"], "drawable": c["drawable"], "screened": c["drawable"] is not None,
-                      "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"]}
+                      "events": c["events"], "pictures": c["pictures"], "drawn": c["drawn"], "chosen": c["chosen"],
+                      "number": numbers.get(c["n"], {}).get("number")}
                      for c in rows]
         ports = got["new_portraits"]
         prov = provider or getattr(image, "provider", None) or next(iter(llm.IMAGE_PROVIDERS))
