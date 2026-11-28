@@ -145,7 +145,7 @@ def test_a_pictures_run_on_an_existing_index_draws_the_set_and_never_writes_the_
     assert {"plate", "portrait"} <= kinds and got["screened"]
     pic = got["pictures"][0]
     r = env.c.get(pic["url"])
-    assert r.status_code == 200 and r.content.startswith(b"\x89PNG") and r.headers["cache-control"] == "max-age=86400"
+    assert r.status_code == 200 and r.content.startswith(b"\x89PNG") and r.headers["cache-control"] == "private, max-age=31536000, immutable"
     assert r.headers["content-type"] == "image/png"
     events = [json.loads(x) for x in (env.data / "jobs" / f"{done['id']}.events.jsonl").read_text().splitlines()]
     assert {"type": "phase", "phase": "art"}.items() <= next(x for x in events if x.get("phase") == "art").items()
@@ -2121,3 +2121,12 @@ def test_a_same_prompt_redraw_of_an_older_portrait_takes_the_mid_chest_frame(env
     r = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={})
     assert r.status_code == 200, r.text
     assert env.image.calls[-1]["prompt"] == "A woman by a window, drawn in ink."
+
+
+def test_the_art_manifest_has_an_etag_and_answers_304(env):
+    env.key()
+    r = env.c.get(f"/api/library/{KEY}/art")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers["etag"]
+    again = env.c.get(f"/api/library/{KEY}/art", headers={"If-None-Match": r.headers["etag"]})
+    assert again.status_code == 304 and again.headers["etag"] == r.headers["etag"] and not again.content
+    assert env.c.get(f"/api/library/{KEY}/art", headers={"If-None-Match": '"other"'}).status_code == 200
