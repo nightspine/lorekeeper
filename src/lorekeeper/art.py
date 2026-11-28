@@ -1375,10 +1375,11 @@ class Illustrator:
         softening rewrite is written by the writer of its kind. `image` draws the scenes and `portrait_image` (else `image`)
         the portraits, places and things. `place_refs`: a scene's reference slots its labelled figures leave free take the
         picture of the place it happens at, then of the things it shows (an experiment, off until measured). `check`: after
-        each drawn picture the picker looks for gross drawing faults (`check_picture`) and, on any, the image model fixes the
-        picture once (`fix`), never checked again; the picker must see pictures, else checking stops with one log line.
-        `checker` (else the picker) makes the drawing-fault check alone, when the picker cannot see pictures (the web app's
-        sheet: a model that can, every other choosing call left to the picker).
+        each drawn picture the picker looks for drawing faults (`check_picture`) and, on a major one, the image model fixes
+        the major ones once, then the picker compares the two pictures (`verify_fix`): a fix that changed nothing keeps the
+        first picture; none is checked again; the picker must see pictures, else checking stops with one log line.
+        `checker` (else the picker) makes the drawing-fault check and the verification alone, when the picker cannot see
+        pictures (the web app's sheet: a model that can, every other choosing call left to the picker).
 
         `portraits` is "main", "all", None, or a collection of entity ids: then only those people and creatures get portraits,
         whatever the main-cast rule says (the Reader's "Through the book so far" for one entry), with the versions a bulk run
