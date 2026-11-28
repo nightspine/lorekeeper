@@ -1,6 +1,6 @@
 // The Ask tab's rule for when a thread must go: revealsLess(snapshot, view, position). Run by tests/test_js_ask.py.
 import assert from "node:assert/strict";
-import { anyRevealsLess, draftAfterInput, historyFor, revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
+import { anyRevealsLess, draftAfterInput, historyFor, passageBlocks, passageLabel, passageOpenable, readSource, revealsLess, snapshot } from "../../src/lorekeeper/web/static/js/ask.js";
 
 const ent = (id, name, aliases = [], extra = {}) => ({ id, name, aliases, profile: null, facets: [], history: [], ...extra });
 const view = (o = {}) => ({ entities: [ent("E1", "Holmes")], relations: [], relationHistory: [], events: [{ id: "V1" }], chapters: [{ id: "C1" }], recap: { id: "R1" }, ...o });
@@ -90,4 +90,83 @@ t("book 2 to book 3 with book 2 not finished clears (its items left the view)", 
 t("another series or a standalone index clears", () => {
   assert.equal(revealsLess(s2, bookView(["a1", "a2"]), p3({ series: "T" })), true);
   assert.equal(revealsLess(s2, bookView(["a1", "a2"]), pos({ key: "solo", series: null })), true);
+});
+
+// The position as a word fraction: two places inside one anchor's span differ in which paragraphs are before them.
+t("back by p inside one anchor clears", () => {
+  const was = snapshot(view(), pos({ p: 0.42 }));
+  assert.equal(revealsLess(was, view(), pos({ p: 0.41 })), true);
+  assert.equal(revealsLess(was, view(), pos({ p: 0.42 })), false);
+  assert.equal(revealsLess(was, view(), pos({ p: 0.5 })), false);
+});
+t("p of another book is not compared", () => {
+  const was = snapshot(view(), pos({ p: 0.9 }));
+  assert.equal(revealsLess(was, view(), pos({ rank: 2, book: "b2", ord: 0, p: 0.01 })), false);
+});
+t("a snapshot without p keeps the anchor rule", () => {
+  assert.equal(revealsLess(snapshot(view(), pos()), view(), pos({ p: 0 })), false);
+});
+t("a draft typed at a later p is cleared on any move back", () => {
+  const d = draftAfterInput(null, "What did he see?", take(view(), pos({ p: 0.3 })));
+  assert.equal(anyRevealsLess([d], view(), pos({ p: 0.2999 })), true);
+});
+
+// Passage cites: a link only while the passage lies wholly before the frontier block of the book being read.
+const pc = (o = {}) => ({ kind: "passage", id: "p::40", book: null, seq: 40, end: 43, chapter: "CHAPTER VI", number: 6, ...o });
+t("a passage before the frontier opens", () => assert.equal(passageOpenable(pc(), { book: null, frontier: 44 }), true));
+t("a passage at or past the frontier never opens", () => {
+  assert.equal(passageOpenable(pc(), { book: null, frontier: 43 }), false);   // its last block is the one being read
+  assert.equal(passageOpenable(pc({ seq: 50, end: 52 }), { book: null, frontier: 44 }), false);
+  assert.equal(passageOpenable(pc({ end: undefined, seq: 44 }), { book: null, frontier: 44 }), false);
+  assert.equal(passageOpenable(pc(), { book: null, frontier: 40 }), false);
+});
+t("no frontier, another book or a bad seq never opens", () => {
+  assert.equal(passageOpenable(pc(), { book: null, frontier: null }), false);
+  assert.equal(passageOpenable(pc({ book: "b1" }), { book: "b2", frontier: 9999 }), false);
+  assert.equal(passageOpenable(pc({ seq: "40" }), { book: null, frontier: 9999 }), false);
+  assert.equal(passageOpenable(pc({ end: 39 }), { book: null, frontier: 9999 }), false);
+  assert.equal(passageOpenable(pc({ end: 41.5 }), { book: null, frontier: 9999 }), false);
+  assert.equal(passageOpenable({ ...pc(), kind: "event" }, { book: null, frontier: 9999 }), false);
+});
+t("a series passage of the book being read opens", () => assert.equal(passageOpenable(pc({ book: "b2" }), { book: "b2", frontier: 44 }), true));
+t("passage labels", () => {
+  const chapter = (c) => (c.number != null ? `Chapter ${c.number}` : null);
+  assert.equal(passageLabel(pc(), { book: null, frontier: 44, chapter }), "Chapter 6");
+  assert.equal(passageLabel(pc({ number: null }), { book: null, frontier: 44, chapter }), "CHAPTER VI");
+  assert.equal(passageLabel(pc({ number: null, chapter: null }), { book: null, frontier: 44, chapter }), "The book");
+  assert.equal(passageLabel(pc({ book: "b1", number: 3 }), { book: "b2", chapter, short: (k) => (k === "b1" ? "Empire of the Vampire" : k) }),
+    "Empire of the Vampire, Chapter 3");
+  assert.equal(passageLabel(pc({ book: "b1", number: null, chapter: "" }), { book: "b2", chapter, short: () => "Book One" }), "Book One");
+});
+t("history never carries passage cites", () => {
+  const h = historyFor([{ q: "q", state: "ok", a: { answer: "a", cites: [{ id: "E1", kind: "entity" }, { id: "p::40", kind: "passage" }] } }]);
+  assert.deepEqual(h[0].cites, ["E1"]);
+});
+t("the remembered source", () => {
+  const store = (v) => ({ getItem: () => v });
+  assert.equal(readSource(store(null)), "both");
+  assert.equal(readSource(store("book")), "book");
+  assert.equal(readSource(store("index")), "index");
+  assert.equal(readSource(store("everything")), "both");
+  assert.equal(readSource({ getItem: () => { throw new Error("denied"); } }), "both");
+});
+
+t("a passage of this book at or past the position is only 'The book'", () => {
+  const chapter = () => "Chapter 27";
+  assert.equal(passageLabel(pc(), { book: null, frontier: 43, chapter }), "The book");   // its last block is being read
+  assert.equal(passageLabel(pc({ seq: 1900, end: 1901 }), { book: null, frontier: 44, chapter }), "The book");
+  assert.equal(passageLabel(pc(), { book: null, frontier: null, chapter }), "The book");   // no exact map
+  assert.equal(passageLabel(pc({ book: "b2" }), { book: "b2", frontier: 40, chapter }), "The book");
+  assert.equal(passageLabel(pc({ book: "b2" }), { book: "b2", frontier: 44, chapter }), "Chapter 27");
+});
+t("the passage sheet shows only cited blocks before the frontier", () => {
+  const blocks = [38, 39, 40, 41, 42, 43, 44].map((seq) => ({ seq, text: `b${seq}` }));
+  const seqs = (fr, c = pc()) => passageBlocks(blocks, c, fr).map((b) => b.seq);
+  assert.deepEqual(seqs(100), [40, 41, 42, 43]);
+  assert.deepEqual(seqs(42), [40, 41]);       // the block being read and later never show
+  assert.deepEqual(seqs(40), []);
+  assert.deepEqual(seqs(null), []);
+  assert.deepEqual(seqs(100, pc({ end: undefined })), [40]);
+  assert.deepEqual(passageBlocks([{ seq: "41", text: "x" }, { seq: 41, text: null }, null], pc(), 100), []);
+  assert.deepEqual(passageBlocks(undefined, pc(), 100), []);
 });
