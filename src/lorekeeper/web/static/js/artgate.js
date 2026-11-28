@@ -90,3 +90,19 @@ export function refParts(ref) {
   if (!id) return null;
   return { id, set: typeof ref.set === "string" ? ref.set : (m ? m[2] : null), url: m ? ref.url : null };
 }
+
+/** A comic's panels as the server sent them: event ids in panel order (strings only, at most 6, each once); [] otherwise. */
+export function cleanPanels(list) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const id of list) if (typeof id === "string" && id && !out.includes(id) && out.length < 6) out.push(id);
+  return out;
+}
+
+/** The numbered captions of a comic's panels: each id's summary from the reader's view now (`text(id)`, null when it is
+ *  not visible there), an id it has no summary for left out. The numbers are the panels' own, so a gap stays a gap. */
+export function panelCaptions(panels, text) {
+  const out = [];
+  cleanPanels(panels).forEach((id, n) => { const t = text ? text(id) : null; if (typeof t === "string" && t) out.push({ n: n + 1, text: t }); });
+  return out;
+}

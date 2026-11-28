@@ -5,6 +5,7 @@
 // /api/art/... URLs built here from ids the server sent, never from a path or URL found in the manifest.
 import { api } from "./api.js";
 import { choiceSentence, composePrompt, promptParts, restyle, squash } from "./artprompt.js";
+import { cleanPanels, panelCaptions } from "./artgate.js";
 import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 import { galleryName, gallerySentence, loadStyles, savedStyle, styleRow } from "./styles.js";
@@ -21,7 +22,7 @@ export const QUALITIES = [["draft", "Draft"], ["standard", "Standard"], ["best",
 export const SHAPES = [["landscape", "Landscape"], ["portrait", "Portrait"], ["square", "Square"]];
 /** The picture kind an entry type is drawn as; concepts and terms are not drawn. */
 export const KIND_OF_TYPE = { person: "portrait", creature: "portrait", group: "portrait", place: "place", object: "thing" };
-const SHAPE_OF = { plate: "landscape", event: "landscape", portrait: "portrait", place: "landscape", thing: "landscape" };
+const SHAPE_OF = { plate: "landscape", event: "landscape", comic: "portrait", portrait: "portrait", place: "landscape", thing: "landscape" };
 export const ENTITY_KINDS = new Set(["portrait", "place", "thing"]);
 /** The image providers' names, for "on Gemini" (the record holds the id). */
 const PROVIDER_LABEL = { gemini: "Gemini", openai: "OpenAI" };
@@ -329,6 +330,9 @@ export function cleanFigures(list) {
  * name from the reader's own view (null: not visible there, so just "Figure A"), `thumb(figure)` the picture's URL or null
  * (the caller decides what may show). Only labels in `text` (when given) are listed. Null when there is nothing to list.
  */
+const panelList = (caps, cls, label) => (caps.length ? h(`ol.${cls}`, { "aria-label": label },
+  caps.map((c) => h("li", { value: String(c.n) }, h("span.panel-n.num", `${c.n}`), h("span", c.text)))) : null);
+
 export function figureLines(figures, { text = null, name = () => null, thumb = () => null } = {}) {
   const used = text == null ? null : new Set(labelsIn(text));
   const rows = cleanFigures(figures).filter((f) => !used || used.has(f.label));
@@ -357,6 +361,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   let i = Math.min(Math.max(0, index), items.length - 1);
   const stage = h("div.lb-stage");
   const caption = h("p.lb-caption");
+  const panelsBox = h("div.lb-panels-box");   // a comic's captions, one per panel, from the reader's view now
   const how = h("div.lb-how");
   const acts = h("div.lb-acts");
   const count = h("span.lb-count.subtle");
@@ -366,7 +371,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   const title = h("h2#lb-title.sr-only");
   const toasts = h("div.toasts.lb-toasts", { "aria-live": "polite" });
   const dlg = h("dialog.lightbox", { "aria-labelledby": "lb-title" },
-    h("div.lb-panel", h("header.lb-head", title, count, closeBtn), h("div.lb-main", prev, stage, next), h("div.lb-foot", caption, acts, how)), toasts);
+    h("div.lb-panel", h("header.lb-head", title, count, closeBtn), h("div.lb-main", prev, stage, next), h("div.lb-foot", caption, panelsBox, acts, how)), toasts);
   const close = () => { closeLocked(dlg); };
   dlg.addEventListener("close", () => { dlg.remove(); if (returnTo?.isConnected) returnTo.focus({ preventScroll: true }); });
   dlg.addEventListener("click", (e) => { if (e.target === dlg) close(); });
@@ -387,6 +392,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     title.textContent = it.caption || "Picture";
     clear(stage, artImg(it.src, it.caption, "lb-img", { eager: true }));
     caption.textContent = it.caption || "";
+    paintPanels();
     count.textContent = items.length > 1 ? `${i + 1} of ${items.length}` : "";
     prev.hidden = next.hidden = items.length < 2;
     prev.disabled = i === 0; next.disabled = i === items.length - 1;
@@ -521,7 +527,12 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
-  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); }
+  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); paintPanels(); }
+  /** A comic's captions under the picture: never drawn into it, so they come from the view at the position now. */
+  function paintPanels() {
+    const it = items[i];
+    clear(panelsBox, it?.rec?.kind === "comic" ? panelList(panelCaptions(it.rec.panels, it.panelText), "lb-panels", "Panels") : null);
+  }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
     // While the lightbox is open its own stack; after it closed, the modal it was opened from (the entry drawer, a sheet),
@@ -619,7 +630,7 @@ export function modalToasts() {
 /**
  * "Draw a picture" for one item the reader can see. `opts`:
  *   key          the index's library key
- *   kind         plate | event | portrait | place | thing
+ *   kind         plate | event | comic | portrait | place | thing
  *   target       the chapter title, event id or entity id the server knows it by
  *   title        what the sheet is about ("Chapter V", "Jonathan Harker"), shown as the title
  *   p            the reader's frontier anchor (the server refuses a target not yet visible)
@@ -632,6 +643,7 @@ export function modalToasts() {
  *   reached(anchor)                   whether an anchor is at or before the position now: a prompt or rewrite that comes
  *                                     back written further on (the reader moved back meanwhile) is dropped and written again
  *   onDrawn(rec, slug)                after a picture was filed (slug is the server's, null when it did not say)
+ *   panelText(event)   a comic panel's caption: the event's summary from the reader's view (null: not visible there)
  *   figureName(entity)   a figure's name from the reader's view (null: not visible there, so only \"Figure A\")
  *   replaces     a picture id of the art set: Redraw with a new prompt. The sheet is titled "Redraw", Draw sends it and the
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
@@ -659,7 +671,7 @@ export async function openPictureSheet(opts) {
     quality: d.quality, provider: provs.find((p) => p.id === d.provider) || provs[0], model: null,
     prompt: "", written: "", price: null, asked: null, slug: null,
     parts: null, sentence: null, missing: false,   // the prompt's parts, the style sentence in it now, and whether that is lost
-    busy: false, closed: false, figures: [],   // figures: the labelled figures of the prompt on screen
+    busy: false, closed: false, figures: [], panels: [],   // panels: a comic's event ids, in panel order, as the server chose them   // figures: the labelled figures of the prompt on screen
     mode: "now",   // "now": one portrait at the position; "through": the entry's portraits through the book so far, as a run
     est: null,     // through: { ask, r, error } the estimate for the choices and position in `ask` (a JSON key)
     writer: null,   // the text model that writes the prompt ({ provider, model }); null: the server's default, the strong tier
@@ -705,7 +717,7 @@ export async function openPictureSheet(opts) {
   const startBtn = h("button.btn.primary", { type: "button", disabled: true, hidden: true }, icon("sparkle"), "Start");
   const footNote = h("span.art-price.num", { role: "status" });
   const replaces = typeof opts.replaces === "string" && ID_RE.test(opts.replaces) ? opts.replaces : null;
-  const sh = sheet({ title: `${replaces ? "Redraw" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
+  const sh = sheet({ title: `${replaces ? "Redraw" : opts.kind === "comic" ? "Make a comic" : "Draw a picture"}${opts.title ? `: ${opts.title}` : ""}`, className: "art-sheet", content: body,
     footer: h("div.art-foot", footNote, drawBtn, startBtn),
     // Always closable: a prompt in flight is abandoned; a drawing already sent is not (the server files it either way), and
     // when it lands its toast, with Undo for a redraw, shows where the sheet was opened from. An edited prompt is asked about first.
@@ -724,7 +736,7 @@ export async function openPictureSheet(opts) {
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
   sh.current = () => ({ kind: st.kind, target: st.target });
-  sh.refreshFigures = () => paintFigures();
+  sh.refreshFigures = () => { paintFigures(); paintPanels(); };
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
   /** The anchors the text on screen was written up to: the prompt's (the picture's own, any world-note hold included) and
    *  the world note's own anchor. The Reader checks them against the position as it checks the moments. */
@@ -734,7 +746,7 @@ export async function openPictureSheet(opts) {
     opts.world = world || null;
     opts.canEditWorld = canEditWorld;   // decided again for the position now: a note hidden here is never written over
     st.prompt = st.written = "";
-    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = []; st.panels = [];
     if (st.mode === "through") { paintFoot(); return; }   // counted again up to the position now; the prompt waits for "now"
     write();
   };
@@ -752,7 +764,7 @@ export async function openPictureSheet(opts) {
    *  once; a second miss says so and waits for the person. */
   function moved(retried) {
     st.prompt = st.written = "";
-    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = [];
+    st.anchor = null; st.promptFor = null; st.asked = null; st.price = null; st.parts = null; st.sentence = null; st.missing = false; st.figures = []; st.panels = [];
     textarea.value = "";
     if (!retried) { write({ retried: true }); return; }
     clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", "Your position moved while the prompt was being written.")),
@@ -785,6 +797,7 @@ export async function openPictureSheet(opts) {
         st.prompt = st.written = typeof r.prompt === "string" ? r.prompt : "";
       }
       st.figures = cleanFigures(r.figures);
+      st.panels = cleanPanels(r.panels);
       st.price = typeof r.price === "number" ? r.price : null;
       st.anchor = typeof r.anchor === "string" ? r.anchor : null;
       st.asked = asked;
@@ -798,7 +811,7 @@ export async function openPictureSheet(opts) {
       if (mine !== gen || st.closed) return;
       st.busy = false; ctrl = null;
       const why = promptError(e);
-      if (st.promptFor && e.code !== "not-visible") {
+      if (st.promptFor && e.code !== "not-visible" && e.code !== "too-few-moments") {
         // A prompt was already on screen: keep it, with the style and moment it was written for, and say why the new one failed.
         Object.assign(st, st.promptFor);
         paint();
@@ -806,7 +819,7 @@ export async function openPictureSheet(opts) {
         return;
       }
       clear(body, modePick(), h("div.art-error", { role: "alert" }, h("p", why)),
-        e.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
+        e.code === "not-visible" || e.code === "too-few-moments" ? null : h("button.btn", { type: "button", on: { click: write } }, "Try again"));
       paintFoot();
     }
   }
@@ -837,6 +850,7 @@ export async function openPictureSheet(opts) {
       } else throw new Error("No prompt came back");
       st.missing = false;
       st.figures = cleanFigures(r.figures);
+      if (Array.isArray(r.panels)) st.panels = cleanPanels(r.panels);
       if (typeof r.price === "number") st.price = r.price;
       if (typeof r.anchor === "string") st.anchor = r.anchor;
       st.asked = asked; st.promptStyle = asked.style;
@@ -844,6 +858,7 @@ export async function openPictureSheet(opts) {
       textarea.value = st.prompt;
       paintStyleNote();
       paintFigures();
+      paintPanels();
       clear(err, h("p.art-ok", "Rewritten so it can be drawn. Read it, change anything, then Draw."));
       paintFoot();
       textarea.focus();
@@ -851,7 +866,7 @@ export async function openPictureSheet(opts) {
       if (mine !== gen || st.closed) return;
       st.busy = false; ctrl = null;
       clear(err, h("p", promptError(e2).replace(/^Couldn't write a prompt/, "Couldn't rewrite it")),
-        e2.code === "not-visible" ? null : h("button.btn", { type: "button", on: { click: () => soften(text, reason) } }, "Try again"));
+        e2.code === "not-visible" || e2.code === "too-few-moments" ? null : h("button.btn", { type: "button", on: { click: () => soften(text, reason) } }, "Try again"));
       paintFoot();
     }
   }
@@ -874,6 +889,16 @@ export async function openPictureSheet(opts) {
     // the reply's `ref` is the reference's URL (a string; `{url}` accepted too), only ever an /api/art/<hash>/<set>/<id> address
     const pic = (f) => refParts(f.ref)?.url || null;
     clear(figuresBox, figureLines(st.figures, { text: st.prompt, name: opts.figureName || undefined, thumb: pic }));
+  }
+  /** A comic's panels in place of the moment list: "5 panels", then each panel's moment as the reader's view says it. */
+  const panelsBox = h("div.art-panels-box");
+  function paintPanels() {
+    if (st.kind !== "comic") { clear(panelsBox); return; }
+    const caps = panelCaptions(st.panels, opts.panelText);
+    const n = st.panels.length;
+    clear(panelsBox, n ? h("div.art-field", h("span.label", `${n} panel${n === 1 ? "" : "s"}`),
+      panelList(caps, "art-panels", "Panels"),
+      h("p.hint", "Each panel's moment is shown under the picture, never drawn into it.")) : null);
   }
   const styleNote = h("p.hint.art-style-note", { role: "status" });
   function paintStyleNote() {
@@ -951,6 +976,7 @@ export async function openPictureSheet(opts) {
       modeSeg,
       opts.drawnLine ? h("p.art-drawn.subtle", opts.drawnLine) : null,
       moments,
+      panelsBox,
       h("div.art-field", h("label.label", { for: "art-prompt" }, "Prompt"), textarea,
         h("p.hint", "Written from what you have read so far. Change anything; the picture is drawn from this text only. ",
           h("button.linkish", { type: "button", on: { click: write } }, "Write it again")),
@@ -969,6 +995,7 @@ export async function openPictureSheet(opts) {
     textarea.id = "art-prompt";
     paintStyleNote();
     paintFigures();
+    paintPanels();
     paintFoot();
   }
   /** The person's own note on the book's world, which the prompt writer reads with every picture of this book (an
@@ -1211,7 +1238,7 @@ export async function openPictureSheet(opts) {
         // read before Draw. A second refusal offers it again.
         const fix = h("button.btn", { type: "button", on: { click: () => soften(sent, e.message || "") } }, icon("sparkle"), "Rewrite it so it can be drawn");
         clear(err, h("p", `The provider would not draw this: ${e.message}. Change the prompt and try again, or have it rewritten.`), fix);
-      } else clear(err, h("p", `Couldn't draw it: ${e.message}`));
+      } else clear(err, h("p", e.code === "not-visible" || e.code === "too-few-moments" || e.code === "bad-position" ? promptError(e) : `Couldn't draw it: ${e.message}`));
       paintFoot();
       textarea.focus();
     }
@@ -1246,6 +1273,8 @@ function runError(e, what) {
  *  ("a name the picture must not show: Hagrid"), when the server could say it without revealing anything. */
 function promptError(e) {
   if (e.code === "not-visible") return "This isn't revealed at your position yet.";
+  if (e.code === "too-few-moments") return "A comic needs at least two moments of this chapter that you have reached. Read on and try again.";
+  if (e.code === "bad-position") return "Your position doesn't fit this book. Move the position and try again.";
   if (e.code === "dropped") {
     if (e.why) return `The prompt that came back had ${e.why}. Write it again for another one.`;
     const reason = String(e.message || "").replace(/^(dropped|skipped):\s*/, "");

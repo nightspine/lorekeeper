@@ -1397,7 +1397,7 @@ export function mountReader(root) {
       summary ? icon("chevron") : null);
   }
 
-  /** One book on the rail. `items` ([{ label, title, body, cls, id, badge, pin }]) are in display order: the fold keeps the first `NEAR`
+  /** One book on the rail. `items` ([{ label, title, body, cls, id, badge, action, pin }]) are in display order: the fold keeps the first `NEAR`
    *  and any `pin`ned item. `newest` only picks the word in the expanded button; `raw` is an earlier book's events block ({ total, build(full) }). */
   function bookBlock(key, items, { current, newest, noun = "chapter", repaint, none, raw }) {
     const all = s.bkAll.has(bkKey(key));
@@ -1405,7 +1405,7 @@ export function mountReader(root) {
     const shown = !folded ? items : items.filter((it, i) => i < NEAR || it.pin);
     const rail = items.length ? h("ol.ch-rail", shown.map((it) => h(`li.ch-item${it.cls ? `.${it.cls}` : ""}`, { "data-chapter": it.id || null },
       it.label ? h("span.ch-label", it.label) : null,
-      it.title ? h("div.ch-name", it.title, it.badge || null) : null,
+      it.title ? h("div.ch-name", it.title, it.badge || null, it.action || null) : null,
       it.body))) : none ? h("p.muted.book-none", none) : null;
     const total = raw ? raw.total : items.length;
     const toggle = total > NEAR ? h("button.btn.ch-all", { type: "button", dataset: { book: bkKey(key) }, "aria-expanded": String(all),
@@ -1782,10 +1782,15 @@ export function mountReader(root) {
     const inRow = (events) => { const e = events.filter((ev) => keep.has(ev)); return s.newestFirst ? e.reverse() : e; };
     const rowBody = (events, total = events.length) => (events.length ? h("ol.tl-list", sceneRuns(events).map((run) => [run.setting ? settingHeading(run.setting) : null, run.events.map((ev) => eventRow(ev, { draw: true }))]))
       : h("p.muted.tl-none", total ? "Nothing to show with these filters." : "No events in this chapter."));
-    const rowItems = (rows) => rows.map((r, i) => {
+    // A chapter's latest comic sits at the top of its row (the book being read, or a finished earlier one), and the book
+    // being read has "Make a comic" beside the chapter title.
+    const rowItems = (rows, book = s.series ? s.book : null) => rows.map((r, i) => {
       const evs = inRow(r.events);
-      return { id: null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title),
-        cls: r.now ? "now" : r.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "", body: rowBody(evs, r.events.length) };
+      const current = !s.series || book === s.book;
+      const comic = comicNode(comicsOf(r, book), tidyTitle(r.title));
+      const body = rowBody(evs, r.events.length);
+      return { id: null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), action: current ? comicButton(r) : null,
+        cls: r.now ? "now" : r.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "", body: comic ? h("div.tl-row-body", comic, body) : body };
     });
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
       : s.tlTurns ? ["No turning points yet", "Nothing read so far has changed the course of the story."]
@@ -1804,7 +1809,7 @@ export function mountReader(root) {
     const earlierKeys = order.filter((b) => b !== s.book && all.some((ev) => ev.book === b));
     const earlierBlocks = (s.newestFirst ? [...earlierKeys].reverse() : earlierKeys).map((b) => {
       const rowsB = earlierRows(b, chapterGroups().filter((g) => g.book === b));
-      if (rowsB.length) return bookBlock(b, ordered(rowItems(rowsB)), { current: false, newest: s.newestFirst, repaint });
+      if (rowsB.length) return bookBlock(b, ordered(rowItems(rowsB, b)), { current: false, newest: s.newestFirst, repaint });
       // That index has no chapter recaps: its events as one block with scene runs.
       const evs = inRow(all.filter((ev) => ev.book === b));
       if (!evs.length) return null;   // nothing to show under these filters: no block, no banner
@@ -2100,7 +2105,7 @@ export function mountReader(root) {
         position: p.set.key === s.key ? () => s.map.frontier(s.p) : null,
         // the finished earlier books, sent with a check and a fix (the same gate as a redraw)
         finished: () => (s.series ? finishedSet() || [] : []),
-        figureName: figureName, figureThumb: (rec, f) => figureThumb(p, f) };
+        figureName: figureName, figureThumb: (rec, f) => figureThumb(p, f), panelText: (id) => eventSummary(id, p.book) };
     });
   }
   /** A figure's name for the sheet and the lightbox: only from the view at the position, null when not visible there. */
@@ -2115,14 +2120,14 @@ export function mountReader(root) {
   }
   /** May a picture be redrawn from a new prompt: its kind and target are an item of the book being read, revealed now. */
   function canRewrite(rec) {
-    if (!rec || typeof rec.target !== "string" || !(rec.kind === "plate" || rec.kind === "event" || ENTITY_KINDS.has(rec.kind))) return false;
+    if (!rec || typeof rec.target !== "string" || !(rec.kind === "plate" || rec.kind === "event" || rec.kind === "comic" || ENTITY_KINDS.has(rec.kind))) return false;
     if (ENTITY_KINDS.has(rec.kind) && s.series && !inThisBook(rec.target)) return false;
     return sheetItemVisible({ kind: rec.kind, target: rec.target });
   }
   /** Redraw with a new prompt: the picture sheet for the same kind and target at the position, replacing `rec`. */
   function redrawPicture(rec, title, slug) {
     if (!canRewrite(rec)) return;
-    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : title, replaces: rec.id, replacesStyle: slug });
+    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : rec.kind === "comic" ? tidyTitle(String(title).replace(/^Comic: /, "")) : title, replaces: rec.id, replacesStyle: slug });
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {
@@ -2170,6 +2175,41 @@ export function mountReader(root) {
     return h("button.linkish.art-draw", { type: "button", on: { click: (ev) => drawPicture({ ...choices[0], title: tidyTitle(r.title), moments: choices, drawnLine: line, from: ev.currentTarget }) } },
       icon("sparkle"), "Draw a picture");
   }
+  /** The moments a comic of a chapter row can draw: its visible events that are not small moments (every one in an index
+   *  that weighs none). The server makes the same choice from the same gated events, at most 6 of them. */
+  const comicMoments = (r) => {
+    const weighed = s.view.events.some((ev) => ev.kind);
+    return r.events.filter((ev) => !weighed || ev.kind !== "minor");
+  };
+  /** "Make a comic" beside a Timeline chapter title of the book being read: one page of the chapter's moments up to the
+   *  position, with 2 or more of them visible. */
+  function comicButton(r) {
+    if (!s.art.canDraw || s.edit || comicMoments(r).length < 2) return null;
+    const title = tidyTitle(r.title);
+    return h("button.linkish.art-draw.tl-comic-btn", { type: "button", "aria-label": `Make a comic of ${title || "this chapter"}`,
+      on: { click: () => drawPicture({ kind: "comic", target: artChapterKey(r), title }) } }, icon("sparkle"), "Make a comic");
+  }
+  /** A chapter row's visible comics, oldest first (the book being read by the pipeline's chapter key; an earlier book's,
+   *  which has no chapter map here, by the row's title). */
+  function comicsOf(r, book = s.series ? s.book : null) {
+    const current = !s.series || book == null || book === s.book;
+    const key = current ? artChapterKey(r) : r.title;
+    return visiblePictures().filter((p) => p.rec.kind === "comic" && (!s.series || p.book === (book ?? s.book))
+      && (p.rec.target === key || (!current && tidyTitle(p.rec.target) === tidyTitle(r.title))))
+      .sort((a, b) => a.ord - b.ord);
+  }
+  /** The latest comic of a row, full width of the column, labelled "Comic"; the lightbox's arrows reach the older ones. */
+  function comicNode(pics, title) {
+    if (!pics.length) return null;
+    const cap = () => (title ? `Comic: ${title}` : "Comic");
+    return h("div.tl-comic", h("span.tl-comic-label", "Comic"), pictureButton(pics, pics.length - 1, cap, "art-plate.tl-comic-pic", { thumb: false }));
+  }
+  /** A panel's caption: its event's summary from the view at the position (an earlier book's by that book), else null. */
+  function eventSummary(id, book = null) {
+    const evs = s.view.events.filter((ev) => ev.id === id);
+    const ev = evs.find((x) => !s.series || !book || !x.book || x.book === book) || null;
+    return ev && typeof ev.summary === "string" ? ev.summary : null;
+  }
   /** The books of the reading order before `book` (the ones a later book's text may carry content from). */
   const booksBefore = (book) => { if (!s.series) return []; const o = s.series.orders[s.order] || []; const i = o.indexOf(book); return i > 0 ? o.slice(0, i) : []; };
   /** The background note the picture sheet shows and whether it may be written (artgate.sheetWorld), at the position now. */
@@ -2192,6 +2232,7 @@ export function mountReader(root) {
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
     const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through,
+      panelText: (id) => eventSummary(id, s.series ? s.book : null),
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
       reached: anchorReached,
@@ -2262,6 +2303,9 @@ export function mountReader(root) {
   function sheetItemVisible({ kind, target }) {
     if (kind === "event") return s.view.events.some((ev) => ev.id === target);
     if (ENTITY_KINDS.has(kind)) return Boolean(nameOf(target));
+    const rows = currentRows(chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book));
+    // A comic needs its chapter reached with two of its moments visible (the chapter may be the one being read).
+    if (kind === "comic") return rows.some((r) => artChapterKey(r) === target && comicMoments(r).length >= 2);
     return currentRows(chapterGroups().filter((g) => !s.series || !g.book || g.book === s.book)).some((r) => r.group && !r.now && artChapterKey(r) === target);
   }
   /** The toolbar's "Pictures" switch and style select: only for a book with an art set. */

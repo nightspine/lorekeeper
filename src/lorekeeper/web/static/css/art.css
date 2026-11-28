@@ -46,6 +46,20 @@
 .timeline li.tl-ev.has-pic { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 10px; }
 .timeline .tl-thumb { width: 48px; height: 48px; }
 
+/* A chapter comic: "Make a comic" quiet beside the chapter title, the latest page at the top of the row, full width of the
+   column. A page is tall, so the row shows its top panels; the lightbox shows it whole with a caption per panel. */
+.ch-name .tl-comic-btn { font-size: var(--text-sm); }
+.tl-row-body { display: grid; gap: 12px; min-width: 0; }
+.tl-comic { display: grid; gap: 6px; max-width: 72ch; width: 100%; }
+.tl-comic-label { font-size: var(--text-sm); font-weight: 600; color: var(--text-3); }
+.tl-comic-pic { width: 100%; aspect-ratio: 4 / 3; }
+.tl-comic-pic .art-img { object-position: 50% 0; }
+.art-panels-box:empty, .lb-panels-box:empty { display: none; }
+.art-panels, .lb-panels { list-style: none; margin: 0; padding: 0; display: grid; border-top: 1px solid var(--line); }
+.art-panels li, .lb-panels li { display: grid; grid-template-columns: 2ch minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: var(--text-sm); line-height: 1.45; color: var(--text-2); }
+.panel-n { color: var(--text-3); font-weight: 700; text-align: right; }
+.lb-panels li { color: var(--text); }
+
 /* ---- Cast rows: a 24px portrait in the type mark's place, the type colour as its ring ---- */
 .ent-row.has-face .ent-name .nm::before { display: none; }
 .ent-face { display: inline-block; width: 24px; height: 24px; flex: none; border-radius: 50%; overflow: hidden; background: var(--pane-2); box-shadow: 0 0 0 2px var(--t); }
