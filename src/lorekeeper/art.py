@@ -301,12 +301,13 @@ _SCENE_WRITER_FOR_COMICS = SCENE_WRITER
 # The staging of a scene (plates and events). Without it the writer ordered a scene as subject, setting, light, said nothing
 # of the instant, the bodies or where the viewer stands, and read "never a look the material does not state" as forbidding
 # any pose: the image model then drew a posed tableau. Both providers' guides put the action and the viewpoint in the
-# prompt as parts of their own. The viewpoint is asked for in plain picture words: film and photography words pulled ink
-# and paint styles toward a photograph (bench/action_prompts.py, 2026-11-28).
-SCENE_FORM = ("60 to 150 words, plain sentences in the present tense, in this order: where the viewer stands, in a few plain "
-              "words; then what happens at the instant the picture shows, who does what to whom, in strong verbs; the figures "
-              "as the other rules allow; the setting as far as the material gives it; then the light and mood. The staging "
-              "needs words: keep each look to what marks the figure, and never pass 150 words.")
+# prompt as parts of their own. The staging is asked for in plain picture words (the path of the action across the picture,
+# a viewpoint in one clause at most): film and photography words pulled ink and paint styles toward a photograph
+# (bench/action_prompts.py, 2026-11-28).
+SCENE_FORM = ("60 to 150 words, plain sentences in the present tense, in this order: what happens at the instant the picture "
+              "shows, who does what to whom, in strong verbs, and which way it travels across the picture; the figures as the "
+              "other rules allow; the setting as far as the material gives it; then the light and mood. The staging needs "
+              "words: keep each look to what marks the figure, and never pass 150 words.")
 _INSTANT = ("- The picture freezes one instant of the moment: choose the one that tells it best. When the moment is action (a "
             "blow, a fight, a chase, a leap, a fall, a struggle), choose the instant at its height: a blade halfway through "
             "its swing or meeting its mark, a body in the air, a grip at its hardest, never the stance before the action "
@@ -319,22 +320,25 @@ _BODIES = ("- Say how each figure's body carries that instant: the line of the b
            "point: one telling posture, gesture or gaze for each figure.\n")
 _NO_FILM_WORDS = ("Say it only in plain picture words, never in the words of photography or film-making, since the same "
                   "text is drawn in ink, watercolour and paint.")
-_VIEWPOINT = ("- Choose where the viewer stands for this instant, as an illustrator would: how near (the whole scene from "
-              "across the room, the figures at full length, close on the two figures, close on one face) and from where (at "
-              "eye level, from low down, from above, from behind one figure's shoulder), and how the picture is laid out (the "
-              "action along a strong slant or a level, balanced picture; what is nearest the viewer and what behind; where the "
-              "eye goes first). Near and low gives force, far gives a chase, a crowd or a place its room, level and still "
-              "suits a quiet moment. " + _NO_FILM_WORDS + "\n")
-_YOURS = ("- The instant, the poses, where the viewer stands and the layout of the picture are yours to choose, as an "
+# The path of the action across the picture, nearest the viewer: what "a low close view on a strong diagonal" did, in words
+# for directions and places in the picture only, so the style sentence keeps the medium. Where the viewer stands is one
+# clause at most.
+_MOTION = ("- Say which way the action travels across the picture, in plain words for directions and places in it: a blade "
+           "sweeping down from the upper left toward the figure in the lower right, a horse plunging from the top edge toward "
+           "a bottom corner, a lunge reaching from one side of the picture to the other. The thing in motion is nearest the "
+           "viewer, large, and its path cuts across the picture. In a quiet moment, say instead where each figure is in the "
+           "picture and where they look. Where the picture is seen from, only when it matters, in one short clause (from low "
+           "down, from above, from across the room). " + _NO_FILM_WORDS + "\n")
+_YOURS = ("- The instant, the poses, the path of the action across the picture and the layout of the picture are yours to choose, as an "
           "illustrator's would be: they are not a look the material lacks. They must fit what the material tells of the "
           "moment: who is there, what they do, with what, and where.\n")
-STAGING = _INSTANT + _BODIES + _VIEWPOINT + _YOURS
+STAGING = _INSTANT + _BODIES + _MOTION + _YOURS
 assert "English, one paragraph, " + _SCENE_FORM in SCENE_WRITER
 SCENE_WRITER = SCENE_WRITER.replace("English, one paragraph, " + _SCENE_FORM, "English, one paragraph, " + SCENE_FORM).replace(
     SCENE_HANDS, STAGING + SCENE_HANDS)
 assert SCENE_WRITER.count(STAGING) == 1 and SCENE_FORM in SCENE_WRITER
 # The version of the writers' wording, stored on every picture record as `promptVersion` (the material version is
-# NOTE_VERSION): 2 is the scene staging above; absent on a record means older.
+# NOTE_VERSION): 2 is the scene staging above, with the path of the action across the picture; absent means older.
 PROMPT_VERSION = 2
 
 # The writer of a comic page: SCENE_WRITER with one text per panel. The page's layout is code's (COMIC_FRAME), so a style
@@ -617,10 +621,10 @@ TASKS = {
     "portrait": "Write the prompt for a portrait of the entry to draw: how they look at this point. The framing and pose are given; do not state them.",
     "place": "Write the prompt for a picture of the place to draw as it looks at this point; people only where the material puts them there.",
     "thing": "Write the prompt for a picture of the thing to draw as it looks at this point, in a plain setting or the place the material puts it.",
-    "event": ("Write the prompt for one picture of the moment: one instant of it, what happens, who is in the picture, where "
-              "the viewer stands, the layout of the picture and the light."),
+    "event": ("Write the prompt for one picture of the moment: one instant of it, what happens, who is in the picture, which "
+              "way the action travels across it, and the light."),
     "plate": ("Write the prompt for one picture of the main moment of this chapter: one instant of it, what happens, who is in "
-              "the picture, where the viewer stands, the layout of the picture and the light."),
+              "the picture, which way the action travels across it, and the light."),
     "comic": "Write the prompt for a comic page of this chapter's moments: one panel for each numbered moment, in order, each what is in frame in that panel.",
 }
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a

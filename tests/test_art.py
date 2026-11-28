@@ -4565,10 +4565,10 @@ def test_the_scene_writer_stages_the_instant_in_plain_picture_words():
     assert art.STAGING in art.SCENE_WRITER and art.SCENE_FORM in art.SCENE_WRITER and art._NO_FILM_WORDS in art.SCENE_WRITER
     assert not photo.search(scene), photo.search(scene)
     for kind in ("event", "plate"):
-        assert not photo.search(art.TASKS[kind]) and "where the viewer stands" in art.TASKS[kind]
+        assert not photo.search(art.TASKS[kind]) and "which way the action travels" in art.TASKS[kind]
     assert art.SCENE_WRITER.count("Two hands each") == 1 and "never pass 150 words" in art.SCENE_FORM
     for other in (art.WRITER, art.PORTRAIT_WRITER, art.COMIC_WRITER):
-        assert "freezes one instant" not in other and "where the viewer stands" not in other
+        assert "freezes one instant" not in other and "which way the action travels" not in other
     assert art.Illustrator._form("event")[0] is art.SCENE_WRITER and art.Illustrator._form("plate")[0] is art.SCENE_WRITER
 
 
