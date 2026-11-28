@@ -519,7 +519,7 @@ def main() -> int:
     if a.restyle:
         prev = json.loads((a.restyle / "results.json").read_text())
         sentence = art.style_sentence(a.style)
-        for n in names:
+        for n in [x for x in names if x not in old]:          # an arm reused as drawn keeps its pictures
             side = {eid: {**{k: v for k, v in r.items() if k != "draws"}, "draws": [],
                           "prompt": " ".join(x for x in (r["body"], sentence, art.NO_TEXT) if x)}
                     for eid, r in prev["sides"].get(n, {}).items() if r.get("body") and any(m[1] == eid for m in moments)}
