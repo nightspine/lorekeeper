@@ -565,10 +565,8 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   /** Fix one panel of a comic page: its text as drawn (editable) and a note; the model edits the page and only that panel is
    *  taken from the result. The result view is the picture Fix's. */
-  async function panelForm(it, k, { value = null, note: noteText = "", error = "" } = {}) {
+  function panelForm(it, k, { value = null, note: noteText = "", error = "" } = {}) {
     const rec = it.rec;
-    await loadStyles().catch(() => null);
-    if (!dlg.open || items[i] !== it || it.rec !== rec) return;
     const shown = !(it.promptHiddenUntil && it.promptHiddenUntil(rec));
     const was = shown ? (panelTextsOf(rec) || [])[k - 1] || "" : "";
     const text = h("textarea.input.lb-note#lb-panel-text", { rows: "4", maxlength: String(PANEL_TEXT_CHARS), "aria-label": `What panel ${k} shows`, placeholder: "What this panel should show" });
@@ -683,7 +681,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i]));
     paintPanels();
     // the hover buttons follow `fixable` like the list; not while a result (Before / After) is on the stage
-    if (!pending && !acts.querySelector(".lb-fix")) paintStage();
+    // A form open (not a result) when the picture stops being fixable: the form goes with its buttons.
+    if (pending) return;
+    if (!acts.querySelector(".lb-fix")) paintStage();
+    else if (!fixable(items[i])) { paintActs(); paintStage(); }
   }
   /** A comic's captions under the picture: never drawn into it, so they come from the view at the position now. */
   function paintPanels() {
