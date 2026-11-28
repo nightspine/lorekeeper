@@ -4367,8 +4367,8 @@ class Illustrator:
         app builds the Illustrator with the record's own provider and model), at the record's quality and shape, editing
         the picture itself with code's words (`fix_prompt`), then one verification (`verify_fix`, both pictures) on
         `checker`, else the run's checker, unless `verify` is False. A reply with the same bytes, or a checked verdict that
-        the picture did not change or that not one fault was put right (with no faults, a note alone, that it did not
-        change), files nothing and raises FixUnchanged (its `cost` is the edit's and the verification's, billed all the
+        the picture did not change or that not one item was put right even in part (the faults and the note, its last
+        item, under one rule: `Verdict.unchanged`), files nothing and raises FixUnchanged (its `cost` is the edit's and the verification's, billed all the
         same). With `keep_doubtful` (a fix the person asked for by hand) only the same bytes raise FixUnchanged: a picture
         that changed but whose verdict says nothing was put right is filed all the same, its `verified` gaining
         `doubtful: true`, so the person sees it and decides. Otherwise the new record is filed in the same set beside the old one (the caller files it in the old one's
@@ -4467,22 +4467,22 @@ class Illustrator:
             self.report.cost += pic.cost        # billed whatever the verdict
             self.last_cost = pic.cost or self.last_cost
         final, mime, pasted, new_grid = pic.data, pic.mime or "image/png", False, None
+        asked = list(faults)
+        if text or note:      # the panel's own change comes first, so verified.results[0] is whether the panel changed
+            asked.insert(0, {"what": f"panel {k} should show: {text}" if text else note, "where": f"panel {k}", "severity": "major"})
         merged = _paste_panel(data, pic.data, k, n, old_mime)
         if merged is not None:
             final, mime, pasted, new_grid, delta = merged
             if delta < PANEL_UNCHANGED:
-                items = len(faults) + (1 if text or note else 0)       # the panel's own item first, as the verification lists them
-                verdict = Verdict([{"n": i, "fixed": "no"} for i in range(1, items + 1)], False, [], True, 0.0,
-                                  "the panel came back as it was")
+                # the code verdict of the same bytes, with the items the verification would have listed (the note last)
+                verdict = verify_fix(None, (data, old_mime), (data, old_mime), asked, note if text else "")
+                verdict.why = "the panel came back as it was"
                 with self.lock:
                     self.report.checks["not fixed: the fix changed nothing"] += 1
                 self.log(f"    fix of panel {k} of comic {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
                 raise FixUnchanged(verdict, round(pic.cost, 6))
         else:
             new_grid = comic_grid(pic.data, n)
-        asked = list(faults)
-        if text or note:      # the panel's own change comes first, so verified.results[0] is whether the panel changed
-            asked.insert(0, {"what": f"panel {k} should show: {text}" if text else note, "where": f"panel {k}", "severity": "major"})
         verdict, doubtful = None, False
         if verify or final == data:
             verdict = self._verify((data, old_mime), (final, mime), asked, note if text else "", j, checker)
