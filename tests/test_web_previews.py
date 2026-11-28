@@ -487,3 +487,16 @@ def test_a_new_name_at_the_plates_anchor_for_someone_met_earlier_keeps_the_plate
     d = headed_doc(bk, [one])
     d["entities"][0]["names"].append({"value": "the Gatewatcher", "kind": "alias", "from": "a5"})
     assert pv.opening(pv.illustrator(d, bk, [], Text()), lambda title, words: True) == []
+
+
+def test_an_entity_first_met_at_the_plates_anchor_but_linked_earlier_keeps_the_plate_out(monkeypatch):
+    from .test_art import HEAD_I, HEAD_II, book, headed_doc
+    monkeypatch.setattr(pv, "OPENING_CHAPTERS", 1)
+    one = {"id": "r1", "from": "a5", "text": "Mira waits at the mill gate.", "evidence": ["a3"], "scope": "chapter",
+           "title": "Chapter I"}
+    bk = book(("Chapter I", HEAD_I), ("Chapter II", HEAD_II))
+    d = headed_doc(bk, [one])
+    mill = next(e for e in d["entities"] if e["id"] == "mill")     # chapter I's event names it
+    mill["from"] = mill["names"][0]["from"] = "a5"
+    mill["names"].append({"value": "the Guild Hall", "kind": "alias", "from": "a5"})
+    assert pv.opening(pv.illustrator(d, bk, [], Text()), lambda title, words: True) == []

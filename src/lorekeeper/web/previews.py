@@ -244,13 +244,25 @@ def _past(b, end: int, s: int) -> bool:
     """Whether anything the index reveals in blocks end..s (a plate's anchor past its chapter) comes from the text after
     the chapter: an item with evidence at or after block `end`, or a new name there for an entity met earlier (names carry
     no evidence). An entity first met there does not count by itself: whatever would tie it to the plate's material (an
-    event, a tie, a detail) carries evidence and is checked. Such a plate is not offered, since its body is written from
+    event, a tie, a detail) carries evidence and is checked, and one that earlier material already refers to (only a
+    hand edit makes that) counts. Such a plate is not offered, since its body is written from
     everything revealed at its anchor."""
     seq = b.seq_of
     here = lambda a: a in seq and end <= seq[a] <= s                      # noqa: E731
     late = lambda x: any(a not in seq or seq[a] >= end for a in x.get("evidence") or ())  # noqa: E731
     d = b.doc
+    before = lambda a: a in seq and seq[a] < end                          # noqa: E731
+    linked = set()                     # entities that material before `end` refers to (an event, its setting, a tie)
+    for x in d.get("events") or ():
+        if before(x.get("from")):
+            linked.update(x.get("entities") or ())
+            linked.add(((x.get("setting") or {}).get("place")))
+    for x in d.get("relations") or ():
+        if before(x.get("from")):
+            linked.update((x.get("src"), x.get("dst")))
     for e in d.get("entities") or ():
+        if here(e.get("from")) and e.get("id") in linked:
+            return True                    # first met here but already linked earlier (a hand edit): its names would leak
         if any(here(n.get("from")) and n.get("from") != e.get("from") for n in e.get("names") or ()):
             return True                    # a new name for someone already met: the entry's "also" would carry it
         if any(here(f.get("from")) and late(f) for f in e.get("facets") or ()):
