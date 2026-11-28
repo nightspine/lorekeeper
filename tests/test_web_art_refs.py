@@ -28,6 +28,7 @@ class FakeUserRef:
     sha: str
     note: str
     description: str | None = None
+    applies: str = "scene"
 
 
 @pytest.fixture
@@ -40,14 +41,27 @@ def refs(env, monkeypatch):
 
     def draw(self, job, *args, user_refs=(), **kw):
         sent.append(list(user_refs))
+        text = kw.get("text") or ""
         rec = orig(self, job, *args, **kw)
         if rec is not None and user_refs:
+            # the contract's fallback, faked: "subject" only off a scene, a label only while the text still uses it
+            used, fell = [], []
+            for r in user_refs:
+                a = getattr(r, "applies", "scene") or "scene"
+                ok = (a == "scene" or (a == "subject" and job.kind not in art.SCENE_KINDS)
+                      or (a in art.LABELS and job.kind in art.SCENE_KINDS and a in art.labels_in(text)))
+                if not ok:
+                    fell.append(r.sha)
+                used.append(a if ok else "scene")
             rec["userRefs"] = [{"sha": r.sha, "ext": store_mod.REF_EXT[r.mime], "note": r.note,
-                                **({"description": r.description} if r.description is not None else {})} for r in user_refs]
+                                **({"description": r.description} if r.description is not None else {}),
+                                **({"appliesTo": u} if u != "scene" else {})} for r, u in zip(user_refs, used)]
             for r in self.man[job.bi]["pictures"]:
                 if r["id"] == rec["id"]:
                     r["userRefs"] = rec["userRefs"]
             self._save(job.bi)
+            if fell:
+                rec["appliesFallback"] = fell
         return rec
     monkeypatch.setattr(art.Illustrator, "draw", draw)
     env.sent = sent
@@ -567,3 +581,81 @@ def test_a_put_refs_undo_entry_holds_the_uploads_it_can_bring_back(refs):
     assert s.prune_refs(e.hash) == 0 and s.ref_path(e.hash, a)
     undo(e, gone["undo"])
     assert next(p for p in pictures(e) if p["id"] == rec["id"])["userRefs"][0]["sha"] == a
+
+
+# ---- what each picture applies to (`appliesTo`)
+
+FIG = {**DRAW, "prompt": "Figure A, a tall man, waits at the gate at dusk."}
+
+
+def test_applies_to_is_checked_and_reaches_the_pipeline(refs):
+    e = refs
+    a, b, c = sha_of(e, pic(1)), sha_of(e, pic(2)), sha_of(e, pic(3))
+    for bad in ["G", "a", "AB", "figure A", "whole", 1, True, {"label": "A"}, ""]:
+        r = e.c.post(f"/api/library/{KEY}/art/draw", json={**FIG, "refs": [{"sha": a, "appliesTo": bad}]})
+        assert r.status_code == 422 and r.json()["code"] == "bad-refs", bad
+        assert "A to F" in r.json()["detail"]
+    r = e.c.post(f"/api/library/{KEY}/art/draw", json={**FIG, "refs": [
+        {"sha": a, "note": "his coat", "appliesTo": "A"}, {"sha": b, "appliesTo": None}, {"sha": c, "appliesTo": "scene"}]})
+    assert r.status_code == 200, r.text
+    assert [x.applies for x in e.sent[-1]] == ["A", "scene", "scene"]
+    rec = r.json()
+    # stored and served only when not "scene", so an older record reads the same
+    assert rec["userRefs"][0]["appliesTo"] == "A" and "appliesTo" not in rec["userRefs"][1]
+    assert "appliesTo" not in rec["userRefs"][2] and "appliesFallback" not in rec
+    listed = next(p for p in pictures(e) if p["id"] == rec["id"])
+    assert listed["userRefs"][0]["appliesTo"] == "A" and "appliesTo" not in listed["userRefs"][1]
+
+
+def test_a_fallback_is_served_with_the_reply_and_the_value_stored_as_used(refs):
+    e = refs
+    a, b = sha_of(e, pic(1)), sha_of(e, pic(2))
+    r = e.c.post(f"/api/library/{KEY}/art/draw", json={**DRAW, "refs": [   # the text has no figure B, and it is a scene
+        {"sha": a, "appliesTo": "B"}, {"sha": b, "appliesTo": "subject"}]})
+    assert r.status_code == 200, r.text
+    rec = r.json()
+    assert rec["appliesFallback"] == [a, b] and all("appliesTo" not in x for x in rec["userRefs"])
+
+
+def test_a_redraw_reuses_applies_to_and_can_change_it(refs):
+    e = refs
+    a = sha_of(e, pic(1))
+    rec = e.c.post(f"/api/library/{KEY}/art/draw", json={**FIG, "refs": [{"sha": a, "note": "coat", "appliesTo": "A"}]}).json()
+    same = e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).json()
+    assert [x.applies for x in e.sent[-1]] == ["A"] and same["userRefs"][0]["appliesTo"] == "A"
+    new = e.c.post(f"/api/library/{KEY}/art/{same['id']}/redraw", json={"refs": [{"sha": a, "note": "coat"}]}).json()
+    assert [x.applies for x in e.sent[-1]] == ["scene"] and "appliesTo" not in new["userRefs"][0]
+    bad = e.c.post(f"/api/library/{KEY}/art/{new['id']}/redraw", json={"refs": [{"sha": a, "appliesTo": "Z"}]})
+    assert bad.status_code == 422 and bad.json()["code"] == "bad-refs"
+
+
+def test_put_refs_changes_applies_to_and_undo_puts_it_back(refs):
+    e = refs
+    a = sha_of(e, pic(1))
+    rec = e.c.post(f"/api/library/{KEY}/art/draw", json={**FIG, "refs": [{"sha": a, "note": "coat"}]}).json()
+    got = e.c.put(f"/api/library/{KEY}/art/{rec['id']}/refs", json={"refs": [{"sha": a, "note": "coat", "appliesTo": "A"}]})
+    assert got.status_code == 200, got.text
+    assert got.json()["userRefs"][0]["appliesTo"] == "A"
+    assert next(p for p in pictures(e) if p["id"] == rec["id"])["userRefs"][0]["appliesTo"] == "A"
+    undo(e, got.json()["undo"])
+    assert "appliesTo" not in next(p for p in pictures(e) if p["id"] == rec["id"])["userRefs"][0]
+    e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={})
+    assert [x.applies for x in e.sent[-1]] == ["scene"]
+    rec2 = e.c.post(f"/api/library/{KEY}/art/draw", json={**FIG, "refs": [{"sha": a, "appliesTo": "A"}]}).json()
+    put = e.c.put(f"/api/library/{KEY}/art/{rec2['id']}/refs", json={"refs": [{"sha": a, "appliesTo": "scene"}]}).json()
+    assert "appliesTo" not in put["userRefs"][0]
+    stored = next(p for p in pictures(e) if p["id"] == rec2["id"])["userRefs"][0]
+    assert "appliesTo" not in stored
+    undo(e, put["undo"])
+    assert next(p for p in pictures(e) if p["id"] == rec2["id"])["userRefs"][0]["appliesTo"] == "A"
+    bad = e.c.put(f"/api/library/{KEY}/art/{rec2['id']}/refs", json={"refs": [{"sha": a, "appliesTo": "subjects"}]})
+    assert bad.status_code == 422 and bad.json()["code"] == "bad-refs"
+
+
+def test_an_older_record_without_applies_to_redraws_for_the_whole_scene(refs):
+    e = refs
+    rec, (a,) = drawn_with_refs(e, "her dress")
+    man = next(p for p in pictures(e) if p["id"] == rec["id"])
+    assert "appliesTo" not in man["userRefs"][0]
+    new = e.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).json()
+    assert [x.applies for x in e.sent[-1]] == ["scene"] and "appliesTo" not in new["userRefs"][0]
