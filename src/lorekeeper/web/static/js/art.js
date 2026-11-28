@@ -44,7 +44,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTexts, panelWish, PANEL_TEXT_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -570,7 +570,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     await loadStyles().catch(() => null);
     if (!dlg.open || items[i] !== it || it.rec !== rec) return;
     const shown = !(it.promptHiddenUntil && it.promptHiddenUntil(rec));
-    const was = shown ? (panelTexts(rec.prompt, gallerySentence(rec.style) || "") || [])[k - 1] || "" : "";
+    const was = shown ? (panelTextsOf(rec) || [])[k - 1] || "" : "";
     const text = h("textarea.input.lb-note#lb-panel-text", { rows: "4", maxlength: String(PANEL_TEXT_CHARS), "aria-label": `What panel ${k} shows`, placeholder: "What this panel should show" });
     text.value = value ?? was;
     const note = h("textarea.input.lb-note#lb-panel-note", { rows: "2", maxlength: String(NOTE_CHARS), placeholder: "For example: keep the candle lit" });
@@ -641,7 +641,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
       clear(stage, img);
     }
-    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); refocus(); } } }, "Keep the fix");
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; paintStage(); paintActs(); refocus(); } } }, "Keep the fix");
     const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
@@ -679,7 +679,12 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
-  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); paintPanels(); }
+  function refresh() {
+    const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i]));
+    paintPanels();
+    // the hover buttons follow `fixable` like the list; not while a result (Before / After) is on the stage
+    if (!pending && !acts.querySelector(".lb-fix")) paintStage();
+  }
   /** A comic's captions under the picture: never drawn into it, so they come from the view at the position now. */
   function paintPanels() {
     const it = items[i];

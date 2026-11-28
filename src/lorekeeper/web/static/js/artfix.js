@@ -135,35 +135,12 @@ export function beforeSrc(url, at = {}) {
 
 /** art.PANEL_TEXT_CHARS: the longest panel text the route takes. */
 export const PANEL_TEXT_CHARS = 600;
-const FRAME_RE = /^A comic page of \d+ panels in a grid, read left to right and top to bottom, with thin white gutters between them\. Each panel shows one moment, and a figure looks the same in every panel they are in\.\s*/;
-const NO_TEXT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture.";
 
-/** A port of art.panel_texts: the "Panel k: ..." texts of a stored comic prompt (the frame, then the panels, then the style
- *  sentence and the no-text line), in order, or null when the prompt is not one. `style` (the style's sentence, when the
- *  caller knows it) is cut from the last panel; without it the last text may end with the style sentence. */
-export function panelTexts(prompt, style = "") {
-  if (typeof prompt !== "string") return null;
-  let t = prompt.split(/\s+/).filter(Boolean).join(" ");
-  const m = FRAME_RE.exec(t);
-  if (!m) return null;
-  t = t.slice(m[0].length);
-  const end = t.lastIndexOf(NO_TEXT);
-  if (end >= 0) t = t.slice(0, end).trim();
-  const st = typeof style === "string" ? style.split(/\s+/).filter(Boolean).join(" ") : "";
-  if (st && t.endsWith(st)) t = t.slice(0, t.length - st.length).trim();
-  // panels are numbered 1..n in order: look for each "Panel k: " in turn, so a "Panel 7: " inside a text does not split it
-  const starts = [];
-  for (let want = 1, at = 0; ; want++) {
-    const tag = `Panel ${want}: `;
-    const i = t.indexOf(tag, at);
-    if (i < 0 || (want === 1 && i !== 0)) break;
-    starts.push([i, i + tag.length]);
-    at = i + tag.length;
-  }
-  if (!starts.length) return null;
-  const out = [];
-  starts.forEach(([, from], j) => out.push(t.slice(from, j + 1 < starts.length ? starts[j + 1][0] : t.length).trim()));
-  return out;
+/** The panel texts a record carries (`panelTexts`, served by the art route), or null unless there is exactly one string
+ *  per panel: the box then starts empty. Never read out of the prompt. */
+export function panelTextsOf(rec) {
+  const t = rec?.panelTexts, n = Array.isArray(rec?.panels) ? rec.panels.length : 0;
+  return Array.isArray(t) && n && t.length === n && t.every((x) => typeof x === "string") ? t : null;
 }
 
 /** The body of POST /art/{id}/panel: { k, text?, note? } or null when nothing changed (the text equals the one drawn, or

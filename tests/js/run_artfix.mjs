@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTexts, panelBody, panelFixLine, panelWish, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
+const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTextsOf, panelBody, panelFixLine, panelWish, severityOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -113,17 +113,12 @@ test("the before picture's address: the API's own route only, the position added
     "/api/library/k/art/../before", "/api/library/k/art/p1/before#x"]) assert.equal(beforeSrc(bad, { p: "a" }), null, String(bad));
 });
 
-const FRAME = "A comic page of 3 panels in a grid, read left to right and top to bottom, with thin white gutters between them. Each panel shows one moment, and a figure looks the same in every panel they are in.";
-const NT = "No text, captions, speech balloons, lettering, titles or signatures anywhere in the picture.";
-test("panelTexts reads the Panel k lines of a stored comic prompt", () => {
-  const body = `${FRAME} Panel 1: A man at a door. Panel 2: Figure A runs. Panel 3: A cart at dusk.`;
-  assert.deepEqual(panelTexts(`${body} Soft ink drawing. ${NT}`, "Soft ink drawing."), ["A man at a door.", "Figure A runs.", "A cart at dusk."]);
-  assert.deepEqual(panelTexts(`${body} ${NT}`), ["A man at a door.", "Figure A runs.", "A cart at dusk."]);
-  assert.equal(panelTexts("A portrait of a man."), null);
-  assert.equal(panelTexts(null), null);
-  assert.equal(panelTexts(`${FRAME} no panels here`), null);
-  // numbers inside a text do not split it
-  assert.deepEqual(panelTexts(`${FRAME} Panel 1: Panel 7: a sign. Panel 2: x.`), ["Panel 7: a sign.", "x."]);
+test("panelTextsOf: one text per panel from the record, else none", () => {
+  assert.deepEqual(panelTextsOf({ panels: ["a", "b"], panelTexts: ["x", "y"] }), ["x", "y"]);
+  assert.equal(panelTextsOf({ panels: ["a", "b"], panelTexts: ["x"] }), null);
+  assert.equal(panelTextsOf({ panels: ["a"], panelTexts: [1] }), null);
+  assert.equal(panelTextsOf({ panels: ["a"] }), null);
+  assert.equal(panelTextsOf(null), null);
 });
 test("panelBody: only a changed text or a note is something to fix", () => {
   assert.equal(panelBody(2, "same", "same", ""), null);
