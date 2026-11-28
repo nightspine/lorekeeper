@@ -7,7 +7,7 @@ not the whole picture."""
 import pytest
 
 from lorekeeper import art
-from tests.test_art import png  # noqa: F401
+from tests.test_art import pics, png  # noqa: F401
 from tests.test_art_style_ref import STYLE_PNG, moody, ref  # noqa: F401
 from tests.test_art_user_refs import Eye, blind_image, drawn, uref  # noqa: F401
 
@@ -94,6 +94,10 @@ def test_a_label_the_text_no_longer_uses_falls_back_to_the_whole_picture(moody):
     assert art.USER_REF_FIGURE_LINE.format(n=3, label="A", note="her shawl") in note
     assert rec["userRefs"][0].get("appliesTo") is None and rec["userRefs"][1]["appliesTo"] == "A"
     assert rec["appliesFallback"] == [mine[0].sha]
+    # the reply only: the filed record, as every later read gets it, has no appliesFallback
+    filed = next(r for r in pics(sink) if r["id"] == rec["id"])
+    assert "appliesFallback" not in filed and filed["userRefs"] == rec["userRefs"]
+    assert all("appliesFallback" not in r for r in il.man[0]["pictures"])
 
 
 def test_subject_holds_for_a_portrait_and_reads_as_the_whole_picture_on_a_scene():
