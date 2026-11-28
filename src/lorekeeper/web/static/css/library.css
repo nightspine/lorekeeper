@@ -139,6 +139,20 @@ table.books { table-layout: fixed; }
 .book-page .set-rows { max-width: none; }
 .bk-head h1 { font-size: 18px; overflow-wrap: anywhere; }
 .bk-head .by { margin: -4px 0 0; color: var(--text-2); }
+/* The Style previews row (bookpreviews.js): one sentence of state, then the draw, redraw and scene actions. */
+.pv-state { min-width: 0; }
+.pv-note { display: block; margin-top: 2px; font-size: var(--text-xs); }
+.pv-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 14px; }
+.pv-price { font-size: var(--text-xs); }
+.pv-acts .linkish.danger { color: var(--rose); }
+/* The scene sheet: the opening moments as radio rows, the one drawn now marked; the price over the buttons. */
+.pv-sheet-lede { margin: 0 0 12px; }
+.pv-sheet .prow { grid-template-columns: 16px minmax(0, 1fr); align-items: start; }
+.pv-sheet .prow input { margin-top: 2px; }
+.pv-sheet .pr-line { color: var(--text-2); overflow-wrap: anywhere; }
+.pv-now { margin-left: 8px; color: var(--beacon); font-size: var(--text-xs); font-weight: 600; }
+.pv-sheet-foot { display: grid; gap: 8px; width: 100%; }
+.pv-sheet-price { margin: 0; }
 .page-sec { display: grid; gap: 10px; }
 .page-sec > h2 { font-size: var(--text-base); }
 .page-sec .hint { margin: 0; }
@@ -202,6 +216,9 @@ body:has(#lib-upload:focus-visible) label[for="lib-upload"] { outline: 2px solid
 /* the Filter and sort button exists only on a phone */
 .lib-filterbtn { display: none; }
 @media (max-width: 640px) {
+  .pv-acts { justify-content: flex-start; }
+  .pv-acts .btn, .pv-acts .linkish { min-height: 44px; }
+  .pv-sheet-foot .confirm-actions .btn { flex: 1; min-height: 44px; }
   /* Head: one line of summary, then the search field and the add button on one row. */
   .lib-head { padding: 10px 16px 8px; gap: 6px; min-height: 0; }
   .lib-title { width: 100%; }
