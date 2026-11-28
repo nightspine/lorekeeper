@@ -35,14 +35,15 @@ from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
+from . import previews as previewsmod
 from . import read as readmod
 from . import styles as stylesmod
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits,
-                   text_choice_config)
+from .jobs import (SIDE_KINDS, BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story,
+                   previews_config, run_limits, text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -210,6 +211,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     arts = artstore.ArtStore(data_dir)
     jobs.art_store = arts
     style_store = stylesmod.StyleStore(data_dir)     # saved picture styles; also gives art.style_sentence their words
+    preview_store = previewsmod.PreviewStore(data_dir)   # a book's own style previews (web/previews.py), never an art set
+    jobs.previews = preview_store
+    jobs.preview_styles = lambda: {st["slug"]: st["text"] for st in style_store.all()}
     library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
                        *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
@@ -244,7 +248,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return none
         # A pictures run writes its prompts with a cloud model: it counts only when its text provider is Ollama.
         busy = any(j.status in ("running", "stopping")
-                   and (j.config.get("provider") or ("" if j.kind == "art" else "ollama")) == "ollama"
+                   and (j.config.get("provider") or ("" if j.kind in SIDE_KINDS else "ollama")) == "ollama"
                    for j in jobs.jobs.values())
         # one Ollama model at a time: don't compete with a running build
         return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
@@ -459,7 +463,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def job_json(job) -> dict:
         return {**asdict(job), "output_name": Path(job.output).name,
-                **({"index": job.config.get("index_key")} if job.kind == "art" else {})}
+                **({"index": job.config.get("index_key")} if job.kind in SIDE_KINDS else {})}
 
     @app.get("/")
     def root():
@@ -2503,6 +2507,167 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
                     "fixCost": fix_cost}
         return await work()
+
+    # ---- style previews: one opening scene of the book in every style, per image provider (web/previews.py) ----------
+
+    def preview_moments(ctx: dict, need: bool = True):
+        """(Illustrator, opening moments) of an index, no model call; (None, []) without the EPUB unless `need`."""
+        try:
+            book = art_epub(ctx)
+        except ArtRefusal:
+            if need:
+                raise
+            return None, []
+        il = previewsmod.illustrator(ctx["doc"], book, art_prior(ctx), None, preview_seed(ctx["hash"]))
+        return il, previewsmod.opening(il, is_story)
+
+    def preview_seed(h: str) -> dict | None:
+        sets = arts.styles(h)
+        return arts.manifest(h, sets[0]["slug"]) if sets else None
+
+    def preview_scene_json(scene: dict | None) -> dict | None:
+        if not isinstance(scene, dict):
+            return None
+        return {k: scene.get(k) for k in ("kind", "target", "chapter", "storyChapter", "summary", "writer", "chosen",
+                                          "created")}
+
+    def preview_estimate_json(plan: dict) -> dict:
+        return {"pictures": plan["pictures"], "price": plan["price"], "styles": plan["styles"],
+                "providers": [{"provider": r["provider"], "label": llm.PROVIDERS.get(r["provider"], {}).get("label", r["provider"]),
+                               "model": r["model"], "quality": r["quality"], "price": r["price"],
+                               "pictures": len(r["styles"])} for r in plan["providers"]]}
+
+    def preview_target(ctx: dict, raw) -> tuple[dict, dict | None, bool]:
+        """(the moment a previews job would draw, the stored data, whether the scene is new): 422 `no-moments` when the
+        opening has none, `bad-scene` for a target that is not one of them."""
+        _, moments = preview_moments(ctx)
+        if not moments:
+            raise ArtRefusal(422, "no-moments", "The first chapters of this book have no moments to draw.")
+        cur = preview_store.get(ctx["hash"])
+        m = previewsmod.choose(moments, raw, (cur or {}).get("scene"))
+        if m is None:
+            raise ArtRefusal(422, "bad-scene", "Choose a moment from the first chapters of the book.")
+        return m, cur, not previewsmod.same_scene((cur or {}).get("scene"), m)
+
+    @app.get("/api/library/{key}/previews")
+    @art_route
+    def previews_get(key: str):
+        """The book's own style previews: the scene (never its prompt), one URL per provider and style with whether it is
+        stale, the opening moments a person may choose instead, and whether a previews job is under way."""
+        ctx = art_index(key)
+        h = ctx["hash"]
+        il, moments = preview_moments(ctx, need=False)
+        data = preview_store.get(h) or {}
+        scene = data.get("scene")
+        if il is not None and isinstance(scene, dict):
+            b = il.books[-1]       # a stored scene outside the opening as the book reads now is never shown
+            story = [c for c in b.chapters if is_story(c["title"], c.get("words", 0))][:previewsmod.OPENING_CHAPTERS]
+            s = b.seq_of.get(scene.get("anchor"))
+            if s is None or not any(c["lo"] <= s <= c["hi"] for c in story):
+                scene = None
+        words = jobs.preview_styles()
+        providers = {}
+        if scene:
+            for p, per in (data.get("items") or {}).items():
+                if p not in llm.IMAGE_PROVIDERS or not isinstance(per, dict):
+                    continue
+                row = {}
+                for slug_, it in per.items():
+                    if slug_ not in words or not isinstance(it, dict) or preview_store.path(h, p, slug_) is None:
+                        continue
+                    ref = artmod.style_reference(slug_) if slug_ not in artmod.STYLES else None
+                    row[slug_] = {"url": f"/api/previews/{h}/{p}/{slug_}?v={int(it.get('created') or 0)}",
+                                  "model": it.get("model"), "quality": it.get("quality"),
+                                  "stale": previewsmod.stale(it, words[slug_], ref.sha if ref else None)}
+                if row:
+                    providers[p] = row
+        return {"scene": preview_scene_json(scene), "providers": providers,
+                "moments": [previewsmod.public_moment(m) for m in moments], "drawing": jobs.previewing(h)}
+
+    @app.get("/api/previews/{text_hash}/{provider}/{slug}")
+    def preview_file(text_hash: str, provider: str, slug: str):
+        p = preview_store.path(text_hash, provider, slug)
+        if p is None:
+            raise HTTPException(404, "no such preview")
+        return FileResponse(p, media_type=previewsmod.MIME.get(p.suffix[1:], "application/octet-stream"),
+                            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/library/{key}/previews/estimate")
+    @art_route
+    def previews_estimate(key: str, scene: str | None = None, redraw: bool = False):
+        """What drawing the previews would cost, no model call: every style for each image provider with a key, at its
+        default model's cheapest level, square; with the same scene, only the styles not drawn yet or stale (all with
+        `redraw`). `price` null when a picture to draw has no known price."""
+        ctx = art_index(key)
+        _, _, fresh = preview_target(ctx, scene or None)
+        return preview_estimate_json(jobs.preview_plan(ctx["hash"], None, None, fresh=fresh, redraw=redraw))
+
+    @app.post("/api/library/{key}/previews")
+    async def previews_post(key: str, request: Request):
+        """Queue the book's style previews ({scene?: a moment's target, redraw?: bool, styles?, providers?}); answers the job."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            try:
+                cfg = previews_config(body)
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            if not any(jobs.keys(p) for p in (cfg["providers"] or llm.IMAGE_PROVIDERS)):
+                raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw style previews.")
+            m, _, fresh = preview_target(ctx, cfg["scene"])
+            if fresh and jobs.text_choice("cheap") is None:
+                raise ArtRefusal(409, "no-text-model", "Style previews need a cloud model to write the scene. Add a key in Settings.")
+            if jobs.previewing(ctx["hash"]):
+                raise ArtRefusal(409, "busy", "Style previews are already being drawn for this book.")
+            plan = jobs.preview_plan(ctx["hash"], cfg["styles"], cfg["providers"], fresh=fresh, redraw=cfg["redraw"])
+            if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+                raise ArtRefusal(422, "bad-config", f"That would cost more than ${previewsmod.CAP:.2f}.")
+            owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
+            title = ctx["doc"].get("work", {}).get("title") or key
+            try:
+                job = jobs.submit_previews(key, {**cfg, "scene": m["target"] if cfg["scene"] else None},
+                                           index_path=str(ctx["item"]["path"]), book_id=(owner or {}).get("localId") or "",
+                                           title=title, text_hash=ctx["hash"], catalog_key=(owner or {}).get("key"))
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            except RuntimeError as e:
+                raise ArtRefusal(409, "busy", str(e)) from e
+            return job_json(job)
+        return await work()
+
+    @app.delete("/api/library/{key}/previews")
+    @art_route
+    def previews_delete(key: str):
+        ctx = art_index(key)
+        if jobs.previewing(ctx["hash"]):
+            raise ArtRefusal(409, "busy", "Style previews are being drawn for this book. Stop that run first.")
+        return {"removed": preview_store.remove(ctx["hash"])}
+
+    def after_build(job) -> str | None:
+        """A finished build asked for style previews (`stylePreviews` in its config): queue them when the edition has
+        none yet and an image provider has a key. The line goes into the build's log."""
+        if job.config.get("stylePreviews") is not True:
+            return None
+        key = art_key_for(job)
+        item = library.get(key) if key else None
+        if item is None or item["doc"].get("kind") != "index":
+            return None
+        h = artstore.text_hash(item["doc"])
+        if not artstore.HASH.fullmatch(h) or preview_store.get(h) or jobs.previewing(h):
+            return None
+        if not any(jobs.keys(p) for p in llm.IMAGE_PROVIDERS):
+            return "style previews: not drawn (add a Gemini or OpenAI key in Settings to draw them)"
+        plan = jobs.preview_plan(h, None, None, fresh=True)
+        if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+            return f"style previews: not drawn (they would cost more than ${previewsmod.CAP:.2f})"
+        title = item["doc"].get("work", {}).get("title") or job.book_title
+        jobs.submit_previews(key, {}, index_path=str(item["path"]), book_id=job.book_id, title=title, text_hash=h,
+                             catalog_key=job.config.get("catalog_key"))
+        cost = "price unknown" if plan["price"] is None else f"about ${plan['price']:.2f}"
+        return f"style previews: queued, {plan['pictures']} pictures, {cost}"
+    jobs.after_build = after_build
 
     @app.put("/api/library/{key}/art/world")
     async def art_world(key: str, request: Request):
