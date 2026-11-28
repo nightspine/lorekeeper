@@ -42,6 +42,8 @@ function readAt() {
  *   entity(id)                         the entry as the view shows it now, or null
  *   portrait(id)                       the URL of its latest visible picture, or null
  *   plates()                           the visible chapter plates of the book being read ([{rec, ...}] from visiblePictures)
+ *   plateSpot(p)                       where plate `p` goes: { chapter, at: "end" } at its chapter's end, or
+ *                                      { chapter, at: "after", seq, title, name } after its anchor block; null unknown
  *   platesNode(pics, title)            the Reader's plate block (opens the lightbox)
  *   openEntry(id, from)                the entry pane or drawer
  *   canAsk(), ask(text)                Ask, when a model is available
@@ -164,6 +166,7 @@ export function createReading(ctx) {
     c.plates.before(...next.map((b) => b.el));
     c.blocks.push(...next);
     lightBlocks(next);
+    if (!c.rest.length) paintPlates(c);   // a plate placed after a block that was still to come
     if (c.rest.length) requestAnimationFrame(() => drip(c));
   }
   function paintEnd() {
@@ -380,22 +383,42 @@ export function createReading(ctx) {
   // A chapter's plate sits at its end, before the next chapter: a generated plate is revealed at the chapter's last anchor,
   // so it comes in as the reader crosses into the next chapter, and scrolling up a little to look at it does not move the
   // position back (it is not a paragraph). At the chapter's start it could only be seen by going back into the chapter,
-  // which takes it away again.
+  // which takes it away again. A plate anchored past its chapter's end (at its own recap's anchor, often the next
+  // chapter's first long paragraph) goes right after that anchor block instead, captioned with its chapter: it is revealed
+  // only once the reader is past the anchor, so at the chapter's end, above the anchor, it could never be on screen.
   /** `fresh`: the chapter was just put in the page (a chapter put above the reader is kept in place by its caller). */
   function paintPlates(c, { fresh = false } = {}) {
     const m = map();
     const lo = m.blockStart(c.firstSeq), hi = m.blockEnd(c.lastSeq);
     const inChapter = (id) => { const at = m.anchorPos(id); return Number.isFinite(at) && at > lo + 1e-12 && at <= hi + 1e-12; };
-    const pics = ctx.plates().filter((p) => inChapter(p.rec.from));
-    const key = pics.map((p) => p.rec.id).join(",");
-    if (st.plateKey.get(c.n) === key || (!key && !c.plates.firstChild)) { st.plateKey.set(c.n, key); return; }
+    const inC = (seq) => c.firstSeq <= seq && seq <= c.lastSeq;
+    const spots = new Map(ctx.plates().map((p) => [p, ctx.plateSpot ? ctx.plateSpot(p) : null]));
+    // At this chapter's end: plates drawn for it whose anchor is inside it (else, unplaced, those anchored in it).
+    const pics = [...spots].filter(([p, sp]) => (sp ? sp.at === "end" && inC(sp.chapter.start) : inChapter(p.rec.from))).map(([p]) => p);
+    // After an anchor block of this chapter, one group per block, only for blocks already in the page.
+    const at = new Map();
+    for (const [p, sp] of spots) {
+      if (!sp || sp.at !== "after" || !inC(sp.seq)) continue;
+      const b = c.blocks.find((x) => x.seq === sp.seq);
+      if (!b) continue;
+      if (!at.has(sp.seq)) at.set(sp.seq, { b, sp, pics: [] });
+      at.get(sp.seq).pics.push(p);
+    }
+    const key = pics.map((p) => p.rec.id).join(",") + "|" + [...at].map(([q, g]) => `${q}:${g.pics.map((p) => p.rec.id).join(",")}`).join(";");
+    if (st.plateKey.get(c.n) === key || (key === "|" && !c.plates.firstChild && !c.atPlates?.length)) { st.plateKey.set(c.n, key); return; }
     st.plateKey.set(c.n, key);
     const title = tidyTitle(c.title) || `Section ${c.n}`;
     // Said only when it is so: every passage the picture was written from lies in this chapter (a visible picture's
     // anchors are all at or before the position).
     const own = pics.length && pics.every((p) => [p.rec.from, ...(Array.isArray(p.rec.sources) ? p.rec.sources : [])].every(inChapter));
     const node = pics.length ? ctx.platesNode(pics, title) : null;
-    const paint = () => clear(c.plates, node, node && own ? h("p.read-plate-note", "Drawn from this chapter, up to where you are.") : null);
+    const inline = [...at.values()].map((g) => ({ b: g.b, el: h("div.read-plates.read-plates-at", { dataset: { at: String(g.b.seq) } },
+      ctx.platesNode(g.pics, g.sp.title || g.sp.name || title), g.sp.name ? h("p.read-plate-note", `From ${g.sp.name}.`) : null) }));
+    const paint = () => {
+      clear(c.plates, node, node && own ? h("p.read-plate-note", "Drawn from this chapter, up to where you are.") : null);
+      for (const el of c.atPlates || []) el.remove();
+      c.atPlates = inline.map((x) => { x.b.el.after(x.el); return x.el; });
+    };
     if (fresh) paint(); else keepPlace(paint);
   }
 

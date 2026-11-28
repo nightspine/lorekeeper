@@ -1,0 +1,221 @@
+{
+ "about": "recap_chapter (chapters.py) and recapChapter (js/chapters.js): the map chapter a chapter recap sits in. `map` and `words` name entries of `maps` and `blockWords` (null: no word counts); `expected` is the chapter's start, or null. `tidy`: absent is the identity, \"lower\" lowercases (both ports compare titles case-insensitively anyway).",
+ "maps": {
+  "main": [
+   {
+    "title": "Chapter XIV. Father of Whispers",
+    "start": 10
+   },
+   {
+    "title": "Chapter XV. The Bridge",
+    "start": 20
+   },
+   {
+    "title": "Part Two",
+    "start": 30
+   },
+   {
+    "title": "Chapter XVI",
+    "start": 31
+   }
+  ],
+  "twin": [
+   {
+    "title": "Interlude",
+    "start": 0
+   },
+   {
+    "title": "Interlude",
+    "start": 10
+   }
+  ],
+  "upper": [
+   {
+    "title": "CHAPTER I",
+    "start": 0
+   },
+   {
+    "title": "CHAPTER II",
+    "start": 10
+   }
+  ],
+  "empty": []
+ },
+ "blockWords": {
+  "main": [120, 120, 120, 120, 120, 120, 120, 120, 120, 120, 2, 120, 120, 120, 120, 120, 120, 120, 120, 120, 2, 120, 120, 120, 120, 120, 120, 120, 120, 120, 2, 2, 120, 120, 120, 120, 120, 120, 120, 120, 120],
+  "twin": [1, 50, 50, 50, 50, 50, 50, 50, 50, 50, 1, 50, 50, 50, 50, 50, 50, 50, 50, 50],
+  "upper": [2, 50, 50, 50, 50, 50, 50, 50, 50, 50, 2, 50, 50, 50, 50, 50, 50, 50, 50, 50]
+ },
+ "cases": [
+  {
+   "name": "anchored on the next chapter's second block, goes to its own chapter",
+   "map": "main",
+   "words": "main",
+   "seq": 21,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": 10
+  },
+  {
+   "name": "case and spacing do not matter",
+   "map": "main",
+   "words": "main",
+   "seq": 21,
+   "title": "  chapter xiv.   father OF whispers ",
+   "expected": 10
+  },
+  {
+   "name": "part of one long chapter (early)",
+   "map": "main",
+   "words": "main",
+   "seq": 14,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": 10
+  },
+  {
+   "name": "part of one long chapter (late)",
+   "map": "main",
+   "words": "main",
+   "seq": 18,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": 10
+  },
+  {
+   "name": "anchored in a chapter's first long paragraph with no matching title, stays there",
+   "map": "main",
+   "words": "main",
+   "seq": 22,
+   "title": "Something else",
+   "expected": 20
+  },
+  {
+   "name": "an empty title, anchored in a long paragraph, stays there",
+   "map": "main",
+   "words": "main",
+   "seq": 22,
+   "title": "",
+   "expected": 20
+  },
+  {
+   "name": "a hand-titled recap after an all-short opening goes back one",
+   "map": "main",
+   "words": "main",
+   "seq": 21,
+   "title": "What happened at the bridge",
+   "expected": 10
+  },
+  {
+   "name": "a hand-titled recap on the heading itself goes back one",
+   "map": "main",
+   "words": "main",
+   "seq": 20,
+   "title": "What happened at the bridge",
+   "expected": 10
+  },
+  {
+   "name": "a short divider between is passed over",
+   "map": "main",
+   "words": "main",
+   "seq": 32,
+   "title": "Chapter XV. The Bridge",
+   "expected": 20
+  },
+  {
+   "name": "a short divider between is passed over, hand title",
+   "map": "main",
+   "words": "main",
+   "seq": 32,
+   "title": "My own title",
+   "expected": 20
+  },
+  {
+   "name": "never more than one real chapter back: rule 2, one back",
+   "map": "main",
+   "words": "main",
+   "seq": 32,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": 20
+  },
+  {
+   "name": "never after the anchor's chapter",
+   "map": "main",
+   "words": "main",
+   "seq": 14,
+   "title": "Chapter XV. The Bridge",
+   "expected": 10
+  },
+  {
+   "name": "null before the first chapter",
+   "map": "main",
+   "words": "main",
+   "seq": 5,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": null
+  },
+  {
+   "name": "null with no chapters",
+   "map": "empty",
+   "words": "main",
+   "seq": 5,
+   "title": "x",
+   "expected": null
+  },
+  {
+   "name": "null with no seq",
+   "map": "main",
+   "words": "main",
+   "seq": null,
+   "title": "x",
+   "expected": null
+  },
+  {
+   "name": "the first chapter has nothing to go back to",
+   "map": "main",
+   "words": "main",
+   "seq": 11,
+   "title": "Anything",
+   "expected": 10
+  },
+  {
+   "name": "two chapters with one title: snapped past the first one's end",
+   "map": "twin",
+   "words": "twin",
+   "seq": 11,
+   "title": "Interlude",
+   "expected": 0
+  },
+  {
+   "name": "two chapters with one title: its own text before the anchor",
+   "map": "twin",
+   "words": "twin",
+   "seq": 14,
+   "title": "Interlude",
+   "expected": 10
+  },
+  {
+   "name": "without word counts, the title alone decides",
+   "map": "main",
+   "words": null,
+   "seq": 21,
+   "title": "Chapter XIV. Father of Whispers",
+   "expected": 10
+  },
+  {
+   "name": "without word counts, nothing goes back by rule 2",
+   "map": "main",
+   "words": null,
+   "seq": 21,
+   "title": "My own title",
+   "expected": 20
+  },
+  {
+   "name": "a tidier is applied to both titles",
+   "map": "upper",
+   "words": "upper",
+   "seq": 11,
+   "title": "Chapter i",
+   "expected": 0,
+   "tidy": "lower"
+  }
+ ]
+}
+

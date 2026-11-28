@@ -1,4 +1,4 @@
-// chapters.js against the shared vectors (tests/fixtures/chapter_numbering.json) and, when a cases file is given,
+// chapters.js against the shared vectors (tests/fixtures/chapter_numbering.json, recap_chapter.json) and, when a cases file is given,
 // against titles chapters.py was run on (tests/test_js_chapters.py writes it).
 //   node tests/js/run_chapters.mjs [cases.json]
 import { readFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { classify, label, numbering, numbersByStart, ownNumber, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
+const { artChapterKeys, classify, label, numbering, numbersByStart, ownNumber, plateChapter, plateSpot, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -80,58 +80,68 @@ test("recaps: a book that numbers its chapters keeps the numbers whichever recap
   assert.equal(recapNumbers(null).size, 0);
 });
 
-// recapChapter: which map chapter a chapter recap sits in. Blocks: a short heading (2 words) opens each chapter.
+// recapChapter: which map chapter a chapter recap sits in, against the vectors chapters.py's recap_chapter also runs.
 {
-  //            ch XIV: 10..19          ch XV: 20..29          Part Two: 30   ch XVI: 31..40
-  const map = [{ title: "Chapter XIV. Father of Whispers", start: 10 }, { title: "Chapter XV. The Bridge", start: 20 },
-    { title: "Part Two", start: 30 }, { title: "Chapter XVI", start: 31 }];
-  const words = Array.from({ length: 41 }, (_, k) => (map.some((c) => c.start === k) ? 2 : 120));
-  const at = (seq, title) => recapChapter(map, seq, title, words)?.start ?? null;
-  test("recapChapter: anchored on the next chapter's second block, goes to its own chapter", () => {
-    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(21, "  chapter xiv.   father OF whispers "), 10);   // case and spacing do not matter
+  const rc = JSON.parse(readFileSync(join(here, "../fixtures/recap_chapter.json"), "utf8"));
+  const tidiers = { lower: (t) => t.toLowerCase() };
+  for (const c of rc.cases) {
+    test(`recapChapter: ${c.name}`, () => {
+      const map = rc.maps[c.map];
+      const words = c.words === null ? null : rc.blockWords[c.words];
+      const got = recapChapter(map, c.seq, c.title, words, c.tidy ? tidiers[c.tidy] : undefined);
+      assert.equal(got ? got.start : null, c.expected);
+    });
+  }
+}
+
+// plateChapter / artChapterKeys: a plate is anchored at its chapter's last anchor, often its own recap's, in the next
+// chapter's first long paragraph; it goes in the row it was drawn for, keyed as art.py keys it.
+{
+  const rc = JSON.parse(readFileSync(join(here, "../fixtures/recap_chapter.json"), "utf8"));
+  const upper = rc.maps.upper, uw = rc.blockWords.upper;   // CHAPTER I at 0, CHAPTER II at 10, each opening on a 2-word heading
+  test("plateChapter: a plate anchored at its own recap in the next chapter's second block goes to its own chapter", () => {
+    assert.equal(plateChapter(upper, 11, "CHAPTER I", uw).start, 0);
   });
-  test("recapChapter: parts of one long chapter stay together", () => {
-    assert.equal(at(14, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(18, "Chapter XIV. Father of Whispers"), 10);
-    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
+  test("plateChapter: a plate anchored in its own chapter stays there", () => {
+    assert.equal(plateChapter(upper, 15, "CHAPTER II", uw).start, 10);
+    assert.equal(plateChapter(upper, 11, "CHAPTER II", uw).start, 10);   // an event in II's first long paragraph
   });
-  test("recapChapter: anchored in a chapter's first long paragraph with no matching title, stays there", () => {
-    assert.equal(at(22, "Something else"), 20);
-    assert.equal(at(22, ""), 20);
+  test("plateChapter: never later than the anchor's chapter, null before the first", () => {
+    assert.equal(plateChapter(upper, 5, "CHAPTER II", uw).start, 0);
+    assert.equal(plateChapter(upper, -1, "CHAPTER I", uw), null);
+    assert.equal(plateChapter([], 3, "CHAPTER I", uw), null);
   });
-  test("recapChapter: a hand-titled recap after an all-short opening goes back one", () => {
-    assert.equal(at(21, "What happened at the bridge"), 10);
-    assert.equal(at(20, "What happened at the bridge"), 10);   // on the heading itself
+  test("plateChapter: without block words it falls back on the title near the anchor", () => {
+    assert.equal(plateChapter(upper, 11, "CHAPTER I", null).start, 0);
   });
-  test("recapChapter: a short divider between is passed over, never more than one real chapter back", () => {
-    assert.equal(at(32, "Chapter XV. The Bridge"), 20);
-    assert.equal(at(32, "My own title"), 20);
-    assert.equal(at(32, "Chapter XIV. Father of Whispers"), 20);   // XIV is out of reach: rule 2, one back
+  const twin = rc.maps.twin, tw = rc.blockWords.twin;   // two "Interlude" chapters, at 0 and 10
+  const keys = artChapterKeys(twin, [3, 13], [], tw);
+  test("artChapterKeys: a repeated title is keyed \" (2)\"", () => {
+    assert.deepEqual([...keys], [[0, "Interlude"], [10, "Interlude (2)"]]);
   });
-  test("recapChapter: never after the anchor's chapter, null before the first", () => {
-    assert.equal(at(14, "Chapter XV. The Bridge"), 10);
-    assert.equal(at(5, "Chapter XIV. Father of Whispers"), null);
-    assert.equal(recapChapter([], 5, "x", words), null);
-    assert.equal(recapChapter(map, null, "x", words), null);
+  test("plateChapter: a repeated title is told apart by its key", () => {
+    // The first Interlude's plate anchored in the second's first long paragraph (snapped): the first.
+    assert.equal(plateChapter(twin, 11, "Interlude", tw, keys).start, 0);
+    // The second Interlude's plate, anchored at an event in its own first long paragraph: the second, where the title
+    // alone (both match, snapped) would have gone back one.
+    assert.equal(plateChapter(twin, 11, "Interlude (2)", tw, keys).start, 10);
+    assert.equal(plateChapter(twin, 11, "Interlude (2)", tw).start, 0);   // without keys: the recap rule on the bare title
   });
-  test("recapChapter: the first chapter has nothing to go back to", () => {
-    assert.equal(at(11, "Anything"), 10);
+  test("plateSpot: a plate anchored past its chapter's end goes after its anchor block, else at the chapter's end", () => {
+    const ch1 = plateChapter(upper, 11, "CHAPTER I", uw);
+    assert.deepEqual(plateSpot(upper, ch1, 11), { at: "after", seq: 11 });   // its own recap's anchor, in II
+    assert.deepEqual(plateSpot(upper, plateChapter(upper, 9, "CHAPTER I", uw), 9), { at: "end" });   // inside I
+    assert.deepEqual(plateSpot(upper, plateChapter(upper, 15, "CHAPTER II", uw), 15), { at: "end" });   // the last chapter
+    assert.deepEqual(plateSpot(upper, null, 11), { at: "end" });
+    assert.deepEqual(plateSpot(upper, ch1, null), { at: "end" });
   });
-  test("recapChapter: two chapters with one title, decided by where the anchor is", () => {
-    const twin = [{ title: "Interlude", start: 0 }, { title: "Interlude", start: 10 }];
-    const w = Array.from({ length: 20 }, (_, k) => (k === 0 || k === 10 ? 1 : 50));
-    assert.equal(recapChapter(twin, 11, "Interlude", w).start, 0);    // snapped past the first one's end
-    assert.equal(recapChapter(twin, 14, "Interlude", w).start, 10);   // its own text before the anchor
-  });
-  test("recapChapter: without word counts, the title alone decides and nothing goes back by rule 2", () => {
-    assert.equal(recapChapter(map, 21, "Chapter XIV. Father of Whispers", null).start, 10);
-    assert.equal(recapChapter(map, 21, "My own title", null).start, 20);
-  });
-  test("recapChapter: a tidier is applied to both titles", () => {
-    const up = [{ title: "CHAPTER I", start: 0 }, { title: "CHAPTER II", start: 10 }];
-    const w = Array.from({ length: 20 }, (_, k) => (k % 10 ? 50 : 2));
-    assert.equal(recapChapter(up, 11, "Chapter i", w, (t) => t.toLowerCase()).start, 0);
+  test("artChapterKeys: a recap counts in the chapter it summarises, as art.py counts it", () => {
+    // CHAPTER I has only its recap, anchored in II's second block; II has an event.
+    assert.deepEqual([...artChapterKeys(upper, [15], [{ seq: 11, title: "CHAPTER I" }], uw)], [[0, "CHAPTER I"], [10, "CHAPTER II"]]);
+    // A recap of II anchored in II, no events: only II is listed.
+    assert.deepEqual([...artChapterKeys(upper, [], [{ seq: 15, title: "CHAPTER II" }], uw)], [[10, "CHAPTER II"]]);
+    // Two Interludes, the first with only a recap anchored in the second's first long paragraph: both listed.
+    assert.deepEqual([...artChapterKeys(twin, [13], [{ seq: 11, title: "Interlude" }], tw)], [[0, "Interlude"], [10, "Interlude (2)"]]);
   });
 }
 
