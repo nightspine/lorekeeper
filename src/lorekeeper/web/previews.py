@@ -21,7 +21,6 @@ scene writer with no earlier series book finished and no reference pictures, the
 from __future__ import annotations
 
 import copy
-import inspect
 import json
 import re
 import threading
@@ -38,7 +37,7 @@ SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 FILE = re.compile(r"[a-z0-9]{1,32}-[a-z0-9][a-z0-9-]{0,39}\.(png|jpg|webp)")
 EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 MIME = {v: k for k, v in EXT.items()}
-OPENING_CHAPTERS = 2       # the story chapters a preview scene may come from
+OPENING_CHAPTERS = art.OPENING_CHAPTERS   # the story chapters a preview scene may come from
 CAP = 5.0                  # USD: the most one previews job may cost (the route refuses a bigger estimate)
 QUALITY = "draft"          # the cheapest level, through `llm.nearest_quality`
 BODY_STYLE = "digital-art"  # the style the scratch Illustrator is made with; the body never depends on it
@@ -200,12 +199,7 @@ def opening(il, is_story: Callable[[str, int], bool]) -> list[dict]:
     story = [c for c in b.chapters if is_story(c["title"], c.get("words", 0))][:OPENING_CHAPTERS]
     if not story:
         return []
-    fn = il.opening_moments
-    try:
-        takes = "story" in inspect.signature(fn).parameters
-    except (TypeError, ValueError):
-        takes = False
-    got = fn(-1, OPENING_CHAPTERS, **({"story": is_story} if takes else {}))
+    got = il.opening_moments(-1, OPENING_CHAPTERS, story=is_story)
     out = []
     for m in got or []:
         anchor = _field(m, "anchor")
@@ -229,14 +223,15 @@ def public_moment(m: dict) -> dict:
 
 def choose(moments: list[dict], want: str | None, scene: dict | None) -> dict | None:
     """The moment to draw: the one asked for (None when it is not among them), else the stored scene's when it is still
-    in the opening, else the default, the first (the pipeline lists the first chapter's main moment first)."""
+    in the opening, else the pipeline's default (`Illustrator.default_moment`: the first moment that shows an event)."""
     if want is not None:
         return next((m for m in moments if m["target"] == want), None)
     if scene:
         hit = next((m for m in moments if m["target"] == scene.get("target") and m["kind"] == scene.get("kind")), None)
         if hit:
             return hit
-    return moments[0] if moments else None
+    first = art.Illustrator.default_moment([m["moment"] for m in moments])
+    return next((m for m in moments if m["moment"] is first), None)
 
 
 def same_scene(scene: dict | None, m: dict) -> bool:
