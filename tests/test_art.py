@@ -4635,6 +4635,10 @@ def test_a_panel_that_came_back_as_it_was_is_unchanged_with_no_verification():
         il.fix_panel(rec, 2, text="A man sits up.", faults=[HAND])               # the panel item first, then the fault
     assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
     with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, text="A man sits up.", note="keep the lamp", faults=[HAND])   # as the verification lists them
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}, {"n": 3, "fixed": "no", "note": True}]
+    assert e.value.verdict.counts()["of"] == 3 and e.value.verdict.why == "the panel came back as it was"
+    with pytest.raises(art.FixUnchanged) as e:
         il.fix_panel(rec, 2, faults=[HAND])                                      # a fault alone: no panel item
     assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]
     il, sink, im, rec = comic_page(eye=eye, image=Paged(edit=lambda k, src: src))
