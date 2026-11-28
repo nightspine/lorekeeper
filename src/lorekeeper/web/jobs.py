@@ -22,6 +22,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .. import art as artmod, arcs as book_arcs, bookkind, epub, generate, llm, portraits, text, validate
+from ..chapters import numbering
 
 MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 TERMINAL = {"done", "failed", "stopped", "interrupted"}
@@ -127,6 +128,8 @@ NOT_STORY = re.compile(
     r"contents|licen[cs]e|gutenberg|copyright|colophon|imprint|title ?page|endnotes|uncopyright|^index$|"
     r"acknowledg|dedication|about the (author|publisher)|also by|^praise|newsletter|sign up|preview|excerpt|"
     r"^maps?$|reading group|discussion questions|^cover$|^half title|"
+    # A list of the people in the book is front matter, however long.
+    r"^dramatis person|^cast of characters|^list of characters|^(principal )?characters$|"
     # An author's own introduction or note usually discusses the plot: never story by default.
     r"^introduction|author[’']?s note|^foreword|^preface|^afterword", re.IGNORECASE)
 
@@ -136,7 +139,7 @@ NOT_STORY = re.compile(
 BACK_MATTER = re.compile(
     r"also by|about the (author|publisher)|acknowledg|newsletter|sign up|preview|excerpt|^praise|"
     r"reading group|discussion questions|coming soon|other books|more from|books by", re.IGNORECASE)
-STORY_RULES = 2   # bump when story detection changes, so cached book metadata is recomputed
+STORY_RULES = 3   # bump when story detection changes, so cached book metadata is recomputed
 
 
 def is_story(title: str, words: int) -> bool:
@@ -162,6 +165,9 @@ def describe(path: Path, book=None) -> dict:
                  "words": sum(len(b.words) for b in book.blocks[c.start:end])}
                 for i, (c, end) in enumerate(zip(book.chapters, ends))]
     mark_story(chapters)
+    # the "Chapter N" the book states (`chapters.numbering` over the whole toc), for the Reader's chapter map
+    for c, num in zip(chapters, numbering(chapters)):
+        c.update(kind=num["kind"], number=num["number"])
     found = bookkind.infer(book)   # no model call here; a build may ask one (generate)
     return {"bookKind": {"detected": found.kind, "basis": found.basis, "why": found.why}, "storyRules": STORY_RULES, "title": book.title or path.stem, "authors": book.authors, "language": book.language,
             "series": book.series, "seriesIndex": book.series_index, "isbns": book.isbns,
@@ -644,29 +650,27 @@ class JobManager:
                 return p, name
         return None
 
-    def vision_model(self, choice: dict | None = None):
+    def vision_model(self, choice: dict | None = None, tier: str = "cheap"):
         """A text backend that can see pictures, for the drawing-fault check: the chosen {provider, model} (checked by
-        `check_text_choice`) unless its preset is marked as unable to, else the cheap tier of the first configured provider
-        whose cheap model is not (a live or custom model counts: it is tried). None when no configured model can."""
+        `check_text_choice`) unless its preset is marked as unable to, else the `tier` model of the first configured
+        provider whose `tier` model is not (a live or custom model counts: it is tried). `tier="strong"` falls back to the
+        cheap tier when no strong model can see pictures. None when no configured model can."""
         if choice:
             if llm.vision(choice["provider"], choice["model"]) is False or choice["provider"] not in self.configured():
                 return None
             return self.cloud_model(choice["provider"], choice["model"])
-        for p in self.configured():
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["cheap"]
-            if name and llm.vision(p, name) is not False:
-                return self.cloud_model(p, name)
+        for t in (("strong", "cheap") if tier == "strong" else ("cheap",)):
+            for p in self.configured():
+                name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p].get(t)
+                if name and llm.vision(p, name) is not False:
+                    return self.cloud_model(p, name)
         return None
 
     def describe_model(self):
         """A text backend that can see pictures, for describing a style's reference picture: the strong tier of the first
         configured provider whose strong model can (a cheap model misread colour and palette on the bench), else the
         cheap tier `vision_model` picks. None when no configured model can."""
-        for p in self.configured():
-            name = (self.provider_config(p) or {}).get("model") if p == "custom" else llm.PROVIDERS[p]["strong"]
-            if name and llm.vision(p, name) is not False:
-                return self.cloud_model(p, name)
-        return self.vision_model()
+        return self.vision_model(tier="strong")
 
     def _portraits(self, job: Job, book, prior: list[dict], flag: threading.Event) -> dict:
         """Rewrite the finished index's profiles from every passage mentioning each entity

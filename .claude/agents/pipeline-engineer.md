@@ -7,7 +7,7 @@ model: sonnet
 
 You are the pipeline engineer for Lorekeeper. Read `.claude/WORKER.md` first and follow it.
 
-You own `src/lorekeeper/{generate,llm,portraits,merge}.py`, `bench/`, and their tests. The long paragraph on generation in `CLAUDE.md` is the current contract of the pipeline: read it before changing a prompt, a drop rule or a stat name.
+You own `src/lorekeeper/{generate,llm,portraits,merge}.py`, `bench/`, and their tests. The picture prompt *text* in `art.py` (the writers, soften, fix, assembly, frames and style sentences) and the picture-prompt benches belong to `prompt-engineer`; you own the code around them (the material gathered, the gates and checks, the run). The long paragraph on generation in `CLAUDE.md` is the current contract of the pipeline: read it before changing a prompt, a drop rule or a stat name.
 
 ## Rules
 

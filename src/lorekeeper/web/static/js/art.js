@@ -9,6 +9,8 @@ import { cleanPanels, panelCaptions } from "./artgate.js";
 import { confirmDialog } from "./build.js";
 import { clear, foldList, h, icon, loading, sheet, showModalLocked, closeLocked, toast } from "./dom.js";
 import { galleryName, gallerySentence, loadStyles, savedStyle, styleRow } from "./styles.js";
+import { cleanUserRefs, describeCost, describeModel, earlyProblem, leftOutLine, MAX_REFS, pathLine, REF_ACCEPT, REF_NOTE_CHARS,
+  refPath, refsBody, roomFor, sameRefs, sniff, takesReferences, uploadError, withRefsPhrase } from "./artrefs.js";
 
 export { loadStyles, stylePicker, styleRow, viewStyle } from "./styles.js";
 
@@ -44,7 +46,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -78,7 +80,7 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-export { refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+export { lightboxHides, refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 import { refParts } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
@@ -113,10 +115,14 @@ export function forgetArt(key = null) {
 
 /** Every provider row of /api/providers, cached for a minute ([] when the call fails). */
 let provCache = null;
+// The answer's own top-level `describe` (the model that describes reference pictures, or null), kept beside the rows;
+// undefined when the server's answer does not carry one (an older server).
+let describeTop;
 function allProviders({ fresh = false } = {}) {
   if (fresh || !provCache || Date.now() - provCache.at > 60000) {
     const promise = api.providers().then((r) => {
       const all = Array.isArray(r?.providers) ? r.providers : [];
+      describeTop = r && typeof r === "object" && "describe" in r ? r.describe : undefined;
       for (const p of all) {
         if (typeof p?.label === "string") PROVIDER_NAME.set(p.id, p.label);
         for (const m of imageModels(p)) MODEL_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
@@ -141,7 +147,9 @@ export function textProviders(opts = {}) {
  *  not passed yet (Settings says why they are not offered). */
 export function modelProviders(opts = {}) {
   return allProviders(opts).then((all) => ({ image: all.filter((p) => canDraw(p)), text: all.filter((p) => p && p.ok && textModels(p).length),
-    broken: all.filter((p) => p && p.configured && !p.ok) }));
+    broken: all.filter((p) => p && p.configured && !p.ok),
+    // the model that would describe reference pictures for an image model that takes none (null: none can)
+    describer: describeModel(all, describeTop) }));
 }
 /** Text model names by "provider\nid", and provider names by id (the lightbox names the model that wrote a prompt). */
 const TEXT_LABEL = new Map();
@@ -361,6 +369,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   if (!items.length) return null;
   const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   let i = Math.min(Math.max(0, index), items.length - 1);
+  const opened = new Map(items.map((x) => [x, x.rec.id]));   // each item's id when the lightbox opened
   const stage = h("div.lb-stage");
   const caption = h("p.lb-caption");
   const panelsBox = h("div.lb-panels-box");   // a comic's captions, one per panel, from the reader's view now
@@ -385,8 +394,14 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     if (e.key === "ArrowLeft") { e.preventDefault(); go(i - 1); }
     if (e.key === "ArrowRight") { e.preventDefault(); go(i + 1); }
   });
+  let stepLock = false;   // Keep the original's undo is in flight: no stepping, so its result lands on its own picture
+  function lockSteps(on) {
+    stepLock = on;
+    prev.disabled = on || i === 0; next.disabled = on || i === items.length - 1;
+  }
   function go(n) {
-    if (n < 0 || n >= items.length || n === i) return;
+    if (stepLock || n < 0 || n >= items.length || n === i) return;
+    settleFix();
     i = n; paint();
   }
   function paint() {
@@ -414,6 +429,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.prompt === "string" && r.prompt ? h("div.lb-prompt", h("span.label", "Prompt"), h("p", r.prompt)) : null,
         fixed.length ? h("ul.lb-fixes", { "aria-label": "Fixes" }, fixed.map((x) => h("li", h("span", x.line), x.created && when(x.created) ? h("span.subtle", ` ${when(x.created)}`) : null))) : null,
         h("div.lb-figs", lbFigures(it)),
+        userRefsBox(it),
         // The style's own reference picture went with this one (the record holds only its sha, never the picture).
         typeof r.styleRef === "string" && r.styleRef ? h("p.lb-styleref", "Style from your reference picture.") : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
@@ -450,12 +466,15 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     cancel.focus();
     let found = [], said = "";
     try {
-      const provs = await textProviders();
-      const picker = textChoice(provs, artDefaults().picker);
-      const r = await api.artCheck(it.key, rec.id, atNow(it), picker, ctl.signal);
+      // The server's checker (its strong model that can see pictures), not the Settings picker: the providers list is
+      // only asked for so the model can be named.
+      await textProviders().catch(() => null);
+      const r = await api.artCheck(it.key, rec.id, atNow(it), null, ctl.signal);
       found = cleanFaults(r?.faults);
-      said = found.length ? (found.length === 1 ? "Found one drawing fault. Change it, remove it or add your own." : `Found ${found.length} drawing faults. Change or remove any, or add your own.`)
-        : "No drawing faults found. If something is wrong, say what and it is fixed.";
+      const m = r?.model && typeof r.model.model === "string" && r.model.model ? textModelLabel(r.model.provider, r.model.model) : "";
+      const who = m || "The check";
+      said = found.length ? (found.length === 1 ? `${who} found one drawing fault. Change it, remove it or add your own.` : `${who} found ${found.length} drawing faults. Change or remove any, or add your own.`)
+        : `${m ? `${m} found no` : "No"} drawing faults. If something is wrong, say what and it is fixed.`;
     } catch (e) {
       if (gone || e.name === "AbortError") return;
       said = e.code === "no-vision" ? "No model set up here can look at pictures. Say what is wrong and it is fixed."
@@ -474,7 +493,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const cancel = h("button.btn.quiet", { type: "button", on: { click: () => paintActs() } }, "Cancel");
     const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
     const price = h("p.hint.lb-fix-price");
-    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where }));
+    const read = () => rows.map((r) => ({ what: r.input.value, where: r.where, severity: severityOf(r) }));
     const ready = () => { go_.disabled = !fixBody(read(), note.value); };
     function row(r, n) {
       r.input = h("textarea.input.lb-fault", { rows: "2", maxlength: String(WHAT_CHARS), "aria-label": `What to fix, ${n + 1}`,
@@ -487,7 +506,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         (rows[Math.min(k, rows.length - 1)]?.input || add).focus();
         ready();
       } } }, icon("x"));
-      return h("li.lb-fault-row", h("div.lb-fault-text", r.input, r.where ? h("span.subtle.lb-where", r.where) : null), del);
+      // "minor": the check's own grade, a quiet tag (noticed on a second look); a line the person adds is fixed in full.
+      const minor = severityOf(r) === "minor" ? h("span.lb-minor", "minor") : null;
+      const meta = r.where || minor ? h("span.subtle.lb-where", r.where ? h("span", r.where) : null, minor) : null;
+      return h("li.lb-fault-row", h("div.lb-fault-text", r.input, meta), del);
     }
     function paintRows() {
       // the typed text survives a repaint: it is read back into the rows first
@@ -495,7 +517,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       clear(list, rows.map(row));
       add.hidden = rows.length >= MAX_FAULTS;
     }
-    add.addEventListener("click", () => { const r = { what: "", where: "" }; rows.push(r); paintRows(); r.input.focus(); ready(); });
+    add.addEventListener("click", () => { const r = { what: "", where: "", severity: "major" }; rows.push(r); paintRows(); r.input.focus(); ready(); });
     note.addEventListener("input", ready);
     paintRows();
     const p = drawers?.find((x) => x.id === it.rec.provider);
@@ -505,27 +527,152 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       const body = fixBody(read(), note.value);
       if (!body) return;
       const keep = { faults: read().filter((f) => f.what.trim() || f.where), note: note.value };
+      const old = { rec: it.rec, src: it.src };
+      const at = atNow(it);
       clear(acts, h("div.lb-fix", loading("Fixing the picture…")));
       try {
-        const r = await api.artFix(it.key, it.rec.id, { ...body, ...atNow(it) });
+        const r = await api.artFix(it.key, it.rec.id, { ...body, ...at });
         forgetArt(it.key);
         const rec = r?.record || r;
         if (rec && ID_RE.test(rec.id || "")) { it.rec = rec; it.src = it.srcFor ? it.srcFor(rec) : it.src; }
+        onChanged?.();
         // The fix is filed even when the lightbox closed meanwhile: the toast with Undo then goes where it was opened
         // from (undoable picks the host), and the page fetches the art set again either way.
-        if (dlg.open && items[i] === it) paint();
-        undoable(it, r, "Picture fixed");
-        onChanged?.();
+        if (!dlg.open || items[i] !== it) { undoable(it, r, "Picture fixed"); return; }
+        paint();
+        fixResult(it, r, { sent: body.faults, old, before: beforeSrc(r?.beforeUrl, at) });
       } catch (e) {
-        if (!dlg.open) { toast(e.code === "refused" ? `The provider would not draw it: ${e.message}` : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
+        const why = e.code === "unchanged" ? "The model sent the picture back without the fix, so your picture is kept. Try again, or say it differently."
+          : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
+        if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
         if (items[i] !== it) return;
-        fixForm(it, keep.faults, said, { note: keep.note, error: e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message });
+        fixForm(it, keep.faults, said, { note: keep.note, error: why });
       }
     });
     clear(acts, h("div.lb-fix", h("p.hint", said), list, add,
       h("label.label", { for: "lb-fix-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
     ready();
     (error ? go_ : rows[0].input).focus();
+  }
+  /** "Your reference pictures": the person's own pictures this one was drawn with, each opening its file in a new tab,
+   *  with its note and what it was described as. Remove changes only what a redraw sends, never the picture drawn. */
+  function userRefsBox(it) {
+    const list = cleanUserRefs(it.rec.userRefs);
+    if (!list.length) return null;
+    const removable = it.canEdit && it.canRedraw !== false;
+    return h("div.lb-refs", h("span.label", "Your reference pictures"),
+      h("ul.lb-refs-list", list.map((r, n) => h("li.lb-ref",
+        r.url ? h("a.lb-ref-thumb", { href: r.url, target: "_blank", rel: "noopener noreferrer", "aria-label": `Open your reference picture ${n + 1}` },
+          artImg(r.url, "", "lb-ref-img")) : h("span.lb-ref-thumb"),
+        h("div.lb-ref-text",
+          r.note ? h("p.lb-ref-note", r.note) : h("p.lb-ref-note.subtle", "No note."),
+          r.description ? h("p.lb-ref-desc.subtle", `Described as: ${r.description}`) : null),
+        removable ? h("button.icon-btn.lb-ref-del", { type: "button", "aria-label": `Remove reference picture ${n + 1}`, title: "Remove",
+          on: { click: (e) => removeRef(it, r.sha, e.currentTarget) } }, icon("x")) : null))),
+      removable ? h("p.hint.lb-refs-hint", "Removing one changes only what a redraw uses.") : null);
+  }
+  async function removeRef(it, sha, btn) {
+    const rec = it.rec;
+    const was = cleanUserRefs(rec.userRefs);
+    const keep = was.filter((r) => r.sha !== sha);
+    if (btn) btn.disabled = true;
+    try {
+      const r = await api.artRefsPut(it.key, rec.id, refsBody(keep));
+      forgetArt(it.key);
+      const got = r?.record || r;
+      // The reply's record, else the list as sent (the picture and its id stay the same).
+      it.rec = got && got.id === rec.id ? got : { ...rec, userRefs: keep };
+      if (dlg.open && items[i] === it) repaintRefs(it);
+      const id = r?.undo ?? r?.journal ?? null;
+      toast("Reference picture removed", "ok", { host: dlg.open ? toasts : modalToasts(), action: id ? { label: "Undo", run: async () => {
+        try {
+          await api.undo(it.key, id);
+          forgetArt(it.key);
+          it.rec = { ...it.rec, userRefs: rec.userRefs };
+          if (dlg.open && items[i] === it) repaintRefs(it);
+          toast("Undone", "ok", { host: dlg.open ? toasts : modalToasts() });
+          onChanged?.();
+        } catch (e) { toast(e.message, "error", { host: dlg.open ? toasts : modalToasts() }); }
+      } } : null });
+      onChanged?.();
+    } catch (e) {
+      if (btn?.isConnected) btn.disabled = false;
+      toast(`Couldn't remove it: ${e.message}`, "error", { host: dlg.open ? toasts : modalToasts() });
+    }
+  }
+  /** The reference list again in place ("How this was drawn" stays open), focus to the next Remove or the summary. */
+  function repaintRefs(it) {
+    const old = how.querySelector(".lb-refs");
+    const box = userRefsBox(it);
+    const body = how.querySelector(".lb-details-body");
+    if (old && box) old.replaceWith(box);
+    else if (old) old.remove();
+    else if (box && body) body.querySelector(".lb-figs")?.after(box);
+    (how.querySelector(".lb-ref-del") || how.querySelector("summary"))?.focus({ preventScroll: true });
+  }
+  /** After a fix: what it put right in one sentence, Before / After over the picture, Keep the fix and Keep the original
+   *  (the journal's Undo, then the old picture on screen again). Left undecided (closed, or another picture stepped to),
+   *  the fix stands and the usual toast with Undo is offered. */
+  let pending = null;   // { it, r } while the result is on screen and not decided
+  function settleFix() {
+    if (!pending) return;
+    const { it, r } = pending;
+    pending = null;
+    undoable(it, r, "Picture fixed");
+  }
+  dlg.addEventListener("close", settleFix);
+  // The button pressed is gone with the panel: focus stays in the dialog (so the arrow keys still step), on its first action.
+  const refocus = () => (acts.querySelector("button") || closeBtn).focus({ preventScroll: true });
+  function fixResult(it, r, { sent, old, before }) {
+    const id = r?.undo ?? r?.journal ?? null;
+    pending = { it, r };
+    const after = it.src;
+    const err = h("p.hint.field-error", { role: "alert" });
+    const bBefore = h("button", { type: "button", "aria-pressed": "false", on: { click: () => show("before") } }, "Before");
+    const bAfter = h("button", { type: "button", "aria-pressed": "true", on: { click: () => show("after") } }, "After");
+    const seg = before ? h("div.seg.lb-ba", { role: "group", "aria-label": "Show the picture" }, bBefore, bAfter) : null;
+    function show(which) {
+      for (const b of [bBefore, bAfter]) b.setAttribute("aria-pressed", String(b === (which === "before" ? bBefore : bAfter)));
+      const img = artImg(which === "before" ? before : after, `${it.caption || "Picture"}${which === "before" ? ", before the fix" : ""}`, "lb-img", { eager: true });
+      // a "before" that cannot be fetched (undone elsewhere, or the server has none): the toggle goes, the fix stays shown
+      if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
+      clear(stage, img);
+    }
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); refocus(); } } }, "Keep the fix");
+    const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
+    keepOld?.addEventListener("click", async () => {
+      keepOld.disabled = keepFix.disabled = true;
+      err.textContent = "";
+      lockSteps(true);
+      // Decided the moment it is pressed: closing or stepping away while the undo runs must not settle the fix (and
+      // toast "Picture fixed" over an original that is coming back).
+      pending = null;
+      try {
+        await api.undo(it.key, id);
+        lockSteps(false);
+        forgetArt(it.key);
+        it.rec = old.rec; it.src = old.src;
+        onChanged?.();
+        if (!dlg.open || items[i] !== it) { toast("The original is back.", "ok", { host: dlg.open ? toasts : modalToasts() }); return; }
+        paint();
+        refocus();
+        toast("The original is back.", "ok", { host: toasts });
+      } catch (e) {
+        lockSteps(false);
+        // The fix stands: back to undecided where the result is still on screen, else the usual toast with Undo.
+        if (dlg.open && items[i] === it && keepOld.isConnected) {
+          pending = { it, r };
+          err.textContent = `Couldn't put the original back: ${e.message}`;
+          keepOld.disabled = keepFix.disabled = false;
+        } else {
+          toast(`Couldn't put the original back: ${e.message}`, "error", { host: dlg.open ? toasts : modalToasts() });
+          undoable(it, r, "Picture fixed");
+        }
+      }
+    });
+    clear(acts, h("div.lb-fix.lb-fixed", { role: "group", "aria-label": "The fix" },
+      h("p.lb-verdict", { role: "status" }, verdictLine(r?.verified, sent)), seg, err, h("div.btns", keepOld, keepFix)));
+    keepFix.focus();
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
@@ -584,7 +731,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         go_.disabled = false; cancel.disabled = false;
       }
     });
-    clear(acts, h("div.lb-redraw", h("label.label", "Redraw with a note, optional"), note, err, h("div.btns", cancel, go_)));
+    // the record's own reference pictures go again as stored (the route reuses them)
+    const withRefs = withRefsPhrase(cleanUserRefs(it.rec.userRefs).length);
+    clear(acts, h("div.lb-redraw", h("label.label", "Redraw with a note, optional"), note,
+      withRefs ? h("p.hint.lb-redraw-refs", `Drawn again ${withRefs}.`) : null, err, h("div.btns", cancel, go_)));
     note.focus();
   }
   async function remove(it) {
@@ -614,7 +764,11 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     if (dd) dd.textContent = modelFact(r);
     if (wd) wd.textContent = writerFact(r.writer) || wd.textContent;
   });
-  return { close, refresh };
+  /** Per picture the lightbox can step to, the ids that stand for it: the one on screen now and the one it opened with
+   *  (a fix or a redraw files the picture under a new id, which the page's art set learns only after it is fetched
+   *  again; both share the same anchor). The Reader closes the lightbox only when neither is visible. */
+  const ids = () => items.map((x) => [x.rec.id, opened.get(x)]);
+  return { close, refresh, ids };
 }
 
 /** A toast stack inside the topmost open modal (the entry drawer or a sheet), or null for the page's own. */
@@ -625,6 +779,153 @@ export function modalToasts() {
   let host = top.querySelector(":scope .drawer-toasts, :scope .sheet-toasts");
   if (!host) { host = h("div.drawer-toasts"); top.append(host); }
   return host;
+}
+
+// ---- the person's own reference pictures (artrefs.js has the rules) ------------------------------------
+
+/** A chosen file's kind, size and, when those pass, its size in pixels (null when it could not be decoded). */
+async function inspectRef(file) {
+  let kind = null;
+  try { kind = sniff(new Uint8Array(await file.slice(0, 16).arrayBuffer())); } catch {}
+  if (earlyProblem({ kind, size: file.size })) return { kind, size: file.size };
+  const dims = await new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ width: img.naturalWidth || null, height: img.naturalHeight || null }); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ width: null, height: null }); };
+    img.src = url;
+  });
+  return { kind, size: file.size, ...dims };
+}
+
+/**
+ * The picture sheet's "Reference pictures" row: up to MAX_REFS of the person's own pictures, each uploaded as soon as it
+ * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it") and Remove.
+ * `initial` is a record's `userRefs` (a redraw starts from them). The element is made once and kept across the sheet's
+ * repaints, so a change of style, shape, quality, model or moment keeps it as it is. Returns
+ * { el, refs() [{sha, note?}], count(), busy(), dirty(), drop(sentence), setPath(text), dispose() }.
+ */
+function refsRow({ key, initial = [], onChange = null }) {
+  let seq = 0;
+  // { id, sha, ext, note, description, url, local (object URL while uploading), uploading, ctrl, done (Promise) }
+  const items = cleanUserRefs(initial).map((r) => ({ ...r, id: ++seq, uploading: false }));
+  let start = items.map((r) => ({ ...r }));
+  const fileIn = h("input.sr-only.art-refs-file", { type: "file", accept: REF_ACCEPT, multiple: true, tabindex: "-1", "aria-hidden": "true" });
+  const addBtn = h("button.btn.art-refs-add-btn", { type: "button", "aria-describedby": "art-refs-err", on: { click: () => fileIn.click() } },
+    icon("upload"), "Add reference pictures");
+  const drop = h("div.art-refs-drop", addBtn,
+    h("span.art-refs-drop-hint.subtle", `or drop them here. PNG, JPEG or WebP, at most 8 MB, up to ${MAX_REFS}.`));
+  const list = h("ul.art-refs-list", { "aria-label": "Your reference pictures" });
+  const err = h("p.hint.field-error#art-refs-err", { role: "alert" });
+  const path = h("p.hint.art-refs-path", { role: "status" });
+  const el = h("div.art-field.art-refs", h("span.label#art-refs-label", "Reference pictures"),
+    h("p.hint.art-refs-what", "Your own pictures to help with this one: a dress, a house, a face. Say what to take from each."),
+    list, fileIn, drop, err, path);
+  const changed = () => onChange?.();
+
+  function row(it, n) {
+    const thumb = h("span.art-ref-thumb", it.uploading ? h("span.spinner", { role: "img", "aria-label": "Uploading" }) : null);
+    const src = it.local || it.url;
+    if (src) {
+      const img = h("img", { src, alt: `Your reference picture ${n + 1}`, decoding: "async", draggable: "false" });
+      img.addEventListener("error", () => img.remove());
+      thumb.prepend(img);
+    }
+    const note = h("input.input.art-ref-note", { type: "text", maxlength: String(REF_NOTE_CHARS), placeholder: "What to take from it",
+      "aria-label": `What to take from picture ${n + 1}`, dataset: { ref: String(it.id) },
+      on: { input: (e) => { it.note = e.target.value; changed(); } } });
+    note.value = it.note || "";
+    const del = h("button.icon-btn.art-ref-del", { type: "button", "aria-label": `Remove picture ${n + 1}`, title: "Remove", dataset: { del: String(it.id) },
+      on: { click: () => remove(it) } }, icon("x"));
+    return h(`li.art-ref${it.uploading ? ".uploading" : ""}`, thumb, note, del);
+  }
+  function paint() {
+    // Typing and focus survive: the notes are read from the items, and focus goes back to the same item's field.
+    const act = document.activeElement;
+    const focusRef = list.contains(act) ? act.dataset.ref || (act.dataset.del ? `del:${act.dataset.del}` : null) : null;
+    clear(list, items.map(row));
+    list.hidden = !items.length;
+    drop.hidden = items.length >= MAX_REFS;
+    if (focusRef) {
+      const t = focusRef.startsWith("del:") ? list.querySelector(`[data-del="${focusRef.slice(4)}"]`) : list.querySelector(`[data-ref="${focusRef}"]`);
+      t?.focus({ preventScroll: true });
+    }
+  }
+  function remove(it) {
+    const k = items.indexOf(it);
+    if (k < 0) return;
+    it.ctrl?.abort();
+    if (it.local) URL.revokeObjectURL(it.local);
+    items.splice(k, 1);
+    err.textContent = "";
+    paint();
+    (list.querySelectorAll(".art-ref-note")[Math.min(k, items.length - 1)] || addBtn).focus({ preventScroll: true });
+    changed();
+  }
+  async function take(files) {
+    err.textContent = "";
+    const chosen = [...(files || [])];
+    if (!chosen.length) return;
+    const room = roomFor(items, chosen.length);
+    if (room < chosen.length) err.textContent = `Up to ${MAX_REFS} pictures: ${chosen.length - room === 1 ? "one was" : `${chosen.length - room} were`} left out.`;
+    for (const file of chosen.slice(0, room)) {
+      const it = { id: ++seq, sha: null, ext: null, note: "", description: null, url: null, local: URL.createObjectURL(file), uploading: true, ctrl: new AbortController() };
+      items.push(it);
+      upload(it, file);
+    }
+    paint();
+    changed();
+  }
+  async function upload(it, file) {
+    const gone = () => !items.includes(it);
+    try {
+      const problem = earlyProblem(await inspectRef(file));
+      if (gone()) return;
+      if (problem) throw Object.assign(new Error(problem), { code: "bad-image" });
+      const r = await api.artRefUpload(key, file, it.ctrl.signal);
+      if (gone()) return;
+      const got = cleanUserRefs([r])[0];
+      if (!got) throw new Error("the server did not say where it went");
+      // the same picture twice: one item, the first one's note kept
+      if (items.some((x) => x !== it && x.sha === got.sha)) { forget(it); err.textContent = "That picture is already here."; return; }
+      Object.assign(it, { sha: got.sha, ext: got.ext, url: got.url, uploading: false });
+      if (it.local) { URL.revokeObjectURL(it.local); it.local = null; }
+      if (!it.url) it.local = URL.createObjectURL(file);   // an older reply without the address: the chosen file shows
+    } catch (e) {
+      if (gone() || e?.name === "AbortError") return;
+      forget(it);
+      err.textContent = uploadError(e);
+      return;
+    }
+    paint();
+    changed();
+  }
+  function forget(it) {
+    const k = items.indexOf(it);
+    if (k >= 0) items.splice(k, 1);
+    if (it.local) URL.revokeObjectURL(it.local);
+    paint();
+    changed();
+  }
+  fileIn.addEventListener("change", () => { const f = [...fileIn.files]; fileIn.value = ""; take(f); });
+  // Dropping files on the row (wide screens; the drop area is hidden on a phone, where the button is the way in).
+  for (const t of ["dragenter", "dragover"]) el.addEventListener(t, (e) => { if (e.dataTransfer?.types?.includes("Files") && items.length < MAX_REFS) { e.preventDefault(); el.classList.add("over"); } });
+  el.addEventListener("dragleave", (e) => { if (!el.contains(e.relatedTarget)) el.classList.remove("over"); });
+  el.addEventListener("drop", (e) => { if (!e.dataTransfer?.files?.length) return; e.preventDefault(); el.classList.remove("over"); take(e.dataTransfer.files); });
+  paint();
+  return {
+    el,
+    refs: () => refsBody(items),
+    count: () => items.filter((x) => !x.uploading).length,
+    busy: () => items.some((x) => x.uploading),
+    dirty: () => items.some((x) => x.uploading) || !sameRefs(items, start),
+    /** Take every picture out (the server could not use them) and say why under the row. */
+    drop: (sentence) => { for (const it of [...items]) { it.ctrl?.abort(); if (it.local) URL.revokeObjectURL(it.local); } items.length = 0; paint(); err.textContent = sentence || ""; changed(); },
+    setPath: (text) => { path.textContent = text || ""; },
+    /** Drawn with these: nothing left to ask about on close. */
+    settle: () => { start = items.map((r) => ({ ...r })); },
+    dispose: () => { for (const it of items) { it.ctrl?.abort(); if (it.local) URL.revokeObjectURL(it.local); } },
+  };
 }
 
 // ---- the picture sheet: on-demand drawing --------------------------------------------------------
@@ -651,13 +952,15 @@ export function modalToasts() {
  *                new picture takes that one's place (Undo puts it back; `onUndone()` runs after)
  *   replacesStyle  the slug of that picture's set: drawn in another style, the picture is a new one in that style's set and
  *                the old one stays (no `replaces` is sent)
+ *   refs         with `replaces`: the old picture's `userRefs`, the person's own reference pictures, which start in the
+ *                "Reference pictures" row (sent with Draw as the row holds them then)
  *   through      a person or creature portrait: the sheet also offers "Through the book so far", the portraits a run would
  *                plan for this one entry (first look, then each lasting look change) up to the position, already drawn ones
  *                skipped, counted by the estimate and started as a pictures run on the queue (never with `replaces`)
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
-  const [{ image: provs, text: writers }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
+  const [{ image: provs, text: writers, describer }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
   if (!provs.length) {
     const sh = sheet({ title: "Draw a picture", className: "art-sheet",
       content: h("div.art-sheet-body", h("p", "Pictures need a Gemini or OpenAI key."),
@@ -725,18 +1028,37 @@ export async function openPictureSheet(opts) {
     // when it lands its toast, with Undo for a redraw, shows where the sheet was opened from. An edited prompt is asked about first.
     beforeClose: () => {
       if (st.drawing || st.starting) return true;
-      if (st.busy) { abort(); return true; }
-      if (!st.prompt || st.prompt === st.written) return true;
-      confirmDialog({ title: "Discard your prompt?", message: "The prompt you changed is not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
-        .then((ok) => { if (ok) { st.prompt = st.written; sh.close(true); } });
+      const edited = Boolean(st.prompt) && st.prompt !== st.written;
+      const pictures = Boolean(refs?.dirty());   // reference pictures added, removed or noted here count as changes
+      if (st.busy && !pictures) { abort(); return true; }
+      if (!edited && !pictures) return true;
+      confirmDialog({ title: "Discard your changes?", message: edited && pictures ? "The prompt you changed and your reference pictures are not kept."
+        : edited ? "The prompt you changed is not kept." : "Your reference pictures are not kept.", confirmLabel: "Discard", cancelLabel: "Keep editing" })
+        .then((ok) => { if (ok) { if (st.busy) abort(); st.prompt = st.written; refs?.dispose(); refs = null; sh.close(true); } });
       return false;
     },
     onClose: () => {
       st.closed = true;
+      refs?.dispose();   // the uploads in flight stop; what was uploaded is pruned by the server after a day
       if (!st.drawing) abort();
       if (undoRedraw) toast("Picture redrawn", "ok", { host: modalToasts(), action: { label: "Undo", run: () => undoRedraw?.() } });
     } });
   let undoRedraw = null;   // after a redraw with a new prompt: puts the old picture back
+  // The person's own reference pictures (not for "Through the book so far", a run). A redraw starts from the old picture's.
+  let refs = refsRow({ key: opts.key, initial: replaces ? opts.refs || [] : [], onChange: () => { paintPath(); paintFoot(); } });
+  /** Which way the pictures go with the image model chosen now, as one quiet line under the row. */
+  function refRoute() {
+    const takes = takesReferences(st.provider, st.model);
+    const d = takes ? null : describer;
+    return { path: refPath({ takes, describer: d }), describer: d };
+  }
+  function paintPath() {
+    if (!refs) return;
+    const { path, describer: d } = refRoute();
+    const n = Math.max(1, refs.count());
+    refs.setPath(pathLine({ path, image: modelLabel(st.provider.id, st.model) || st.provider.label, provider: st.provider.label,
+      describer: d ? d.model.label || d.model.id : null, describerProvider: d ? d.provider.label : null, price: d ? describeCost(d.model, n) : null }));
+  }
   sh.current = () => ({ kind: st.kind, target: st.target });
   sh.refreshFigures = () => { paintFigures(); paintPanels(); };
   sh.listed = () => [sh.current(), ...(opts.moments || []).map((m) => ({ kind: m.kind, target: m.target }))];
@@ -983,6 +1305,7 @@ export async function openPictureSheet(opts) {
         h("p.hint", "Written from what you have read so far. Change anything; the picture is drawn from this text only. ",
           h("button.linkish", { type: "button", on: { click: write } }, "Write it again")),
         figuresBox),
+      refs ? refs.el : null,
       h("div.art-field", h("label.label", { for: "art-style-row" }, "Style"), styleChoice, styleNote),
       h("div.art-row",
         h("div.art-field", h("span.label", "Shape"), seg("Shape", SHAPES, st.shape, (k) => { st.shape = k; })),
@@ -995,6 +1318,7 @@ export async function openPictureSheet(opts) {
       worldLine(),
       err);
     textarea.id = "art-prompt";
+    paintPath();
     paintStyleNote();
     paintFigures();
     paintPanels();
@@ -1134,13 +1458,16 @@ export async function openPictureSheet(opts) {
     }
     // An older server's prompt carries its style in the text: until it is written again for a new style, Draw waits.
     const stale = !st.parts && st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
-    const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !stale;
+    // While a reference picture uploads, Draw is off: nothing is drawn without a picture the person just added, and a
+    // picture whose upload fails stays said under the row with nothing drawn.
+    const uploading = Boolean(refs?.busy());
+    const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !uploading && !stale;
     drawBtn.disabled = !ok;
     const pr = price();
     // Without the image table the price is the prompt route's, for the choices it was asked with; other choices say so
     // rather than show a number for the wrong quality or provider.
     const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.model === st.model && st.asked.shape === st.shape;
-    footNote.textContent = st.busy ? "" : stale ? "Write the prompt again for this style first."
+    footNote.textContent = st.busy ? "" : uploading ? "Uploading your pictures…" : stale ? "Write the prompt again for this style first."
       : pr != null ? `${money(pr)[0].toUpperCase()}${money(pr).slice(1)} for this picture`
         : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Price unknown for these choices" : "Price unknown";
   }
@@ -1173,7 +1500,7 @@ export async function openPictureSheet(opts) {
     }
   });
   drawBtn.addEventListener("click", async () => {
-    if (st.busy) return;
+    if (st.busy || refs?.busy()) return;   // Draw is disabled meanwhile; this only guards a click already queued
     // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.
     if (st.parts && sentenceNow() !== st.sentence) applyStyle();
     abort();
@@ -1182,12 +1509,16 @@ export async function openPictureSheet(opts) {
     // The old picture is replaced only within its own set: another style files a new picture there and keeps the old one.
     const replacing = Boolean(replaces) && (!opts.replacesStyle || folder() === opts.replacesStyle);
     const sent = st.prompt;   // the text as the provider saw it (a rewrite after a refusal starts from this)
+    // The person's pictures go unless neither the image model nor a describing model can take them (the line says so).
+    const userRefs = refs && refRoute().path !== "none" ? refs.refs() : [];
     const keep = [...body.childNodes];
     clear(body, loading("Drawing the picture. This takes a few seconds…"));
     footNote.textContent = "";
     try {
       const r = await api.artDraw(opts.key, { kind: st.kind, target: st.target, style: styleText(), shape: st.shape, quality: st.quality,
         prompt: st.prompt, provider: st.provider.id, ...(st.model ? { model: st.model } : {}), ...(replacing ? { replaces } : {}),
+        // a redraw sends its list even when empty, so pictures taken out here are not carried over from the old picture
+        ...(userRefs.length || replacing ? { refs: userRefs } : {}),
         ...(artDefaults().check ? { check: true } : {}), ...here() });
       st.drawing = false;
       const rec = r?.record || r;
@@ -1217,6 +1548,7 @@ export async function openPictureSheet(opts) {
       }
       st.busy = false;
       st.written = st.prompt;   // drawn: nothing to ask about on close
+      refs?.settle();
       // The new picture shows here only if it may show at the position (its anchor is the item's own, which is visible,
       // but the server decides the anchor; the Reader checks it as it checks every picture).
       const src = slug && opts.srcFor && (!opts.canShow || opts.canShow(rec)) ? opts.srcFor(rec, slug) : null;
@@ -1224,6 +1556,7 @@ export async function openPictureSheet(opts) {
       clear(body, h("div.art-done", src ? artImg(src, opts.title, "art-done-img", { eager: true }) : null,
         h("p", src ? added : `${added} It shows where it belongs in the book.`),
         autoFixed(rec) ? h("p.hint.art-fixed", "Redrawn: the first try had a drawing fault.") : null,
+        leftOutLine(r?.refsLeftOut ?? rec?.refsLeftOut) ? h("p.hint.art-left-out", leftOutLine(r?.refsLeftOut ?? rec?.refsLeftOut)) : null,
         h("div.btns", h("button.btn.primary", { type: "button", on: { click: () => sh.close(true) } }, "Done"))));
       drawBtn.hidden = true; footNote.textContent = typeof rec?.cost === "number" && rec.cost > 0 ? `Cost ${money(rec.cost).replace(/^about /, "")}` : "";
       // A redraw took the old picture out of the set: Undo puts it back (and takes the new one out).
@@ -1235,7 +1568,13 @@ export async function openPictureSheet(opts) {
       if (mine !== gen) return;
       st.busy = false;
       clear(body, keep);
-      if (e.code === "refused") {
+      if (e.code === "no-vision-model" && refs) {
+        // The image model takes no pictures and nothing here can describe them: they are taken out, and Draw goes without.
+        refs.drop("No model that can see pictures is set up, so your pictures were taken out. Draw again to draw without them.");
+        clear(err);
+      } else if (e.code === "bad-refs" && refs) {
+        clear(err, h("p", `Your reference pictures could not be used: ${e.message}`));
+      } else if (e.code === "refused") {
         // The person stays in control: a rewrite of the same moment, told so it can be drawn, goes into the prompt box to be
         // read before Draw. A second refusal offers it again.
         const fix = h("button.btn", { type: "button", on: { click: () => soften(sent, e.message || "") } }, icon("sparkle"), "Rewrite it so it can be drawn");

@@ -27,7 +27,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Protocol, Sequence
 
 from . import anchors as A
 from . import epub, gating, images, llm
@@ -454,34 +454,53 @@ def soften_request(text: str, reason: str = "", limit: int = SOFTEN_TEXT_CHARS) 
     return SOFTEN.format(text=text.replace('"', "'"), reason=f' (the reason it gave: "{reason}")' if reason else "")
 
 
-# ---- drawing faults: the check (one call on the picker, which sees the picture) and the fix (one edit by the image model)
+# ---- drawing faults: the check (one call on a text model that sees the picture) and the fix (one edit by the image model)
 #
 # The check only finds; code decides. A fault is a short instruction-ready phrase ("the head is far too small for the body")
-# and where it is, by how the figure looks or its label, never by name. The stored prompt goes with the picture, so a figure
-# the prompt describes as maimed is not a fault. A failed call is "not checked", never a fault.
-ANATOMY = """You check a picture an image model drew for a reader's illustrated companion to a novel, for gross drawing faults only: the ones a reader would notice at a glance.
+# and where it is, by how the figure looks or its label, never by name, graded "major" (seen at a glance) or "minor" (seen on
+# a second look). The model first writes down, figure by figure, the heads, arms, hands and legs it sees (`figures`, never
+# stored or shown: it is there so the model looks before it judges). The stored prompt goes with the picture, so a figure the
+# prompt describes as maimed is not a fault. A failed call is "not checked", never a fault.
+ANATOMY = """You check a picture an image model drew for a reader's illustrated companion to a novel, for drawing faults: things drawn wrong, the way image models draw them wrong. Be critical. Image models often draw bodies, hands, faces and objects wrong, and a picture that looks fine at a glance often is not on a second look.
 
-Report only these:
-- an extra or a missing hand, arm, leg or head;
-- a limb attached to the wrong body or in the wrong place;
+First take stock, figure by figure: for every person and creature in the picture, write in "figures" where it is (a few words) and how many heads, arms, hands and legs are drawn on it, counting what you see, not what it should have. Count only what is in the picture: a limb hidden or cut off by the frame is not counted and is no fault.
+
+Then look for these faults, on every figure and every object:
+- an extra or a missing head, arm, hand or leg, against what that figure should have;
+- a limb attached to the wrong body or in the wrong place, or a limb that starts or ends nowhere;
+- a joint bent the way it cannot bend (an elbow or a knee backwards, a wrist or a neck twisted round);
 - bodies fused or merged into one another;
 - a head or a body far out of proportion to the rest of the figure (a head far too small for the body, an arm far too long);
-- a hand with clearly wrong fingers (too many, too few, melted together);
+- a distorted or melted face: eyes at different heights or of different sizes, a missing or a doubled feature, a face smeared into the hair or the background;
+- a hand with wrong fingers (too many, too few, melted together, bent where no finger bends);
+- an object merged into a body, or passing through a hand, an arm or a body;
+- a held thing floating with no hand gripping it, or a hand closed round nothing where it should hold something;
+- a doubled or broken object (a sword with two blades or two hilts, a chair with a leg missing, a cup fused into the table, a candle melting into what it stands on);
+- furniture or a building that could not stand (a table whose legs do not reach the floor, a stair leading nowhere, a wall that bends through itself);
+- figures at an impossible scale to each other or to the room (a man as tall as the door is wide, a child twice the size of the adults beside it);
 - one person the prompt describes drawn twice.
 
-Never report style, taste, mood, composition or colour, a detail the prompt asks for that is merely small, how well anyone resembles anyone, or text and lettering. These are not faults either: a pose or a long reach, foreshortening, a limb or hand hidden behind something or cut off by the frame, a hand that is small or rough because the drawing style is loose, a crowd or a team of animals whose legs overlap but can be counted. The prompt the picture was drawn from comes with it: what the prompt asks for is never a fault (a figure the prompt says has lost an arm is drawn without it).
-Report a fault only when you can point to it and are sure of it; when unsure, it is not a fault. Most pictures have none.
+Judge how things are drawn, not whether the picture follows the prompt: a thing the prompt mentions that is missing, placed elsewhere or posed otherwise is not a fault, and neither is a figure doing something else than the prompt says. A part that is only sketchy, vague or hard to make out is not a fault either: a fault is something drawn wrong, and you can say what is wrong with it. These are never faults: style, taste, mood, colour, composition; how well anyone resembles anyone; text or lettering; a pose or a long reach; foreshortening; a limb or a hand hidden behind something or cut off by the frame; a hand that is small or rough because the drawing style is loose; a crowd or a team of animals whose legs overlap but can be counted; and anything the prompt asks for (a figure the prompt says has lost an arm is drawn without it, a creature the prompt gives four arms has four).
 
-For each fault, "what" is a short phrase saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers"), and "where" names the figure by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 5 faults, the most visible first. A picture with none of these faults gets an empty list.
-Return "faults"."""
-ANATOMY_SCHEMA = {"type": "object", "required": ["faults"], "properties": {"faults": {"type": "array", "items": {
-    "type": "object", "required": ["what", "where"],
-    "properties": {"what": {"type": "string"}, "where": {"type": "string"}}}}}}
+Report what a careful viewer would find wrong on a second look. A fault you can point to is reported even when it is small. "severity" is "major" for a fault a reader notices at a glance: a wrong number of heads, limbs, hands or fingers, bodies merged, a melted or doubled face, a joint bent backwards, an object through a body, a broken or doubled object in the middle of the picture; it is major even when the figure is small in the picture. It is "minor" when it takes a second look: a grip that does not quite close, a slightly wrong proportion, a small object a little out of shape.
+
+For each fault, "what" is a short phrase of at most about 150 characters saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "the sword passes through the man's hand"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
+Return "figures", then "faults"."""
+ANATOMY_SCHEMA = {"type": "object", "required": ["figures", "faults"], "properties": {
+    "figures": {"type": "array", "items": {
+        "type": "object", "required": ["where", "heads", "arms", "hands", "legs"],
+        "properties": {"where": {"type": "string"}, "heads": {"type": "integer"}, "arms": {"type": "integer"},
+                       "hands": {"type": "integer"}, "legs": {"type": "integer"}}}},
+    "faults": {"type": "array", "items": {
+        "type": "object", "required": ["what", "where", "severity"],
+        "properties": {"what": {"type": "string"}, "where": {"type": "string"},
+                       "severity": {"type": "string", "enum": ["major", "minor"]}}}}}}
 ANATOMY_PROMPT = """The picture above was drawn from this prompt (context only: what it asks for is not a fault):
 <prompt>{prompt}</prompt>
 
-List its gross drawing faults, if any."""
-MAX_FAULTS = 5             # what the check keeps of one answer
+Take stock of its figures, then list its drawing faults, if any."""
+MAX_FAULTS = 6             # what the check keeps of one answer
+SEVERITIES = ("major", "minor")
 FAULT_CHARS = 200          # one fault's "what", and its "where" (the web route's limits for a person's own list)
 WHERE_CHARS = 120
 CHECK_PROMPT_CHARS = 3000  # the stored prompt sent with the picture
@@ -493,38 +512,73 @@ FIX = ("Correct the drawing faults listed below in this picture: redraw each par
 FIX_NOTE_CHARS = 300
 FIX_UNPRICED = 1.5         # a fix on a token-billed model is held at this times the picture's cost (the picture goes back in)
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
+MAX_NEW_FAULTS = 3         # faults the verification may say a fix added
 # Measured by bench/anatomy_check.py on 2026-11-26 (20 Gemini draft scenes of Dracula and Empire of the Vampire, Claude Haiku
-# 5.5 as the picker): it flagged 11 of 20 (0.55), the share of drawn pictures the cost cap reserves a fix for; one check took
-# 2,629 tokens in and 72 out on average, about $0.03 per 100 pictures. CHECK_TOKENS (with a margin) is what `check_price`
-# prices for the estimate and the cap reserves before each check. An edit kept the picture (9 of 10 by the picker) where a
-# redraw with the faults to avoid made another picture (4.4 of 10), at about the same rate of faults left, so a fix is an edit.
-FIX_RATE = 0.55
-CHECK_TOKENS = (2800, 120)
+# 5.5 as the picker): an edit kept the picture (9 of 10 by the picker) where a redraw with the faults to avoid made another
+# picture (4.4 of 10), at about the same rate of faults left, so a fix is an edit. Measured again on the same 20 on 2026-11-27
+# with this ANATOMY (two runs): Haiku flagged 18 and 15 (the 0.27.0 prompt 11 and 10), Sonnet 5.5 8 and 8 (5 and 6); Haiku
+# found a major fault in 4 of 20 both times, the share of drawn pictures the cost cap reserves a fix (and its verification)
+# for, since the automatic path fixes major faults only. One check took 3,633 tokens in and 290 out on average (637 at most),
+# one verification 3,976 in and 62 to 112 out; CHECK_TOKENS and VERIFY_TOKENS (with a margin) are what `check_price` and
+# `verify_price` price for the estimate and what the cap reserves. Of 8 edits Sonnet called 2 unchanged, 5 partly fixed and
+# 1 fixed; Haiku 0, 8 and 0.
+FIX_RATE = 0.2
+CHECK_TOKENS = (3800, 400)
 CHECK_FALLBACK = 0.002     # USD for one check when the picker's price is unknown, so the cap still reserves something
+VERIFY_TOKENS = (4200, 200)  # one verification: two pictures in, the verdict out
+VERIFY_FALLBACK = 0.004
 
 
 @dataclass
 class Check:
-    """What the check found: `faults` [{"what", "where"}] (empty: clean), `checked` False when the call failed or the model
-    cannot see pictures (`why` says which), never a fault. `cost` is the call's, in USD."""
+    """What the check found: `faults` [{"what", "where", "severity"}] (empty: clean), `checked` False when the call failed or
+    the model cannot see pictures (`why` says which), never a fault. `cost` is the call's, in USD."""
     faults: list[dict]
     checked: bool = True
     cost: float = 0.0
     why: str = ""
 
 
+def _cut_words(text, limit: int) -> str:
+    """`text` with whitespace collapsed, cut to at most `limit` characters at a word boundary, so the image model is never
+    handed half a word ("without clear att"); a cut never keeps a trailing comma, dash or stop. A first word longer than half
+    the limit is cut where the limit falls (there is no boundary worth keeping)."""
+    text = " ".join(str(text or "").split())
+    if len(text) > limit:
+        head = text[:limit]
+        if text[limit] != " ":
+            space = head.rfind(" ")
+            if space > limit // 2:
+                head = head[:space]
+        text = head.rstrip(" ,;:-\u2013\u2014")
+    return text.rstrip(" .")
+
+
 def clean_faults(raw, limit: int = MAX_FAULTS) -> list[dict]:
-    """A list of faults as code keeps them: each {"what", "where"} with whitespace collapsed and cut to FAULT_CHARS and
-    WHERE_CHARS, one with no "what" left out, at most `limit`."""
+    """A list of faults as code keeps them: each {"what", "where", "severity"} with whitespace collapsed and cut to
+    FAULT_CHARS and WHERE_CHARS at a word boundary (`_cut_words`), one with no "what" left out, at most `limit`. A missing or
+    unknown severity is "major", so an older client's list and a person's own lines are fixed in full."""
     out = []
     for f in raw if isinstance(raw, list) else []:
         if not isinstance(f, dict):
             continue
-        what = " ".join(str(f.get("what") or "").split())[:FAULT_CHARS].rstrip(" .")
-        where = " ".join(str(f.get("where") or "").split())[:WHERE_CHARS].rstrip(" .")
+        what = _cut_words(f.get("what"), FAULT_CHARS)
+        where = _cut_words(f.get("where"), WHERE_CHARS)
+        severity = f.get("severity") if f.get("severity") in SEVERITIES else "major"
         if what and len(out) < limit:
-            out.append({"what": what, "where": where})
+            out.append({"what": what, "where": where, "severity": severity})
     return out
+
+
+def _seeing_call(model, system: str, prompt: str, schema: dict, pictures: list[tuple[bytes, str]]):
+    """One call on a text model that sees pictures. Raises llm.NoVision (also for a backend whose complete() takes no
+    pictures) and llm.Cancelled; any other failure is raised as it came."""
+    try:
+        return model.complete(system, prompt, schema, images=pictures)
+    except TypeError as e:          # a backend whose complete() takes no pictures
+        if "images" in str(e):
+            raise llm.NoVision(f"{getattr(model, 'name', 'the model')} cannot see pictures") from e
+        raise
 
 
 def check_picture(model, data: bytes, mime: str, prompt: str) -> Check:
@@ -534,19 +588,107 @@ def check_picture(model, data: bytes, mime: str, prompt: str) -> Check:
     before = _cost_of(model)
     prompt = " ".join(str(prompt or "").split())[:CHECK_PROMPT_CHARS]
     try:
-        out = model.complete(ANATOMY, ANATOMY_PROMPT.format(prompt=prompt), ANATOMY_SCHEMA, images=[(data, mime)])
+        out = _seeing_call(model, ANATOMY, ANATOMY_PROMPT.format(prompt=prompt), ANATOMY_SCHEMA, [(data, mime)])
     except (llm.NoVision, llm.Cancelled):
         raise
-    except TypeError as e:          # a backend whose complete() takes no pictures
-        if "images" in str(e):
-            raise llm.NoVision(f"{getattr(model, 'name', 'the model')} cannot see pictures") from e
-        return Check([], False, _cost_of(model) - before, f"{type(e).__name__}: {str(e)[:160]}")
     except Exception as e:      # noqa: BLE001 - a failed check leaves the picture as it is
         return Check([], False, _cost_of(model) - before, f"{type(e).__name__}: {str(e)[:160]}")
     cost = _cost_of(model) - before
     if not isinstance(out, dict) or not isinstance(out.get("faults"), list):
         return Check([], False, cost, "no list of faults in the reply")
     return Check(clean_faults(out["faults"]), True, cost)
+
+
+# ---- the verification of a fix: one call with both pictures, the original first. Code reads only the verdict: per fault
+# yes, partly or no, whether the picture changed where the faults were, and the gross faults the fix added.
+VERIFY_FIX = """You check whether an image model fixed a picture. Picture 1 is the original; picture 2 is the same picture after the image model was asked to correct the faults listed with it, and to leave everything else as it was.
+
+Compare the two pictures closely. Be strict: image models often send a picture back with nothing corrected, or with the fault moved, or only half put right.
+- For each listed fault, by its number "n", say whether picture 2 fixes it: "yes" when the part is now drawn right, "partly" when it is better but still visibly wrong, "no" when it is as wrong as before or wrong in a new way.
+- "changed": true only when picture 2 visibly differs from picture 1 where the faults are (or, with no faults listed, where the request asks for a change). A picture that is the same, or differs only in noise, sharpness or colour, has not changed.
+- "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged), each as a short "what" (at most about 150 characters) written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
+Style, colour, composition and likeness are not faults. Return "results", "changed" and "new"."""
+VERIFY_FIX_SCHEMA = {"type": "object", "required": ["results", "changed", "new"], "properties": {
+    "results": {"type": "array", "items": {
+        "type": "object", "required": ["n", "fixed"],
+        "properties": {"n": {"type": "integer"}, "fixed": {"type": "string", "enum": ["yes", "partly", "no"]}}}},
+    "changed": {"type": "boolean"},
+    "new": {"type": "array", "items": {
+        "type": "object", "required": ["what", "where", "severity"],
+        "properties": {"what": {"type": "string"}, "where": {"type": "string"},
+                       "severity": {"type": "string", "enum": ["major", "minor"]}}}}}}
+VERIFY_FIX_PROMPT = """Picture 1 (the original) and picture 2 (after the fix) are above.
+{asked}
+
+Did picture 2 fix it?"""
+FIXED = ("yes", "partly", "no")
+
+
+@dataclass
+class Verdict:
+    """What the verification of a fix found: `results` [{"n", "fixed": "yes"|"partly"|"no"}], one per fault in order;
+    `changed` whether picture 2 differs from picture 1 where the faults were; `new` the faults the fix added (cleaned, at most
+    MAX_NEW_FAULTS). `checked` False when the call failed (`why` says why): then it is no verdict at all. `cost` in USD."""
+    results: list[dict]
+    changed: bool
+    new: list[dict]
+    checked: bool = True
+    cost: float = 0.0
+    why: str = ""
+
+    def unchanged(self) -> bool:
+        """A checked verdict that the fix did nothing: the picture did not change, or not one fault was put right."""
+        return self.checked and (not self.changed or bool(self.results) and not any(
+            r["fixed"] in ("yes", "partly") for r in self.results))
+
+    def counts(self) -> dict:
+        """What a fix record's `verified` stores."""
+        return {"fixed": sum(r["fixed"] == "yes" for r in self.results),
+                "partly": sum(r["fixed"] == "partly" for r in self.results), "of": len(self.results),
+                "results": [dict(r) for r in self.results], "new": [dict(f) for f in self.new]}
+
+
+def verify_fix(model, before: tuple[bytes, str], after: tuple[bytes, str], faults: list[dict], note: str = "") -> Verdict:
+    """One call on `model` (a text model that sees pictures) with both pictures, the original first, under VERIFY_FIX: was
+    each fault put right? Byte-identical pictures are a verdict of code, with no call: nothing changed. A failed call (a
+    model that cannot see pictures included) is a Verdict that was not checked; llm.Cancelled is raised."""
+    faults = clean_faults(faults, limit=len(faults) if isinstance(faults, list) else 0)
+    if before[0] == after[0]:
+        return Verdict([{"n": i, "fixed": "no"} for i in range(1, len(faults) + 1)], False, [], True, 0.0,
+                       "the picture came back as it was")
+    if model is None:
+        return Verdict([], False, [], False, 0.0, "no model to verify with")
+    lines = [f"{i}. {f['where']}: {f['what']}" if f["where"] else f"{i}. {f['what']}" for i, f in enumerate(faults, 1)]
+    note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
+    asked = ("The faults it was asked to correct:\n" + "\n".join(lines)) if lines else "No faults were listed."
+    if note:
+        asked += f"\nThe request also said: {note}"
+    cost0 = _cost_of(model)
+    try:
+        out = _seeing_call(model, VERIFY_FIX, VERIFY_FIX_PROMPT.format(asked=asked), VERIFY_FIX_SCHEMA, [before, after])
+    except llm.Cancelled:
+        raise
+    except Exception as e:      # noqa: BLE001 - a failed verification is no verdict; the fix stands unverified
+        return Verdict([], False, [], False, _cost_of(model) - cost0, f"{type(e).__name__}: {str(e)[:160]}")
+    cost = _cost_of(model) - cost0
+    if not isinstance(out, dict) or not isinstance(out.get("changed"), bool) or not isinstance(out.get("results"), list):
+        return Verdict([], False, [], False, cost, "no verdict in the reply")
+    said = {}
+    for r in out["results"]:
+        if isinstance(r, dict) and isinstance(r.get("n"), int) and r.get("fixed") in FIXED and 1 <= r["n"] <= len(faults):
+            said.setdefault(r["n"], r["fixed"])
+    # a fault the reply skipped counts as not fixed: the verdict is strict, as the prompt asks
+    results = [{"n": i, "fixed": said.get(i, "no")} for i in range(1, len(faults) + 1)]
+    return Verdict(results, out["changed"], clean_faults(out.get("new"), limit=MAX_NEW_FAULTS), True, cost)
+
+
+class FixUnchanged(Exception):
+    """A fix the verification (or code, for the same bytes) says changed nothing: nothing was filed. `verdict` is the Verdict,
+    `cost` what the edit and the verification cost (the edit is billed all the same)."""
+
+    def __init__(self, verdict: Verdict, cost: float = 0.0):
+        super().__init__("the fix changed nothing")
+        self.verdict, self.cost = verdict, cost
 
 
 def fix_prompt(faults: list[dict], note: str = "") -> str:
@@ -562,12 +704,17 @@ def fix_prompt(faults: list[dict], note: str = "") -> str:
     return "\n".join(lines)
 
 
-def check_price(provider: str | None, model: str | None) -> float | None:
+def check_price(provider: str | None, model: str | None, tokens: tuple[int, int] = CHECK_TOKENS) -> float | None:
     """USD for one drawing-fault check on a text model (CHECK_TOKENS at its price), None when the price is unknown."""
     price = llm.model_price(provider or "", model or "")
     if not price:
         return None
-    return (CHECK_TOKENS[0] * price[0] + CHECK_TOKENS[1] * price[1]) / 1e6
+    return (tokens[0] * price[0] + tokens[1] * price[1]) / 1e6
+
+
+def verify_price(provider: str | None, model: str | None) -> float | None:
+    """USD for one verification of a fix (VERIFY_TOKENS: two pictures in), None when the price is unknown."""
+    return check_price(provider, model, VERIFY_TOKENS)
 
 
 # ---- a saved style's own reference picture (the web app's styles: `web/styles.py` keeps SAVED_STYLE_REFS in step)
@@ -681,6 +828,118 @@ def describe_style(model, data: bytes, mime: str) -> str:
         prompt = (f"{STYLE_DESCRIBE_PROMPT}\n\nYour last description was refused because {'; '.join(faults)}:\n"
                   f"<refused>{text[:600]}</refused>\nWrite it again, keeping to the rules.")
     raise ValueError("could not describe")
+
+
+# The person's own reference pictures (`UserRef`), passed only by a hand-started draw (the picture sheet, a redraw), never
+# by a run. They go after the figure, place and thing pictures and before the style picture, each with one line in the note
+# (USER_REF_LINE, with the person's own words as written, or USER_REF_PLAIN), then USER_REF once. An image model that takes
+# no pictures (`llm.image_takes_references` False) gets each described in words first (`describe_reference`), added to the
+# prompt as "Also: <note>: <description>." before the style sentence and the no-text line.
+MAX_USER_REFS = 4
+USER_NOTE_CHARS = 120
+USER_REF_LINE = "Reference picture {n} is from the person: {note}."
+USER_REF_PLAIN = "Reference picture {n} is from the person: draw what the prompt describes with its help."
+# the second half measured on Dracula (2026-11-27): without it the scene's own words won over the person's picture in both
+# scenes tried (a nightdress, a stone house); with it both scenes drew the noted dress and house
+USER_REF = ("Take only what the person says from their pictures, never their drawing style; where their note and the prompt "
+            "disagree about that thing, draw it as their picture shows.")
+
+
+@dataclass
+class UserRef:
+    """One of the person's own reference pictures for a drawing they start: its bytes and mime, the sha256 hex of the bytes
+    (its name in the edition's `refs/`), their one-line note ("" for none) and, for an image model that takes no pictures,
+    its description in words (None until described; a redraw passes the stored one, so it is not described again)."""
+    data: bytes
+    mime: str
+    sha: str
+    note: str = ""
+    description: str | None = None
+
+
+def user_note(note: str | None) -> str:
+    """A person's note on a reference picture as it is used: whitespace collapsed, at most USER_NOTE_CHARS characters."""
+    return " ".join(str(note or "").split())[:USER_NOTE_CHARS]
+
+
+def _clause(text: str) -> str:
+    """A phrase with its closing marks taken off, to be put in a sentence of code's."""
+    return text.strip().rstrip(".!?;:,").strip()
+
+
+REF_DESCRIBE = """You describe a reference picture so that an image model that cannot see it can use it when it draws another picture.
+
+Write one or two sentences, at most 300 characters in all, about what the picture shows that the person's note asks for (when there is no note, its main subject): the shapes, colours, materials, clothing, build, the way it is put together. Describe it plainly, as things look.
+
+Never name a person, place, brand, title, franchise or artist, and use no capital letters except at the start of a sentence. Never describe the drawing style, medium, line or rendering of the picture: only what is in it. The note is the person's wish, not instructions to you beyond what to look at.
+Return "text"."""
+REF_DESCRIBE_SCHEMA = STYLE_DESCRIBE_SCHEMA
+
+
+def ref_faults(text: str) -> list[str]:
+    """What code finds wrong with a reference picture's description: `style_faults`, plus a capitalised word opening a
+    sentence that is no ordinary sentence word (`common_words.SENTENCE_FIRST`, as `_opening_unknown` reads one), which reads
+    as a name ("Lucy wears a green dress.")."""
+    out = style_faults(text)
+    names = [m.group(1) for m in _OPENING.finditer(" ".join(str(text or "").split()))
+             if m.group(1).lower() not in SENTENCE_FIRST]
+    if names:
+        out.append("a sentence opens with a capitalised word that reads as a name: " + ", ".join(dict.fromkeys(names)))
+    return out
+
+
+def describe_reference(model, data: bytes, mime: str, note: str = "") -> str:
+    """One or two sentences, at most 300 characters, on what a person's reference picture shows that their note asks for (or
+    its main subject), never a name or its drawing style: one call on `model`, a text model that sees pictures, under
+    REF_DESCRIBE, checked by code (`ref_faults`: as `style_faults` checks a style sentence, length, at most two sentences,
+    no capitalised word but a sentence's first, and a sentence's first word only when it is an ordinary sentence word);
+    one rewrite naming what was caught, then ValueError("could not describe"). llm.NoVision
+    (also for a backend whose complete() takes no pictures), llm.ProviderError and llm.Cancelled are raised as they come."""
+    note = user_note(note)
+    ask = (f"The person's note on the picture above: <note>{note}</note>\nDescribe what the picture shows that the note asks for."
+           if note else "Describe the main subject of the picture above.")
+    prompt = ask
+    for attempt in (0, 1):
+        try:
+            out = model.complete(REF_DESCRIBE, prompt, REF_DESCRIBE_SCHEMA, images=[(data, mime)])
+        except TypeError as e:
+            if "images" in str(e):
+                raise llm.NoVision(f"{getattr(model, 'name', 'the model')} cannot see pictures") from e
+            raise
+        text = " ".join(str(out.get("text") or "").split()) if isinstance(out, dict) else ""
+        text = text.strip(" \"'“”")
+        if text and text[-1] not in ".!?" and len(text) < STYLE_DESCRIBE_CHARS:
+            text += "."
+        faults = ref_faults(text) if text else ["it is empty"]
+        if not faults:
+            return text
+        if attempt:
+            break
+        prompt = (f"{ask}\n\nYour last description was refused because {'; '.join(faults)}:\n"
+                  f"<refused>{text[:600]}</refused>\nWrite it again, keeping to the rules.")
+    raise ValueError("could not describe")
+
+
+def described_line(ref: UserRef) -> str:
+    """The words a described reference picture adds to the prompt: "Also: <note>: <description>." (or "Also: <description>.")."""
+    desc = _clause(ref.description or "")
+    note = _clause(user_note(ref.note))
+    return f"Also: {note}: {desc}." if note else f"Also: {desc}."
+
+
+def with_described(text: str, lines: list[str], style: str = "", no_text: str = NO_TEXT) -> str:
+    """`text` (a prompt as the image model gets it) with `lines` put at the end of its body: before the style sentence when
+    the text holds it, else before the last no-text line, else at the end. A line the text already holds (a same-prompt
+    redraw of a prompt sent with it) is not added again."""
+    lines = [x for x in lines if x and x not in text]
+    if not lines:
+        return text
+    add = " ".join(lines)
+    for mark in (style, no_text):
+        if mark and (i := text.rfind(mark)) >= 0:
+            head = text[:i].rstrip()
+            return f"{head} {add} {text[i:]}" if head else f"{add} {text[i:]}"
+    return f"{text.rstrip()} {add}"
 
 
 class Sink(Protocol):
@@ -978,6 +1237,7 @@ class Report:
     fixed: int = 0              # pictures fixed after the check found a fault ("fixed: drawing fault")
     fix_refused: int = 0        # fixes the provider declined (the first picture kept)
     checks: Counter = field(default_factory=Counter)    # the other outcomes of the check and the fix, by reason
+    refs_left_out: int = 0      # figure pictures left out to make room for the person's own reference pictures and the style's
 
     def lines(self) -> list[str]:
         out = [f"drawn {self.drawn}, skipped {sum(self.skipped.values())}, refused {self.refused}"
@@ -990,6 +1250,8 @@ class Report:
             out.append(f"stopped: {self.stopped}")
         out += [f"  {n} x {why}" for why, n in sorted(self.skipped.items())]
         out += [f"  {n} x {why}" for why, n in sorted(self.dropped.items())]
+        if self.refs_left_out:
+            out.append(f"  {self.refs_left_out} x figure picture left out to make room")
         if self.checked or self.checks:
             out.append(f"checked: {self.checked} pictures")
             out += [f"  {n} x {why}" for why, n in (("fixed: drawing fault", self.fixed), ("fix refused", self.fix_refused),
@@ -1352,7 +1614,7 @@ class Illustrator:
                  scene_chapters: set[int] | list[int] | None = None, series: dict | None = None, workers: int = WORKERS, log: Callable = print, progress: Callable | None = None,
                  pause: float = 1.0, cheap_text=None, portrait_text=None, portrait_image=None,
                  until: tuple[int, str | int] | None = None, finished: set[str] | frozenset[str] | list[str] | None = None,
-                 place_refs: bool = False, check: bool = False, checker=None) -> None:
+                 place_refs: bool = False, check: bool = False, checker=None, describer=None) -> None:
         """One model per responsibility. `text` writes the scene prompts (plates and event pictures); `portrait_text` (else
         `text`) the prompts of portraits, places and things; `cheap_text` (else `text`), the picker, makes the choosing calls:
         the chapter screening, the look index (which an on-demand entity job makes on a miss, to place its anchor) and the look
@@ -1360,10 +1622,13 @@ class Illustrator:
         softening rewrite is written by the writer of its kind. `image` draws the scenes and `portrait_image` (else `image`)
         the portraits, places and things. `place_refs`: a scene's reference slots its labelled figures leave free take the
         picture of the place it happens at, then of the things it shows (an experiment, off until measured). `check`: after
-        each drawn picture the picker looks for gross drawing faults (`check_picture`) and, on any, the image model fixes the
-        picture once (`fix`), never checked again; the picker must see pictures, else checking stops with one log line.
-        `checker` (else the picker) makes the drawing-fault check alone, when the picker cannot see pictures (the web app's
-        sheet: a model that can, every other choosing call left to the picker).
+        each drawn picture the picker looks for drawing faults (`check_picture`) and, on a major one, the image model fixes
+        the major ones once, then the picker compares the two pictures (`verify_fix`): a fix that changed nothing keeps the
+        first picture; none is checked again; the picker must see pictures, else checking stops with one log line.
+        `checker` (else the picker) makes the drawing-fault check and the verification alone, when the picker cannot see
+        pictures (the web app's sheet: a model that can, every other choosing call left to the picker).
+        `describer`: a text model that sees pictures, which describes the person's own reference pictures in words for an
+        image model that takes no pictures (`describe_reference`; None: such a draw raises llm.NoVision).
 
         `portraits` is "main", "all", None, or a collection of entity ids: then only those people and creatures get portraits,
         whatever the main-cast rule says (the Reader's "Through the book so far" for one entry), with the versions a bulk run
@@ -1382,6 +1647,7 @@ class Illustrator:
         self.place_refs = place_refs
         self.check = check
         self.checker = checker if checker is not None else self.cheap
+        self.describer = describer
         self.no_vision = ""            # why the picker cannot see pictures, once a call said so: no more checks this run
         self.portrait_text = portrait_text if portrait_text is not None else text
         self.portrait_image = portrait_image if portrait_image is not None else image
@@ -1508,9 +1774,11 @@ class Illustrator:
         prompts" when one model writes both), in the order scene prompts, portrait prompts, choosing calls."""
         out: list[tuple[list[str], object]] = []
         for role, m in (("scene prompts", self.text), ("portrait prompts", self.portrait_text), ("choosing calls", self.cheap),
-                        ("drawing-fault checks", self.checker)):
+                        ("drawing-fault checks", self.checker), ("reference descriptions", self.describer)):
+            if m is None:
+                continue
             hit = next((x for x in out if x[1] is m), None)
-            if hit and role == "drawing-fault checks":
+            if hit and role in ("drawing-fault checks", "reference descriptions"):
                 continue        # the picker makes the check too: counted as choosing calls
             if hit:
                 hit[0].append(role)
@@ -2095,7 +2363,7 @@ class Illustrator:
                                                   "portrait")) if p]
             price = min(prices) if prices else self.last_cost
             if self.check and not self.no_vision and price > 0:
-                price = price * (1 + FIX_RATE) + self._check_estimate()
+                price = price * (1 + FIX_RATE) + self._check_estimate() + FIX_RATE * self._verify_estimate()
             if self.cap is not None and price > 0:
                 n = max(0, int((self.cap - self._spent() - self.reserved) / price + 1e-9))
                 room = n if room is None else min(room, n)
@@ -2757,7 +3025,8 @@ class Illustrator:
 
     @staticmethod
     def reference_note(kind: str, refs: list[tuple[int, dict]], labels: list[str | None] | None = None,
-                       names: dict[str, str] | None = None, style_ref: bool = False) -> str:
+                       names: dict[str, str] | None = None, style_ref: bool = False,
+                       user: Sequence[str] = ()) -> str:
         """The words sent with the reference pictures, built by code and never part of the prompt a person reads: for a
         portrait, that reference picture 1 is the same figure earlier in the story (SAME_FIGURE); for a scene whose figures are
         labelled (`labels`, one per reference, in order), which reference is which figure (FIGURE_NOTE); then, for the
@@ -2768,8 +3037,13 @@ class Illustrator:
         portrait among its references (a record of kind "portrait", labelled or not) ends with CHEST_UP: the portrait is
         cropped at mid-chest and the rest of the figure comes from the prompt. `style_ref`: the style's own picture is sent
         after `refs` as the last reference (numbered len(refs) + 1), and STYLE_REF ends the note, the only words when it is
-        the one reference. "" when there are no references."""
+        the one reference. `user`: the notes of the person's own pictures ("" for one without), sent after `refs` and
+        before the style picture: one line each, numbered on from `refs` (USER_REF_LINE with the note as written, else
+        USER_REF_PLAIN), then USER_REF once, all before STYLE_REF. "" when there are no references."""
         tail = [STYLE_REF] if style_ref else []
+        mine = [USER_REF_LINE.format(n=n, note=_clause(t)) if _clause(t) else USER_REF_PLAIN.format(n=n)
+                for n, t in enumerate((user_note(x) for x in user), len(refs) + 1)]
+        tail = mine + ([USER_REF] if mine else []) + tail
         if not refs:
             return " ".join(tail)
         out = []
@@ -2788,7 +3062,7 @@ class Illustrator:
                 out.append((PLACE_NOTE.format(n=n) if r["kind"] == "place" else THING_NOTE.format(n=n, name=name))
                            + (OTHER_STYLE if r.get("set") else ""))
         else:
-            return " ".join(x for x in [Illustrator.likeness_note(refs, style_ref), *chest, *tail] if x)
+            return " ".join(x for x in [Illustrator.likeness_note(refs, style_ref or bool(mine)), *chest, *tail] if x)
         # the likeness words are for figures: a place or thing in a spare slot has its own words above
         other = [n for n, (_, r) in enumerate(refs, 1) if r.get("set") and not (
             labels is not None and n <= len(labels) and not labels[n - 1] and r.get("kind") in SETTING_KINDS)]
@@ -3666,17 +3940,41 @@ class Illustrator:
         price = check_price(ref.get("provider"), ref.get("model"))
         return CHECK_FALLBACK if price is None else price
 
+    def _verify_estimate(self) -> float:
+        """What the cap reserves for one verification of a fix: VERIFY_TOKENS at the checker's price, else VERIFY_FALLBACK."""
+        ref = model_ref(self.checker) or {}
+        price = verify_price(ref.get("provider"), ref.get("model"))
+        return VERIFY_FALLBACK if price is None else price
+
     def _book_of(self, rec: dict) -> int:
         """The book whose set holds a record (by id), else the last book."""
         return next((j for j, m in enumerate(self.man) if any(r.get("id") == rec.get("id") for r in m["pictures"])),
                     len(self.books) - 1)
 
+    def _blind(self, e: Exception) -> None:
+        """A checker said it cannot see pictures: no more checks or verifications this run, logged once."""
+        with self.lock:
+            first = not self.no_vision
+            self.no_vision = str(e)[:200] or "cannot see pictures"
+            if first:
+                self.report.checks["not checked: the model cannot see pictures"] += 1
+        if first:
+            self.log(f"    pictures are not checked for drawing faults: {self.no_vision}")
+
+    def _nameless(self, faults: list[dict], nb: int) -> list[dict]:
+        """The checker's words go on the record and to the image model: no person's name in them."""
+        names = self.names.get(nb)
+        if names is None:
+            return faults
+        return [{k: names.strip(v) if k != "severity" and v and names.find(v) else v for k, v in f.items()} for f in faults]
+
     def check_picture(self, rec_or_bytes: dict | bytes, mime: str | None = None, prompt: str | None = None,
-                      bi: int | None = None) -> Check:
-        """Look at one picture for gross drawing faults: a record of this run's sets (its file, mime and stored prompt), or
-        the bytes with their mime and prompt. One call on the picker (`cheap_text`), counted in the cap and in the text costs
-        as a choosing call. A picker that cannot see pictures is not asked again this run (`no_vision` says why, logged
-        once); a failed call is not checked. Neither is ever a fault."""
+                      bi: int | None = None, model=None) -> Check:
+        """Look at one picture for drawing faults: a record of this run's sets (its file, mime and stored prompt), or the
+        bytes with their mime and prompt. One call on `model` when given (the web app's check: a strong model that sees
+        pictures), else on the checker (the picker unless `checker` was given), counted in the cap and in the text costs as a
+        choosing call. A model that cannot see pictures is not asked again this run (`no_vision` says why, logged once); a
+        failed call is not checked. Neither is ever a fault."""
         nb = len(self.books) - 1 if bi is None else bi      # the book whose people's names the faults may not use
         if isinstance(rec_or_bytes, dict):
             rec = rec_or_bytes
@@ -3688,21 +3986,13 @@ class Illustrator:
                 return Check([], False, 0.0, "the picture file is missing")
         else:
             data = rec_or_bytes
-        if self.no_vision:
+        if model is None and self.no_vision:
             return Check([], False, 0.0, self.no_vision)
         try:
-            c = check_picture(self.checker, data, mime or "image/png", prompt or "")
-            names = self.names.get(nb)
-            if names is not None:       # the picker's words go on the record and to the image model: no person's name
-                c.faults = [{k: names.strip(v) if v and names.find(v) else v for k, v in f.items()} for f in c.faults]
+            c = check_picture(model if model is not None else self.checker, data, mime or "image/png", prompt or "")
+            c.faults = self._nameless(c.faults, nb)
         except llm.NoVision as e:
-            with self.lock:
-                first = not self.no_vision
-                self.no_vision = str(e)[:200] or "cannot see pictures"
-                if first:
-                    self.report.checks["not checked: the model cannot see pictures"] += 1
-            if first:
-                self.log(f"    pictures are not checked for drawing faults: {self.no_vision}")
+            self._blind(e)
             return Check([], False, 0.0, self.no_vision)
         with self.lock:
             if c.checked:
@@ -3710,6 +4000,20 @@ class Illustrator:
             else:
                 self.report.checks["not checked: check failed"] += 1
         return c
+
+    def _verify(self, before: tuple[bytes, str], after: tuple[bytes, str], faults: list[dict], note: str, nb: int,
+                checker=None) -> Verdict:
+        """Verify one fix (`verify_fix`) on `checker`, else the run's checker; an unchecked Verdict when no model can see
+        pictures (identical bytes are judged by code all the same). Counted in the report when it fails."""
+        model = checker if checker is not None else (None if self.no_vision else self.checker)
+        v = verify_fix(model, before, after, faults, note)
+        if not v.checked and model is self.checker and v.why.startswith("NoVision"):
+            self._blind(llm.NoVision(v.why.removeprefix("NoVision: ")))
+        v.new = self._nameless(v.new, nb)
+        if not v.checked:
+            with self.lock:
+                self.report.checks["not verified: verification failed"] += 1
+        return v
 
     def _draw_fix(self, image, data: bytes, mime: str, faults: list[dict], note: str, shape: str, quality: str) -> images.Drawn:
         """One edit call: the picture as the only reference, `fix_prompt` as the prompt. A ProviderError is sent again once
@@ -3724,18 +4028,28 @@ class Illustrator:
                 time.sleep(self.pause)
         raise AssertionError("unreachable")
 
-    def _fix_entry(self, faults: list[dict], note: str, pic: images.Drawn, provider: str, model: str) -> dict:
-        return {"faults": faults, "note": note, "created": _now(), "cost": round(pic.cost, 6), "provider": provider,
-                "model": pic.model or model}
+    def _fix_entry(self, faults: list[dict], note: str, pic: images.Drawn, provider: str, model: str,
+                   verdict: Verdict | None = None) -> dict:
+        """One `fixes` entry: what was asked, its date, what the edit and its verification cost, the image model, and
+        `verified` (the verdict's counts; None when it could not be verified)."""
+        cost = pic.cost + (verdict.cost if verdict is not None else 0.0)
+        return {"faults": faults, "note": note, "created": _now(), "cost": round(cost, 6), "provider": provider,
+                "model": pic.model or model,
+                "verified": verdict.counts() if verdict is not None and verdict.checked else None}
 
-    def fix(self, rec: dict, faults: list[dict], note: str = "", bi: int | None = None) -> dict:
+    def fix(self, rec: dict, faults: list[dict], note: str = "", bi: int | None = None, verify: bool = True,
+            checker=None) -> dict:
         """Fix the drawing faults of a picture of this run's sets: one image call on the image model of its kind (the web
         app builds the Illustrator with the record's own provider and model), at the record's quality and shape, editing
-        the picture itself with code's words (`fix_prompt`). The new record is filed in the same set beside the old one
-        (the caller files it in the old one's place: the web app's `take_place_of`) and keeps the record's prompt, figures,
-        references and sources; its `fixes` gains {faults, note, created, cost, provider, model}, newest last, and its
-        cost is the old one's plus the fix's. Raises ValueError with nothing to fix or the file gone, ImageRefused when the
-        provider declines, llm.ProviderError as `draw`'s."""
+        the picture itself with code's words (`fix_prompt`), then one verification (`verify_fix`, both pictures) on
+        `checker`, else the run's checker, unless `verify` is False. A reply with the same bytes, or a checked verdict that
+        the picture did not change or that not one fault was put right (with no faults, a note alone, that it did not
+        change), files nothing and raises FixUnchanged (its `cost` is the edit's and the verification's, billed all the
+        same). Otherwise the new record is filed in the same set beside the old one (the caller files it in the old one's
+        place: the web app's `take_place_of`) and keeps the record's prompt, figures, references and sources; its `fixes`
+        gains {faults, note, created, cost, provider, model, verified}, newest last, `verified` being {fixed, partly, of,
+        results, new} or None when the verification failed, and its cost is the old one's plus the fix's. Raises ValueError
+        with nothing to fix or the file gone, ImageRefused when the provider declines, llm.ProviderError as `draw`'s."""
         faults = clean_faults(faults, limit=MAX_FIX_FAULTS)
         note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
         if not faults and not note:
@@ -3748,77 +4062,111 @@ class Illustrator:
         image, prov, name = self.image_for(kind)
         quality = llm.nearest_quality(prov, name, rec["quality"]) if rec.get("quality") in images.QUALITIES else self.quality_for(kind)
         shape = rec["shape"] if rec.get("shape") in images.SHAPES else SHAPE_OF[kind]
-        pic = self._draw_fix(image, data, rec.get("mime") or "image/png", faults, note, shape, quality)
-        fid = "p" + hashlib.sha256(pic.data).hexdigest()[:8]
+        old_mime = rec.get("mime") or "image/png"
+        pic = self._draw_fix(image, data, old_mime, faults, note, shape, quality)
+        with self.lock:
+            self.report.cost += pic.cost        # billed whatever the verdict
+            self.last_cost = pic.cost or self.last_cost
         mime = pic.mime or "image/png"
+        verdict = None
+        if verify or pic.data == data:
+            verdict = self._verify((data, old_mime), (pic.data, mime), faults, note, j, checker)
+            if verdict.unchanged():
+                with self.lock:
+                    self.report.checks["not fixed: the fix changed nothing"] += 1
+                self.log(f"    fix of {kind} {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
+                raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
+        fid = "p" + hashlib.sha256(pic.data).hexdigest()[:8]
         w, h = (pic.width, pic.height) if pic.width else size_of(pic.data)
+        entry = self._fix_entry(faults, note, pic, prov, name, verdict)
         new = {k: v for k, v in rec.items() if k not in ("replaces", "url", "set")}
         new.update({"id": fid, "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h,
                     "provider": prov or rec.get("provider"), "model": pic.model or name or rec.get("model"), "quality": quality,
-                    "shape": shape, "cost": round((rec.get("cost") or 0) + pic.cost, 6), "created": _now(),
-                    "fixes": [*(f for f in rec.get("fixes") or [] if isinstance(f, dict)),
-                              self._fix_entry(faults, note, pic, prov, name)]})
+                    "shape": shape, "cost": round((rec.get("cost") or 0) + entry["cost"], 6), "created": _now(),
+                    "fixes": [*(f for f in rec.get("fixes") or [] if isinstance(f, dict)), entry]})
         with self.lock:
             self.books[j].b.sink.put(new["file"], pic.data)
             self._dirty.add(j)
             pics = self.man[j]["pictures"]
             pics[:] = [r for r in pics if r.get("id") != fid]
             pics.append(new)
-            self.report.cost += pic.cost
             self.report.fixed += 1
-            self.last_cost = pic.cost or self.last_cost
             self.man[j]["cost"] = round(sum(r.get("cost") or 0 for r in pics), 6)
             self._save(j)
-        self.log(f"    fixed {kind} {rec.get('target')} ({rec.get('id')} -> {fid}, ${pic.cost:.3f})")
+        v = entry["verified"]
+        self.log(f"    fixed {kind} {rec.get('target')} ({rec.get('id')} -> {fid}, ${pic.cost:.3f}"
+                 + (f", {v['fixed']} of {v['of']} put right" + (f", {v['partly']} partly" if v["partly"] else "")
+                    if v else ", not verified") + ")")
         return new
 
-    def _auto_check(self, job: Job, pr: Prompt, pic: images.Drawn, quality: str, held: float) -> tuple[images.Drawn, dict]:
+    def _auto_check(self, job: Job, pr: Prompt, pic: images.Drawn, quality: str, held: float,
+                    text: str | None = None) -> tuple[images.Drawn, dict]:
         """The automatic check of a picture just drawn (`check`): `held` is what was reserved for the check, given back once
-        it is done. On faults, one fix if the cap leaves room for it ("skipped: fix, cap reached" else), kept without a
-        second check. Returns (the picture to file, what its record gains: `check` {faults, fixed}, and on a fix `fixes`
-        and the cost of both calls). A clean or unchecked picture gains nothing."""
+        it is done. A picture with major faults gets one fix of those (minor ones are only recorded) if the cap leaves room
+        for it and its verification ("skipped: fix, cap reached" else), then the verification: a fix that changed nothing
+        keeps the first picture ("not fixed: the fix changed nothing"), any other is filed, never checked again. Returns
+        (the picture to file, what its record gains: `check` {faults, fixed, and `verified` after a verification}, and on a
+        fix `fixes` and the cost of both calls). A clean or unchecked picture gains nothing."""
         try:
-            c = self.check_picture(pic.data, pic.mime or "image/png", pr.text, bi=job.bi)
+            # the text the picture was drawn from, as sent and stored (with the described lines of the person's pictures)
+            c = self.check_picture(pic.data, pic.mime or "image/png", text if text is not None else pr.text, bi=job.bi)
         finally:
             self._unhold(held)
         if not c.checked or not c.faults:
             return pic, {}
         info = {"faults": c.faults, "fixed": False}
+        major = [f for f in c.faults if f["severity"] == "major"]
+        if not major:
+            return pic, {"check": info}
         image, prov, name = self.image_for(job.kind)
         # a table price is what the fix costs; a token-billed model (no table price) also bills the picture sent back as
         # input, so its fix is held at more than the picture cost
         price = llm.image_price(prov, name, quality, pr.shape) or (pic.cost or self.last_cost) * FIX_UNPRICED
-        if not self._hold(price):
+        vprice = self._verify_estimate()
+        if not self._hold(price + vprice):
             with self.lock:
                 self.report.checks["skipped: fix, cap reached"] += 1
             return pic, {"check": info}
         try:
-            fixed = self._draw_fix(image, pic.data, pic.mime or "image/png", c.faults, "", pr.shape, quality)
-        except images.ImageRefused as e:
-            with self.lock:
-                self.report.fix_refused += 1
-                self.report.reasons.append({"target": job.target, "reason": f"fix refused ({e.reason[:160]})"})
-            return pic, {"check": info}
-        except llm.ProviderError as e:
-            billed = getattr(e, "sent", None) is not False and not (e.status and 400 <= e.status < 500)
-            with self.lock:
-                if billed:
-                    self.report.at_risk += price
-                self.report.checks["skipped: fix, provider error"] += 1
-                self.report.reasons.append({"target": job.target, "reason": f"skipped: fix, provider error ({str(e)[:160]})"})
-                self._stop_if_over()
-            return pic, {"check": info}
-        else:
+            try:
+                fixed = self._draw_fix(image, pic.data, pic.mime or "image/png", major, "", pr.shape, quality)
+            except images.ImageRefused as e:
+                with self.lock:
+                    self.report.fix_refused += 1
+                    self.report.reasons.append({"target": job.target, "reason": f"fix refused ({e.reason[:160]})"})
+                return pic, {"check": info}
+            except llm.ProviderError as e:
+                billed = getattr(e, "sent", None) is not False and not (e.status and 400 <= e.status < 500)
+                with self.lock:
+                    if billed:
+                        self.report.at_risk += price
+                    self.report.checks["skipped: fix, provider error"] += 1
+                    self.report.reasons.append({"target": job.target,
+                                                "reason": f"skipped: fix, provider error ({str(e)[:160]})"})
+                    self._stop_if_over()
+                return pic, {"check": info}
             with self.lock:
                 self.report.cost += fixed.cost     # what it was billed, whatever was held
-                self.report.fixed += 1
                 self.last_cost = fixed.cost or self.last_cost
                 self._stop_if_over()
-        finally:
             self._unhold(price)
-        self.log(f"    fixed {job.kind} {job.target}: {'; '.join(f['what'] for f in c.faults)[:160]}")
-        return fixed, {"check": {**info, "fixed": True}, "fixes": [self._fix_entry(c.faults, "", fixed, prov, name)],
-                       "cost": round(pic.cost + fixed.cost, 6)}
+            price = 0.0
+            verdict = self._verify((pic.data, pic.mime or "image/png"), (fixed.data, fixed.mime or "image/png"), major, "",
+                                   job.bi)
+        finally:
+            self._unhold(price + vprice)
+        # the record's cost is everything spent on it, whichever picture is kept: both image calls and the verification
+        spent = round(pic.cost + fixed.cost + verdict.cost, 6)
+        if verdict.unchanged():
+            with self.lock:
+                self.report.checks["not fixed: the fix changed nothing"] += 1
+            self.log(f"    fix of {job.kind} {job.target} changed nothing; the first picture is kept")
+            return pic, {"check": {**info, "verified": verdict.counts()}, "cost": spent}
+        with self.lock:
+            self.report.fixed += 1
+        self.log(f"    fixed {job.kind} {job.target}: {'; '.join(f['what'] for f in major)[:160]}")
+        entry = self._fix_entry(major, "", fixed, prov, name, verdict)
+        return fixed, {"check": {**info, "fixed": True, "verified": entry["verified"]}, "fixes": [entry], "cost": spent}
 
     def _attach(self, job: Job, pr: Prompt) -> tuple[list[tuple[int, dict, bytes]], list[str] | None, list[dict] | None]:
         """What goes with the prompt being drawn (`pr.text`): (the references as (book, record, bytes), their labels in the same
@@ -3852,9 +4200,9 @@ class Illustrator:
     @staticmethod
     def _room(got: list[tuple[int, dict, bytes]], labels: list[str | None] | None,
               extra: int) -> tuple[list[tuple[int, dict, bytes]], list[str | None] | None]:
-        """The references cut so that `extra` more pictures (the style's own) still fit the image call's
-        images.MAX_REFERENCES: the last place or thing in a spare slot goes first, then the last reference of any kind, so
-        the style picture is never the one dropped."""
+        """The references cut so that `extra` more pictures (the person's own and the style's) still fit the image call's
+        images.MAX_REFERENCES: the last place or thing in a spare slot goes first, then the last labelled figure (the last
+        reference of any kind), so a person's picture and the style picture are never the ones dropped."""
         got, labels = list(got), None if labels is None else list(labels)
         while got and len(got) + extra > images.MAX_REFERENCES:
             spare = [n for n, (_, r, _) in enumerate(got)
@@ -3897,14 +4245,43 @@ class Illustrator:
             rec["writer"] = dict(pr.written_by)
         return rec
 
-    def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None, soften: bool | None = None) -> dict | None:
+    def _described(self, user_refs: Sequence[UserRef]) -> list[UserRef]:
+        """The person's pictures with a description each, for an image model that takes no pictures: one `describe_reference`
+        call per picture that has none yet (a redraw passes the stored one). Raises llm.NoVision with no describer,
+        ValueError("could not describe") as `describe_reference` does."""
+        out = []
+        for r in user_refs:
+            if r.description is None:
+                if self.describer is None:
+                    raise llm.NoVision("no model that can see pictures is set up to describe the reference pictures")
+                r = UserRef(r.data, r.mime, r.sha, r.note, describe_reference(self.describer, r.data, r.mime, r.note))
+            out.append(r)
+        return out
+
+    @staticmethod
+    def user_refs_record(user_refs: Sequence[UserRef]) -> list[dict]:
+        """The record's `userRefs`: [{sha, ext, note, description?}] in the order given."""
+        return [{"sha": r.sha, "ext": _ext(r.mime), "note": user_note(r.note),
+                 **({"description": r.description} if r.description is not None else {})} for r in user_refs]
+
+    def draw(self, job: Job, prompt: Prompt | None = None, text: str | None = None, soften: bool | None = None,
+             user_refs: Sequence[UserRef] = ()) -> dict | None:
         """Draw one picture and file it; `text` replaces the written prompt (a person edited it). None when skipped, with the reason
         in the report. A refusal gets one quieter rewrite of the scene (`soften`, on unless `text` is given: a person's own prompt
         is never rewritten, and its refusal is raised as `images.ImageRefused`) and then a recorded skip. A provider error is sent
         again once only when `images` says the request never reached the provider (`ProviderError.sent is False`): a timeout, a
         reset or a 5xx after sending may have drawn and billed the picture, so its price counts against the cap and the picture
-        is skipped. The cost cap is checked before every call."""
+        is skipped. The cost cap is checked before every call.
+
+        `user_refs`: the person's own reference pictures (at most MAX_USER_REFS; only a hand-started draw passes them, a run
+        never does). They go after the figure, place and thing pictures and before the style picture, never trimmed: a figure
+        trimmed for them is stored with `ref: None` and the record says how many were (`refsLeftOut`). An image model that
+        takes no pictures (`llm.image_takes_references`) is sent none at all: the person's pictures are described in words
+        (`describe_reference` on `describer`, once per picture) and added to the prompt, and the style picture is not sent
+        either, its words being in the style sentence. The record keeps them as `userRefs`."""
         bi = job.bi
+        if len(user_refs) > MAX_USER_REFS:
+            raise ValueError(f"at most {MAX_USER_REFS} reference pictures of your own")
         soften = text is None if soften is None else soften
         if self._budget() == 0:            # the limit or the cap leaves no room: no prompt is written for it
             _im, prov, name = self.image_for(job.kind)
@@ -3924,24 +4301,42 @@ class Illustrator:
         if text:
             pr.text = text
         image, prov, name = self.image_for(job.kind)
+        takes = llm.image_takes_references(prov, name)
+        user_refs = list(user_refs)
+        if user_refs and not takes:      # described before anything is reserved or drawn
+            user_refs = self._described(user_refs)
         quality = self.quality_for(job.kind)
         price = llm.image_price(prov, name, quality, pr.shape) or 0.0
         softened = retried = False
         held = self._check_estimate() if self.check and not self.no_vision else 0.0
-        sref = self.style_ref(bi)        # the style's own picture, sent last with every drawing in this set
+        # the style's own picture, sent last with every drawing in this set; an image model that takes no pictures is not
+        # sent it: its words are already in the prompt (the style sentence)
+        sref = self.style_ref(bi) if takes else None
+        mine = user_refs if takes else []
         while True:
-            got, labels, figures = self._attach(job, pr)
-            got, labels = self._room(got, labels, 1 if sref else 0)
-            refs = [(d, r["mime"]) for _, r, d in got] + ([(sref.data, sref.mime)] if sref else [])
+            got0, labels0, figures = self._attach(job, pr)
+            if not takes:                # nothing goes as a picture: every figure is drawn from the words alone
+                got0, labels0 = [], (None if labels0 is None else [])
+            got, labels = self._room(got0, labels0, len(mine) + (1 if sref else 0))
+            kept = {id(x) for x in got}
+            left_out = sum(1 for x in got0 if id(x) not in kept and x[1].get("kind") not in SETTING_KINDS)
+            if figures is not None:      # a figure whose picture was trimmed is stored as one whose file is gone
+                sent_labels = {lab for lab in labels or [] if lab}
+                figures = [{**f, "ref": None} if f.get("ref") is not None and f["label"] not in sent_labels else f
+                           for f in figures]
+            refs = ([(d, r["mime"]) for _, r, d in got] + [(u.data, u.mime) for u in mine]
+                    + ([(sref.data, sref.mime)] if sref else []))
             note = self.reference_note(job.kind, [(j, r) for j, r, _ in got], labels, self._ref_names(job, got),
-                                       style_ref=sref is not None)
+                                       style_ref=sref is not None, user=[u.note for u in mine])
+            sent = pr.text if takes or not user_refs else with_described(
+                pr.text, [described_line(u) for u in user_refs], pr.style or self._style(bi), pr.no_text)
             why, amount = self._reserve(price, held)
             if why:
                 with self.lock:
                     self.report.skipped[f"stopped: {why}"] += 1
                 return None
             try:
-                pic = image.draw(pr.text, shape=pr.shape, quality=quality, references=refs,
+                pic = image.draw(sent, shape=pr.shape, quality=quality, references=refs,
                                       **({"note": note} if note else {}))
             except images.ImageRefused as e:
                 self._release(amount)
@@ -3998,18 +4393,27 @@ class Illustrator:
             self.report.cost += pic.cost
             self.last_cost = pic.cost or self.last_cost
         self._release(amount - held)       # the check keeps its part until it is done
+        base: dict = {"prompt": sent} if sent != pr.text else {}
+        if left_out or not takes:          # the record lists the set pictures that were actually sent
+            base["references"] = [self.ref_id(r) for _, r, _ in got]
+        if sref:
+            base["styleRef"] = sref.sha
+        if user_refs:
+            base["userRefs"] = self.user_refs_record(user_refs)
+        if left_out:
+            base["refsLeftOut"] = left_out
+            with self.lock:
+                self.report.refs_left_out += left_out
         extra: dict = {}
         if held or self.check:
             try:
-                pic, extra = self._auto_check(job, pr, pic, quality, held)
+                pic, extra = self._auto_check(job, pr, pic, quality, held, sent)
             except BaseException:
                 # a stop (Cancelled) or anything else in the check or the fix: the picture was drawn and billed, so it is
                 # filed as drawn before the error goes on, and a resume does not draw and pay for it again
-                self._file(job, pr, pic, got, figures, softened, {"styleRef": sref.sha} if sref else {})
+                self._file(job, pr, pic, got, figures, softened, base)
                 raise
-        if sref:
-            extra = {"styleRef": sref.sha, **extra}
-        return self._file(job, pr, pic, got, figures, softened, extra)
+        return self._file(job, pr, pic, got, figures, softened, {**base, **extra})
 
     def _file(self, job: Job, pr: Prompt, pic: images.Drawn, got, figures, softened: bool, extra: dict) -> dict:
         """File a drawn picture: its record (with what the check added, `extra`), its bytes and the manifest."""

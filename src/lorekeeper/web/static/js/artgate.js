@@ -91,6 +91,11 @@ export function refParts(ref) {
   return { id, set: typeof ref.set === "string" ? ref.set : (m ? m[2] : null), url: m ? ref.url : null };
 }
 
+/** Whether an open lightbox must close: `ids` is its list, per picture it can step to, of the ids that stand for that
+ *  picture (the id on screen now, and the one it opened with, since a fix or redraw files a new id that the page's art
+ *  set knows only once fetched again); `shown` the visible ids. It closes when any picture has none of its ids shown. */
+export const lightboxHides = (ids, shown) => (Array.isArray(ids) ? ids : []).some((alts) => !(Array.isArray(alts) ? alts : [alts]).some((x) => typeof x === "string" && shown.has(x)));
+
 /** A comic's panels as the server sent them: event ids in panel order (strings only, at most 6, each once); [] otherwise. */
 export function cleanPanels(list) {
   if (!Array.isArray(list)) return [];

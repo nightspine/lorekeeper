@@ -217,10 +217,15 @@ def cmd_locate(args) -> int:
 def cmd_toc(args) -> int:
     book = epub.read(args.epub)
     print(f"{book.title} — {', '.join(book.authors)} ({book.language}), {len(book.blocks)} blocks")
+    from .chapters import label, numbering
+    from .web.jobs import mark_story     # the build form's front and back matter rule (stdlib only, like this)
     ends = [c.start for c in book.chapters[1:]] + [len(book.blocks)]
-    for i, (c, end) in enumerate(zip(book.chapters, ends), 1):
-        words = sum(len(b.words) for b in book.blocks[c.start:end])
-        print(f"{i:3}  seq {c.start:5}  {words:6} words  {c.title}")
+    secs = [{"title": c.title or f"Section {i}", "words": sum(len(b.words) for b in book.blocks[c.start:end])}
+            for i, (c, end) in enumerate(zip(book.chapters, ends), 1)]
+    mark_story(secs)
+    # the first column is the TOC position (what --chapters takes); the label is the chapter number the book states
+    for i, (c, s, num) in enumerate(zip(book.chapters, secs, numbering(secs)), 1):
+        print(f"{i:3}  {label(num['number']):11}  seq {c.start:5}  {s['words']:6} words  {c.title}")
     return 0
 
 
@@ -858,7 +863,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--inclusive", action="store_true", help="count the current block (default: it does not count, §3.7)")
     s.set_defaults(fn=cmd_locate)
 
-    s = sub.add_parser("toc", help="list an EPUB's table of contents (chapter numbers for --chapters)")
+    s = sub.add_parser("toc", help="list an EPUB's table of contents: the first column is the TOC position that --chapters "
+                       "takes, the label beside it the book's own chapter number")
     s.add_argument("epub")
     s.set_defaults(fn=cmd_toc)
 

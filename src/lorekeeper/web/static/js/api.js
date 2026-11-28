@@ -200,14 +200,21 @@ export const api = {
   artSoften: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/soften`, body, { signal }),
   artDraw: (key, body, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/draw`, body, { signal }),
   artDelete: (key, id) => request("DELETE", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}`),
-  artRedraw: (key, id, note, p = null) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`,
-    typeof p === "string" && p ? { note, p } : { note }),
-  /** Look at a picture for drawing faults: { faults: [{ what, where }], cost }. `at` is { p, finished }; `picker` an
-   *  optional { provider, model }. 409 "no-vision" when no model here can see pictures. */
+  /** Draw the saved prompt again. The record's own reference pictures (`userRefs`) go again unless `refs` is given
+   *  ([{ sha, note? }], [] for none). */
+  artRedraw: (key, id, note, p = null, refs = null) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/redraw`,
+    { note, ...(typeof p === "string" && p ? { p } : {}), ...(Array.isArray(refs) ? { refs } : {}) }),
+  /** Upload one of the person's own reference pictures for a drawing: { sha, ext, width, height, bytes, url }; 413
+   *  `too-large`, 422 `bad-image` with the server's sentence. Kept beside the edition's pictures, never in the index. */
+  artRefUpload: (key, file, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/refs`, fileForm(file), { signal }),
+  /** Change a drawn picture's own reference pictures (what a redraw sends) without drawing: the record back, with `undo`. */
+  artRefsPut: (key, id, refs) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/refs`, { refs }),
+  /** Look at a picture for drawing faults: { faults: [{ what, where, severity }], cost, model: { provider, model } }. `at` is { p, finished }; `picker` an
+   *  optional { provider, model } (the lightbox sends none: the server picks its strong checker). 409 "no-vision" when no model here can see pictures. */
   artCheck: (key, id, at = {}, picker = null, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/check`,
     { ...at, ...(picker ? { picker } : {}) }, { signal }),
   /** Fix a picture's drawing faults with one edit by the model that drew it: { faults, note? } plus { p, finished };
-   *  answers like a redraw (the new record, `replaces`, `undo`, `cost`). */
+   *  answers like a redraw (the new record, `replaces`, `undo`, `cost`) plus `verified` and `beforeUrl`; 422 "unchanged" when the fix changed nothing (nothing filed). */
   artFix: (key, id, body) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/fix`, body),
   /** Edit the world note of one style's art set (the style's slug: each style has its own manifest). */
   artWorld: (key, text, style = null) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/world`, style ? { text, style } : { text }),
