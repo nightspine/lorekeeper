@@ -1467,10 +1467,32 @@ def _text_vocab(s: str, unknown: list[str]) -> set[str]:
 def _voice_text(s: str) -> str:
     def fix(m: re.Match) -> str:
         w = m.group(0).lower()
-        r = ("the book" if "passage" in w else "the index's notes" if "notes" in w or "tags" in w
+        # "the passages" keeps a plural noun, so its verb still agrees ("The passages mention" never becomes
+        # "The book mention").
+        r = ("the parts of the book you have read" if "passages" in w else "the book" if "passage" in w
+             else "the index's notes" if "notes" in w or "tags" in w
              else "your" if w.endswith(("’s", "'s")) else "you")
         return r[:1].upper() + r[1:] if m.group(0)[:1].isupper() else r
     return _VOICE_TEXT.sub(fix, s)
+
+
+def _copy_shingles(passages: list[Passage]) -> set[tuple[str, ...]]:
+    """The copy rule's word runs, built per stretch of the book: passages that touch in the book (same book, the next
+    block) are one stretch, others never join, so a run made of one passage's end and an unrelated passage's start is
+    not a copy."""
+    runs: list[list[str]] = []
+    last: Passage | None = None
+    for p in sorted(passages, key=lambda p: (p.book, p.seq)):
+        ws = text.words(p.text)
+        if last is not None and last.book == p.book and p.seq == last.end + 1:
+            runs[-1].extend(ws)
+        else:
+            runs.append(list(ws))
+        last = p
+    out: set[tuple[str, ...]] = set()
+    for ws in runs:
+        out |= text.shingles(ws, COPY_RUN)
+    return out
 
 
 def _answer_text(view: dict, question: str, llm, history: list[Turn], budget_chars: int,
@@ -1541,8 +1563,7 @@ def _answer_text(view: dict, question: str, llm, history: list[Turn], budget_cha
     system = SYSTEM_BOOK if book_only else SYSTEM_BOTH
     vocab = _text_vocab(notes + "\n" + ptext, sl.unknown)
     valid = dict(ptags) if book_only else {**sl.tags, **ptags}
-    source_words = [w for p in passages for w in text.words(p.text)]
-    shingles = text.shingles(source_words, COPY_RUN)
+    shingles = _copy_shingles(passages)
 
     def ask_(extra: str = "") -> dict:
         r = llm.complete(system, base + extra, SCHEMA)
