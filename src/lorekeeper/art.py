@@ -734,7 +734,10 @@ MAX_NEW_FAULTS = 3         # faults the verification may say a fix added
 # `verify_price` price for the estimate and what the cap reserves. Of 8 edits Sonnet called 2 unchanged, 5 partly fixed and
 # 1 fixed; Haiku 0, 8 and 0.
 FIX_RATE = 0.2
-CHECK_TOKENS = (3800, 400)
+# 2026-11-28, the check with writing and style faults (ANATOMY longer, the style sentence in the message), Sonnet 5.5, 34 pictures
+# (the anatomy bench's 20 and 14 more): 4,209 tokens in and 347 out on average (732 out at most), $0.0119 a check, so the
+# tokens held for a check went from (3800, 400) to
+CHECK_TOKENS = (4600, 450)
 CHECK_FALLBACK = 0.002     # USD for one check when the picker's price is unknown, so the cap still reserves something
 VERIFY_TOKENS = (4200, 200)  # one verification: two pictures in, the verdict out
 VERIFY_FALLBACK = 0.004
