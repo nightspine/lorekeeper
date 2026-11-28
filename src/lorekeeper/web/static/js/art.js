@@ -113,10 +113,14 @@ export function forgetArt(key = null) {
 
 /** Every provider row of /api/providers, cached for a minute ([] when the call fails). */
 let provCache = null;
+// The answer's own top-level `describe` (the model that describes reference pictures, or null), kept beside the rows;
+// undefined when the server's answer does not carry one (an older server).
+let describeTop;
 function allProviders({ fresh = false } = {}) {
   if (fresh || !provCache || Date.now() - provCache.at > 60000) {
     const promise = api.providers().then((r) => {
       const all = Array.isArray(r?.providers) ? r.providers : [];
+      describeTop = r && typeof r === "object" && "describe" in r ? r.describe : undefined;
       for (const p of all) {
         if (typeof p?.label === "string") PROVIDER_NAME.set(p.id, p.label);
         for (const m of imageModels(p)) MODEL_LABEL.set(`${p.id}\n${m.id}`, m.label || m.id);
@@ -141,7 +145,9 @@ export function textProviders(opts = {}) {
  *  not passed yet (Settings says why they are not offered). */
 export function modelProviders(opts = {}) {
   return allProviders(opts).then((all) => ({ image: all.filter((p) => canDraw(p)), text: all.filter((p) => p && p.ok && textModels(p).length),
-    broken: all.filter((p) => p && p.configured && !p.ok) }));
+    broken: all.filter((p) => p && p.configured && !p.ok),
+    // the model that would describe reference pictures for an image model that takes none (null: none can)
+    describer: describeModel(all, describeTop) }));
 }
 /** Text model names by "provider\nid", and provider names by id (the lightbox names the model that wrote a prompt). */
 const TEXT_LABEL = new Map();
@@ -709,7 +715,7 @@ async function inspectRef(file) {
  * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it") and Remove.
  * `initial` is a record's `userRefs` (a redraw starts from them). The element is made once and kept across the sheet's
  * repaints, so a change of style, shape, quality, model or moment keeps it as it is. Returns
- * { el, refs() [{sha, note?}], count(), busy(), idle() Promise, dirty(), drop(sentence), setPath(text), dispose() }.
+ * { el, refs() [{sha, note?}], count(), busy(), dirty(), drop(sentence), setPath(text), dispose() }.
  */
 function refsRow({ key, initial = [], onChange = null }) {
   let seq = 0;
@@ -777,7 +783,7 @@ function refsRow({ key, initial = [], onChange = null }) {
     for (const file of chosen.slice(0, room)) {
       const it = { id: ++seq, sha: null, ext: null, note: "", description: null, url: null, local: URL.createObjectURL(file), uploading: true, ctrl: new AbortController() };
       items.push(it);
-      it.done = upload(it, file);
+      upload(it, file);
     }
     paint();
     changed();
@@ -824,7 +830,6 @@ function refsRow({ key, initial = [], onChange = null }) {
     refs: () => refsBody(items),
     count: () => items.filter((x) => !x.uploading).length,
     busy: () => items.some((x) => x.uploading),
-    idle: () => Promise.all(items.map((x) => x.done).filter(Boolean)).then(() => undefined),
     dirty: () => items.some((x) => x.uploading) || !sameRefs(items, start),
     /** Take every picture out (the server could not use them) and say why under the row. */
     drop: (sentence) => { for (const it of [...items]) { it.ctrl?.abort(); if (it.local) URL.revokeObjectURL(it.local); } items.length = 0; paint(); err.textContent = sentence || ""; changed(); },
@@ -867,7 +872,7 @@ function refsRow({ key, initial = [], onChange = null }) {
  * Returns the sheet, with `current()` → { kind, target } (the moment selected now) and `listed()` → every item named on it.
  */
 export async function openPictureSheet(opts) {
-  const [{ image: provs, text: writers }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
+  const [{ image: provs, text: writers, describer }] = await Promise.all([modelProviders({ fresh: true }), loadStyles()]);
   if (!provs.length) {
     const sh = sheet({ title: "Draw a picture", className: "art-sheet",
       content: h("div.art-sheet-body", h("p", "Pictures need a Gemini or OpenAI key."),
@@ -956,7 +961,7 @@ export async function openPictureSheet(opts) {
   /** Which way the pictures go with the image model chosen now, as one quiet line under the row. */
   function refRoute() {
     const takes = takesReferences(st.provider, st.model);
-    const d = takes ? null : describeModel(writers);
+    const d = takes ? null : describer;
     return { path: refPath({ takes, describer: d }), describer: d };
   }
   function paintPath() {
@@ -1365,13 +1370,16 @@ export async function openPictureSheet(opts) {
     }
     // An older server's prompt carries its style in the text: until it is written again for a new style, Draw waits.
     const stale = !st.parts && st.prompt && st.promptStyle != null && styleText() !== st.promptStyle;
-    const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !st.waiting && !stale;
+    // While a reference picture uploads, Draw is off: nothing is drawn without a picture the person just added, and a
+    // picture whose upload fails stays said under the row with nothing drawn.
+    const uploading = Boolean(refs?.busy());
+    const ok = st.prompt.trim().length > 0 && Boolean(styleText()) && !st.busy && !uploading && !stale;
     drawBtn.disabled = !ok;
     const pr = price();
     // Without the image table the price is the prompt route's, for the choices it was asked with; other choices say so
     // rather than show a number for the wrong quality or provider.
     const asked = st.asked && st.asked.quality === st.quality && st.asked.provider === st.provider.id && st.asked.model === st.model && st.asked.shape === st.shape;
-    footNote.textContent = st.busy ? "" : stale ? "Write the prompt again for this style first."
+    footNote.textContent = st.busy ? "" : uploading ? "Uploading your pictures…" : stale ? "Write the prompt again for this style first."
       : pr != null ? `${money(pr)[0].toUpperCase()}${money(pr).slice(1)} for this picture`
         : imagePrice(st.provider, st.quality, st.shape, st.model) === undefined && st.asked && !asked ? "Price unknown for these choices" : "Price unknown";
   }
@@ -1404,17 +1412,7 @@ export async function openPictureSheet(opts) {
     }
   });
   drawBtn.addEventListener("click", async () => {
-    if (st.busy || st.waiting) return;
-    // Draw waits for the reference pictures still uploading (one that fails is taken out and said under the row).
-    if (refs?.busy()) {
-      st.waiting = true; drawBtn.disabled = true;
-      footNote.textContent = "Waiting for your pictures to upload…";
-      await refs.idle();
-      st.waiting = false;
-      if (st.closed) return;
-      paintFoot();
-      if (st.busy) return;
-    }
+    if (st.busy || refs?.busy()) return;   // Draw is disabled meanwhile; this only guards a click already queued
     // A custom style typed but not yet swapped in (no change event yet): put it in the prompt before it is sent.
     if (st.parts && sentenceNow() !== st.sentence) applyStyle();
     abort();
