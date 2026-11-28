@@ -100,7 +100,7 @@ class ArtStore:
         self.journal = data_dir / "merges"      # the undo journal (`Identity.dir`): an entry may still need an upload
         self._locks: dict[tuple[str, str], threading.Lock] = {}
         self._guard = threading.Lock()
-        self._refs_lock = threading.Lock()
+        self.refs_lock = threading.RLock()      # every write, removal and prune of an edition's `refs/`
         self._pruned: dict[str, float] = {}
         for h in self.ref_editions():           # when the store opens
             self.prune_refs(h)
@@ -284,7 +284,7 @@ class ArtStore:
         ext = REF_EXT[mime]
         d = self.refs_dir(text_hash)
         p = d / f"{sha}.{ext}"
-        with self._refs_lock:
+        with self.refs_lock:
             if p.is_file():
                 os.utime(p)
             else:
@@ -305,31 +305,47 @@ class ArtStore:
                 return p
         return None
 
+    def touch_ref(self, text_hash: str, sha: str) -> Path | None:
+        """Renew an upload's time because it is being used (checked for a draw, kept by `PUT .../refs`, brought back by an
+        undo): pruning only takes files a day old, so one used in the last day is never pruned. Its path, or None."""
+        with self.refs_lock:
+            p = self.ref_path(text_hash, sha)
+            if p is None:
+                return None
+            try:
+                os.utime(p)
+            except OSError:
+                return None
+            return p
+
     def ref_bytes(self, text_hash: str, sha: str) -> tuple[bytes, str, str] | None:
-        """(bytes, mime, ext) of an uploaded picture, or None when the folder does not hold it."""
+        """(bytes, mime, ext) of an uploaded picture, or None when the folder does not hold it (also when it went just now)."""
         p = self.ref_path(text_hash, sha)
         if p is None:
             return None
         ext = p.suffix[1:]
-        return p.read_bytes(), REF_MIME[ext], ext
+        try:
+            return p.read_bytes(), REF_MIME[ext], ext
+        except OSError:
+            return None
 
     def ref_editions(self) -> list[str]:
         if not self.root.is_dir():
             return []
         return sorted(d.name for d in self.root.iterdir() if HASH.fullmatch(d.name) and (d / REFS).is_dir())
 
-    def journal_refs(self) -> set[str]:
+    def journal_refs(self) -> set[str] | None:
         """Every upload an undo journal entry still names: in its entry (a removed record, a `refs` change) or in a set
-        it keeps a copy of (a removed set)."""
+        it keeps a copy of (a removed set). None when an entry can't be read (being written or removed just now, or
+        damaged): that counts as keeping everything, never as keeping nothing."""
         out: set[str] = set()
-        if not self.journal.is_dir():
-            return out
-        for d in self.journal.iterdir():
-            for f in [d / "entry.json", *(d.glob("*/art.json") if d.is_dir() else [])]:
-                try:
+        try:
+            entries = [d for d in self.journal.iterdir() if d.is_dir()] if self.journal.is_dir() else []
+            for d in entries:
+                for f in [d / "entry.json", *d.glob("*/art.json")]:
                     out |= user_ref_shas(json.loads(f.read_text()))
-                except (OSError, json.JSONDecodeError):
-                    continue
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
         return out
 
     def listed_refs(self, text_hash: str) -> set[str]:
@@ -348,26 +364,35 @@ class ArtStore:
         except KeyError:
             return 0
         now = time.time() if now is None else now
-        if throttle:
-            with self._refs_lock:
+        with self.refs_lock:    # the kept set and the removals in one step: no upload, use or undo slips between them
+            if throttle:
                 if now - self._pruned.get(text_hash, 0) < PRUNE_EVERY:
                     return 0
                 self._pruned[text_hash] = now
-        if not d.is_dir():
-            return 0
-        files = [f for f in d.iterdir() if REF_FILE.fullmatch(f.name) or f.name.endswith(".tmp")]
-        old = [f for f in files if now - f.stat().st_mtime > REF_KEEP]
-        if not old:
-            return 0
-        keep = self.listed_refs(text_hash) | self.journal_refs()
-        gone = 0
-        with self._refs_lock:
+
+            def age(f: Path) -> float:
+                try:
+                    return now - f.stat().st_mtime
+                except OSError:          # gone meanwhile
+                    return 0.0
+            try:
+                files = [f for f in d.iterdir() if REF_FILE.fullmatch(f.name) or f.name.endswith(".tmp")] if d.is_dir() else []
+            except OSError:              # the folder went (every set removed)
+                return 0
+            old = [f for f in files if age(f) > REF_KEEP]
+            if not old:
+                return 0
+            held = self.journal_refs()
+            if held is None:             # an undo entry can't be read: prune nothing this time
+                return 0
+            keep = self.listed_refs(text_hash) | held
+            gone = 0
             for f in old:
                 m = REF_FILE.fullmatch(f.name)
-                if (m is None or m.group(1) not in keep) and now - f.stat().st_mtime > REF_KEEP:
+                if (m is None or m.group(1) not in keep) and age(f) > REF_KEEP:   # renewed since: kept
                     f.unlink(missing_ok=True)
                     gone += 1
-        return gone
+            return gone
 
     # ---- writing (callers hold `lock`)
 
