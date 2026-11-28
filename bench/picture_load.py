@@ -86,7 +86,7 @@ def run(args):
     data = Path(args.data); data.mkdir(parents=True, exist_ok=True)
     th = build_set(data, args.source or SOURCES)
     # `lorekeeper web` itself, not through `uv run`, so terminate() ends the server and not only its launcher.
-    srv = None if args.external else subprocess.Popen([sys.executable, "-m", "lorekeeper", "web", "--no-auth", "--port", str(args.port), "--data", str(data)],
+    srv = None if args.external else subprocess.Popen([sys.executable, "-m", "lorekeeper.cli", "web", "--no-auth", "--port", str(args.port), "--data", str(data)],
                            cwd=ROOT, stdout=open(data / "server.log", "w"), stderr=subprocess.STDOUT)
     results = {}
     try:
