@@ -350,3 +350,277 @@ def test_a_client_that_leaves_before_the_job_starts_never_holds_a_slot(ask):
     assert not ask.model.calls
     for _ in range(3):
         assert ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?"}).status_code == 200
+
+
+# ---- source: the book's own text before the position (Index and book, Book only) --------------------------------
+
+import dataclasses  # noqa: E402
+
+import lorekeeper.ask as askmod  # noqa: E402
+from lorekeeper import epub  # noqa: E402
+
+from .test_editor import edit  # noqa: E402
+from .test_generate import make_epub  # noqa: E402
+
+REAL_TEXT = hasattr(askmod, "BookText")   # the pipeline side; the route tests below run with stand-ins without it
+
+# The frontier block holds FRONTIER, a later block LATER: neither may ever reach the model at that position.
+FRONTIER, LATER, EARLY = "zanzibarfrontier", "quixoticlater", "marmaladeearly"
+CH1 = [f"Alice Marlow arrived at the old lighthouse one grey morning and saw a {EARLY} lantern on the stair.",
+       "She had come to find her brother, Tom Marlow, who had vanished from the village a year before.",
+       "The keeper, a quiet man named Ezra Pike, said he had never heard of anyone called Tom at all."]
+CH2 = [f"In the morning Alice Marlow found a {FRONTIER} key under the loose boards of the lamp room floor.",
+       f"Pike admitted that Tom had stayed all winter and had left by boat with the {LATER} chart in hand."]
+
+
+@pytest.fixture
+def text_ask(make, tmp_path):
+    """A hand-made index of a book whose EPUB is here, with Alice visible from the start; a cloud key."""
+    build, model, mp = make
+    mp.setenv("ANTHROPIC_API_KEY", "test-key-123")
+    if not REAL_TEXT:
+        @dataclasses.dataclass
+        class TextBook:
+            book: object
+            title: object
+            blocks: list
+            chapters: list
+            numbers: object
+            before: int
+
+        class BookText:
+            def __init__(self, books):
+                self.books = [dataclasses.replace(b, blocks=[x for x in b.blocks if x.seq < b.before]) for b in books]
+        mp.setattr(askmod, "TextBook", TextBook, raising=False)
+        mp.setattr(askmod, "BookText", BookText, raising=False)
+    with build() as c:
+        path = make_epub(tmp_path / "light.epub", ch1=CH1, ch2=CH2)
+        up = c.post("/api/books", files={"file": ("light.epub", path.read_bytes(), "application/epub+zip")}).json()
+        key = c.post(f"/api/catalog/books/up:{up['id']}/handmade", json={"license": "CC-BY-4.0"}).json()["key"]
+        edit(c, key, op="add-entity", name="Alice Marlow", type="person", seq=1, desc="A young woman who comes to a lighthouse.")
+        c.model, c.mp, c.key, c.book = model, mp, key, epub.read(path)
+        yield c
+
+
+def frac_before(book, seq):
+    """The Reader's `p` whose frontier block (finished mode) is `seq`."""
+    total = sum(len(b.words) for b in book.blocks)
+    return sum(len(b.words) for b in book.blocks[:seq]) / total
+
+
+def seq_of(book, word):
+    return next(b.seq for b in book.blocks if word in b.raw)
+
+
+def spy_answer(mp):
+    """Records what the route hands `ask.answer`, and answers without a model."""
+    seen = []
+
+    def spy(view, question, llm_, history=(), budget=0, books=None, roster_chars=0, **kw):
+        seen.append({"history": list(history), **kw})
+        return askmod.Answer("ok", True, [], None, 0, {})
+    mp.setattr(askmod, "answer", spy)
+    return seen
+
+
+def searchable(text):
+    return [b for tb in text.books for b in tb.blocks] if hasattr(text, "books") else None
+
+
+def test_index_only_is_todays_call(text_ask):
+    seen = spy_answer(text_ask.mp)
+    for body in ({}, {"source": "index"}, {"source": "index", "p": 0.5}):
+        r = text_ask.post(f"/api/library/{text_ask.key}/ask", json={"question": "Who is Alice Marlow?", **body})
+        assert r.status_code == 200, r.text
+        assert "source" not in r.json()
+    assert all(s == {"history": []} for s in seen)       # no text, no source: the call is exactly today's
+
+
+@pytest.mark.parametrize("source", ["both", "book"])
+def test_only_blocks_before_the_frontier_are_passed(text_ask, source):
+    seen = spy_answer(text_ask.mp)
+    book, F = text_ask.book, seq_of(text_ask.book, FRONTIER)
+    r = text_ask.post(f"/api/library/{text_ask.key}/ask",
+                      json={"question": "What did Alice Marlow find?", "source": source, "p": frac_before(book, F)})
+    assert r.status_code == 200, r.text and r.json()["source"] == source
+    got = seen[-1]
+    assert got["source"] == source
+    [tb] = got["text"].books if hasattr(got["text"], "books") else [None]
+    if tb is not None:
+        assert tb.before == F and [b.seq for b in tb.blocks] == list(range(F))
+        assert tb.book is None and all(c.start < F for c in tb.chapters)
+        assert tb.numbers is None or len(tb.numbers) == len(tb.chapters)
+    assert F > 0 and all(FRONTIER not in b.raw and LATER not in b.raw for b in searchable(got["text"]) or [])
+
+
+def test_the_block_being_read_never_counts_and_the_whole_book_only_at_the_end(text_ask):
+    seen = spy_answer(text_ask.mp)
+    book, F = text_ask.book, seq_of(text_ask.book, FRONTIER)
+    total = sum(len(b.words) for b in book.blocks)
+    # one word into the frontier block: still not read
+    for p, before in ((frac_before(book, F) + 1 / total, F), (0.0, 0), (0.9999, len(book.blocks) - 1),
+                      (1, len(book.blocks)), (1.0, len(book.blocks))):
+        assert text_ask.post(f"/api/library/{text_ask.key}/ask",
+                             json={"question": "Who is Alice Marlow?", "source": "both", "p": p}).status_code == 200
+        [tb] = seen[-1]["text"].books
+        assert tb.before == before and [b.seq for b in tb.blocks] == list(range(before)), p
+
+
+def test_passage_cites_in_history_are_never_handed_on(text_ask):
+    seen = spy_answer(text_ask.mp)
+    hist = [{"question": "What did she find?", "answer": "A chart.", "cites": ["p::7", "p:lights-one:3", "e:alice-marlow"]}]
+    text_ask.post(f"/api/library/{text_ask.key}/ask",
+                  json={"question": "Who is Alice Marlow?", "source": "both", "p": 0.2, "history": hist})
+    assert seen[-1]["history"][0].cites == ["e:alice-marlow"]
+
+
+@pytest.mark.parametrize("body,code", [
+    ({"source": "all"}, "bad-source"),
+    ({"source": None}, "bad-source"),
+    ({"source": 1}, "bad-source"),
+    ({"source": "both"}, "bad-position"),
+    ({"source": "book", "p": None}, "bad-position"),
+    ({"source": "book", "p": 1.5}, "bad-position"),
+    ({"source": "book", "p": -0.1}, "bad-position"),
+    ({"source": "book", "p": "0.5"}, "bad-position"),
+    ({"source": "book", "p": True}, "bad-position"),
+    ({"source": "index", "p": 2}, "bad-position"),
+])
+def test_bad_source_or_position(text_ask, body, code):
+    r = text_ask.post(f"/api/library/{text_ask.key}/ask", json={"question": "Who is Alice?", **body})
+    assert r.status_code == 422 and r.json()["code"] == code and r.json()["detail"]
+    assert not text_ask.model.calls
+
+
+def test_no_book_file_is_409_before_any_call(ask):
+    # the bundled examples have no EPUB on disk here
+    r = ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "source": "both", "p": 0.5})
+    assert r.status_code == 409 and r.json() == {"code": "no-book-file", "detail": "The book file for this index is not here."}
+    assert not ask.model.calls
+    assert ask.post(f"/api/library/{SIGN}/ask", json={"question": "Who is Holmes?", "p": 0.5}).status_code == 200
+
+
+def test_the_text_is_not_stored_or_logged(text_ask, tmp_path, caplog):
+    before = {p: p.read_bytes() for p in (tmp_path / "data").rglob("*") if p.is_file()}
+    text_ask.post(f"/api/library/{text_ask.key}/ask", json={"question": "What lantern did Alice Marlow see?",
+                                                           "source": "both", "p": 0.9})
+    assert EARLY not in caplog.text
+    after = {p: p.read_bytes() for p in (tmp_path / "data").rglob("*") if p.is_file()}
+    assert not [p for p in after if p not in before or after[p] != before[p]]
+
+
+# ---- a series: an earlier book's text only when finished and earlier in the order used ---------------------------
+
+@pytest.fixture
+def series_ask(make, tmp_path):
+    build, model, mp = make
+    mp.setenv("ANTHROPIC_API_KEY", "test-key-123")
+    seen = spy_answer(mp)
+    if not REAL_TEXT:
+        mp.setattr(askmod, "TextBook", lambda **kw: type("TB", (), kw)(), raising=False)
+        mp.setattr(askmod, "BookText", lambda books: type("BT", (), {"books": books})(), raising=False)
+    with build() as c:
+        keys = []
+        for i, title in enumerate(["Lights One", "Lights Two", "Lights Three"], 1):
+            meta = f'<meta name="calibre:series" content="Lights"/><meta name="calibre:series_index" content="{i}"/>'
+            words = [f"Book {i} marker{i}word: Alice Marlow kept the harbour light alone for twenty winters and more."] * 3
+            path = make_epub(tmp_path / f"b{i}.epub", title=title, series_meta=meta, ch1=words)
+            up = c.post("/api/books", files={"file": (f"b{i}.epub", path.read_bytes())}).json()
+            r = c.post(f"/api/catalog/books/up:{up['id']}/handmade", json={"license": "CC-BY-4.0"})
+            assert r.status_code == 200, r.text
+            keys.append(r.json()["key"])
+        docs = [c.get(f"/api/library/{k}").json() for k in keys]
+        c.keys, c.books, c.seen = keys, [d["series"]["book"] for d in docs], seen
+        yield c
+
+
+def text_books(c, key, **body):
+    r = c.post(f"/api/library/{key}/ask", json={"question": "Who is Alice Marlow?", "source": "both", **body})
+    assert r.status_code == 200, r.text
+    return {tb.book: tb for tb in c.seen[-1]["text"].books}
+
+
+def test_an_earlier_book_is_read_only_when_finished(series_ask):
+    c = series_ask
+    one, two, three = c.books
+    mid = text_books(c, c.keys[1], p=0.5, finished=[one], book=two)
+    assert list(mid) == [one, two]
+    assert mid[one].before == len(mid[one].blocks) and mid[one].title == "Lights One"
+    assert any("marker1word" in b.raw for b in mid[one].blocks)
+    assert 0 < mid[two].before < len(mid[one].blocks)                  # this book is cut, the finished one is whole
+    assert not [b for t in mid.values() for b in t.blocks if "marker3word" in b.raw]
+    # not finished, finished = null, or a later book listed as finished: never sent
+    assert list(text_books(c, c.keys[1], p=0.5, finished=[])) == [two]
+    assert list(text_books(c, c.keys[1], p=0.5)) == [two]
+    assert list(text_books(c, c.keys[1], p=0.5, finished=[one, three])) == [one, two]
+    got = text_books(c, c.keys[2], p=0.5, finished=[one, two])
+    assert list(got) == [one, two, three]
+
+
+def test_a_missing_earlier_book_file_is_skipped(series_ask, tmp_path):
+    c = series_ask
+    one, two, _ = c.books
+    from lorekeeper import text as textmod
+    want = c.get(f"/api/library/{c.keys[0]}").json()["editions"][0]["textHash"]
+    [path] = [p for p in (tmp_path / "data").rglob("*.epub")
+              if textmod.text_hash(b.words for b in epub.blocks(p)) == want]
+    path.rename(path.with_suffix(".gone"))
+    assert list(text_books(c, c.keys[1], p=0.5, finished=[one])) == [two]
+
+
+# ---- end to end with the real ask.BookText: what reaches any prompt (pick calls included) ------------------------
+
+def prompts(c):
+    return "\n".join(s + "\n" + p for s, p in c.model.calls)
+
+
+@pytest.mark.skipif(not REAL_TEXT, reason="needs ask.BookText (the pipeline side of add-ask-book-text)")
+@pytest.mark.parametrize("source", ["both", "book"])
+def test_no_text_at_or_after_the_frontier_reaches_a_prompt(text_ask, source):
+    c, book = text_ask, text_ask.book
+    F = seq_of(book, FRONTIER)
+    url = f"/api/library/{c.key}/ask"
+    # the first question asks for exactly what lies past the position
+    for q in ("What did Alice Marlow find under the boards?", "What chart did Tom take?", "What happened next?"):
+        r = c.post(url, json={"question": q, "source": source, "p": frac_before(book, F)})
+        assert r.status_code == 200, r.text
+    assert c.model.calls and EARLY in prompts(c)          # the text before the position does reach the model
+    assert FRONTIER not in prompts(c) and LATER not in prompts(c)
+    # a follow-up whose history cites the frontier and a later passage
+    hist = [{"question": "What did she find?", "answer": f"A {FRONTIER} key and the {LATER} chart.",
+             "cites": [f"p::{F}", f"p::{F + 1}", "p::999"]}]
+    c.model.calls.clear()
+    r = c.post(url, json={"question": "And then what did Alice Marlow do?", "source": source,
+                          "p": frac_before(book, F), "history": hist})
+    assert r.status_code == 200
+    assert FRONTIER not in prompts(c) and LATER not in prompts(c)
+    # moved back to the block holding EARLY: now that is out of reach too
+    c.model.calls.clear()
+    E = seq_of(book, EARLY)
+    r = c.post(url, json={"question": "What lantern did Alice Marlow see on the stair?", "source": source,
+                          "p": frac_before(book, E), "history": hist})
+    assert r.status_code == 200
+    assert not [w for w in (EARLY, FRONTIER, LATER) if w in prompts(c)]
+    for cite in r.json()["cites"]:
+        if cite.get("kind") == "passage":
+            assert cite["end"] < E
+
+
+@pytest.mark.skipif(not REAL_TEXT, reason="needs ask.BookText (the pipeline side of add-ask-book-text)")
+def test_passage_cites_come_back_with_the_source(text_ask, monkeypatch):
+    c, book = text_ask, text_ask.book
+
+    def cite_first_passage(system, prompt, schema, prefix=None):
+        c.model.calls.append((system, prompt))
+        tag = re.search(r"\[(p:[^\]]+)\]", prompt)
+        return {"answer": "The book says she saw a lantern on the stair.", "found": True,
+                "cites": [tag.group(1)] if tag else []}
+    monkeypatch.setattr(c.model, "complete", cite_first_passage)
+    r = c.post(f"/api/library/{c.key}/ask", json={"question": "What did Alice Marlow see on the stair?",
+                                                  "source": "book", "p": 1})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["source"] == "book"
+    passages = [x for x in body["cites"] if x.get("kind") == "passage"]
+    for x in passages:
+        assert x["id"] == f"p::{x['seq']}" and x["book"] is None and x["seq"] <= x["end"] < len(book.blocks)
