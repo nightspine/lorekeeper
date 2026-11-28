@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, fixBody, fixLine, fixLines, MAX_FAULTS, panelTextsOf, panelBody, panelFixLine, panelWish, severityOf, kindOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
+const { autoFixed, cutWords, beforeSrc, cleanFaults, cleanVerified, doubtful, fixBody, fixLine, fixLines, MAX_FAULTS, panelTextsOf, panelBody, panelFixLine, panelWish, severityOf, kindOf, verdictLine } = await import(join(here, "../../src/lorekeeper/web/static/js/artfix.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -106,6 +106,50 @@ test("an unchecked fix, a note-only fix and a malformed verdict", () => {
   assert.equal(verdictLine({ fixed: 1, partly: 0, of: 3, results: [], new: [] }, []), "Fixed 1 of 3. 2 are still wrong.");
   assert.deepEqual(cleanVerified({ fixed: 1, partly: 0, of: 2, results: [{ n: 0, fixed: "yes" }, { n: 2, fixed: "maybe" }, { n: 1, fixed: "yes" }] }).results, [{ n: 1, fixed: "yes" }]);
   assert.equal(cleanVerified({ fixed: 0, partly: 0, of: 1, new: Array.from({ length: 5 }, (_, j) => ({ what: `n${j}` })) }).new.length, 3);
+});
+const withNote = (...k) => [...res(...k.slice(0, -1)), { n: k.length, fixed: k[k.length - 1], note: true }];
+test("the note is the last item judged: Your change: done, partly done, not done", () => {
+  assert.equal(verdictLine({ fixed: 3, partly: 0, of: 3, results: withNote("yes", "yes", "yes"), new: [] }, sent.slice(0, 2)),
+    "Fixed both. Your change: done.");
+  assert.equal(verdictLine({ fixed: 1, partly: 1, of: 3, results: withNote("yes", "no", "partly"), new: [] }, sent.slice(0, 2)),
+    "Fixed 1 of 2. Still wrong: the chair has three legs. Your change: partly done.");
+  assert.equal(verdictLine({ fixed: 1, partly: 0, of: 2, results: withNote("yes", "no"), new: [] }, sent.slice(0, 1)),
+    "Fixed it. Your change: not done.");
+  // a note-only fix now has a result too
+  assert.equal(verdictLine({ fixed: 1, partly: 0, of: 1, results: withNote("yes"), new: [] }, []), "Your change: done.");
+  assert.equal(verdictLine({ fixed: 0, partly: 1, of: 1, results: withNote("partly"), new: [{ what: "a third hand" }] }, []),
+    "Your change: partly done. The fix added: a third hand.");
+  // `note` is kept only on the last item, and only once
+  assert.deepEqual(cleanVerified({ fixed: 1, partly: 0, of: 2, results: [{ n: 1, fixed: "yes", note: true }, { n: 2, fixed: "no" }] }).results,
+    [{ n: 1, fixed: "yes" }, { n: 2, fixed: "no" }]);
+  assert.deepEqual(cleanVerified({ fixed: 0, partly: 0, of: 1, results: [{ n: 1, fixed: "no", note: "yes" }] }).results, [{ n: 1, fixed: "no" }]);
+});
+test("a doubtful hand fix: the checker thinks nothing was fixed", () => {
+  const d = (results, of) => ({ fixed: 0, partly: 0, of, results, new: [], doubtful: true });
+  assert.equal(verdictLine(d(res("no", "no"), 2), sent.slice(0, 2)),
+    "The checker thinks nothing was fixed: the left hand has six fingers; the chair has three legs.");
+  assert.equal(verdictLine(d(withNote("no", "no"), 2), sent.slice(0, 1)),
+    "The checker thinks nothing was fixed: the left hand has six fingers. Your change: not done.");
+  assert.equal(verdictLine(d(withNote("no"), 1), []), "The checker thinks your change was not done.");
+  assert.equal(verdictLine(d([], 2), []), "The checker thinks nothing was fixed.");
+  assert.equal(verdictLine({ ...d(res("no"), 1), new: [{ what: "a blur on the face" }] }, sent.slice(0, 1)),
+    "The checker thinks nothing was fixed: the left hand has six fingers. The fix added: a blur on the face.");
+  assert.equal(doubtful(d(res("no"), 1)), true);
+  assert.equal(doubtful({ fixed: 1, partly: 0, of: 1, results: res("yes"), doubtful: "yes" }), false);
+  assert.equal(doubtful(null), false);
+  assert.equal(cleanVerified({ fixed: 0, partly: 0, of: 0, doubtful: 1 }).doubtful, undefined);
+});
+test("How this was drawn: the note's own result, and a doubtful fix", () => {
+  assert.equal(fixLine({ faults: [{ what: "a" }, { what: "b" }], note: "brighter.", verified: { fixed: 2, partly: 0, of: 3, results: withNote("yes", "no", "yes") } }),
+    "Fixed: a; b (1 of 2 put right). Also: brighter (done).");
+  assert.equal(fixLine({ faults: [], note: "the eyes open", verified: { fixed: 0, partly: 1, of: 1, results: withNote("partly") } }),
+    "Fixed: the eyes open (partly done).");
+  assert.equal(fixLine({ faults: [{ what: "a" }], note: "n", verified: { fixed: 0, partly: 0, of: 2, results: withNote("no", "no"), doubtful: true } }),
+    "Tried to fix: a (0 of 1 put right). Also: n (not done).");
+  assert.equal(panelFixLine({ panel: 2, text: "A boy asleep.", verified: { fixed: 0, partly: 0, of: 1, results: res("no"), doubtful: true } }),
+    "Tried to fix panel 2: A boy asleep (0 of 1 put right).");
+  assert.equal(verdictLine({ fixed: 0, partly: 0, of: 1, results: res("no"), new: [], doubtful: true }, [panelWish(2, { text: "a boy asleep" })]),
+    "The checker thinks nothing was fixed: panel 2 should show: a boy asleep.");
 });
 test("How this was drawn: the fix line carries its tally when checked", () => {
   assert.equal(fixLine({ faults: [{ what: "a" }, { what: "b" }, { what: "c" }], verified: { fixed: 2, partly: 0, of: 3 } }), "Fixed: a; b; c (2 of 3 put right).");
