@@ -177,3 +177,45 @@ export function recapNumbers(doc) {
   groups.forEach((g, i) => g.ids.forEach((id) => out.set(id, nums[i].number)));
   return out;
 }
+
+// ---- not part of the chapters.py port: where a chapter recap sits in the Reader's chapter map ----------------------
+
+const ANCHOR_WORDS = 6;   // SPEC §3.5: a block of fewer words never carries an anchor
+const sameTitle = (t) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
+
+/**
+ * The map chapter a chapter recap of the book being read summarises. A recap's `from` is the first anchor-eligible block
+ * after its chapter's last paragraph, and a chapter usually opens with a short heading, so the anchor often lands in the
+ * next chapter's second block; the chapter it is in is then the wrong row.
+ * 1. A chapter whose title is the recap's, at the anchor's chapter or back to the chapter before it (the last one
+ *    before it holding a block that can carry an anchor; chapters made only of short blocks in between, a "Part Two"
+ *    divider, are passed over as the snap would pass over them). Never later than the anchor's chapter.
+ * 2. Else (a hand-written or retitled recap), or when both match: the chapter before when no block between the
+ *    anchor's chapter's start and the anchor could carry an anchor (the anchor was snapped past a chapter end),
+ *    else the anchor's chapter.
+ * Only for recaps: an event in a chapter's first long paragraph belongs to that chapter.
+ * @param chapters the whole map in book order, [{ title, start }]
+ * @param seq the block the recap's anchor is in (its effective location)
+ * @param title the recap's title
+ * @param blockWords words per block of the edition (the map's), or null when unknown (then rule 2 never goes back)
+ * @param tidy the title tidier the Reader shows titles with
+ * @returns a chapter of `chapters`, or null when the anchor is before the first one or unknown
+ */
+export function recapChapter(chapters, seq, title, blockWords, tidy = (t) => t) {
+  if (!chapters?.length || !Number.isInteger(seq) || seq < 0) return null;
+  let i = -1;
+  for (let k = 0; k < chapters.length && chapters[k].start <= seq; k++) i = k;
+  if (i < 0) return null;
+  const words = blockWords || null;
+  const eligible = (a, b) => { for (let k = a; k < b; k++) if ((words[k] || 0) >= ANCHOR_WORDS) return true; return false; };
+  let j = i - 1;
+  if (words) while (j >= 0 && !eligible(chapters[j].start, chapters[j + 1].start)) j--;
+  // Snapped: nothing in the anchor's chapter before the anchor could have carried it (with a known chapter to go back to).
+  const snapped = Boolean(words) && j >= 0 && !eligible(chapters[i].start, seq);
+  const key = sameTitle(tidy(title));
+  const matches = [];
+  if (key) for (let k = i; k >= Math.max(j, 0); k--) if (sameTitle(tidy(chapters[k].title)) === key) matches.push(k);
+  if (matches.length === 1) return chapters[matches[0]];
+  if (matches.length > 1) return chapters[matches[0] === i && !snapped ? i : matches.find((k) => k !== i)];
+  return chapters[snapped ? j : i];
+}
