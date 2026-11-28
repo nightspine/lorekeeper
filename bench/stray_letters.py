@@ -37,8 +37,7 @@ ARMS = {
     "v3": ('The words "figure A", "figure B" and so on only tell the figures apart in this description. Nothing is written in the '
            "picture: no letter, label, number or caption beside, above or on anyone."),
     "shipped": art.LABEL_NOT_TEXT,
-    "v4": ("Each figure in this description is called by a label (the word figure and a letter) only so that the figures can be "
-           "told apart. Nothing is written in the picture: no letter, label, number or caption beside, above or on anyone."),
+    "v4": art.LABEL_NOT_TEXT,      # the shipped wording, kept under its bench name
     "v2": ('"Figure A", "figure B" and so on are only names for telling the people apart in this description. Around every '
            "person the picture is clean: nothing is written, lettered or marked next to them."),
 }
