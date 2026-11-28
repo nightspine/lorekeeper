@@ -28,8 +28,10 @@ for (const [label, t] of [["with the table of contents", toc], ["with the chapte
       assert.equal(info.state, "ahead");
       assert.equal(info.title, "");
       assert.ok(!/Prologue|Road/.test(info.label), info.label);
-      assert.equal(nextName(st), "Chapter 1");
-      assert.equal(whereText(st, p), "You haven't started Chapter 1 yet.");
+      // A prologue has no chapter number, so it is a section by its place, never by its title.
+      assert.equal(nextName(st), "Section 1");
+      assert.equal(whereText(st, p), "You haven't started Section 1 yet.");
+      assert.equal(info.label, "Section 1, not read yet. Mark it finished");
       assert.ok(!/Body|Library/.test(tickInfo(list[1], st, p).label));
     });
   }
@@ -47,7 +49,8 @@ for (const [label, t] of [["with the table of contents", toc], ["with the chapte
     assert.equal(st.last, list[0]);
     assert.equal(st.cur, list[1]);
     assert.equal(whereText(st, 0.5), "You're at the end of Prologue.");
-    assert.equal(stepName(list[1]), "Chapter 2");
+    // The book's own count: the prologue takes no number, so the first titled chapter is Chapter 1.
+    assert.equal(stepName(list[1]), "Chapter 1");
   });
   test(`${label}: the end of the book`, () => {
     const st = stepState(list, 1);
@@ -59,6 +62,34 @@ for (const [label, t] of [["with the table of contents", toc], ["with the chapte
 test("front matter is not a step", () => {
   const list = stepList([{ title: "Contents", start: 0, story: false }, { title: "Chapter I", start: 1, story: true }], null, pos);
   assert.deepEqual(list.map((c) => [c.title, c.k]), [["Chapter I", 1]]);
+});
+
+// Isako-like titles: a plain-titled opener, then chapters named by number words.
+const isako = ["The Company", "One", "Two", "Three"].map((title, i) => ({ title, start: i * 2 + 1, story: true }));
+const pos20 = { blockStart: (b) => b / 8, blockEnd: (b) => (b + 1) / 8 };
+test("numbers are the book's own, not the step's place", () => {
+  const list = stepList(isako, null, pos20);
+  assert.deepEqual(list.map((c) => [c.k, c.number]), [[1, null], [2, 1], [3, 2], [4, 3]]);
+  assert.equal(stepName(list[0]), "The Company");
+  assert.equal(stepName(list[2]), "Chapter 2");
+  const st = stepState(list, list[2].from + 0.01);
+  assert.equal(whereText(st, list[2].from + 0.01), "You're part way through Chapter 2.");
+  assert.equal(tickInfo(list[3], st, list[2].from + 0.01).label, "Chapter 3, not read yet. Mark it finished");
+  const before = stepState(list, 0);
+  assert.equal(nextName(before), "Section 1");
+  assert.ok(!/Company/.test(tickInfo(list[0], before, 0).label));
+});
+test("the server's numbers win, and null means no number", () => {
+  const map2 = isako.map((c, i) => ({ ...c, number: i === 0 ? null : i + 10 }));
+  const list = stepList(map2, null, pos20);
+  assert.deepEqual(list.map((c) => c.number), [null, 11, 12, 13]);
+  const toc2 = isako.map((c, i) => ({ n: i + 1, title: c.title, firstSeq: c.start, lastSeq: c.start + 1, number: i === 1 ? 7 : null }));
+  assert.deepEqual(stepList(isako, toc2, pos20).map((c) => c.number), [null, 7, null, null]);
+});
+test("a step's number does not change with which chapters are story steps", () => {
+  const withFront = [{ title: "Contents", start: 0, story: false }, ...isako];
+  const list = stepList(withFront, null, pos20);
+  assert.deepEqual(list.map((c) => [c.k, c.number]), [[1, null], [2, 1], [3, 2], [4, 3]]);
 });
 
 test("age: the profile's first sentence about the entry", () => {

@@ -34,9 +34,9 @@ def test_chapters_titles_and_counts_stop_at_the_position(client, tmp_path):
     r = get(client, key, "alice-marlow", 5).json()
     assert r["total"] == 2
     # "Alice Marlow" (block 1) and the given name "Alice" (block 5), derived from the visible name.
-    assert r["chapters"] == [{"n": 1, "title": "Chapter One", "count": 2}]      # chapter two: not even its title
+    assert r["chapters"] == [{"n": 1, "title": "Chapter One", "number": 1, "count": 2}]   # chapter two: not even its title
     assert r["current"]["n"] == 1 and r["current"]["count"] == 2
-    assert r["first"]["n"] == 1 and r["latest"]["n"] == 1 and r["busiest"] == {"n": 1, "title": "Chapter One", "count": 2}
+    assert r["first"]["n"] == 1 and r["latest"]["n"] == 1 and r["busiest"] == {"n": 1, "title": "Chapter One", "number": 1, "count": 2}
     assert [(s["seq"], s["text"][s["start"]:s["end"]]) for s in r["current"]["snippets"]] == \
         [(1, "Alice Marlow"), (5, "Alice")]
     assert "Chapter Two" not in str(r)
@@ -49,7 +49,7 @@ def test_the_current_chapter_counts_only_through_the_position(client, tmp_path):
     assert [c["count"] for c in r["chapters"]] == [2] and r["current"]["n"] == 1
     r = get(client, key, "tom-marlow", 7).json()                       # through block 7, not 8
     assert [c["count"] for c in r["chapters"]] == [2, 1] and [s["seq"] for s in r["current"]["snippets"]] == [7]
-    assert r["busiest"] == {"n": 1, "title": "Chapter One", "count": 2} and r["latest"]["n"] == 2
+    assert r["busiest"] == {"n": 1, "title": "Chapter One", "number": 1, "count": 2} and r["latest"]["n"] == 2
     r = get(client, key, "tom-marlow", 8).json()
     assert [c["count"] for c in r["chapters"]] == [2, 2] and [s["seq"] for s in r["current"]["snippets"]] == [7, 8]
     assert r["busiest"]["n"] == 1                                      # a tie goes to the earlier chapter
@@ -69,7 +69,7 @@ def test_a_name_revealed_later_is_not_counted_earlier(client, tmp_path):
     _, key = setup(client, tmp_path)
     # "keeper" is a name of the entity from seq 5 (a hidden identity): its use in block 3 must not count while hidden.
     before = get(client, key, "ezra-pike", 4).json()
-    assert before["chapters"] == [{"n": 1, "title": "Chapter One", "count": 1}]
+    assert before["chapters"] == [{"n": 1, "title": "Chapter One", "number": 1, "count": 1}]
     assert [s["text"][s["start"]:s["end"]] for s in before["current"]["snippets"]] == ["Ezra Pike"]
     after = get(client, key, "ezra-pike", 5).json()                    # block 5 is the last finished: "keeper" is visible
     assert after["chapters"][0]["count"] == 2
@@ -127,9 +127,10 @@ def test_front_matter_is_not_a_chapter(client, tmp_path):
     r = get(client, key, "alice-marlow", 6).json()
     assert r["total"] == 2 and [(c["n"], c["title"]) for c in r["chapters"]] == [(1, "Chapter One")]
     assert r["current"]["n"] == 1 and r["first"]["n"] == 1
+    assert r["current"]["number"] == 1 and r["first"]["number"] == 1 and r["latest"]["number"] == 1
     # Chapter two is numbered 2, not 3.
     r = get(client, key, "alice-marlow", 10).json()
-    assert [(c["n"], c["title"]) for c in r["chapters"]] == [(1, "Chapter One"), (2, "Chapter Two")]
+    assert [(c["n"], c["title"], c["number"]) for c in r["chapters"]] == [(1, "Chapter One", 1), (2, "Chapter Two", 2)]
     assert r["total"] == 2
 
 

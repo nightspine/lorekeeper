@@ -354,7 +354,7 @@ wheels = [
 
 [[package]]
 name = "lorekeeper"
-version = "0.30.0"
+version = "0.31.1"
 source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
@@ -382,7 +382,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'claude'", specifier = ">=1.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.115" },
     { name = "jsonschema", specifier = ">=4.21" },
-    { name = "pillow", marker = "extra == 'web'", specifier = ">=10" },
+    { name = "pillow", marker = "extra == 'web'", specifier = ">=11" },
     { name = "python-multipart", marker = "extra == 'web'", specifier = ">=0.0.9" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.30" },
 ]

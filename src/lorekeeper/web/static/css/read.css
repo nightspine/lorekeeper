@@ -24,6 +24,7 @@ html.lk-reading { overflow-anchor: none; }   /* read.js keeps the place itself, 
 .read-ch:first-child .read-divider { margin-top: 16px; }
 .read-plates:empty { display: none; }
 .read-plates { margin: 24px 0 0; }
+.read-plates-at { margin: 20px 0 24px; }   /* after its anchor paragraph, in the text */
 .read-plates .art-plates { max-width: none; }
 .read-plate-note { margin: 6px 0 0; font: 500 12px/1.4 var(--font-ui); color: var(--text-3); }
 .read-end { min-height: 70vh; padding-top: 32px; font: 500 13px/1.5 var(--font-ui); color: var(--text-3); text-align: center; }

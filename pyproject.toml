@@ -1,6 +1,6 @@
 [project]
 name = "lorekeeper"
-version = "0.30.0"
+version = "0.31.1"
 description = "Reference implementation of the Lorekeeper spoiler-safe book index format"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ lorekeeper = "lorekeeper.cli:main"
 [project.optional-dependencies]
 web = [
     "fastapi>=0.115",
-    "pillow>=10",
+    "pillow>=11",
     "python-multipart>=0.0.9",
     "uvicorn>=0.30",
 ]

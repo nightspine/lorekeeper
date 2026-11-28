@@ -11,6 +11,49 @@ const MAX_Q = 500;
 const KEEP_TURNS = 6;
 export const CLEARED = "Cleared, because your position moved back.";
 
+/** The paragraphs of a chapter reply (`api.readChapter`) a passage sheet may show: the cited ones, `seq..end`, that are
+ *  also before the frontier block at the time of showing. */
+export function passageBlocks(blocks, c, frontier) {
+  if (!Number.isInteger(frontier) || !Number.isInteger(c?.seq)) return [];
+  const end = Number.isInteger(c.end) ? c.end : c.seq;
+  return (Array.isArray(blocks) ? blocks : []).filter((b) => Number.isInteger(b?.seq) && typeof b.text === "string"
+    && b.seq >= c.seq && b.seq <= end && b.seq < frontier);
+}
+
+// Where answers come from: the index's notes, the book's own text before the position, or both. Offered only when the
+// book file is here; remembered per viewer.
+export const SOURCES = ["both", "index", "book"];
+export const SOURCE_LABEL = { both: "Index and book", index: "Index only", book: "Book only" };
+const SOURCE_KEY = "lk-ask-source";
+/** The remembered choice, "both" when none (or an unknown value) is stored. */
+export function readSource(storage = globalThis.localStorage) {
+  try { const v = storage?.getItem(SOURCE_KEY); return SOURCES.includes(v) ? v : "both"; } catch { return "both"; }
+}
+function saveSource(v) { try { localStorage.setItem(SOURCE_KEY, v); } catch {} }
+
+/** A passage cite opens only when it lies wholly before the frontier block of the book being read (the block being read
+ *  never counts) and is from that book: an earlier book's passage, a bad seq or no frontier means plain text.
+ *  frontier: the first seq that is not yet read (the block count at the end of the book), or null without the book file. */
+export function passageOpenable(c, { book = null, frontier = null } = {}) {
+  if (!c || c.kind !== "passage" || !Number.isInteger(frontier)) return false;
+  if ((c.book ?? null) !== (book ?? null)) return false;
+  if (!Number.isInteger(c.seq) || c.seq < 0 || c.seq >= frontier) return false;
+  if (c.end != null && (!Number.isInteger(c.end) || c.end < c.seq || c.end >= frontier)) return false;
+  return true;
+}
+/** "Chapter VI" for a passage of the book being read (chapter(c) gives the label from the book's own number, else
+ *  null), else its title; an earlier book's passage is prefixed with that book's short title. A passage of the book being
+ *  read that is not wholly before `frontier` is only "The book": a label never names a chapter past the position (the
+ *  server sends none; this is the second line of defence). */
+export function passageLabel(c, { book = null, frontier = null, chapter = () => null, short = (k) => k } = {}) {
+  if ((c?.book ?? null) === (book ?? null) && !passageOpenable(c, { book, frontier })) return "The book";
+  const title = typeof c?.chapter === "string" ? c.chapter.replace(/\s+/g, " ").trim() : "";
+  const ch = chapter(c) || title || null;
+  const other = c?.book != null && c.book !== (book ?? null);
+  if (other) { const b = short(c.book) || "An earlier book"; return ch ? `${b}, ${ch}` : b; }
+  return ch || "The book";
+}
+
 /** Everything a gated view shows that could be a spoiler if the position moved back: ids of entries, profiles, details,
  *  earlier impressions, connections (current and replaced), events and chapter recaps, and every name and alias of
  *  an entry (a later name has its own reveal point while the entry id stays). The story recap is left out on purpose:
@@ -33,10 +76,11 @@ export function viewIds(view) {
 const covers = (now, then) => { for (const id of then) if (!now.has(id)) return false; return true; };
 
 /** What was on screen when something was asked or typed: the ids above and where the view was computed.
- *  pos: { key, book, rank (the book's place in the reading order used), ord (the anchor's ordinal in that book), order, finished: [book keys] }. */
+ *  pos: { key, book, rank (the book's place in the reading order used), ord (the anchor's ordinal in that book), p (the word
+ *  fraction of that book), order, finished: [book keys] }. */
 export function snapshot(view, pos) {
   return { ids: viewIds(view), key: pos.key ?? null, series: pos.series ?? null, book: pos.book ?? null, rank: pos.rank ?? 0, ord: pos.ord ?? -1,
-    order: pos.order ?? null, finished: [...(pos.finished || [])] };
+    p: Number.isFinite(pos.p) ? pos.p : null, order: pos.order ?? null, finished: [...(pos.finished || [])] };
 }
 
 /** True when the view now reveals less than it did at `old` (so what was asked there must go): something it held is gone,
@@ -50,6 +94,8 @@ export function revealsLess(old, view, pos) {
   const rank = pos.rank ?? 0, ord = pos.ord ?? -1;
   if (rank < old.rank) return true;
   if (rank === old.rank && (pos.book ?? null) === old.book && ord < old.ord) return true;
+  // Two positions inside one anchor's span differ in which paragraphs of the book are before them: any move back counts.
+  if (rank === old.rank && (pos.book ?? null) === old.book && old.p != null && Number.isFinite(pos.p) && pos.p < old.p - 1e-12) return true;
   const fin = new Set(pos.finished || []);
   if (old.finished.some((b) => !fin.has(b))) return true;
   return !covers(viewIds(view), old.ids);
@@ -69,12 +115,14 @@ export const anyRevealsLess = (snaps, view, pos) => snaps.filter(Boolean).some((
 const NOT_SENT = new Set(["unknown name", "refused: outside knowledge"]);
 export function historyFor(turns, keep = KEEP_TURNS) {
   return turns.filter((t) => t.state === "ok" && !NOT_SENT.has(t.a?.note)).slice(-keep)
-    .map((t) => ({ question: t.q, answer: t.a.answer, cites: (t.a.cites || []).map((c) => c.id) }));
+    // Passage cites stay out: what an earlier answer quoted from the book is never named again (the server ignores them too).
+    .map((t) => ({ question: t.q, answer: t.a.answer, cites: (t.a.cites || []).filter((c) => c?.kind !== "passage").map((c) => c.id) }));
 }
 
 /**
  * ctx: key() the library key; position() { anchor, finished, order, key, book, rank, ord } the view on screen was computed with;
- * view() the gated view; examples() three question strings; canOpen(cite), open(cite) for the sources.
+ * view() the gated view; examples() three question strings; canOpen(cite), open(cite) for the sources; citeLabel(cite) a label
+ * the Reader writes (passages), else the server's; hasBook() true when the book file is here (the source choice is offered).
  */
 export function createAsk(ctx) {
   let info = null;                 // GET /api/ask
@@ -84,6 +132,8 @@ export function createAsk(ctx) {
   let busy = null;                 // { turn, controller, ids, key }
   let clearedLine = "";
   let disposed = false;
+  let chosen = readSource();       // the person's choice, used only while the book file is here
+  const source = () => (ctx.hasBook?.() ? chosen : "index");
 
   const log = h("div.ask-log", { role: "log", "aria-live": "polite", "aria-label": "Questions and answers" });
   const cleared = h("p.ask-cleared", { role: "status" });
@@ -96,7 +146,25 @@ export function createAsk(ctx) {
   const composer = h("form.ask-composer", { on: { submit: (ev) => { ev.preventDefault(); ask(field.value); } } },
     h("div.ask-row", field, send), count);
   const via = h("p.ask-via.hint");
-  const root = h("div.ask", log, cleared, empty, unavailable, composer, via);
+  const srcBtns = SOURCES.map((v) => h("button", { type: "button", dataset: { src: v }, on: { click: () => pick(v) } }, SOURCE_LABEL[v]));
+  const srcLine = h("p.ask-src-line.hint");
+  const srcBox = h("div.ask-src", h("div.seg.ask-seg", { role: "group", "aria-label": "Answer from" }, srcBtns), srcLine);
+  const root = h("div.ask", srcBox, log, cleared, empty, unavailable, composer, via);
+
+  function pick(v) {
+    if (!SOURCES.includes(v) || v === chosen) return;
+    chosen = v; saveSource(v);
+    paintSource(); paintVia(); paintEmpty();
+  }
+  function paintSource() {
+    const show = Boolean(ctx.hasBook?.()) && Boolean(info?.available);
+    srcBox.hidden = !show;
+    if (!show) return;
+    const now = source();
+    for (const b of srcBtns) b.setAttribute("aria-pressed", String(b.dataset.src === now));
+    srcLine.textContent = now === "index" ? ""
+      : info.local ? "Passages of the book are read by the local model." : `Passages of the book are sent to ${company(info)}.`;
+  }
 
   function grow() {
     field.style.height = "auto";
@@ -115,8 +183,11 @@ export function createAsk(ctx) {
   const company = (i) => (i.provider === "claude" ? "Anthropic" : i.label || "the provider");
   function paintVia() {
     if (!info?.available) { clear(via); return; }
-    clear(via, info.local ? `Answered on this computer by ${info.modelLabel || info.model}.`
-      : `Answered by ${info.modelLabel || info.model} from the index's notes. Your question and those notes are sent to ${company(info)}; the book's text is not.`);
+    const m = info.modelLabel || info.model, src = source();
+    clear(via, info.local ? `Answered on this computer by ${m}.`
+      : src === "both" ? `Answered by ${m} from the index's notes and the book's own text, up to where you are.`
+      : src === "book" ? `Answered by ${m} from the book's own text, up to where you are.`
+      : `Answered by ${m} from the index's notes. Your question and those notes are sent to ${company(info)}; the book's text is not.`);
   }
   function paintState() {
     const off = info && !info.available;
@@ -129,6 +200,7 @@ export function createAsk(ctx) {
         : h("p", "Ask needs a model to write the answers. Add a key under ", h("a", { href: "#/settings/cloud" }, "Cloud models in Settings"),
           ", or start Ollama on this computer."));
     } else clear(unavailable);
+    paintSource();
     paintVia();
     paintEmpty();
   }
@@ -149,7 +221,9 @@ export function createAsk(ctx) {
     empty.hidden = !show;
     if (!show) return clear(empty);
     const ex = ctx.examples();
-    clear(empty, h("p", "Ask about anyone or anything you've read so far. Answers come from this index up to your position, not from the book's text."),
+    const src = source();
+    clear(empty, h("p", `Ask about anyone or anything you've read so far. ${src === "both" ? "Answers come from this index and the book's own text, up to your position."
+      : src === "book" ? "Answers come from the book's own text, up to your position." : "Answers come from this index up to your position, not from the book's text."}`),
       ex.length ? h("div.ask-examples", ex.map((q) => h("button.ask-example", { type: "button", on: { click: () => ask(q) } }, q))) : null);
   }
 
@@ -159,7 +233,7 @@ export function createAsk(ctx) {
     const seen = new Set();
     const list = (cites || []).filter((c) => { const k = `${c.kind}:${c.id}`; if (seen.has(k)) return false; seen.add(k); return true; });
     if (!list.length) return null;
-    const label = (c) => String(c.label || c.kind || "source");
+    const label = (c) => String(ctx.citeLabel?.(c) || c.label || c.kind || "source");
     const items = list.map((c) => {
       const plain = () => h("span.ask-cite", { title: label(c) }, label(c));
       if (!ctx.canOpen(c)) return h("li", plain());
@@ -179,7 +253,7 @@ export function createAsk(ctx) {
   function paintTurn(t) {
     const body = [h("p.ask-q", t.q)];
     if (t.state === "pending") {
-      body.push(h("div.ask-wait", loading("Reading the index…"),
+      body.push(h("div.ask-wait", loading(t.source === "index" ? "Reading the index…" : t.source === "book" ? "Reading the book…" : "Reading the index and the book…"),
         h("button.btn.quiet.ask-cancel", { type: "button", on: { click: cancel } }, "Cancel")));
     } else if (t.state === "error") {
       body.push(h("p.ask-err", { role: "alert" }, t.err, " ",
@@ -227,7 +301,8 @@ export function createAsk(ctx) {
     draft = null;
     const history = historyFor(turns);
     clearedLine = ""; clear(cleared);
-    const turn = { q, state: "pending", a: null, err: "", el: null, at };
+    const src = source();
+    const turn = { q, state: "pending", a: null, err: "", el: null, at, source: src };
     turns.push(turn);
     const controller = new AbortController();
     const mine = busy = { turn, controller, at, cancelled: false };
@@ -236,7 +311,9 @@ export function createAsk(ctx) {
     paintEmpty();
     setBusy(true);
     let res = null, failure = null;
-    try { res = await api.ask(key, { question: q, anchor: pos.anchor ?? null, book: pos.book ?? null, finished: pos.finished ?? null, order: pos.order ?? null, history }, controller.signal); }
+    const body = { question: q, anchor: pos.anchor ?? null, book: pos.book ?? null, finished: pos.finished ?? null, order: pos.order ?? null, history };
+    if (src !== "index") { body.source = src; body.p = pos.p; }   // left out for "Index only", so an older server is asked as before
+    try { res = await api.ask(key, body, controller.signal); }
     catch (e) { failure = e; }
     if (disposed || mine.cancelled || busy !== mine) return;
     busy = null;
@@ -254,12 +331,15 @@ export function createAsk(ctx) {
       turn.err = failure.code === "busy" ? "Two questions are already being answered."
         : failure.code === "model-failed" ? (failure.message || "The model could not answer.")
         : failure.code === "bad-position" ? "The index doesn't recognise where you are. Move the position and try again."
+        : failure.code === "no-book-file" ? "The book file for this index is not here. Choose Index only to ask the index."
+        : failure.code === "bad-source" ? "This server can't read the book for Ask yet. Choose Index only."
         : failure.status ? (failure.message || "The question could not be answered.") : "Couldn't reach the server.";
       restore(q, at);
       paintTurn(turn);
     } else {
       turn.state = "ok";
-      turn.a = { answer: String(res.answer || ""), found: Boolean(res.found), cites: Array.isArray(res.cites) ? res.cites : [], note: res.note ?? null };
+      turn.a = { answer: String(res.answer || ""), found: Boolean(res.found), cites: Array.isArray(res.cites) ? res.cites : [], note: res.note ?? null,
+        source: typeof res.source === "string" ? res.source : src };
       paintTurn(turn);
     }
     if (document.activeElement === document.body || root.contains(document.activeElement) || !document.activeElement) field.focus();
@@ -293,9 +373,15 @@ export function createAsk(ctx) {
     check() {
       const snaps = [...turns.map((t) => t.at), busy?.at, draft].filter(Boolean);
       if (snaps.length && anyRevealsLess(snaps, ctx.view(), ctx.position())) { reset(); return; }
-      // The thread stays: a source whose item has left the view (a replaced recap, an edit) becomes plain text now.
+      // The thread stays: a source whose item has left the view (a replaced recap, an edit, a passage now at or past the
+      // position) becomes plain text now, focused or not; focus stays on the replacement, inside the thread.
       for (const t of turns) for (const x of t.links || []) {
-        if (x.btn.isConnected && document.activeElement !== x.btn && !ctx.canOpen(x.c)) x.btn.replaceWith(x.plain());
+        if (!x.btn.isConnected || ctx.canOpen(x.c)) continue;
+        const had = document.activeElement === x.btn;
+        const plain = x.plain();
+        if (had) plain.tabIndex = -1;
+        x.btn.replaceWith(plain);
+        if (had) plain.focus({ preventScroll: true });
       }
     },
     reset,

@@ -3,6 +3,7 @@ import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
+import { artChapterKeys, numbersByStart, plateChapter, plateSpot, recapChapter, recapNumbers } from "./chapters.js";
 import { nextName, SELF_NAMED_SHORT, stepList, stepName, statedAge, stepState as stepStateAt, tickInfo, whereText as whereAt } from "./steps.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -11,10 +12,10 @@ import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
-import { createAsk } from "./ask.js";
+import { createAsk, passageBlocks, passageLabel, passageOpenable } from "./ask.js";
 import { createReading } from "./read.js";
 import { variantUrl } from "./artsrc.js";
-import { artImg, artOn, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, SIZES, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
+import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, SIZES, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -32,12 +33,14 @@ class PositionMap {
       let total = 0;
       for (const w of edition.blockWords) { total += w; this.cum.push(total); }
       this.total = total;
+      this.words = edition.blockWords;
       this.chapters = edition.chapters;
     } else {
       // Without the book file, spread the known anchor positions evenly: approximate but monotonic.
       const seqs = this.anchors.map((a) => a.seq).filter((s) => s != null);
       this.total = Math.max(1, (seqs.length ? Math.max(...seqs) : this.anchors.length) + 1);
       this.cum = null;
+      this.words = null;
       this.chapters = [];
     }
     // Exact: seq hints are block numbers in this very edition. Approximate: fall back to anchor order.
@@ -72,6 +75,27 @@ class PositionMap {
     let ch = null;
     for (const c of this.chapters) if (this.blockStart(c.start) <= p + 1e-12) ch = c; else break;
     return ch;
+  }
+  /** The chapter a plate filed under chapter key `target` belongs to (chapters.js plateChapter), null without the book file. */
+  plateChapterOf(id, target, keys) {
+    const at = this.anchorPos(id);
+    if (!this.cum || !Number.isFinite(at)) return null;
+    return plateChapter(this.chapters, this.seqAt(Math.max(0, at - 1e-9)), target, this.words, keys);
+  }
+  /** Where the reading view puts a plate (chapters.js plateSpot): { chapter, at: "end" } or { chapter, at: "after", seq },
+   *  null without the book file or a position for its anchor. */
+  plateSpotOf(id, target, keys) {
+    const at = this.anchorPos(id);
+    if (!this.cum || !Number.isFinite(at)) return null;
+    const seq = this.seqAt(Math.max(0, at - 1e-9));
+    const chapter = plateChapter(this.chapters, seq, target, this.words, keys);
+    return chapter ? { chapter, ...plateSpot(this.chapters, chapter, seq) } : null;
+  }
+  /** The chapter a chapter recap anchored at `id` summarises (chapters.js recapChapter), null without the book file. */
+  recapChapterOf(id, title, tidy) {
+    const at = this.anchorPos(id);
+    if (!this.cum || !Number.isFinite(at)) return null;
+    return recapChapter(this.chapters, this.seqAt(Math.max(0, at - 1e-9)), title, this.words, tidy);
   }
 }
 
@@ -110,7 +134,7 @@ export function mountReader(root) {
     key: () => s.key,
     position: askPosition,
     view: () => s.view,
-    examples: askExamples, canOpen: canOpenCite, open: openCite,
+    examples: askExamples, canOpen: canOpenCite, open: openCite, citeLabel: askCiteLabel, hasBook: () => canRead(),
     onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
   });
   if (!preview) ask.refreshStatus();
@@ -124,6 +148,7 @@ export function mountReader(root) {
     entity: (id) => nameOf(id) || null,
     portrait: (id) => { const p = latestPicture(id); return p ? variantUrl(picSrc(p), 160) : null; },
     plates: () => visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)),
+    plateSpot: (p) => plateReadSpot(p),
     platesNode: (pics, title) => platesNode(pics, title),
     openEntry: (id, from) => openDrawer(id, { from }),
     canAsk: () => !preview && Boolean(ask.available?.available), ask: (text) => showAsk({ text }),
@@ -232,6 +257,7 @@ export function mountReader(root) {
     clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
+    s.askPassage?.close(true);
     reading.reset();   // and nothing of the last one's text
     render();
     if (!preview) loadPictures(stale);   // pictures are an extra: they arrive after the page and repaint what shows them
@@ -834,7 +860,9 @@ export function mountReader(root) {
       const raw = Array.isArray(j) ? j : j?.chapters;
       if (!Array.isArray(raw) || !raw.length) return;
       list = raw.filter((c) => c && Number.isInteger(c.n) && Number.isInteger(c.firstSeq) && Number.isInteger(c.lastSeq) && c.lastSeq >= c.firstSeq)
-        .map((c) => ({ n: c.n, title: typeof c.title === "string" ? c.title : "", firstSeq: c.firstSeq, lastSeq: c.lastSeq }));
+        .map((c) => ({ n: c.n, title: typeof c.title === "string" ? c.title : "", firstSeq: c.firstSeq, lastSeq: c.lastSeq,
+          // the book's own chapter number (chapters.py); absent from an older server, which steps.js then works out
+          ...(Number.isInteger(c.number) && c.number > 0 ? { number: c.number } : c.number === null ? { number: null } : {}) }));
     } catch { return; }
     if (stale() || !list?.length || s.key !== key) return;
     s.toc = { key, list };
@@ -1053,13 +1081,15 @@ export function mountReader(root) {
     }
     s.prevIds = ids;
     ask.check();   // moved back, a book unticked or switched: the thread goes
+    if (s.askPassage && !canOpenCite(s.askPassage.cite)) s.askPassage.close(true);   // a passage now at or past the position
     // Pictures: a book ticked or unticked as finished changes which art sets may show; an open lightbox that could
     // step to a picture the position no longer reveals closes (the spoiler rule outranks it), as does a picture sheet.
     const books = pictureBooks().map(bkKey).join(",");
     if (!preview && s.art.loadedBooks != null && s.art.loadedBooks !== books) loadPictures();
     if (s.art.lightbox) {
       const shown = new Set(visiblePictures().map((p) => p.rec.id));
-      if ([...s.art.lightbox.ids].some((x) => !shown.has(x))) { s.art.lightbox.close(); s.art.lightbox = null; }
+      // each picture by its id now or the one it opened with (a fix files a new id before the art set is fetched again)
+      if (lightboxHides(s.art.lightbox.ids(), shown)) { s.art.lightbox.close(); s.art.lightbox = null; }
     }
     if (s.art.sheet && !sheetVisible(s.art.sheet)) { const o = s.art.sheet.opened; s.art.sheet = null; o.then((sh) => sh?.close(true)); }
     else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
@@ -1323,13 +1353,14 @@ export function mountReader(root) {
   /** Visible chapter recaps, with the parts of one long chapter joined: [{ key, title, book, parts, ids }]. */
   function chapterGroups() {
     const out = [];
-    // The map chapter a recap of the book being read ends in (parts of one long chapter share it; two chapters with
-    // the same title do not). Unknown for earlier books and without a position for its anchor.
+    // The map chapter a recap of the book being read summarises (parts of one long chapter share it; two chapters with
+    // the same title do not): by its title near its anchor, which often lands just inside the next chapter (chapters.js
+    // recapChapter). Unknown for earlier books and without a position for its anchor.
     const docRecaps = new Map((s.doc.recaps || []).map((r) => [r.id, r]));
     const chapterOf = (c) => {
       if (s.series && c.book && c.book !== s.book) return null;
-      const at = s.map.anchorPos(docRecaps.get(c.id)?.from);
-      return Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+      const r = docRecaps.get(c.id);
+      return r ? s.map.recapChapterOf(r.from, c.title ?? r.title, tidyTitle) : null;
     };
     for (const c of s.view.chapters || []) {
       const last = out[out.length - 1];
@@ -1422,9 +1453,35 @@ export function mountReader(root) {
       bookBanner(key, { summary: true }), content, toggle);
   }
 
-  /** "Chapter 7" over a title that does not say what it is; no label when the title carries its own number or kind. */
+  /** "Chapter 7" over a title that does not say what it is, 7 being the book's own number (chapters.js), never the row's
+   *  place; no label when the title carries its own number or kind, or the book gives it no number. */
   const SELF_NAMED = /^\s*(chapter|part|book|prologue|epilogue|preface|introduction|foreword|afterword|section|letter)\b/i;
-  const chapterLabel = (title, n) => (SELF_NAMED.test(tidyTitle(title) || "") ? null : `Chapter ${n}`);
+  const chapterLabel = (title, number) => (number == null || SELF_NAMED.test(tidyTitle(title) || "") ? null : `Chapter ${number}`);
+
+  /** The chapter map's numbers by chapter start (chapters.js), worked out once per map. */
+  function mapNumbers() {
+    if (s.numMemo?.map !== s.map) s.numMemo = { map: s.map, byStart: numbersByStart(s.map?.chapters) };
+    return s.numMemo.byStart;
+  }
+  /** A book's numbers from all its chapter recaps (chapters.js), when there is no chapter map; once per document. The
+   *  titles are chapter titles, which name nothing past the position. */
+  const recapNumMemo = new WeakMap();
+  function recapNumbersOf(book) {
+    const d = docOf(book);
+    if (!d) return new Map();
+    if (!recapNumMemo.has(d)) recapNumMemo.set(d, recapNumbers(d));
+    return recapNumMemo.get(d);
+  }
+  /** The number of a chapter row (currentRows or earlierRows) of `book` (null: the book being read). */
+  function rowNumber(r, book) {
+    const current = !s.series || book == null || book === s.book;
+    if (current && (s.map?.chapters || []).length) return r.ch ? mapNumbers().get(r.ch.start) ?? null : null;
+    const ids = r.group?.ids || [];
+    const nums = recapNumbersOf(current ? (s.series ? s.book : null) : book);
+    for (const id of ids) if (nums.has(id)) return nums.get(id);
+    return null;
+  }
+  const rowLabel = (r, book) => chapterLabel(r.title, rowNumber(r, book));
 
   /** Chapter rows of the book being read, oldest first, the same on both tabs: every revealed recap, the chapter the
    *  position is in (title only until its recap is revealed) and any chapter an event happens in. */
@@ -1438,8 +1495,8 @@ export function mountReader(root) {
       return create(`c${ch.start}`, ch.title, ch);
     };
     for (const g of groups) {
+      // A row with a map chapter keeps that chapter's title; a recap with no place in the map is a row of its own title.
       const r = g.ch ? forChapter(g.ch) : create(`g:${g.key}`, g.title, null);
-      if (!r.group) r.title = g.title;   // the recap's own title, as the Chapters tab always showed
       r.group = r.group ? { ...r.group, parts: [...r.group.parts, ...g.parts], ids: [...r.group.ids, ...g.ids] } : g;
     }
     const here = s.map.chapterAt(s.p);
@@ -1484,24 +1541,25 @@ export function mountReader(root) {
   function chapterItems(rows, book = s.series ? s.book : null) {
     const plates = platesByRow(rows, book);
     const current = !s.series || book === s.book;
-    // The chapter just finished says who was met in it: its own row, else the row its recap landed in (a recap is revealed
-    // at the first anchor after its chapter's last paragraph, which can be in the next chapter).
+    // The chapter just finished says who was met in it, in its own row once its recap is revealed (recapChapter puts the
+    // recap there even when its anchor is in the next chapter).
     const lastStep = current ? stepState().last : null;
-    const justDone = lastStep ? rows.find((r) => r.group && r.ch && r.ch.start === lastStep.seq) || rows.find((r) => r.group && r.now) || null : null;
+    const doneCh = lastStep ? s.map.chapterAt(s.map.blockStart(lastStep.seq)) : null;
+    const justDone = doneCh ? rows.find((r) => r.group && r.ch && r.ch.start === doneCh.start) || null : null;
     return rows.map((r, i) => {
       const g = r.group, parts = g ? g.parts : [];
       const fresh = (g && g.ids.some((id) => s.fresh.has(id))) || false;
       const who = parts.length ? mentions(parts.join(" ")) : [];
       const pics = plates.get(r) || [];
       const draw = current ? chapterDrawButton(r, pics) : null;
-      return { id: g ? g.key : null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), cls: r.now ? "now" : fresh ? "fresh" : "",
+      return { id: g ? g.key : null, label: rowLabel(r, book), title: tidyTitle(r.title), cls: r.now ? "now" : fresh ? "fresh" : "",
         badge: r.now ? h("span.chip.ch-ongoing", "So far") : fresh ? h("span.new-badge", "New") : null,
         body: parts.length || pics.length || draw ? h("div.ch-body", platesNode(pics, tidyTitle(r.title)), parts.map((t, k) => {
           if (!s.edit) return h("p", t);
           const part = h("div.ch-part");
           clear(part, h("p", t), editor.recapRowActions({ id: g.ids[k], text: t }, part, { scope: "chapter", title: g.title }));
           return part;
-        }), r === justDone ? metLine({ start: lastStep.seq }) : null, draw ? h("div.art-draw-row", draw) : null,
+        }), r === justDone ? metLine(doneCh) : null, draw ? h("div.art-draw-row", draw) : null,
         who.length ? h("div.ch-who", h("span.eyebrow", "In this chapter"), h("div.ents", who.slice(0, 14).map((e) => entityChip(e.id)))) : null) : null };
     });
   }
@@ -1687,11 +1745,11 @@ export function mountReader(root) {
     const chCard = (r) => {
       const pic = (plates.get(r) || []).at(-1);
       const thumb = pic ? artImg(picSrc(pic), "", "ov-ch-img", { sizes: SIZES.chapter, px: 160 }) : null;
-      const i = rows.indexOf(r);
+      const label = rowLabel(r, book);
       // Beside a chapter with a picture, one without shows more of its recap.
       return h("li", h(`button.ov-chapter${thumb ? ".has-pic" : anyPic ? ".long" : ""}`, { type: "button", on: { click: () => openChapter(r.group.key) } },
         thumb ? h("span.ov-ch-pic", thumb) : null,
-        h("span.ov-ch-text", chapterLabel(r.title, i + 1) ? h("span.ov-ch-label", chapterLabel(r.title, i + 1)) : null,
+        h("span.ov-ch-text", label ? h("span.ov-ch-label", label) : null,
           h("span.ov-ch-title", tidyTitle(r.title)), h("span.ov-ch-recap", r.group.parts.join(" ")))));
     };
     const chapters = h("section.ov-sec", { "aria-labelledby": "ov-ch" },
@@ -1790,7 +1848,7 @@ export function mountReader(root) {
       const current = !s.series || book === s.book;
       const comic = comicNode(comicsOf(r, book), tidyTitle(r.title));
       const body = rowBody(evs, r.events.length);
-      return { id: null, label: chapterLabel(r.title, i + 1), title: tidyTitle(r.title), action: current ? comicButton(r) : null,
+      return { id: null, label: rowLabel(r, book), title: tidyTitle(r.title), action: current ? comicButton(r) : null,
         cls: r.now ? "now" : r.events.some((ev) => s.fresh.has(ev.id)) ? "fresh" : "", body: comic ? h("div.tl-row-body", comic, body) : body };
     });
     const empty = !all.length ? ["No events yet", s.edit ? "Add the first event from where you are in the book." : "Key moments appear here as you read."]
@@ -1827,11 +1885,14 @@ export function mountReader(root) {
     return h("li", entityChip(r.src), h("span.lbl", r.label), entityChip(r.dst));
   }
 
-  /** Short name for a chapter: "Ch. III" when the title starts with a chapter number, else the title. */
+  /** Short name for a map chapter: "Ch. III" when the title starts with a chapter number, "Ch. 2" for one the book
+   *  numbers ("Two"), else the title. */
   function shortChapter(c) {
     const t = tidyTitle(c.title);
     const m = /^(?:chapter|ch\.?)\s+([\w]+)/i.exec(t);
-    return m ? `Ch. ${m[1]}` : t.length > 26 ? `${t.slice(0, 25)}…` : t;
+    if (m) return `Ch. ${m[1]}`;
+    const n = c.start != null ? mapNumbers().get(c.start) : null;
+    return n != null ? `Ch. ${n}` : t.length > 26 ? `${t.slice(0, 25)}…` : t;
   }
 
   /** The series book that introduces an entity (or relation) and the anchor it is revealed at. */
@@ -2066,8 +2127,7 @@ export function mountReader(root) {
     for (const p of plates) {
       let row = null;
       if (current && s.map.exact) {
-        const at = s.map.anchorPos(p.rec.from);
-        const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+        const ch = plateMapChapter(p);
         row = ch ? rows.find((r) => r.ch && r.ch.start === ch.start) : null;
       }
       if (!row) { const i = rowOrd.findIndex((o) => o >= p.ord); row = i >= 0 ? rows[i] : null; }
@@ -2077,25 +2137,42 @@ export function mountReader(root) {
     }
     return out;
   }
-  /** The chapter key the pipeline files a chapter under (its title, " (2)" for a repeated one), for the current book. */
-  function artChapterKey(r) {
-    if (!r.ch || !s.map.exact) return r.title;
-    if (!s.art.chKeys || s.art.chKeys.doc !== s.doc) {
+  /** The chapter keys the pipeline files chapters under, for the current book: Map(chapter start → key), chapters.js
+   *  artChapterKeys (a chapter recap counted in the chapter it summarises, as art.py does). Empty without the exact map. */
+  function artKeys() {
+    if (!s.map?.exact) return new Map();
+    if (!s.art.chKeys || s.art.chKeys.doc !== s.doc || s.art.chKeys.map !== s.map) {
       const seqs = (s.doc.anchors || []).map((a) => a.seq);
       const ord = ordsOf(s.doc);
       const at = (id) => { const i = ord.get(id); return i == null ? null : seqs[i]; };
-      const marks = [...(s.doc.events || []).map((e) => at(e.from)), ...(s.doc.recaps || []).filter((x) => x.scope === "chapter").map((x) => at(x.from))].filter((x) => x != null);
-      const seen = new Map(), keys = new Map();
-      s.map.chapters.forEach((c, i) => {
-        const end = i + 1 < s.map.chapters.length ? s.map.chapters[i + 1].start - 1 : Infinity;
-        if (!marks.some((q) => q >= c.start && q <= end)) return;
-        const n = (seen.get(c.title) || 0) + 1;
-        seen.set(c.title, n);
-        keys.set(c.start, n === 1 ? c.title : `${c.title} (${n})`);
-      });
-      s.art.chKeys = { doc: s.doc, keys };
+      const events = (s.doc.events || []).map((e) => at(e.from)).filter((x) => x != null);
+      const recaps = (s.doc.recaps || []).filter((x) => x.scope === "chapter").map((x) => ({ seq: at(x.from), title: x.title })).filter((x) => x.seq != null);
+      s.art.chKeys = { doc: s.doc, map: s.map, keys: artChapterKeys(s.map.chapters, events, recaps, s.map.words) };
     }
-    return s.art.chKeys.keys.get(r.ch.start) || r.ch.title;
+    return s.art.chKeys.keys;
+  }
+  /** The chapter key the pipeline files a chapter under (its title, " (2)" for a repeated one), for the current book. */
+  function artChapterKey(r) {
+    if (!r.ch || !s.map.exact) return r.title;
+    return artKeys().get(r.ch.start) || r.ch.title;
+  }
+  /** The map chapter a plate of the book being read belongs to: by its target near its anchor, since a plate is anchored at
+   *  its own recap's anchor, often the next chapter's first long paragraph (chapters.js plateChapter). Null without the
+   *  exact map or a position for the anchor. */
+  function plateMapChapter(p) {
+    if (!s.map?.exact || p?.rec?.kind !== "plate") return null;
+    return s.map.plateChapterOf(p.rec.from, p.rec.target, artKeys());
+  }
+  /** Where the Read tab puts a plate: { chapter, at: "end" }, or { chapter, at: "after", seq, name } after its anchor
+   *  block with its chapter's name ("Chapter V"; the plate's anchor is at or before the position, so the chapter is
+   *  reached); null without the exact map. */
+  function plateReadSpot(p) {
+    if (!s.map?.exact || p?.rec?.kind !== "plate") return null;
+    const spot = s.map.plateSpotOf(p.rec.from, p.rec.target, artKeys());
+    if (!spot) return null;
+    const title = tidyTitle(spot.chapter.title) || "";
+    const number = mapNumbers().get(spot.chapter.start);
+    return { ...spot, title, name: title ? stepName({ title, number: number ?? null }) : number != null ? `Chapter ${number}` : "" };
   }
   /** Lightbox items for pictures, with their captions (a chapter title or the entry's name, never the prompt). */
   function lightboxItems(pics, caption) {
@@ -2131,14 +2208,15 @@ export function mountReader(root) {
   /** Redraw with a new prompt: the picture sheet for the same kind and target at the position, replacing `rec`. */
   function redrawPicture(rec, title, slug) {
     if (!canRewrite(rec)) return;
-    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : rec.kind === "comic" ? tidyTitle(String(title).replace(/^Comic: /, "")) : title, replaces: rec.id, replacesStyle: slug });
+    drawPicture({ kind: rec.kind, target: rec.target, title: rec.kind === "plate" ? tidyTitle(title) : rec.kind === "comic" ? tidyTitle(String(title).replace(/^Comic: /, "")) : title, replaces: rec.id, replacesStyle: slug,
+      refs: Array.isArray(rec.userRefs) ? rec.userRefs : null });   // the person's own reference pictures start in the row
   }
   /** Open the lightbox; it closes itself if a later repaint would hide any picture it can step to. */
   function showPictures(pics, index, caption) {
     s.art.lightbox?.close();
     const items = lightboxItems(pics, caption);
     const box = openLightbox(items, index, { onChanged: () => refreshPictures({ forget: s.key }) });
-    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: new Set(items.map((x) => x.rec.id)) };
+    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: box.ids };
   }
   /** A picture as a button that opens the lightbox on it. */
   function pictureButton(pics, i, caption, cls, { sizes = SIZES.thumbs, px = 80, eager = false } = {}) {
@@ -2231,11 +2309,11 @@ export function mountReader(root) {
     return missing.length ? bookTitleOf(missing[0]) : null;
   }
   /** Open the picture sheet for one item; after a picture is filed, the art set is fetched again and the page repaints. */
-  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false }) {
+  function drawPicture({ kind, target, title, moments = null, drawnLine = null, replaces = null, replacesStyle = null, through = false, refs = null }) {
     const set = s.art.sets.get(bkKey(s.series ? s.book : null));
     const { world, canEditWorld } = sheetWorld(set);
     // The position and finished books are asked at every call, so "Write it again" after a move writes for where the reader is.
-    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through,
+    const opened = openPictureSheet({ key: s.key, kind, target, title, moments, drawnLine, replaces, replacesStyle, figureName, through, refs,
       panelText: (id) => eventSummary(id, s.series ? s.book : null),
       position: () => ({ p: s.map.frontier(s.p), finished: s.series ? finishedSet() || [] : [] }),
       // A prompt written for a position the reader has since moved back from is never put on screen.
@@ -2357,7 +2435,7 @@ export function mountReader(root) {
     let i = -1;
     if (current && s.map.exact) {
       const at = s.map.anchorPos(p.rec.from);
-      const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+      const ch = p.rec.kind === "plate" ? plateMapChapter(p) : Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
       i = ch ? rows.findIndex((r) => r.ch && r.ch.start === ch.start) : -1;
     }
     if (i < 0) {
@@ -2371,7 +2449,7 @@ export function mountReader(root) {
     const title = i >= 0 ? rows[i].title : typeof p.rec.chapter === "string" ? p.rec.chapter : null;
     const full = tidyTitle(title) || null;
     if (!full) return null;
-    const short = (i >= 0 ? chapterLabel(title, i + 1) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
+    const short = (i >= 0 ? rowLabel(rows[i], current ? null : p.book) : null) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full;
     return { short, full };
   }
   /** "Portraits" under "Who they are": every visible picture of the entry, oldest to newest, each captioned with its
@@ -2859,7 +2937,7 @@ export function mountReader(root) {
     const anchor = s.map.frontier(s.p);
     const order = s.series ? s.series.orders[s.order] : null;
     const finished = s.series ? finishedSet() : null;
-    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
+    return { anchor, p: s.p, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
       rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
   }
   // ---- Ask: examples, sources, entry points -----------------------------------------------------
@@ -2889,9 +2967,31 @@ export function mountReader(root) {
   };
   /** The entity whose current view carries this arc (an arc replaced since, or past the position, is not there). */
   const arcEntity = (id) => { const e = s.view.entities.find((x) => (x.arcs || []).some((a) => a.id === id)); return e && nameOf(e.id) ? e.id : null; };
+  /** The first block not yet read in the book on screen (finished mode: the block being read never counts; the end of
+   *  the book is every block), or null without its exact map. Passages the server sent all lie before it. */
+  function askFrontierSeq() {
+    if (!canRead() || !s.map.cum) return null;
+    return s.p >= 1 - 1e-12 ? s.map.cum.length : s.map.seqAt(s.p);
+  }
+  /** A passage of the book being read is labelled by the book's own chapter number (the chapter map), else the server's
+   *  number, else its title; an earlier book's carries that book's short title. */
+  function askCiteLabel(c) {
+    if (c?.kind !== "passage") return null;
+    // A passage of this book at or past the position is only "The book" (passageLabel), never its chapter.
+    return passageLabel(c, { book: s.book ?? null, frontier: askFrontierSeq(), short: (k) => bookShort(k), chapter: (x) => {
+      const current = (x.book ?? null) === (s.book ?? null);
+      let ch = null;
+      if (current && Number.isInteger(x.seq)) for (const g of s.map?.chapters || []) if (g.start <= x.seq) ch = g; else break;
+      const title = ch?.title || x.chapter || "";
+      const n = ch ? mapNumbers().get(ch.start) ?? null : Number.isInteger(x.number) ? x.number : null;
+      const full = tidyTitle(title) || "";
+      return chapterLabel(title, n) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full || null;
+    } });
+  }
   /** A source is a link only while the item is in the view on screen. */
   function canOpenCite(c) {
     if (disposed || !s.view) return false;
+    if (c.kind === "passage") return passageOpenable(c, { book: s.book ?? null, frontier: askFrontierSeq() });
     if (c.kind === "event") return s.view.events.some((ev) => ev.id === c.id);
     if (c.kind === "chapter") return chapterGroups().some((g) => g.ids.includes(c.id));
     if (c.kind === "recap") return s.view.recap?.id === c.id;   // the recap is replaced as the story goes on: the old one is plain text
@@ -2899,7 +2999,8 @@ export function mountReader(root) {
   }
   async function openCite(c) {
     if (!canOpenCite(c)) return;
-    if (c.kind === "event") {
+    if (c.kind === "passage") openPassage(c);
+    else if (c.kind === "event") {
       s.tab = "timeline"; saveUrl();
       paintTabs();
       let li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
@@ -2929,6 +3030,32 @@ export function mountReader(root) {
       const target = (arc.book && [...(box?.querySelectorAll(".arc-card[data-book]") || [])].find((n) => n.dataset.book === arc.book)) || box?.querySelector('[data-jump="arc"]');
       target?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     } else openDrawer(entryOfCite(c), { from: document.activeElement });
+  }
+  /** A passage an answer cites, in a sheet: the book's own paragraphs, only those before the position. Opening it in the
+   *  Read tab would move the position back to it (Read's position is the paragraph at the top), which clears the thread,
+   *  so that is a separate, stated choice. */
+  async function openPassage(c) {
+    const body = h("div.ask-passage", loading("Opening the passage…"));
+    const go = h("button.btn", { type: "button", on: { click: async () => {
+      // Closed at once, not with the slide-out: after the move the cited paragraphs are no longer before the position.
+      sh.close(true);
+      if (!canOpenCite(c)) return;
+      await moveTo(s.map.blockStart(c.seq));
+      if (disposed || Math.abs(s.p - s.map.blockStart(c.seq)) > 1e-9) return;
+      s.tab = "read"; saveUrl(); paintTabs();
+    } } }, "Read from here");
+    const sh = sheet({ title: askCiteLabel(c), content: body, className: "ask-passage-sheet",
+      footer: [h("p.hint.ask-passage-note", "Reading from here moves your position back to this passage, which clears your questions."), go],
+      onClose: () => { if (s.askPassage === sh) s.askPassage = null; } });
+    s.askPassage = sh;
+    sh.cite = c;
+    let r;
+    try { r = await api.readChapter(s.key, { seq: c.seq }); }
+    catch { if (!sh.finished) sh.set(h("p.ask-err", "The passage could not be loaded.")); return; }
+    if (sh.finished || disposed) return;
+    if (!canOpenCite(c)) { sh.close(true); return; }
+    const blocks = passageBlocks(r?.blocks, c, askFrontierSeq());
+    sh.set(h("div.ask-passage", blocks.length ? blocks.map((b) => h(b.heading ? "h3.ask-passage-h" : "p.ask-passage-p", b.text)) : h("p.hint", "The passage could not be found in the book.")));
   }
   /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */
   async function showAsk({ text = null } = {}) {
@@ -2996,7 +3123,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); reading.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); s.askPassage?.close(true); reading.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };
