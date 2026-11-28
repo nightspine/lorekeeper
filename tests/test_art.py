@@ -111,7 +111,9 @@ FAKE_LOOK = re.compile(r"\b(hair|haired|shawl|dress|coat|cloak|hooded|apron|boot
 FAKE_CHANGE = re.compile(r"\b(scarred|older than she was|lost an eye|eyes replaced)\b", re.IGNORECASE)
 
 
-WRITERS = (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER)
+WRITERS = (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER, art.COMIC_WRITER)
+PANEL = ("A young woman stands at the wooden gate of a grey stone mill in soft morning light, a basket on her arm, with the "
+         "river bright beyond the wheel and low green hills behind.")
 
 
 def unframed(prompt):
@@ -135,11 +137,14 @@ class Text:
     `look(text)` and `change(text)` say how it classifies an entity's item (default: the FAKE_ regexes above); `scene` is the
     writer's text (a string, or a function of the writer's prompt), `shows` the figures it says it drew."""
 
-    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None, picks=None, names=None):
+    def __init__(self, scene=SCENE, screen=None, shows=None, look=None, change=None, picks=None, names=None, comic=None):
         # `picks`: how it picks look sentences (a function of the sentence; default `look`), False: that call fails
         # `names`: whether a word the name check caught is used as a name (a function of word and sentence; default: every
         # one is, the old rule), False: that call fails
         self.scene, self.shows, self.screen, self.picks, self.names = scene, shows, screen, picks, names
+        # `comic`: the comic writer's panel texts, a function of the writer's prompt (default: PANEL for each <moment n=...>,
+        # each panel drawing every labelled figure by its label)
+        self.comic = comic
         self.look = look or (lambda t: bool(FAKE_LOOK.search(t)))
         self.change = change or (lambda t: (m.group(0) if (m := FAKE_CHANGE.search(t)) else ""))
         self.prompts, self.systems = [], []
@@ -147,6 +152,17 @@ class Text:
     def complete(self, system, prompt, schema, prefix=None):
         self.prompts.append(prompt)
         self.systems.append(system)
+        if system == art.COMIC_WRITER:
+            if self.comic is not None:
+                got = self.comic(prompt)
+            else:
+                labels = re.findall(r'<entry name="[^"]*"[^>]*? figure="([A-F])"', prompt)
+                got = [PANEL + "".join(f" Figure {lab} waits by the wall." for lab in labels)
+                       for _ in re.findall(r'<moment n="(\d+)"', prompt)]
+            out = got if isinstance(got, dict) else {"panels": [{"n": k, "text": t} for k, t in enumerate(got, 1)]}
+            if self.shows is not None:
+                out["shows"] = self.shows
+            return out
         if system in WRITERS:
             scene = PORTRAIT_SCENE if is_portrait(prompt) and self.scene is SCENE else self.scene
             out = {"text": scene(prompt) if callable(scene) else scene}
@@ -1203,8 +1219,8 @@ def test_a_softened_redraw_runs_the_same_last_name_check(monkeypatch):
     quiet = ("A door stands ajar in a stone mill at dusk and a long shadow lies across the worn floor. A lamp burns low on a wooden table "
              "beside a woven basket, and the last grey light comes through one small window. The room is quiet and empty and the air is still.")
     real = art.Illustrator._assemble
-    monkeypatch.setattr(art.Illustrator, "_assemble", staticmethod(lambda body, bi=-1, style="":
-                        real(body, bi, style) + (" Oren" if body.startswith(quiet[:20]) else "")))
+    monkeypatch.setattr(art.Illustrator, "_assemble", staticmethod(lambda body, bi=-1, style="", no_text=art.NO_TEXT:
+                        real(body, bi, style, no_text) + (" Oren" if body.startswith(quiet[:20]) else "")))
     t = Text(scene=lambda p: quiet if "quieter composition" in p else SCENE)
     im = Image(refuse=[lambda prompt, n: prompt.startswith(SCENE[:30])])
     il, rep, sink, t, im = run(text_=t, image=im, portraits=False)
@@ -3649,6 +3665,216 @@ def test_the_writers_ask_for_no_visible_writing_and_no_detail_too_small_once():
         assert w.count("say it is marked or inscribed, with no words shown") == 1
         assert w.count("Leave out details too small to show at the picture's framing.") == 1
     assert art.SCENE_WRITER.count("Two hands each") == 1
+
+
+# ---- comic pages: one picture of a chapter's moments, one panel each (chapter-comic)
+
+
+def comic_doc(bk=None):
+    """base_doc with every block of chapter Two an event: turning points at a6 and a10, a minor one at a7."""
+    bk = bk or book(("One", CH1), ("Two", CH2))
+    d = base_doc(bk)
+    d["events"] = [e for e in d["events"] if e["id"] in ("e1", "e2", "e3")] + [
+        event(4, 6, "A hooded stranger comes to the mill asking for a bed.", ["stranger", "oren"], "turn"),
+        event(5, 7, "Mira sees the stranger sit by the fire.", ["mira", "stranger"], "minor"),
+        event(6, 8, "Gabriel rides in with news of a coming storm.", ["gabriel"]),
+        event(7, 9, "Oren bars the door while Mira watches the road.", ["oren", "mira"]),
+        event(8, 10, "The stranger leaves before sunrise and Mira finds a silver coin.", ["mira", "stranger"], "turn"),
+        event(9, 11, "Mira keeps the coin and tells no one at the market.", ["mira"])]
+    return bk, d
+
+
+def test_a_comic_takes_the_chapters_moments_turning_points_first_in_reading_order(monkeypatch):
+    bk, d = comic_doc()
+    il, t = fresh(d, bk)
+    j = il.job("comic", "Two")
+    assert j.kind == "comic" and j.shape == "portrait" and art.SHAPE_OF["comic"] == "portrait" and not t.prompts
+    assert j.panels == ["e4", "e6", "e7", "e8", "e9"] and j.anchor == "a11"      # the minor one is never a panel
+    assert art.MAX_PANELS == 6 and art.MIN_PANELS == 2 and "comic" not in art.ENTITY_KINDS + art.SETTING_KINDS
+    monkeypatch.setattr(art, "MAX_PANELS", 4)
+    # both turning points, then the other two evenly spaced (the first and the last of the rest), in reading order
+    assert il.job("comic", "Two").panels == ["e4", "e6", "e8", "e9"]
+    monkeypatch.setattr(art, "MAX_PANELS", 2)
+    assert il.job("comic", "Two").panels == ["e4", "e8"]
+    with pytest.raises(ValueError, match="no such chapter"):
+        il.job("comic", "Three")
+
+
+def test_a_comic_shows_only_the_moments_reached_and_from_its_last_panel():
+    bk, d = comic_doc()
+    il, _ = fresh(d, bk)
+    j = il.job("comic", "Two", at="a9")                   # the current chapter so far
+    assert j.panels == ["e4", "e6", "e7"] and j.anchor == "a9"
+    j = il.job("comic", "Two", at="a8")
+    assert j.panels == ["e4", "e6"] and j.anchor == "a8"
+    with pytest.raises(art.TooFewMoments, match="too few moments"):
+        il.job("comic", "Two", at="a7")                   # one moment reached (a7 is minor)
+    assert isinstance(art.TooFewMoments(), ValueError)
+    with pytest.raises(art.NotVisible):
+        il.job("comic", "Two", at="a3")                   # none of the chapter reached
+    assert il.job("comic", "One").panels == ["e1", "e2"]  # e3 is minor
+    with pytest.raises(art.TooFewMoments):
+        il.job("comic", "One", at="a0")
+
+
+def test_a_comic_uses_a_fresh_screening_when_it_leaves_enough_moments():
+    bk, d = comic_doc()
+    il, _ = fresh(d, bk, text_=Text(screen=lambda ns, p: [1, 3, 4] if len(ns) > 3 else ns))
+    il.drawable(0, il.books[0].chapters[1])
+    assert il.job("comic", "Two").panels == ["e4", "e7", "e8"]
+    il, _ = fresh(d, bk, text_=Text(screen=lambda ns, p: [2] if len(ns) > 3 else ns))
+    il.drawable(0, il.books[0].chapters[1])               # one drawable moment: every moment of the chapter instead
+    assert il.job("comic", "Two").panels == ["e4", "e6", "e7", "e8", "e9"]
+
+
+def test_a_comic_prompt_is_one_writer_call_and_code_puts_the_page_together():
+    bk, d = comic_doc()
+    il, t = fresh(d, bk)
+    j = il.job("comic", "Two", at="a9")
+    pr = il.make_prompt(j)
+    assert len(t.prompts) == 1 and t.systems == [art.COMIC_WRITER]
+    w = t.prompts[0]
+    assert w.startswith(art.TASKS["comic"])
+    assert [m for m in re.findall(r'<moment n="(\d)" chapter="Two">', w)] == ["1", "2", "3"]
+    assert '<moment n="1" chapter="Two">A hooded stranger comes to the mill' in w and "<earlier_in_chapter>" not in w
+    assert '<passage n="1">' in w and "silver coin" not in w             # nothing after the anchor
+    labs = re.findall(r'<entry name="[^"]*"[^>]*? figure="([A-F])"', w)       # every figure labelled, portrait or not
+    panel = PANEL + "".join(f" Figure {x} waits by the wall." for x in labs)
+    assert pr.body == art.comic_body([panel] * 3) and pr.body.startswith(art.comic_frame(3) + " Panel 1: " + PANEL)
+    assert pr.text == f"{pr.body} {art.style_sentence('ink')} {art.COMIC_NO_TEXT}" and pr.no_text == art.COMIC_NO_TEXT
+    assert "speech balloons" in art.COMIC_NO_TEXT and pr.panels == ["e4", "e6", "e7"] and pr.shape == "portrait"
+    assert {"a6", "a8", "a9"} <= set(pr.sources) and all(ordinal(d)[a] <= ordinal(d)["a9"] for a in pr.sources)
+    for rule in ("one panel for each <moment>", "No speech balloons", "Two hands each", "is called by that label the first time"):
+        assert rule in art.COMIC_WRITER
+    assert art.unframed(pr.body).startswith("Panel 1: ")
+
+
+def test_a_comic_labels_a_figure_once_for_the_whole_page_and_the_record_keeps_its_panels():
+    il, t, im, by, sink = labelled(Text())
+    il2 = art.Illustrator([art.Book(comic_doc(il.books[0].epub)[1], il.books[0].epub, sink)], t, im, "ink", portraits="all",
+                          workers=1, log=lambda *_: None, pause=0)
+    j = il2.job("comic", "Two", at="a11")
+    pr = il2.make_prompt(j)
+    w = writer_calls(t)[-1]
+    labels = re.findall(r'<entry name="([^"]*)"[^>]*? figure="([A-D])"', w)
+    assert len(labels) == len({n for n, _ in labels}) == 4      # one label per figure, across every panel
+    assert pr.body.count("Figure A") == len(j.panels)           # the same label in each panel
+    assert [f["label"] for f in pr.figures] == ["A", "B", "C", "D"] and len(pr.references) == 4
+    rec = il2.draw(j, pr)
+    assert rec["kind"] == "comic" and rec["target"] == "Two" and rec["panels"] == j.panels and rec["from"] == "a11"
+    assert rec["shape"] == "portrait" and im.calls[-1]["shape"] == "portrait" and len(im.calls[-1]["references"]) == 4
+    assert im.calls[-1]["prompt"].endswith(art.COMIC_NO_TEXT) and [f["label"] for f in rec["figures"]] == ["A", "B", "C", "D"]
+    assert set(rec["sources"]) >= {il2.books[0].events[x]["from"] for x in j.panels}
+    # a scene record never carries panels
+    rec = il2.draw(il2.job("event", "e6", at="a11"))
+    assert "panels" not in rec
+
+
+def test_a_comic_reply_with_the_wrong_number_of_panels_gets_one_rewrite_then_is_dropped():
+    bk, d = comic_doc()
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: [PANEL] * (2 if "It was rejected" in p else 1)))
+    pr = il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert "It was rejected: wrong panel count: 1 panels for 2 moments" in t.prompts[-1] and pr.body == art.comic_body([PANEL] * 2)
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: [PANEL] * 3))
+    with pytest.raises(art.Dropped, match="dropped: wrong panel count") as e:
+        il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert len(t.prompts) == 2 and e.value.say == "a page with another number of panels than the moments it was given"
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: {"text": PANEL}))   # no panels at all
+    with pytest.raises(art.Dropped, match="dropped: wrong panel count"):
+        il.make_prompt(il.job("comic", "Two", at="a8"))
+    # panels numbered out of order are put in their order
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: {"panels": [{"n": 2, "text": PANEL + " The air is still."}, {"n": 1, "text": PANEL}]}))
+    assert il.make_prompt(il.job("comic", "Two", at="a8")).body == art.comic_body([PANEL, PANEL + " The air is still."])
+
+
+def test_every_panel_is_checked_and_a_name_is_replaced_by_a_role_after_the_rewrite():
+    bk, d = comic_doc()
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: [PANEL, PANEL + " Oren bars the door."]))
+    pr = il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert "It was rejected: panel 2: name in the text: Oren" in t.prompts[-1]
+    assert "Oren" not in pr.text and il.report.dropped["fixed: name replaced by a role"] == 1
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: [PANEL, "A door."]))
+    with pytest.raises(art.Dropped, match="dropped: prompt too short"):
+        il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert "panel 2: too short" in t.prompts[-1]
+    il, t = fresh(d, bk, text_=Text(comic=lambda p: [PANEL, PANEL + " The miller has just barred the door."]))
+    with pytest.raises(art.Dropped, match="hindsight"):
+        il.make_prompt(il.job("comic", "Two", at="a8"))
+
+
+def test_a_comic_softens_and_redraws_as_a_scene_does():
+    calm = PANEL + " The air is still."
+    bk, d = comic_doc()
+    t = Text(comic=lambda p: [calm] * 2 if "image model refused" in p else [PANEL] * 2)
+    il, _ = fresh(d, bk, text_=t)
+    j = il.job("comic", "Two", at="a8")
+    pr = il.make_prompt(j)
+    soft = il.soften(j, pr.text, "violence")
+    w = t.prompts[-1]
+    assert "Panel 1: " + PANEL in w and art.comic_frame(2) not in w.split("image model refused", 1)[1]
+    assert art.COMIC_NO_TEXT not in w.split("image model refused", 1)[1]
+    assert soft.body == art.comic_body([calm] * 2) and soft.panels == ["e4", "e6"] and soft.text.endswith(art.COMIC_NO_TEXT)
+    # the run's own quieter rewrite after a refusal (draw) keeps the page
+    im = Image(refuse=[lambda prompt, n: n == 1])
+    il, _ = fresh(d, bk, text_=Text(comic=lambda p: [calm] * 2 if "image model refused" in p else [PANEL] * 2))
+    il.image = im
+    rec = il.draw(il.job("comic", "Two", at="a8"))
+    assert rec is not None and rec["prompt"] == f"{art.comic_body([calm] * 2)} {art.style_sentence('ink')} {art.COMIC_NO_TEXT}"
+    assert rec["panels"] == ["e4", "e6"] and il.report.softened == 1
+
+
+def test_a_run_never_draws_a_comic():
+    il, rep, sink, t, im = run(level="all")
+    assert not pics(sink, "comic") and art.COMIC_WRITER not in t.systems
+
+
+def test_a_corridor_called_the_passage_and_a_capital_label_inside_a_sentence_pass_the_checks():
+    # found on Dracula's comic pages: "More locked doors line the passage." is a corridor, not talk about the material
+    il0, _, im, by, sink = labelled(Text())
+    t = Text(comic=lambda p: [PANEL + " More doors line the passage.", PANEL + " Two small marks show on Figure A's throat."])
+    bk = il0.books[0].epub
+    il = art.Illustrator([art.Book(comic_doc(bk)[1], bk, sink)], t, im, "ink", portraits="all", workers=1, log=lambda *_: None,
+                         pause=0)
+    assert "Figure" not in il.books[0].first
+    pr = il.make_prompt(il.job("comic", "Two", at="a8"))
+    assert len(t.prompts) == 1 and "line the passage" in pr.body and "on figure A's throat" in pr.body
+    assert pr.figures and pr.figures[0]["label"] == "A"
+    for talk in ("This passage shows a gate.", "The passage describes a gate.", "the material says so"):
+        assert art.ABOUT_THE_TEXT.search(talk)
+
+
+def test_talk_about_the_text_is_caught_in_a_picture_and_a_corridor_or_cloth_is_not():
+    # the generator's forms still count ("this passage", "the excerpt", "the chunk"), and "the passage" or "the section"
+    # when what follows tells about the text; a corridor, a part of a wall and cloth are picture words
+    for talk in ("The passage reveals she is already dead.", "In the excerpt he is her son.",
+                 "The passage later describes the killing.", "This passage shows a gate.", "The passage describes a gate.",
+                 "As the section explains, he is old.", "The passages make it clear she is his wife.", "The chunk ends here.",
+                 "the material says so", "The material reveals her as his wife.", "This section shows a gate."):
+        assert art.ABOUT_THE_TEXT.search(talk), talk
+    for word in ("More locked doors line the passage.", "The dark material gives at the shoulder.",
+                 "The material shows wear at the elbows.", "The passage goes on into darkness.", "The passage ends with a door.",
+                 "A lamp burns in the passage, its light low.", "The section of wall is cracked.",
+                 "She walks down the passage toward figure A."):
+        assert not art.ABOUT_THE_TEXT.search(word), word
+
+
+def test_a_scene_saying_the_passage_reveals_is_rewritten_and_cloth_that_gives_is_kept():
+    bk, d = comic_doc()
+    talk = SCENE + " The passage reveals she is already dead."
+    cloth = SCENE + " The dark material of her shawl gives at the shoulder."
+    t = Text(scene=[talk, talk])
+    il, _ = fresh(d, bk, t)
+    with pytest.raises(art.Dropped) as e:
+        il.make_prompt(il.job("event", "e4"))
+    assert str(e.value) == "dropped: hindsight wording in prompt" and len(t.prompts) == 2
+    assert "about the passage" in t.prompts[1]
+    t2 = Text(scene=cloth)
+    il2, _ = fresh(d, bk, t2)
+    pr = il2.make_prompt(il2.job("event", "e4"))
+    assert "The dark material of her shawl gives at the shoulder." in pr.body and len(t2.prompts) == 1
+    assert art.lower_labels("Figure A waits. He sees Figure B; Figure C runs.") == "Figure A waits. He sees figure B; figure C runs."
+    assert art.lower_labels("Figure F waits. He sees Figure E.") == "Figure F waits. He sees figure E."   # every label letter
+    assert set(art.LABELS) == set("ABCDEF")
 
 
 # ---- every figure of a scene is labelled, with or without a portrait (label-every-figure)

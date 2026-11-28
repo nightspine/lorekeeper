@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { cleanPanels, panelCaptions, refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -133,6 +133,19 @@ test("a figure's reference in every shape the server and the records give it", (
     assert.ok(got === null || (got.url === null && /^[A-Za-z0-9_-]{1,64}$/.test(got.id)), JSON.stringify(bad));
   }
   assert.equal(refParts({ id: "p1", url: "https://evil.example/x.png" }).url, null);       // an id kept, a foreign URL never
+});
+
+test("a comic's panels and their captions come only from the view the reader has now", () => {
+  assert.deepEqual(cleanPanels(["e1", "e2", "e1", 3, "", null, "e3"]), ["e1", "e2", "e3"]);   // strings, each once
+  assert.deepEqual(cleanPanels(["a", "b", "c", "d", "e", "f", "g"]), ["a", "b", "c", "d", "e", "f"]);   // at most six
+  for (const bad of [null, undefined, "e1", { 0: "e1" }]) assert.deepEqual(cleanPanels(bad), []);
+  const view = new Map([["e1", "Harker reaches the castle."], ["e3", "The Count reads the map."]]);
+  const text = (id) => view.get(id) ?? null;
+  // a panel whose event is not in the view is left out, and the others keep their own panel numbers
+  assert.deepEqual(panelCaptions(["e1", "e2", "e3"], text), [{ n: 1, text: "Harker reaches the castle." }, { n: 3, text: "The Count reads the map." }]);
+  assert.deepEqual(panelCaptions(["e1"], () => ""), []);
+  assert.deepEqual(panelCaptions(["e1"], null), []);
+  assert.deepEqual(panelCaptions(undefined, text), []);
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
