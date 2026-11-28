@@ -42,6 +42,7 @@ function readAt() {
  *   entity(id)                         the entry as the view shows it now, or null
  *   portrait(id)                       the URL of its latest visible picture, or null
  *   plates()                           the visible chapter plates of the book being read ([{rec, ...}] from visiblePictures)
+ *   plateChapter(p)                    the map chapter ({title, start}) plate `p` was drawn for, or null
  *   platesNode(pics, title)            the Reader's plate block (opens the lightbox)
  *   openEntry(id, from)                the entry pane or drawer
  *   canAsk(), ask(text)                Ask, when a model is available
@@ -386,7 +387,13 @@ export function createReading(ctx) {
     const m = map();
     const lo = m.blockStart(c.firstSeq), hi = m.blockEnd(c.lastSeq);
     const inChapter = (id) => { const at = m.anchorPos(id); return Number.isFinite(at) && at > lo + 1e-12 && at <= hi + 1e-12; };
-    const pics = ctx.plates().filter((p) => inChapter(p.rec.from));
+    // A plate belongs to the chapter it was drawn for (ctx.plateChapter: its own recap's anchor is often the next
+    // chapter's first long paragraph), else to the chapter its anchor is in.
+    const mine = (p) => {
+      const ch = ctx.plateChapter ? ctx.plateChapter(p) : null;
+      return ch ? c.firstSeq <= ch.start && ch.start <= c.lastSeq : inChapter(p.rec.from);
+    };
+    const pics = ctx.plates().filter(mine);
     const key = pics.map((p) => p.rec.id).join(",");
     if (st.plateKey.get(c.n) === key || (!key && !c.plates.firstChild)) { st.plateKey.set(c.n, key); return; }
     st.plateKey.set(c.n, key);

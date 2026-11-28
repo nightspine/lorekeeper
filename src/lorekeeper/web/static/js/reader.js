@@ -3,7 +3,7 @@ import { parseHash, setParams } from "./app.js";
 import { readingList, rememberReading } from "./reading.js";
 import { announce, clear, describe, tidyTitle, foldList, h, icon, loadError, loading, relTime, sheet, showModalLocked, TYPE_LABEL, TYPE_PLURAL, toast, typeTag } from "./dom.js";
 import { view as gate } from "./gating.js";
-import { numbersByStart, recapChapter, recapNumbers } from "./chapters.js";
+import { artChapterKeys, numbersByStart, plateChapter, recapChapter, recapNumbers } from "./chapters.js";
 import { nextName, SELF_NAMED_SHORT, stepList, stepName, statedAge, stepState as stepStateAt, tickInfo, whereText as whereAt } from "./steps.js";
 import { bookNo, confirmDialog, cover, modal } from "./build.js";
 import { mergeWith, openPairs, reviewDuplicates, visiblePairs } from "./dupes.js";
@@ -75,6 +75,12 @@ class PositionMap {
     for (const c of this.chapters) if (this.blockStart(c.start) <= p + 1e-12) ch = c; else break;
     return ch;
   }
+  /** The chapter a plate filed under chapter key `target` belongs to (chapters.js plateChapter), null without the book file. */
+  plateChapterOf(id, target, keys) {
+    const at = this.anchorPos(id);
+    if (!this.cum || !Number.isFinite(at)) return null;
+    return plateChapter(this.chapters, this.seqAt(Math.max(0, at - 1e-9)), target, this.words, keys);
+  }
   /** The chapter a chapter recap anchored at `id` summarises (chapters.js recapChapter), null without the book file. */
   recapChapterOf(id, title, tidy) {
     const at = this.anchorPos(id);
@@ -132,6 +138,7 @@ export function mountReader(root) {
     entity: (id) => nameOf(id) || null,
     portrait: (id) => { const p = latestPicture(id); return p ? picSrc(p, true) : null; },
     plates: () => visiblePictures().filter((p) => p.rec.kind === "plate" && (!s.series || p.book === s.book)),
+    plateChapter: (p) => plateMapChapter(p),
     platesNode: (pics, title) => platesNode(pics, title),
     openEntry: (id, from) => openDrawer(id, { from }),
     canAsk: () => !preview && Boolean(ask.available?.available), ask: (text) => showAsk({ text }),
@@ -2105,8 +2112,7 @@ export function mountReader(root) {
     for (const p of plates) {
       let row = null;
       if (current && s.map.exact) {
-        const at = s.map.anchorPos(p.rec.from);
-        const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+        const ch = plateMapChapter(p);
         row = ch ? rows.find((r) => r.ch && r.ch.start === ch.start) : null;
       }
       if (!row) { const i = rowOrd.findIndex((o) => o >= p.ord); row = i >= 0 ? rows[i] : null; }
@@ -2116,25 +2122,31 @@ export function mountReader(root) {
     }
     return out;
   }
-  /** The chapter key the pipeline files a chapter under (its title, " (2)" for a repeated one), for the current book. */
-  function artChapterKey(r) {
-    if (!r.ch || !s.map.exact) return r.title;
-    if (!s.art.chKeys || s.art.chKeys.doc !== s.doc) {
+  /** The chapter keys the pipeline files chapters under, for the current book: Map(chapter start → key), chapters.js
+   *  artChapterKeys (a chapter recap counted in the chapter it summarises, as art.py does). Empty without the exact map. */
+  function artKeys() {
+    if (!s.map?.exact) return new Map();
+    if (!s.art.chKeys || s.art.chKeys.doc !== s.doc || s.art.chKeys.map !== s.map) {
       const seqs = (s.doc.anchors || []).map((a) => a.seq);
       const ord = ordsOf(s.doc);
       const at = (id) => { const i = ord.get(id); return i == null ? null : seqs[i]; };
-      const marks = [...(s.doc.events || []).map((e) => at(e.from)), ...(s.doc.recaps || []).filter((x) => x.scope === "chapter").map((x) => at(x.from))].filter((x) => x != null);
-      const seen = new Map(), keys = new Map();
-      s.map.chapters.forEach((c, i) => {
-        const end = i + 1 < s.map.chapters.length ? s.map.chapters[i + 1].start - 1 : Infinity;
-        if (!marks.some((q) => q >= c.start && q <= end)) return;
-        const n = (seen.get(c.title) || 0) + 1;
-        seen.set(c.title, n);
-        keys.set(c.start, n === 1 ? c.title : `${c.title} (${n})`);
-      });
-      s.art.chKeys = { doc: s.doc, keys };
+      const events = (s.doc.events || []).map((e) => at(e.from)).filter((x) => x != null);
+      const recaps = (s.doc.recaps || []).filter((x) => x.scope === "chapter").map((x) => ({ seq: at(x.from), title: x.title })).filter((x) => x.seq != null);
+      s.art.chKeys = { doc: s.doc, map: s.map, keys: artChapterKeys(s.map.chapters, events, recaps, s.map.words) };
     }
-    return s.art.chKeys.keys.get(r.ch.start) || r.ch.title;
+    return s.art.chKeys.keys;
+  }
+  /** The chapter key the pipeline files a chapter under (its title, " (2)" for a repeated one), for the current book. */
+  function artChapterKey(r) {
+    if (!r.ch || !s.map.exact) return r.title;
+    return artKeys().get(r.ch.start) || r.ch.title;
+  }
+  /** The map chapter a plate of the book being read belongs to: by its target near its anchor, since a plate is anchored at
+   *  its own recap's anchor, often the next chapter's first long paragraph (chapters.js plateChapter). Null without the
+   *  exact map or a position for the anchor. */
+  function plateMapChapter(p) {
+    if (!s.map?.exact || p?.rec?.kind !== "plate") return null;
+    return s.map.plateChapterOf(p.rec.from, p.rec.target, artKeys());
   }
   /** Lightbox items for pictures, with their captions (a chapter title or the entry's name, never the prompt). */
   function lightboxItems(pics, caption) {
@@ -2397,7 +2409,7 @@ export function mountReader(root) {
     let i = -1;
     if (current && s.map.exact) {
       const at = s.map.anchorPos(p.rec.from);
-      const ch = Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
+      const ch = p.rec.kind === "plate" ? plateMapChapter(p) : Number.isFinite(at) ? s.map.chapterAt(Math.max(0, at - 1e-9)) : null;
       i = ch ? rows.findIndex((r) => r.ch && r.ch.start === ch.start) : -1;
     }
     if (i < 0) {

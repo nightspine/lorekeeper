@@ -183,6 +183,22 @@ export function recapNumbers(doc) {
 const ANCHOR_WORDS = 6;   // SPEC §3.5: a block of fewer words never carries an anchor
 const sameTitle = (t) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase();
 
+/** The anchor's chapter `i`, the real chapter before it `j` (-1 for none) and whether the anchor was snapped past `j`'s
+ *  end (recapChapter's rules 1 and 2), or null when the anchor is before the first chapter or unknown. */
+function recapWindow(chapters, seq, blockWords) {
+  if (!chapters?.length || !Number.isInteger(seq) || seq < 0) return null;
+  let i = -1;
+  for (let k = 0; k < chapters.length && chapters[k].start <= seq; k++) i = k;
+  if (i < 0) return null;
+  const words = blockWords || null;
+  const eligible = (a, b) => { for (let k = a; k < b; k++) if ((words[k] || 0) >= ANCHOR_WORDS) return true; return false; };
+  let j = i - 1;
+  if (words) while (j >= 0 && !eligible(chapters[j].start, chapters[j + 1].start)) j--;
+  // Snapped: nothing in the anchor's chapter before the anchor could have carried it (with a known chapter to go back to).
+  const snapped = Boolean(words) && j >= 0 && !eligible(chapters[i].start, seq);
+  return { i, j, snapped };
+}
+
 /**
  * The map chapter a chapter recap of the book being read summarises. A recap's `from` is the first anchor-eligible block
  * after its chapter's last paragraph, and a chapter usually opens with a short heading, so the anchor often lands in the
@@ -202,20 +218,61 @@ const sameTitle = (t) => String(t || "").replace(/\s+/g, " ").trim().toLowerCase
  * @returns a chapter of `chapters`, or null when the anchor is before the first one or unknown
  */
 export function recapChapter(chapters, seq, title, blockWords, tidy = (t) => t) {
-  if (!chapters?.length || !Number.isInteger(seq) || seq < 0) return null;
-  let i = -1;
-  for (let k = 0; k < chapters.length && chapters[k].start <= seq; k++) i = k;
-  if (i < 0) return null;
-  const words = blockWords || null;
-  const eligible = (a, b) => { for (let k = a; k < b; k++) if ((words[k] || 0) >= ANCHOR_WORDS) return true; return false; };
-  let j = i - 1;
-  if (words) while (j >= 0 && !eligible(chapters[j].start, chapters[j + 1].start)) j--;
-  // Snapped: nothing in the anchor's chapter before the anchor could have carried it (with a known chapter to go back to).
-  const snapped = Boolean(words) && j >= 0 && !eligible(chapters[i].start, seq);
+  const w = recapWindow(chapters, seq, blockWords);
+  if (!w) return null;
+  const { i, j, snapped } = w;
   const key = sameTitle(tidy(title));
   const matches = [];
   if (key) for (let k = i; k >= Math.max(j, 0); k--) if (sameTitle(tidy(chapters[k].title)) === key) matches.push(k);
   if (matches.length === 1) return chapters[matches[0]];
   if (matches.length > 1) return chapters[matches[0] === i && !snapped ? i : matches.find((k) => k !== i)];
   return chapters[snapped ? j : i];
+}
+
+/**
+ * The chapter keys the picture pipeline files plates under (art.py `_chapters`): a map chapter is listed when an event's
+ * anchor is in its blocks or one of its own chapter recaps (by recapChapter) is; a listed title is its key the first
+ * time and "<title> (2)", "(3)" for the next listed chapters with the same title.
+ * @param chapters the whole map in book order, [{ title, start }]
+ * @param eventSeqs the blocks the events' anchors are in
+ * @param recaps the chapter recaps, [{ seq, title }] (seq the block of the recap's anchor)
+ * @param blockWords words per block, or null when unknown
+ * @returns Map(chapter start → key)
+ */
+export function artChapterKeys(chapters, eventSeqs, recaps, blockWords) {
+  const keys = new Map();
+  if (!chapters?.length) return keys;
+  const index = (seq) => { let i = -1; for (let k = 0; k < chapters.length && chapters[k].start <= seq; k++) i = k; return i; };
+  const used = new Set();
+  for (const q of eventSeqs || []) if (Number.isInteger(q) && q >= 0) { const i = index(q); if (i >= 0) used.add(i); }
+  for (const r of recaps || []) {
+    const ch = recapChapter(chapters, r.seq, r.title, blockWords);
+    if (ch) used.add(chapters.indexOf(ch));
+  }
+  const seen = new Map();
+  chapters.forEach((c, i) => {
+    if (!used.has(i)) return;
+    const n = (seen.get(c.title) || 0) + 1;
+    seen.set(c.title, n);
+    keys.set(c.start, n === 1 ? c.title : `${c.title} (${n})`);
+  });
+  return keys;
+}
+
+/**
+ * The map chapter a chapter plate belongs to. A plate is anchored at its chapter's last anchor, which is its own recap's
+ * when that comes last, and a recap's anchor is often the next chapter's first long paragraph; so a plate is placed as a
+ * recap is (recapChapter), by its `target`, the chapter key the pipeline filed it under.
+ * 1. A chapter whose key (`keys`, from artChapterKeys) is the target, at the anchor's chapter or back to the chapter
+ *    before it: this tells two chapters of one title apart ("Interlude (2)").
+ * 2. Else recapChapter with the target as the title, a " (N)" suffix taken off.
+ * Never later than the anchor's chapter, never before the chapter before it.
+ * @returns a chapter of `chapters`, or null when the anchor is before the first one or unknown
+ */
+export function plateChapter(chapters, seq, target, blockWords, keys = null) {
+  const w = recapWindow(chapters, seq, blockWords);
+  if (!w) return null;
+  const t = String(target ?? "");
+  if (keys && t) for (let k = w.i; k >= Math.max(w.j, 0); k--) if (keys.get(chapters[k].start) === t) return chapters[k];
+  return recapChapter(chapters, seq, t.replace(/\s+\(\d+\)$/, ""), blockWords);
 }
