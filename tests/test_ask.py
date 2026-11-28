@@ -1295,3 +1295,33 @@ def test_query_weighs_written_names_over_entry_names_and_borrows_event_words():
     assert t["piccadilly"] == ask.WRITTEN_NAME_WEIGHT > t["gate"] == 1.0 > t["harker"] == ask.NAME_WEIGHT
     assert t["moonlight"] == ask.EXPAND_WEIGHT and "the" not in t
     assert ask._stem("climbed") == ask._stem("climbing") == ask._stem("climbs")
+
+
+def test_the_passages_becomes_a_plural_that_keeps_its_verb():
+    assert ask._voice_text("The passages mention Justice.") == "The parts of the book you have read mention Justice."
+    assert ask._voice_text("the passage says so") == "the book says so"
+
+
+def test_copy_runs_never_span_two_passages_that_do_not_touch():
+    a = ask.Passage(0, 10, 10, None, None, "one two three four five six")
+    b = ask.Passage(0, 40, 40, None, None, "seven eight nine ten eleven twelve")
+    across = "one two three four five six seven eight nine"
+    assert not textmod.copied_runs(across, ask._copy_shingles([a, b]), ask.COPY_RUN)
+    c = ask.Passage(0, 11, 11, None, None, "seven eight nine ten eleven twelve")      # the next block: one stretch
+    assert textmod.copied_runs(across, ask._copy_shingles([a, c]), ask.COPY_RUN)
+    d = ask.Passage(1, 11, 11, None, None, "seven eight nine ten eleven twelve")      # another book: never joined
+    assert not textmod.copied_runs(across, ask._copy_shingles([a, d]), ask.COPY_RUN)
+
+
+def test_bench_reads_earlier_books_by_reading_order_never_by_argument_order():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ask_eval", Path(__file__).resolve().parents[1] / "bench" / "ask_eval.py")
+    bench = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bench)
+    series = {"defaultOrder": "pub", "orders": {"pub": ["one", "two", "three"], "rev": ["three", "two", "one"]}}
+    keys = ["three", "one", "two"]                       # given out of order
+    assert bench.searchable(keys, "two", series) == [(1, True), (2, False)]
+    assert bench.searchable(keys, "one", series) == [(1, False)]          # "three" listed first is later: never read
+    assert bench.searchable(keys, "two", series, finished=set()) == [(2, False)]
+    assert bench.searchable(keys, "two", series, "rev") == [(0, True), (2, False)]
+    assert bench.searchable(["solo"], "solo", None) == [(0, False)]
