@@ -24,7 +24,7 @@ def pipe(monkeypatch):
     monkeypatch.setattr(art, "PANEL_TEXT_CHARS", getattr(art, "PANEL_TEXT_CHARS", 600), raising=False)
     calls = []
     if not hasattr(art.Illustrator, "fix_panel"):
-        def fix_panel(self, rec, k, text="", note="", faults=(), bi=None, verify=True, checker=None):
+        def fix_panel(self, rec, k, text="", note="", faults=(), bi=None, verify=True, checker=None, **kw):
             calls.append((k, text, note, list(faults)))
             new = art.Illustrator.fix(self, rec, list(faults), note or text or "panel", bi=bi, verify=False)
             new["fixes"][-1].update(panel=k, pasted=True, **({"text": text} if text else {}))
@@ -133,12 +133,17 @@ def test_a_panel_fix_that_changed_nothing_is_422_unchanged_and_files_nothing(env
     before = pictures(env)
     verdict = art.Verdict(results=[{"n": 1, "fixed": "no"}], changed=False, new=[], checked=True, cost=0.002)
 
-    def fix_panel(self, rec, k, text="", note="", faults=(), bi=None, verify=True, checker=None):
+    given = []
+
+    def fix_panel(self, rec, k, text="", note="", faults=(), bi=None, verify=True, checker=None, **kw):
+        given.append(kw)
         raise art.FixUnchanged(verdict, 0.042)
     monkeypatch.setattr(art.Illustrator, "fix_panel", fix_panel, raising=False)
     r = ok(env, old, k=3, text="New words")
     assert r.status_code == 422, r.text
     body = r.json()
+    assert given == [{"keep_doubtful": True}]
+    assert body["detail"] == "The model sent the picture back unchanged, so your picture is kept."
     assert body["code"] == "unchanged" and body["verified"]["of"] == 1 and body["fixCost"] == pytest.approx(0.042)
     assert pictures(env) == before
 
@@ -203,3 +208,18 @@ def test_unchanged_serves_the_pipelines_own_verdict_not_a_count_from_the_request
     monkeypatch.setattr(art.Illustrator, "fix_panel", fix_panel, raising=False)
     r = ok(env, old, k=1, text="Other words", faults=[{"what": "a third hand", "where": "panel 1"}])
     assert r.status_code == 422 and r.json()["verified"] == {"fixed": 0, "partly": 0, "of": 0, "results": [], "new": []}
+
+
+def test_a_changed_panel_the_checker_calls_unfixed_is_filed_as_a_doubtful_fix(env, pipe, eye):
+    """A hand panel fix keeps a changed page: filed with its verdict and `doubtful: true`, undone like any fix."""
+    old = page(env)
+    eye.verdict = lambda prompt, a, b: {"results": [{"n": i, "fixed": "no"} for i in range(1, 9)], "changed": True,
+                                        "new": []}
+    r = ok(env, old, k=2, text="The miller waves.", p=1.0)
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert new["verified"]["doubtful"] is True and new["verified"]["fixed"] == 0
+    assert new["replaces"] == old["id"] and new["undo"]
+    undo(env, new["undo"])
+    ids = {p["id"] for p in pictures(env)}
+    assert old["id"] in ids and new["id"] not in ids
