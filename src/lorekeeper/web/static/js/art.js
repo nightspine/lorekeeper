@@ -44,7 +44,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -330,8 +330,17 @@ export function cleanFigures(list) {
  * name from the reader's own view (null: not visible there, so just "Figure A"), `thumb(figure)` the picture's URL or null
  * (the caller decides what may show). Only labels in `text` (when given) are listed. Null when there is nothing to list.
  */
-const panelList = (caps, cls, label) => (caps.length ? h(`ol.${cls}`, { "aria-label": label },
-  caps.map((c) => h("li", { value: String(c.n) }, h("span.panel-n.num", `${c.n}`), h("span", c.text)))) : null);
+const panelList = (caps, cls, label, action = null) => (caps.length ? h(`ol.${cls}`, { "aria-label": label },
+  caps.map((c) => h("li", { value: String(c.n) }, h("span.panel-n.num", `${c.n}`), h("span", c.text), action ? action(c) : null))) : null);
+
+/** A comic's panel boxes as the record stores them ([[x0, y0, x1, y1]] as fractions of the page), accepted only when there is
+ *  one per panel and each is a real box inside the page; else null (no buttons over the picture). */
+export function gridBoxes(rec) {
+  const g = rec?.grid, n = Array.isArray(rec?.panels) ? rec.panels.length : 0;
+  if (!Array.isArray(g) || !n || g.length !== n) return null;
+  const ok = g.every((b) => Array.isArray(b) && b.length === 4 && b.every((v) => typeof v === "number" && v >= 0 && v <= 1) && b[2] > b[0] && b[3] > b[1]);
+  return ok ? g : null;
+}
 
 export function figureLines(figures, { text = null, name = () => null, thumb = () => null } = {}) {
   const used = text == null ? null : new Set(labelsIn(text));
@@ -397,7 +406,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   function paint() {
     const it = items[i], r = it.rec;
     title.textContent = it.caption || "Picture";
-    clear(stage, artImg(it.src, it.caption, "lb-img", { eager: true }));
+    paintStage();
     caption.textContent = it.caption || "";
     paintPanels();
     count.textContent = items.length > 1 ? `${i + 1} of ${items.length}` : "";
@@ -423,6 +432,17 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         typeof r.styleRef === "string" && r.styleRef ? h("p.lb-styleref", "Style from your reference picture.") : null,
         h("dl.lb-facts", facts.map(([k, v]) => [h("dt", k), h(k === "Model" ? "dd.lb-model" : k === "Prompt written by" ? "dd.lb-writer" : "dd", v)])))));
     paintActs();
+  }
+  /** The picture, and over a comic page with known panel boxes a "Fix panel N" button per panel (shown on hover or focus of
+   *  the picture, and only with a hover pointer: on a touch screen the list below is the way there). */
+  function paintStage() {
+    const it = items[i];
+    const img = artImg(it.src, it.caption, "lb-img", { eager: true });
+    const boxes = it.rec.kind === "comic" && fixable(it) ? gridBoxes(it.rec) : null;
+    if (!img || !boxes) { clear(stage, img); return; }
+    clear(stage, h("div.lb-pagebox", img, boxes.map(([x0, y0, x1, y1], n) => h("button.lb-panel-hover", {
+      type: "button", style: { left: `${(x1 * 100).toFixed(2)}%`, top: `${(y0 * 100).toFixed(2)}%` },
+      "aria-label": `Fix panel ${n + 1}`, title: `Fix panel ${n + 1}`, on: { click: () => panelForm(it, n + 1) } }, icon("sparkle"), `Fix panel ${n + 1}`))));
   }
   /** The actions under the picture: Fix, Redraw and Delete. Fix needs the image provider that drew this picture set up
    *  here (the list arrives after the lightbox opens: `drawers`), since the fix is drawn by that same model. */
@@ -543,6 +563,54 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     ready();
     (error ? go_ : rows[0].input).focus();
   }
+  /** Fix one panel of a comic page: its text as drawn (editable) and a note; the model edits the page and only that panel is
+   *  taken from the result. The result view is the picture Fix's. */
+  function panelForm(it, k, { value = null, note: noteText = "", error = "" } = {}) {
+    const rec = it.rec;
+    const shown = !(it.promptHiddenUntil && it.promptHiddenUntil(rec));
+    const was = shown ? (panelTextsOf(rec) || [])[k - 1] || "" : "";
+    const text = h("textarea.input.lb-note#lb-panel-text", { rows: "4", maxlength: String(PANEL_TEXT_CHARS), "aria-label": `What panel ${k} shows`, placeholder: "What this panel should show" });
+    text.value = value ?? was;
+    const note = h("textarea.input.lb-note#lb-panel-note", { rows: "2", maxlength: String(NOTE_CHARS), placeholder: "For example: keep the candle lit" });
+    note.value = noteText;
+    const err = h("p.hint.field-error", { role: "alert" }, error);
+    const cancel = h("button.btn.quiet", { type: "button", on: { click: () => { paintActs(); } } }, "Cancel");
+    const go_ = h("button.btn.primary", { type: "button" }, icon("sparkle"), "Fix it");
+    const ready = () => { go_.disabled = !panelBody(k, text.value, was, note.value); };
+    text.addEventListener("input", ready); note.addEventListener("input", ready);
+    const p = drawers?.find((x) => x.id === rec.provider);
+    const one = p ? imagePrice(p, rec.quality || "standard", rec.shape || "landscape", rec.model || null) : undefined;
+    const price = h("p.hint.lb-fix-price", `${one != null ? `${money(one)[0].toUpperCase()}${money(one).slice(1)}` : "Price unknown"} for one picture with ${modelLabel(rec.provider, rec.model) || "the model that drew it"}. Only panel ${k} changes; the others stay as they are.`);
+    go_.addEventListener("click", async () => {
+      const body = panelBody(k, text.value, was, note.value);
+      if (!body) return;
+      const keep = { value: text.value, note: note.value };
+      const old = { rec: it.rec, src: it.src };
+      const at = atNow(it);
+      clear(acts, h("div.lb-fix", loading(`Fixing panel ${k}…`)));
+      try {
+        const r = await api.artPanel(it.key, it.rec.id, { ...body, ...at });
+        forgetArt(it.key);
+        const nr = r?.record || r;
+        if (nr && ID_RE.test(nr.id || "")) { it.rec = nr; it.src = it.srcFor ? it.srcFor(nr) : it.src; }
+        onChanged?.();
+        if (!dlg.open || items[i] !== it) { undoable(it, r, "Panel fixed"); return; }
+        paint();
+        fixResult(it, r, { sent: [panelWish(k, body)], old, before: beforeSrc(r?.beforeUrl, at) });
+      } catch (e) {
+        const why = e.code === "unchanged" ? "The model sent the page back without the change, so your picture is kept. Try again, or say it differently."
+          : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
+        if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
+        if (items[i] !== it) return;
+        panelForm(it, k, { ...keep, error: why });
+      }
+    });
+    clear(acts, h("div.lb-fix", h("h3.lb-fix-title", `Panel ${k}`),
+      h("label.label", { for: "lb-panel-text" }, `What panel ${k} shows`), text,
+      h("label.label", { for: "lb-panel-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
+    ready();
+    (error ? go_ : text).focus();
+  }
   /** After a fix: what it put right in one sentence, Before / After over the picture, Keep the fix and Keep the original
    *  (the journal's Undo, then the old picture on screen again). Left undecided (closed, or another picture stepped to),
    *  the fix stands and the usual toast with Undo is offered. */
@@ -571,7 +639,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
       clear(stage, img);
     }
-    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; if (seg) show("after"); paintActs(); refocus(); } } }, "Keep the fix");
+    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; paintStage(); paintActs(); refocus(); } } }, "Keep the fix");
     const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
@@ -609,11 +677,22 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */
-  function refresh() { const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i])); paintPanels(); }
+  function refresh() {
+    const box = how.querySelector(".lb-figs"); if (box) clear(box, lbFigures(items[i]));
+    paintPanels();
+    // the hover buttons follow `fixable` like the list; not while a result (Before / After) is on the stage
+    // A form open (not a result) when the picture stops being fixable: the form goes with its buttons.
+    if (pending) return;
+    if (!acts.querySelector(".lb-fix")) paintStage();
+    else if (!fixable(items[i])) { paintActs(); paintStage(); }
+  }
   /** A comic's captions under the picture: never drawn into it, so they come from the view at the position now. */
   function paintPanels() {
     const it = items[i];
-    clear(panelsBox, it?.rec?.kind === "comic" ? panelList(panelCaptions(it.rec.panels, it.panelText), "lb-panels", "Panels") : null);
+    const act = it && it.rec.kind === "comic" && fixable(it)
+      ? (c) => h("button.btn.quiet.lb-panel-fix", { type: "button", "aria-label": `Fix panel ${c.n}`, on: { click: () => panelForm(it, c.n) } }, icon("sparkle"), "Fix panel")
+      : null;
+    clear(panelsBox, it?.rec?.kind === "comic" ? panelList(panelCaptions(it.rec.panels, it.panelText), "lb-panels", "Panels", act) : null);
   }
   function undoable(it, r, done) {
     const id = r?.undo ?? r?.journal ?? null;
@@ -687,7 +766,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   imageProviders().then((list) => {
     drawers = list;
     // Fix appears once the providers are known, unless a flow is already on screen there.
-    if (dlg.isConnected && !acts.querySelector(".lb-redraw, .lb-fix")) paintActs();
+    if (dlg.isConnected && !acts.querySelector(".lb-redraw, .lb-fix")) { paintActs(); paintStage(); paintPanels(); }
     const r = dlg.isConnected ? items[i]?.rec : null;
     if (!r) return;
     const dd = how.querySelector(".lb-model"), wd = how.querySelector(".lb-writer");
