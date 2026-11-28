@@ -8,19 +8,48 @@ looked up in the manifest, so a file name only ever comes from the manifest and 
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
 from .. import art
+from .styles import EXT as REF_EXT, MAX_REF_BYTES, StyleError, sniff
 
 HASH = re.compile(r"[0-9a-f]{64}")
 SLUG = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 PID = re.compile(r"p[0-9a-f]{8}")
 FILE = re.compile(r"p[0-9a-f]{8}\.(png|jpg|webp|bin)")
 MAX_WORLD = 800     # characters of a world note a person may write
+# The person's own reference pictures, one folder per edition beside its style sets (shared by every set), by content.
+REFS = "refs"       # never a style slug (`ArtStore.folder` refuses it)
+SHA = re.compile(r"[0-9a-f]{64}")
+REF_FILE = re.compile(r"([0-9a-f]{64})\.(png|jpg|webp)")
+REF_MIME = {v: k for k, v in REF_EXT.items()}
+MAX_USER_REFS = 4
+REF_NOTE_CHARS = 120
+REF_KEEP = 24 * 3600            # seconds an upload no picture or undo entry lists is kept
+PRUNE_EVERY = 60                # seconds between prunes of one edition on saves
+
+
+def user_ref_shas(value) -> set[str]:
+    """Every sha listed under a `userRefs` key anywhere in a JSON value (a manifest, a journal entry)."""
+    out: set[str] = set()
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, dict):
+            refs = v.get("userRefs")
+            if isinstance(refs, list):
+                out |= {r["sha"] for r in refs if isinstance(r, dict) and isinstance(r.get("sha"), str)}
+            stack.extend(v.values())
+        elif isinstance(v, list):
+            stack.extend(v)
+    return out
 
 
 def text_hash(doc: dict) -> str:
@@ -47,6 +76,13 @@ class SeededSink(art.FileSink):
     def manifest(self) -> dict | None:
         return self._seed(super().manifest())
 
+    def save(self, manifest: dict) -> None:
+        super().save(manifest)
+        if self.saved is not None:
+            self.saved()
+
+    saved = None    # called after every save (the store prunes the edition's uploads)
+
 
 class ReadOnlySink(art.FileSink):
     """Another style's set of the same edition, read for a likeness only: a run or a route never writes through it."""
@@ -61,15 +97,20 @@ class ReadOnlySink(art.FileSink):
 class ArtStore:
     def __init__(self, data_dir: Path) -> None:
         self.root = data_dir / "art"
+        self.journal = data_dir / "merges"      # the undo journal (`Identity.dir`): an entry may still need an upload
         self._locks: dict[tuple[str, str], threading.Lock] = {}
         self._guard = threading.Lock()
+        self.refs_lock = threading.RLock()      # every write, removal and prune of an edition's `refs/`
+        self._pruned: dict[str, float] = {}
+        for h in self.ref_editions():           # when the store opens
+            self.prune_refs(h)
 
     # ---- addressing
 
     def folder(self, text_hash: str, style: str) -> Path:
         """The folder of one art set; `style` is a style name or a slug. KeyError for anything malformed."""
         slug = art.style_slug(style) if style else ""
-        if not HASH.fullmatch(text_hash or "") or not SLUG.fullmatch(slug):
+        if not HASH.fullmatch(text_hash or "") or not SLUG.fullmatch(slug) or slug == REFS:
             raise KeyError(style)
         return self.root / text_hash / slug
 
@@ -86,7 +127,9 @@ class ArtStore:
                 m = art.blank(self._stored_hash(text_hash) or text_hash, style)
             m["world"] = world_of(bg)
             return m
-        return SeededSink(folder, seed)
+        sink = SeededSink(folder, seed)
+        sink.saved = lambda: self.prune_refs(text_hash, throttle=True)
+        return sink
 
     def likeness(self, text_hash: str, style: str) -> dict[str, art.FileSink]:
         """slug -> read-only sink of every other style's set of the edition: where a picture in `style` may take a figure's
@@ -125,7 +168,7 @@ class ArtStore:
         d = self.root / text_hash
         out = []
         for sub in d.iterdir() if d.is_dir() else ():
-            m = self.manifest(text_hash, sub.name) if SLUG.fullmatch(sub.name) else None
+            m = self.manifest(text_hash, sub.name) if SLUG.fullmatch(sub.name) and sub.name != REFS else None
             if m is None:
                 continue
             out.append({"slug": sub.name, "style": m.get("style"), "pictures": len(m.get("pictures", [])),
@@ -219,9 +262,137 @@ class ArtStore:
         return p if p.is_file() else None
 
     def size(self, text_hash: str) -> int:
-        """Bytes on disk for every art set of an edition."""
+        """Bytes on disk for every art set of an edition, its uploaded reference pictures included."""
         d = self.root / text_hash if HASH.fullmatch(text_hash or "") else None
         return sum(f.stat().st_size for f in d.rglob("*") if f.is_file()) if d and d.is_dir() else 0
+
+    # ---- the person's reference pictures: `<textHash>/refs/<sha256>.<ext>`, by content, shared by the edition's sets
+
+    def refs_dir(self, text_hash: str) -> Path:
+        if not HASH.fullmatch(text_hash or ""):
+            raise KeyError(text_hash)
+        return self.root / text_hash / REFS
+
+    def put_ref(self, text_hash: str, data: bytes) -> dict:
+        """Keep one uploaded picture: checked by its bytes (`styles.sniff`, at most `MAX_REF_BYTES`), filed under its
+        sha256. The same bytes again give the same sha and no new file (the file's time is renewed, so a fresh upload
+        is never pruned before it is drawn). Raises `styles.StyleError` (413 `too-large`, 422 `bad-image`)."""
+        if len(data) > MAX_REF_BYTES:
+            raise StyleError(413, "too-large", "The picture is over 8 MB. Choose a smaller one.")
+        mime, w, h = sniff(data)
+        sha = hashlib.sha256(data).hexdigest()
+        ext = REF_EXT[mime]
+        d = self.refs_dir(text_hash)
+        p = d / f"{sha}.{ext}"
+        with self.refs_lock:
+            if p.is_file():
+                os.utime(p)
+            else:
+                d.mkdir(parents=True, exist_ok=True)
+                tmp = d / f".{uuid.uuid4().hex}.tmp"
+                tmp.write_bytes(data)
+                tmp.replace(p)
+        return {"sha": sha, "ext": ext, "mime": mime, "bytes": len(data), "width": w, "height": h}
+
+    def ref_path(self, text_hash: str, sha: str) -> Path | None:
+        """The file of an uploaded picture the edition's folder holds, named `<sha>.<ext>`; None otherwise."""
+        if not HASH.fullmatch(text_hash or "") or not SHA.fullmatch(sha or ""):
+            return None
+        d = self.root / text_hash / REFS
+        for ext in REF_MIME:
+            p = d / f"{sha}.{ext}"
+            if p.is_file():
+                return p
+        return None
+
+    def touch_ref(self, text_hash: str, sha: str) -> Path | None:
+        """Renew an upload's time because it is being used (checked for a draw, kept by `PUT .../refs`, brought back by an
+        undo): pruning only takes files a day old, so one used in the last day is never pruned. Its path, or None."""
+        with self.refs_lock:
+            p = self.ref_path(text_hash, sha)
+            if p is None:
+                return None
+            try:
+                os.utime(p)
+            except OSError:
+                return None
+            return p
+
+    def ref_bytes(self, text_hash: str, sha: str) -> tuple[bytes, str, str] | None:
+        """(bytes, mime, ext) of an uploaded picture, or None when the folder does not hold it (also when it went just now)."""
+        p = self.ref_path(text_hash, sha)
+        if p is None:
+            return None
+        ext = p.suffix[1:]
+        try:
+            return p.read_bytes(), REF_MIME[ext], ext
+        except OSError:
+            return None
+
+    def ref_editions(self) -> list[str]:
+        if not self.root.is_dir():
+            return []
+        return sorted(d.name for d in self.root.iterdir() if HASH.fullmatch(d.name) and (d / REFS).is_dir())
+
+    def journal_refs(self) -> set[str] | None:
+        """Every upload an undo journal entry still names: in its entry (a removed record, a `refs` change) or in a set
+        it keeps a copy of (a removed set). None when an entry can't be read (being written or removed just now, or
+        damaged): that counts as keeping everything, never as keeping nothing."""
+        out: set[str] = set()
+        try:
+            entries = [d for d in self.journal.iterdir() if d.is_dir()] if self.journal.is_dir() else []
+            for d in entries:
+                for f in [d / "entry.json", *d.glob("*/art.json")]:
+                    out |= user_ref_shas(json.loads(f.read_text()))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return None
+        return out
+
+    def listed_refs(self, text_hash: str) -> set[str]:
+        """Every upload a picture record of any set of the edition lists."""
+        out: set[str] = set()
+        for st in self.styles(text_hash):
+            out |= user_ref_shas((self.manifest(text_hash, st["slug"]) or {}).get("pictures", []))
+        return out
+
+    def prune_refs(self, text_hash: str, throttle: bool = False, now: float | None = None) -> int:
+        """Delete the uploads of an edition that no picture record lists, no undo entry needs and that are older than a
+        day (an upload never drawn goes after a day). Runs when the store opens and when a set is saved (`throttle`: at
+        most once a minute per edition). Returns how many went."""
+        try:
+            d = self.refs_dir(text_hash)
+        except KeyError:
+            return 0
+        now = time.time() if now is None else now
+        with self.refs_lock:    # the kept set and the removals in one step: no upload, use or undo slips between them
+            if throttle:
+                if now - self._pruned.get(text_hash, 0) < PRUNE_EVERY:
+                    return 0
+                self._pruned[text_hash] = now
+
+            def age(f: Path) -> float:
+                try:
+                    return now - f.stat().st_mtime
+                except OSError:          # gone meanwhile
+                    return 0.0
+            try:
+                files = [f for f in d.iterdir() if REF_FILE.fullmatch(f.name) or f.name.endswith(".tmp")] if d.is_dir() else []
+            except OSError:              # the folder went (every set removed)
+                return 0
+            old = [f for f in files if age(f) > REF_KEEP]
+            if not old:
+                return 0
+            held = self.journal_refs()
+            if held is None:             # an undo entry can't be read: prune nothing this time
+                return 0
+            keep = self.listed_refs(text_hash) | held
+            gone = 0
+            for f in old:
+                m = REF_FILE.fullmatch(f.name)
+                if (m is None or m.group(1) not in keep) and age(f) > REF_KEEP:   # renewed since: kept
+                    f.unlink(missing_ok=True)
+                    gone += 1
+            return gone
 
     # ---- writing (callers hold `lock`)
 
