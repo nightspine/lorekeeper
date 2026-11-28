@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
+const { lightboxHides, refParts, sheetWorld, visibleArt, visibleAt, visibleWorld, unfinishedSources } = await import(join(here, "../../src/lorekeeper/web/static/js/artgate.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -133,6 +133,20 @@ test("a figure's reference in every shape the server and the records give it", (
     assert.ok(got === null || (got.url === null && /^[A-Za-z0-9_-]{1,64}$/.test(got.id)), JSON.stringify(bad));
   }
   assert.equal(refParts({ id: "p1", url: "https://evil.example/x.png" }).url, null);       // an id kept, a foreign URL never
+});
+
+test("an open lightbox closes only when a picture has none of its ids shown", () => {
+  const shown = new Set(["pold", "pother"]);
+  assert.equal(lightboxHides([["pold", "pold"], ["pother", "pother"]], shown), false);
+  // fixed: the new id is not in the art set yet, the one it opened with is
+  assert.equal(lightboxHides([["pnew", "pold"]], shown), false);
+  // fetched again: the new id is shown and the old one gone
+  assert.equal(lightboxHides([["pnew", "pold"]], new Set(["pnew"])), false);
+  // the position moved back before the picture: neither is shown
+  assert.equal(lightboxHides([["pnew", "pold"], ["pother", "pother"]], new Set(["pother"])), true);
+  assert.equal(lightboxHides([["pold", undefined]], new Set()), true);
+  assert.equal(lightboxHides([], shown), false);
+  assert.equal(lightboxHides(null, shown), false);
 });
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }

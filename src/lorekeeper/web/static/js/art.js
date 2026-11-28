@@ -75,7 +75,7 @@ export const setArtDefaults = (d) => write("lk-art-defaults", JSON.stringify({ .
 
 // ---- the gating helper: the one rule (artgate.js, dependency-free so Node can test it) --------------
 
-export { refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
+export { lightboxHides, refParts, sheetWorld, unfinishedSources, visibleArt, visibleAt, visibleWorld } from "./artgate.js";
 import { refParts } from "./artgate.js";
 
 // ---- the manifest cache --------------------------------------------------------------------------
@@ -355,6 +355,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
   if (!items.length) return null;
   const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   let i = Math.min(Math.max(0, index), items.length - 1);
+  const opened = new Map(items.map((x) => [x, x.rec.id]));   // each item's id when the lightbox opened
   const stage = h("div.lb-stage");
   const caption = h("p.lb-caption");
   const how = h("div.lb-how");
@@ -562,19 +563,27 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
       err.textContent = "";
+      // Decided the moment it is pressed: closing or stepping away while the undo runs must not settle the fix (and
+      // toast "Picture fixed" over an original that is coming back).
+      pending = null;
       try {
         await api.undo(it.key, id);
-        pending = null;
         forgetArt(it.key);
         it.rec = old.rec; it.src = old.src;
         onChanged?.();
-        if (!dlg.open || items[i] !== it) return;
+        if (!dlg.open || items[i] !== it) { toast("The original is back.", "ok", { host: dlg.open ? toasts : modalToasts() }); return; }
         paint();
         toast("The original is back.", "ok", { host: toasts });
       } catch (e) {
-        if (!dlg.open) return;
-        err.textContent = `Couldn't put the original back: ${e.message}`;
-        keepOld.disabled = keepFix.disabled = false;
+        // The fix stands: back to undecided where the result is still on screen, else the usual toast with Undo.
+        if (dlg.open && items[i] === it && keepOld.isConnected) {
+          pending = { it, r };
+          err.textContent = `Couldn't put the original back: ${e.message}`;
+          keepOld.disabled = keepFix.disabled = false;
+        } else {
+          toast(`Couldn't put the original back: ${e.message}`, "error", { host: dlg.open ? toasts : modalToasts() });
+          undoable(it, r, "Picture fixed");
+        }
       }
     });
     clear(acts, h("div.lb-fix.lb-fixed", { role: "group", "aria-label": "The fix" },
@@ -663,7 +672,11 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     if (dd) dd.textContent = modelFact(r);
     if (wd) wd.textContent = writerFact(r.writer) || wd.textContent;
   });
-  return { close, refresh };
+  /** Per picture the lightbox can step to, the ids that stand for it: the one on screen now and the one it opened with
+   *  (a fix or a redraw files the picture under a new id, which the page's art set learns only after it is fetched
+   *  again; both share the same anchor). The Reader closes the lightbox only when neither is visible. */
+  const ids = () => items.map((x) => [x.rec.id, opened.get(x)]);
+  return { close, refresh, ids };
 }
 
 /** A toast stack inside the topmost open modal (the entry drawer or a sheet), or null for the page's own. */
