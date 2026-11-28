@@ -846,8 +846,11 @@ USER_REF = ("Take only what the person says from their pictures, never their dra
 # what each of the person's pictures applies to (`UserRef.applies`): the whole picture ("scene", the default and the lines
 # above), the subject of a portrait, place or thing picture ("subject"), or one labelled figure of a scene ("A".."F"). A
 # picture tied to a figure is read within that figure alone; the closing line is then USER_REF_SCOPED, so what wins over the
-# prompt is what the note names on that figure, and who the figure is never changes (measured on Red Rising and Dracula,
-# 2026-11-28, `bench/user_refs_applies.py`)
+# prompt is what the note names on that figure. Measured on Red Rising and Dracula (2026-11-28, `bench/user_refs_applies.py`,
+# Gemini nano-banana-2.1): tied, the noted dress went to the chosen figure and every other figure stayed as drawn (a boy
+# the whole-picture note turned into a woman in 2 of 2 stayed a boy in 6 of 6); a note naming "the woman's dress" tied to
+# a man still made him a woman (8 of 8), and neither "never who that figure is" in the closing line (4 of 4) nor the
+# figure's sex and age kept in the figure line (3 of 4) stopped it, so neither is here
 APPLIES_SCENE, APPLIES_SUBJECT = "scene", "subject"
 USER_REF_FIGURE_LINE = ("Reference picture {n} is from the person and is only for figure {label}: {note}. Use it for figure "
                         "{label} alone; nothing else about figure {label}, and nothing about any other figure, changes.")
@@ -858,7 +861,7 @@ USER_REF_SUBJECT_PLAIN = ("Reference picture {n} is from the person and is for t
                           "help.")
 USER_REF_SCOPED = ("Take only what the person says from their pictures, never their drawing style; where their note and the "
                    "prompt disagree about that thing, draw it as their picture shows, but a picture that is only for one "
-                   "figure changes that thing on that figure alone, and never who that figure is.")
+                   "figure changes that thing on that figure alone.")
 
 
 @dataclass

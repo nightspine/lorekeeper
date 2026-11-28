@@ -59,7 +59,7 @@ def test_the_closing_line_is_scoped_once_a_picture_is_tied_to_a_figure():
         [art.SAME_FIGURE, art.USER_REF_SUBJECT_LINE.format(n=2, note="her dress"), art.USER_REF])
     # the scoped line still says what the plain one says, and scopes it
     assert art.USER_REF_SCOPED.startswith(art.USER_REF[:-1])
-    assert "that figure alone" in art.USER_REF_SCOPED and "never who that figure is" in art.USER_REF_SCOPED
+    assert art.USER_REF_SCOPED.endswith("changes that thing on that figure alone.")
 
 
 # ---- draw: the rules, the fallback and the record
