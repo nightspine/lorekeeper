@@ -863,7 +863,8 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--inclusive", action="store_true", help="count the current block (default: it does not count, §3.7)")
     s.set_defaults(fn=cmd_locate)
 
-    s = sub.add_parser("toc", help="list an EPUB's table of contents (chapter numbers for --chapters)")
+    s = sub.add_parser("toc", help="list an EPUB's table of contents: the first column is the TOC position that --chapters "
+                       "takes, the label beside it the book's own chapter number")
     s.add_argument("epub")
     s.set_defaults(fn=cmd_toc)
 

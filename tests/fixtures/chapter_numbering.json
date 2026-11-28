@@ -1555,6 +1555,158 @@
      "number": null
     }
    ]
+  },
+  {
+   "name": "whole-words-only",
+   "note": "Named sections match whole words only: Coda is named, Codex, Codename and Forward March are plain titles",
+   "entries": [
+    {
+     "title": "Codex",
+     "story": true
+    },
+    {
+     "title": "The Trial",
+     "story": true
+    },
+    {
+     "title": "The Verdict",
+     "story": true
+    },
+    {
+     "title": "Codename",
+     "story": true
+    },
+    {
+     "title": "Forward March",
+     "story": true
+    },
+    {
+     "title": "Coda",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": 1
+    },
+    {
+     "kind": "other",
+     "number": 2
+    },
+    {
+     "kind": "other",
+     "number": 3
+    },
+    {
+     "kind": "other",
+     "number": 4
+    },
+    {
+     "kind": "other",
+     "number": 5
+    },
+    {
+     "kind": "named",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "no-number-inside-a-word",
+   "note": "After Chapter only I V X L C are roman and the token ends at a space, punctuation, a dash or the end: Dix, Mix and Mix-up state no number",
+   "entries": [
+    {
+     "title": "Chapter Dix",
+     "story": true
+    },
+    {
+     "title": "Chapter Mix",
+     "story": true
+    },
+    {
+     "title": "Chapter Mix-up",
+     "story": true
+    },
+    {
+     "title": "Chapter One-Eyed",
+     "story": true
+    },
+    {
+     "title": "Chapter IV The Return",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    }
+   ]
+  },
+  {
+   "name": "title-only-whole-list",
+   "note": "A title-only book is counted over the whole list: callers pass every entry of the table of contents, never only the rows a view lists",
+   "entries": [
+    {
+     "title": "Prologue",
+     "story": true
+    },
+    {
+     "title": "The Arrival",
+     "story": true
+    },
+    {
+     "title": "A Long Night",
+     "story": true
+    },
+    {
+     "title": "The Storm",
+     "story": true
+    },
+    {
+     "title": "Morning",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": 1
+    },
+    {
+     "kind": "other",
+     "number": 2
+    },
+    {
+     "kind": "other",
+     "number": 3
+    },
+    {
+     "kind": "other",
+     "number": 4
+    }
+   ]
   }
  ]
 }

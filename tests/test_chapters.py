@@ -26,6 +26,11 @@ def test_vectors(case):
     ("Book One. Deathseeker", "divider", None), ("PART I.", "divider", None), ("Part Two", "divider", None),
     ("Book of the Dead", "other", None), ("Part Mic", "other", None), ("SCENE II. A room", "named", None),
     ("The Company", "other", None), ("", "other", None),
+    ("Codex", "other", None), ("Codename", "other", None), ("Forward March", "other", None), ("Coda", "named", None),
+    ("Acknowledgments", "named", None), ("Notes on a Scandal", "other", None),
+    ("Chapter Dix", "chapter", None), ("Chapter Mix", "chapter", None), ("Chapter Mix-up", "chapter", None),
+    ("Chapter One-Eyed", "chapter", None), ("Chapter IV The Return", "chapter", 4), ("Chapter XL", "chapter", 40),
+    ("Book Mix", "other", None),
 ])
 def test_classify(title, kind, number):
     assert classify(title) == kind
@@ -38,8 +43,14 @@ def test_restart_after_divider_keeps_the_books_numbers():
 
 
 def test_numbers_never_depend_on_which_rows_a_view_lists():
+    # Stated numbers stay put whatever is left out.
     toc = ["Prologue", "One", "Two", "Three"]
     assert numbering(toc)[3]["number"] == 3 == numbering(toc[:1] + toc[2:])[2]["number"]
+    # A title-only book is a count, so the rule is over the whole table of contents: dropping a row renumbers what
+    # follows, which is why callers pass every entry, never only the rows a view lists.
+    titled = ["Prologue", "The Arrival", "A Long Night", "The Storm"]
+    assert [x["number"] for x in numbering(titled)] == [None, 1, 2, 3]
+    assert [x["number"] for x in numbering(titled[:1] + titled[2:])] == [None, 1, 2]
 
 
 def test_strings_and_dicts_and_roman_and_label():

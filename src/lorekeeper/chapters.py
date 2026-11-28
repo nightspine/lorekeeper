@@ -44,12 +44,16 @@ for _i, _w in enumerate(_ORD_TENS):
 _TENS_RE = "|".join(_TENS)
 _WORD_RE = rf"(?:(?:{_TENS_RE})[\s\-‐–]+(?:{'|'.join(_UNITS)})|{'|'.join(sorted(WORDS, key=len, reverse=True))})"
 _ORD_RE = rf"(?:(?:{_TENS_RE})[\s\-‐–]+(?:{'|'.join(_ORD_UNITS)})|{'|'.join(sorted(ORDINALS, key=len, reverse=True))})"
-_ROMAN_RE = r"[ivxlcdm]+"
+_ROMAN_RE = r"[ivxlc]+"           # I V X L C only, as standing alone: "Chapter Mix" and "Chapter Dix" are no numbers
 # end of the title, punctuation, or a dash: an en or em dash anywhere, a hyphen only after a space ("3 - Title",
 # never "One-Eyed" or "X-Men")
 _SEP = r"(?=\s*(?:$|[.:,;)\]–—])|\s+[-‐])"
 
-_ANY = rf"(?P<t>\d{{1,4}}|{_ROMAN_RE}|{_ORD_RE}|{_WORD_RE})\b"    # ordinals first: "Twenty-First" is not "Twenty"
+# After "Chapter" (or "Part", "Scene"...) the token ends at a space, punctuation, a dash or the end of the title, never
+# inside a word or before "-letter" ("Chapter Mix-up", "Chapter One-Eyed" have no number). ASCII classes only, so the
+# JS port reads them the same.
+_END = r"(?=$|[\s.:,;)\]–—]|[-‐](?![A-Za-z]))"
+_ANY = rf"(?P<t>\d{{1,4}}|{_ROMAN_RE}|{_ORD_RE}|{_WORD_RE}){_END}"    # ordinals first: "Twenty-First" is not "Twenty"
 _CHAPTER = re.compile(rf"^chapter\s+(?:the\s+)?{_ANY}", re.I)
 _CHAPTER_BARE = re.compile(r"^chapter\b", re.I)
 _DIVIDER = re.compile(rf"^(?:part|book|volume|vol\.|section|act)\s+(?:the\s+)?{_ANY}", re.I)
@@ -59,12 +63,13 @@ _ALONE_DIGITS = re.compile(rf"^(?P<t>\d{{1,3}}){_SEP}")
 _ALONE_ROMAN = re.compile(rf"^(?P<t>[IVXLC]+){_SEP}")       # upper case only, and no D or M: "MIX" or "DID" are words
 _ALONE_WORD = re.compile(rf"^(?P<t>{_WORD_RE}){_SEP}", re.I)
 _NAMED = re.compile(
-    r"^(?:the\s+|an?\s+)?(?:prologue|epilogue|interlude|intermission|introduction|preface|foreword|forward|afterword|"
+    r"^(?:the\s+|an?\s+)?(?:prologue|epilogue|interlude|intermission|introduction|preface|foreword|afterword|"
     r"prelude|postlude|postscript|coda|dramatis\s+person(?:ae|æ)|cast\s+of\s+characters|list\s+of\s+characters|"
-    r"characters$|principal\s+characters|appendix|appendices|glossary|author[’']?s\s+note|note\s+on|translator|"
-    r"acknowledg|dedication|epigraph|contents|table\s+of\s+contents|copyright|colophon|title\s+page|half\s+title|"
-    r"cover$|about\s+the\s+(?:author|publisher)|also\s+by|maps?$|index$|notes$|endnotes|bibliography|"
-    r"further\s+reading|reading\s+group|discussion\s+questions)", re.I)
+    r"characters$|principal\s+characters|appendix|appendices|glossary|author[’']?s\s+note|note\s+on|"
+    r"translator[’']?s\s+note|acknowledge?ments?|dedication|epigraph|contents|table\s+of\s+contents|copyright|"
+    r"colophon|title\s+page|half\s+title|cover$|about\s+the\s+(?:author|publisher)|also\s+by|maps?$|index$|notes$|"
+    r"endnotes|bibliography|further\s+reading|reading\s+group|discussion\s+questions)"
+    r"(?![A-Za-z0-9])", re.I)     # whole words only: "Coda" but never "Codex" or "Codename"
 
 _ROMAN_VALUES = {"i": 1, "v": 5, "x": 10, "l": 50, "c": 100, "d": 500, "m": 1000}
 
