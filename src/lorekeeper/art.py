@@ -294,6 +294,48 @@ SCENE_HANDS = """- Two hands each: a figure holds or uses at most two things in 
 """
 SCENE_WRITER = SCENE_WRITER.replace(_NO_TEXT_RULE, SCENE_HANDS + _NO_TEXT_RULE)
 assert SCENE_WRITER.count("Two hands each") == 1
+# The comic writer is built from the scene writer as it stands here, before the staging below: comics keep their own form
+# and rules (measured on 3 pages, the staging added no dynamism there).
+_SCENE_WRITER_FOR_COMICS = SCENE_WRITER
+
+# The staging of a scene (plates and events). Without it the writer ordered a scene as subject, setting, light, said nothing
+# of the instant, the bodies or where the viewer stands, and read "never a look the material does not state" as forbidding
+# any pose: the image model then drew a posed tableau. Both providers' guides put the action and the viewpoint in the
+# prompt as parts of their own. The viewpoint is asked for in plain picture words: film and photography words pulled ink
+# and paint styles toward a photograph (bench/action_prompts.py, 2026-11-28).
+SCENE_FORM = ("60 to 150 words, plain sentences in the present tense, in this order: where the viewer stands, in a few plain "
+              "words; then what happens at the instant the picture shows, who does what to whom, in strong verbs; the figures "
+              "as the other rules allow; the setting as far as the material gives it; then the light and mood. The staging "
+              "needs words: keep each look to what marks the figure, and never pass 150 words.")
+_INSTANT = ("- The picture freezes one instant of the moment: choose the one that tells it best. When the moment is action (a "
+            "blow, a fight, a chase, a leap, a fall, a struggle), choose the instant at its height: a blade halfway through "
+            "its swing or meeting its mark, a body in the air, a grip at its hardest, never the stance before the action "
+            "starts or after it ends. Where the material says the action is stopped, show the instant it is stopped. Write that "
+            "instant as it happens, in the present tense: never what has just happened or is about to.\n")
+_BODIES = ("- Say how each figure's body carries that instant: the line of the body (lunging, twisting, braced, thrown back, "
+           "falling), where the weight is (on the front foot, off balance, in the air), what the arms and legs are doing, "
+           "where the head and eyes turn, and what the motion does to what moves with it (a cloak or coat flaring, hair "
+           "whipping, snow, dust, water or sparks thrown up). When the moment is quiet or full of feeling, the stillness is the "
+           "point: one telling posture, gesture or gaze for each figure.\n")
+_NO_FILM_WORDS = ("Say it only in plain picture words, never in the words of photography or film-making, since the same "
+                  "text is drawn in ink, watercolour and paint.")
+_VIEWPOINT = ("- Choose where the viewer stands for this instant, as an illustrator would: how near (the whole scene from "
+              "across the room, the figures at full length, close on the two figures, close on one face) and from where (at "
+              "eye level, from low down, from above, from behind one figure's shoulder), and how the picture is laid out (the "
+              "action along a strong slant or a level, balanced picture; what is nearest the viewer and what behind; where the "
+              "eye goes first). Near and low gives force, far gives a chase, a crowd or a place its room, level and still "
+              "suits a quiet moment. " + _NO_FILM_WORDS + "\n")
+_YOURS = ("- The instant, the poses, where the viewer stands and the layout of the picture are yours to choose, as an "
+          "illustrator's would be: they are not a look the material lacks. They must fit what the material tells of the "
+          "moment: who is there, what they do, with what, and where.\n")
+STAGING = _INSTANT + _BODIES + _VIEWPOINT + _YOURS
+assert "English, one paragraph, " + _SCENE_FORM in SCENE_WRITER
+SCENE_WRITER = SCENE_WRITER.replace("English, one paragraph, " + _SCENE_FORM, "English, one paragraph, " + SCENE_FORM).replace(
+    SCENE_HANDS, STAGING + SCENE_HANDS)
+assert SCENE_WRITER.count(STAGING) == 1 and SCENE_FORM in SCENE_WRITER
+# The version of the writers' wording, stored on every picture record as `promptVersion` (the material version is
+# NOTE_VERSION): 2 is the scene staging above; absent on a record means older.
+PROMPT_VERSION = 2
 
 # The writer of a comic page: SCENE_WRITER with one text per panel. The page's layout is code's (COMIC_FRAME), so a style
 # change is still one sentence swapped; the captions are the Reader's, so no text is drawn.
@@ -301,7 +343,7 @@ _MOMENT_LINE = "<moment>: the moment of the story the picture shows, as the comp
 assert _MOMENT_LINE in SCENE_WRITER
 _SCENE_RETURN = 'Return "text": the prompt.'
 assert SCENE_WRITER.endswith(_SCENE_RETURN)
-COMIC_WRITER = SCENE_WRITER.replace(_MOMENT_LINE, (
+COMIC_WRITER = _SCENE_WRITER_FOR_COMICS.replace(_MOMENT_LINE, (
     "<moment n=...>: one moment of the chapter for each panel of a comic page, numbered in reading order, as the companion "
     "records it, and where it happens when that is known. Panel n shows moment n.\n"
     "<passage n=...>: paragraphs of the book that tell moment n.")).replace(
@@ -575,8 +617,10 @@ TASKS = {
     "portrait": "Write the prompt for a portrait of the entry to draw: how they look at this point. The framing and pose are given; do not state them.",
     "place": "Write the prompt for a picture of the place to draw as it looks at this point; people only where the material puts them there.",
     "thing": "Write the prompt for a picture of the thing to draw as it looks at this point, in a plain setting or the place the material puts it.",
-    "event": "Write the prompt for one picture of the moment: one scene, what is in frame, the composition and the light.",
-    "plate": "Write the prompt for one picture of the main moment of this chapter: one scene, what is in frame, the composition and the light.",
+    "event": ("Write the prompt for one picture of the moment: one instant of it, what happens, who is in the picture, where "
+              "the viewer stands, the layout of the picture and the light."),
+    "plate": ("Write the prompt for one picture of the main moment of this chapter: one instant of it, what happens, who is in "
+              "the picture, where the viewer stands, the layout of the picture and the light."),
     "comic": "Write the prompt for a comic page of this chapter's moments: one panel for each numbered moment, in order, each what is in frame in that panel.",
 }
 SHOWS = """Return also "shows": the names, as the <entry> tags give them, of the figures that are IN your picture (the one place a
@@ -1386,6 +1430,9 @@ class Prompt:
     # the text model that wrote it, {"provider", "model"} (None: not known, an older prompt or a model with no name)
     written_by: dict | None = None
     panels: list[str] | None = None   # a comic page's event ids, one per panel in panel order (None: not a comic)
+    # the writers' wording it was written with (PROMPT_VERSION), stored as the record's `promptVersion`; None: not known
+    # (an older record drawn again as it is)
+    prompt_version: int | None = None
 
 
 @dataclass
@@ -3972,7 +4019,7 @@ class Illustrator:
         return Prompt(self._assemble(body, bi, style, no_text), body, anchor, job.shape or SHAPE_OF[job.kind], [], refs,
                       sorted((a for a in sources if a in b.ord_of), key=b.ord_of.get), writer, check,
                       sorted(inherits - {me}), fin is not None, world, milieu, NOTE_VERSION, body, style, no_text, list(ids),
-                      figures, model_ref(model), list(job.panels) if job.kind == "comic" else None)
+                      figures, model_ref(model), list(job.panels) if job.kind == "comic" else None, PROMPT_VERSION)
 
     def _say(self, why: str, bi: int, anchor: str, finished: frozenset[str] | None) -> str:
         """`explain(why)` for the reader at `anchor`: a caught name only when the whole name, as caught, occurs in the text the
@@ -4497,7 +4544,8 @@ class Illustrator:
                "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h, "prompt": pr.text,
                "references": [self.ref_id(r) for _, r in pr.references] if figures is None else [self.ref_id(r) for _, r, _ in sent or []],
                "sources": pr.sources, "inherits": list(pr.inherits),
-               **({"notes": pr.version} if pr.version is not None else {})}
+               **({"notes": pr.version} if pr.version is not None else {}),
+               **({"promptVersion": pr.prompt_version} if pr.prompt_version is not None else {})}
         if figures is not None:
             rec["figures"] = figures
         if job.kind == "comic":            # the page's moments, one per panel: the Reader captions each from the view

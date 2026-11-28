@@ -4554,3 +4554,26 @@ def test_a_panel_text_is_replaced_in_a_prompt_whose_style_sentence_had_a_name_re
     assert new["prompt"].endswith(f" Panel 3: Nobody is at the mill. {stored} {art.COMIC_NO_TEXT}")
     assert art.panel_texts(new["prompt"], stored)[2] == "Nobody is at the mill."
     assert new["panelTexts"][2] == "Nobody is at the mill."
+
+
+def test_the_scene_writer_stages_the_instant_in_plain_picture_words():
+    """Plates and events are staged (the instant, the bodies, where the viewer stands) in plain picture words: film and
+    photography words pulled ink and paint toward a photograph. Comics, portraits, places and things keep their writers."""
+    photo = re.compile(r"\b(shots?|lens(es)?|cameras?|depth of field|cinematic|close-?ups?|photograph\w*|film\w*|f/\d|"
+                       r"bokeh|wide-angle|telephoto|zoom\w*)\b", re.IGNORECASE)
+    scene = art.SCENE_WRITER.replace(art._NO_FILM_WORDS, "")
+    assert art.STAGING in art.SCENE_WRITER and art.SCENE_FORM in art.SCENE_WRITER and art._NO_FILM_WORDS in art.SCENE_WRITER
+    assert not photo.search(scene), photo.search(scene)
+    for kind in ("event", "plate"):
+        assert not photo.search(art.TASKS[kind]) and "where the viewer stands" in art.TASKS[kind]
+    assert art.SCENE_WRITER.count("Two hands each") == 1 and "never pass 150 words" in art.SCENE_FORM
+    for other in (art.WRITER, art.PORTRAIT_WRITER, art.COMIC_WRITER):
+        assert "freezes one instant" not in other and "where the viewer stands" not in other
+    assert art.Illustrator._form("event")[0] is art.SCENE_WRITER and art.Illustrator._form("plate")[0] is art.SCENE_WRITER
+
+
+def test_every_picture_records_the_prompt_version():
+    il, rep, sink, _, _ = run(level="all")
+    got = pics(sink)
+    assert got and all(p["promptVersion"] == art.PROMPT_VERSION for p in got)
+    assert {p["kind"] for p in got} >= {"portrait", "plate"}

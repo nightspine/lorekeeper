@@ -2704,6 +2704,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                                    partial=bool(rec.get("partial")),
                                    notes=[(rec["target"], rec["appearance"])] if rec.get("appearance") else [],
                                    version=rec.get("notes"), body=text_, figures=figures,
+                                   prompt_version=rec.get("promptVersion") if isinstance(rec.get("promptVersion"), int) else None,
                                    written_by=dict(rec["writer"]) if isinstance(rec.get("writer"), dict) else None,
                                    panels=panels if rec["kind"] == "comic" else None,
                                    **({"no_text": artmod.COMIC_NO_TEXT} if rec["kind"] == "comic" else {}))

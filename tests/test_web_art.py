@@ -1898,6 +1898,20 @@ def test_a_same_prompt_redraw_keeps_who_wrote_the_prompt(env):
     assert new["writer"] == {"provider": "claude", "model": "claude-sonnet-5-5"}
 
 
+def test_a_same_prompt_redraw_keeps_the_prompt_version_it_was_written_with(env):
+    env.key()
+    ask = {"kind": "event", "target": "e5", "style": "ink", "prompt": "A gate."}
+    rec = env.c.post(f"/api/library/{KEY}/art/draw", json=ask).json()
+    man = env.jobs.art_store.manifest(env.hash, "ink")
+    got = next(r for r in man["pictures"] if r["id"] == rec["id"])
+    assert got["promptVersion"] == art.PROMPT_VERSION
+    del got["promptVersion"]                                  # an older record: written before the version was kept
+    env.jobs.art_store.save(env.hash, "ink", man)
+    new = env.c.post(f"/api/library/{KEY}/art/{rec['id']}/redraw", json={}).json()
+    man = env.jobs.art_store.manifest(env.hash, "ink")
+    assert "promptVersion" not in next(r for r in man["pictures"] if r["id"] == new["id"])
+
+
 def test_a_portrait_model_without_the_runs_quality_draws_at_its_nearest_level(env, monkeypatch):
     lite = "gemini-3.1-flash-lite-image"                    # draft and standard only
     assert llm.nearest_quality("gemini", lite, "best") == "standard"
