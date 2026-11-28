@@ -392,13 +392,14 @@ function configure(target, book, ctx, fromJob = null) {
   // Pictures, closed and off by default: drawn after the index is written, as the run's last stage. The estimate asks the
   // server (which counts from the book's current index when it has one); before a first build it is a rough count.
   let indexKey = null;
-  if (catalogKey) api.book(catalogKey).then((b) => { indexKey = (b?.versions || []).find((v) => v.isDefault)?.key || null; pics.refresh(); }).catch(() => {});
+  // The index key, once known (null before a first build): the Pictures style row and its sheet follow it.
+  const indexKeyLater = catalogKey ? api.book(catalogKey).then((b) => { indexKey = (b?.versions || []).find((v) => v.isDefault)?.key || null; pics.refresh(); return indexKey; }).catch(() => null) : null;
   pics = picturesForm({
     // No chapter list here (the index the pictures follow is not written yet), so no `chapters`: every chapter it ends up with.
     estimate: (q) => api.artEstimate({ key: indexKey || "", catalog: catalogKey || "", ...q }),
     onChange: () => { if (pics) update(); },   // the form paints once while it is made, before `pics` is set
     runProvider: () => cfg.provider,   // "ollama" matches no picture writer, so Default is then the first working provider's
-    book: () => indexKey,   // a rebuild's style cards show the book's own previews when it has them
+    book: indexKeyLater,   // a rebuild's style cards show the book's own previews when it has them
     fallback: (st) => {
       const n = [...picked].filter((n) => storySet.has(n)).length;
       if (st.level === "none") return `${st.cast === "main" ? "Portraits of the main characters" : "Portraits of everyone with a part"}, no chapter pictures; the count is set once the index is written.`;
