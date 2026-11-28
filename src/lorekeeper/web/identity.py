@@ -454,6 +454,19 @@ class Identity:
         journal = self._journal(gid)
         return journal[-1] if journal else None
 
+    def art_entry_filing(self, key: str, text_hash: str, style: str, pid: str) -> tuple[dict, Path] | None:
+        """(entry, snapshot folder) of the live pictures entry that filed `pid` in the place of another picture (a fix or a
+        redraw, op `redraw`) in this key's group and set, newest first; None when there is none or it was undone (an undo
+        removes the snapshot)."""
+        gid, _ = self.group(key)
+        for e in reversed(self._journal(gid)):
+            a = e.get("art") if e.get("kind") == "art" else None
+            if (isinstance(a, dict) and a.get("op") == "redraw" and a.get("textHash") == text_hash
+                    and a.get("style") == style and pid in (a.get("added") or [])):
+                snap = self.dir / e["id"]
+                return (e, snap) if snap.is_dir() else None
+        return None
+
     def undo(self, key: str, merge_id: str, revert=None) -> dict:
         """Undo the latest entry of the group. `revert(entry, snapshot folder)` is called for a pictures entry before its
         snapshot goes, and does the whole of its undo."""

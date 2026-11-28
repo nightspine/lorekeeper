@@ -13,7 +13,7 @@ import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
 import { createAsk } from "./ask.js";
 import { createReading } from "./read.js";
-import { artImg, artOn, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
+import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
 const TYPES = ["person", "creature", "place", "group", "object", "concept", "term"];
 
@@ -1058,7 +1058,8 @@ export function mountReader(root) {
     if (!preview && s.art.loadedBooks != null && s.art.loadedBooks !== books) loadPictures();
     if (s.art.lightbox) {
       const shown = new Set(visiblePictures().map((p) => p.rec.id));
-      if ([...s.art.lightbox.ids].some((x) => !shown.has(x))) { s.art.lightbox.close(); s.art.lightbox = null; }
+      // each picture by its id now or the one it opened with (a fix files a new id before the art set is fetched again)
+      if (lightboxHides(s.art.lightbox.ids(), shown)) { s.art.lightbox.close(); s.art.lightbox = null; }
     }
     if (s.art.sheet && !sheetVisible(s.art.sheet)) { const o = s.art.sheet.opened; s.art.sheet = null; o.then((sh) => sh?.close(true)); }
     else if (s.art.sheet?.sh && !sheetTextVisible(s.art.sheet.sh)) {
@@ -2135,7 +2136,7 @@ export function mountReader(root) {
     s.art.lightbox?.close();
     const items = lightboxItems(pics, caption);
     const box = openLightbox(items, index, { onChanged: () => refreshPictures({ forget: s.key }) });
-    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: new Set(items.map((x) => x.rec.id)) };
+    s.art.lightbox = box && { close: box.close, refresh: box.refresh, ids: box.ids };
   }
   /** A picture as a button that opens the lightbox on it. */
   function pictureButton(pics, i, caption, cls, { thumb = true } = {}) {
