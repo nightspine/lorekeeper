@@ -48,6 +48,8 @@ def refs(env, monkeypatch):
             used, fell = [], []
             for r in user_refs:
                 a = getattr(r, "applies", "scene") or "scene"
+                if a == "subject" and job.kind in art.SCENE_KINDS:
+                    a = "scene"                 # as `_applies`: read as the whole scene, and not reported
                 ok = (a == "scene" or (a == "subject" and job.kind not in art.SCENE_KINDS)
                       or (a in art.LABELS and job.kind in art.SCENE_KINDS and a in art.labels_in(text)))
                 if not ok:
@@ -60,8 +62,8 @@ def refs(env, monkeypatch):
                 if r["id"] == rec["id"]:
                     r["userRefs"] = rec["userRefs"]
             self._save(job.bi)
-            if fell:
-                rec["appliesFallback"] = fell
+            if fell:                            # reply-only: filed without it, returned on a copy
+                rec = {**rec, "appliesFallback": fell}
         return rec
     monkeypatch.setattr(art.Illustrator, "draw", draw)
     env.sent = sent
@@ -614,7 +616,12 @@ def test_a_fallback_is_served_with_the_reply_and_the_value_stored_as_used(refs):
         {"sha": a, "appliesTo": "B"}, {"sha": b, "appliesTo": "subject"}]})
     assert r.status_code == 200, r.text
     rec = r.json()
-    assert rec["appliesFallback"] == [a, b] and all("appliesTo" not in x for x in rec["userRefs"])
+    # the label left the text: reported; "subject" on a scene is read as the whole scene and not reported
+    assert rec["appliesFallback"] == [a] and all("appliesTo" not in x for x in rec["userRefs"])
+    stored = next(p for p in pictures(e) if p["id"] == rec["id"])
+    assert "appliesFallback" not in stored and all("appliesTo" not in x for x in stored["userRefs"])
+    man = json.loads((e.data / "art" / e.hash / "ink" / "art.json").read_text())
+    assert not any("appliesFallback" in p for p in man["pictures"])
 
 
 def test_a_redraw_reuses_applies_to_and_can_change_it(refs):
