@@ -16,6 +16,7 @@ sentence and the no-text line, and checks the text (names, hindsight, ties, word
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 import re
@@ -333,6 +334,175 @@ def comic_frame(n: int) -> str:
 def comic_body(panels: list[str]) -> str:
     """A comic page's body: the frame, then "Panel 1: ..." to "Panel n: ...", all by code around the writer's panel texts."""
     return " ".join([comic_frame(len(panels))] + [f"Panel {k}: {t}" for k, t in enumerate(panels, 1)])
+
+
+# ---- fixing one panel of a comic page (fix-comic-panel): the page is edited whole (the model sees every panel, so faces and
+# style stay consistent), then by code only the fixed panel's box is pasted into the original page, so every other panel
+# stays the original pixels. Panel boxes are found by code from the white gutters.
+PANEL_TEXT_CHARS = 600        # a panel's text, as a person gives it
+GRID_SIDE = 1200              # the page is looked at with its long side at this many pixels
+GRID_WHITE = 235              # a gutter pixel is at least this bright (of 255) ...
+GRID_LINE = 0.97              # ... along at least this share of a line
+GRID_MIN_RUN = 40             # a panel is at least this many pixels (at GRID_SIDE) across
+GRID_AGREE = 0.02             # the two pages' panel edges may differ by this much of the page and still be one grid
+PANEL_UNCHANGED = 1.0         # a pasted panel whose mean absolute difference from before is under this (of 255) did not change
+PANEL_FIX = ("This is a comic page of {n} panels in a grid, read left to right and top to bottom. Change only panel {k} ({where}):")
+PANEL_KEEP = ("Leave every other panel exactly as it is: the same figures, faces, poses, clothing, colours, light and drawing "
+              "style, and keep the page layout, the panel borders and the white gutters exactly as they are.")
+
+
+def _runs(flags: list[bool]) -> list[tuple[int, int]]:
+    out, start = [], None
+    for i, x in enumerate(flags + [False]):
+        if x and start is None:
+            start = i
+        elif not x and start is not None:
+            out.append((start, i))
+            start = None
+    return out
+
+
+def _panel_boxes(img) -> list[list[float]]:
+    """The panel boxes of a comic page image as fractions of its width and height, row by row, left to right: rows of
+    near-white across the page give the bands, columns of near-white inside each band the panels. [] when none are found."""
+    from PIL import Image
+    w0, h0 = img.size
+    s = GRID_SIDE / max(w0, h0)
+    g = img.convert("L").resize((max(1, round(w0 * s)), max(1, round(h0 * s))), Image.Resampling.BILINEAR)
+    w, h = g.size
+    raw = g.tobytes()
+
+    def white(chunk: bytes) -> float:
+        return sum(1 for v in chunk if v >= GRID_WHITE) / max(1, len(chunk))
+
+    gutter = [white(raw[y * w:(y + 1) * w:2]) >= GRID_LINE for y in range(h)]
+    boxes = []
+    for y0, y1 in (r for r in _runs([not x for x in gutter]) if r[1] - r[0] > GRID_MIN_RUN):
+        gap = [white(raw[y0 * w + x:y1 * w:2 * w]) >= GRID_LINE for x in range(w)]
+        for x0, x1 in (r for r in _runs([not x for x in gap]) if r[1] - r[0] > GRID_MIN_RUN):
+            boxes.append([x0 / w, y0 / h, x1 / w, y1 / h])
+    return boxes
+
+
+def _open(data: bytes):
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(data))
+        img.load()
+        return img.convert("RGB")
+    except Exception:      # noqa: BLE001 - no Pillow, or a file that does not decode: there is no grid
+        return None
+
+
+def comic_grid(data: bytes, n: int) -> list[list[float]] | None:
+    """The `n` panel boxes of a comic page, in reading order, each [x0, y0, x1, y1] as fractions of the page's width and
+    height rounded to 4 places, found from the white gutters (no model call). None when Pillow is missing, the file does not
+    decode, or the number of boxes found is not `n`."""
+    img = _open(data)
+    if img is None:
+        return None
+    boxes = _panel_boxes(img)
+    return [[round(v, 4) for v in b] for b in boxes] if len(boxes) == n else None
+
+
+def _where(grid: list[list[float]] | None, k: int) -> str:
+    """Where panel k sits on the page, in words: "row 2 of 3, left", or counting order when the grid is unknown."""
+    if not grid or not 1 <= k <= len(grid):
+        return "counting left to right and top to bottom"
+    x0, y0 = grid[k - 1][:2]
+    rows = sorted({round(b[1], 2) for b in grid})
+    cols = sorted({round(b[0], 2) for b in grid})
+    r, c = rows.index(round(y0, 2)) + 1, cols.index(round(x0, 2)) + 1
+    side = "left" if c == 1 else "right" if c == len(cols) else "middle"
+    return f"row {r} of {len(rows)}, {side}" if len(cols) > 1 else f"row {r} of {len(rows)}"
+
+
+def panel_fix_prompt(n: int, k: int, where: str, text: str = "", note: str = "", faults=()) -> str:
+    """What the image model is asked when it fixes panel k of an n-panel comic page, by code only: PANEL_FIX, the panel's new
+    text, the faults (one line each, as `fix_prompt`), the person's note, PANEL_KEEP and COMIC_NO_TEXT."""
+    lines = [PANEL_FIX.format(n=n, k=k, where=where)]
+    text = " ".join(str(text or "").split())[:PANEL_TEXT_CHARS]
+    if text:
+        lines.append(f"Panel {k} should show: {text}")
+    lines += [f"- {f['where']}: {f['what']}." if f["where"] else f"- {f['what']}."
+              for f in clean_faults(list(faults), limit=len(faults))]
+    note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
+    if note:
+        lines.append(f"Also: {note.rstrip('.')}.")
+    lines += [PANEL_KEEP, COMIC_NO_TEXT]
+    return "\n".join(lines)
+
+
+def _panel_spans(prompt: str, style_text: str = "") -> list[tuple[int, int]] | None:
+    """The (start, end) offsets of each "Panel k: ..." text in a stored comic prompt, None when it is not one. The last text
+    ends where the style sentence (`style_text`, else any known one) or COMIC_NO_TEXT begins."""
+    s = str(prompt or "")
+    m = _COMIC_FRAME_RX.match(s)
+    if not m or not s.startswith("Panel 1: ", m.end()):
+        return None
+    starts, cur, k = [], m.end(), 1
+    while True:
+        starts.append(cur + len(f"Panel {k}: "))
+        i = s.find(f" Panel {k + 1}: ", starts[-1])
+        if i < 0:
+            break
+        cur, k = i + 1, k + 1
+    end = len(s) - len(COMIC_NO_TEXT) if s.endswith(COMIC_NO_TEXT) else len(s)
+    tail = s[:end].rstrip()
+    for sentence in [x for x in (style_text, *STYLES.values(), *SAVED_STYLES.values()) if x]:
+        if tail.endswith(sentence) and len(tail) - len(sentence) > starts[-1]:
+            tail = tail[:-len(sentence)].rstrip()
+            break
+    return [(starts[i], starts[i + 1] - len(f" Panel {i + 2}: ")) for i in range(len(starts) - 1)] + [(starts[-1], len(tail))]
+
+
+def panel_texts(prompt: str, style_sentence: str = "") -> list[str] | None:
+    """The "Panel k: ..." texts of a stored comic prompt (`comic_body`'s shape: the frame, the panels, then the style sentence
+    and COMIC_NO_TEXT), in order; None when the prompt is not one. `style_sentence` is the set's style sentence, cut off the last
+    panel when it is not a built-in or saved one."""
+    spans = _panel_spans(prompt, style_sentence)
+    return None if spans is None else [prompt[a:b] for a, b in spans]
+
+
+def _paste_panel(original: bytes, edited: bytes, k: int, n: int, mime: str):
+    """Paste panel k of an edited comic page into the original: (bytes, mime, True, the original's grid, mean absolute
+    difference of the panel box from before, of 255) when both pages have `n` panel boxes (the edited page taken at the
+    original's size) that agree within GRID_AGREE of the page; the box reaches the middle of the gutters around it so its
+    border comes with it. The bytes are the original's format (JPEG quality 95, else PNG). None when Pillow is missing, a
+    file does not decode or the grids differ: the caller keeps the whole edited page."""
+    try:
+        from PIL import Image, ImageChops, ImageStat
+    except ImportError:
+        return None
+    a, b = _open(original), _open(edited)
+    if a is None or b is None:
+        return None
+    if b.size != a.size:
+        b = b.resize(a.size, Image.Resampling.LANCZOS)
+    ga, gb = _panel_boxes(a), _panel_boxes(b)
+    if len(ga) != n or len(gb) != n or any(abs(p - q) > GRID_AGREE for x, y in zip(ga, gb) for p, q in zip(x, y)):
+        return None
+    x0, y0, x1, y1 = ga[k - 1]
+    eps = 1e-6
+    left = max((c[2] for c in ga if c[2] <= x0 + eps and c[1] < y1 and c[3] > y0 and c is not ga[k - 1]), default=None)
+    right = min((c[0] for c in ga if c[0] >= x1 - eps and c[1] < y1 and c[3] > y0 and c is not ga[k - 1]), default=None)
+    up = max((c[3] for c in ga if c[3] <= y0 + eps and c[0] < x1 and c[2] > x0 and c is not ga[k - 1]), default=None)
+    down = min((c[1] for c in ga if c[1] >= y1 - eps and c[0] < x1 and c[2] > x0 and c is not ga[k - 1]), default=None)
+    ext = [(x0 + left) / 2 if left is not None else 0.0, (y0 + up) / 2 if up is not None else 0.0,
+           (x1 + right) / 2 if right is not None else 1.0, (y1 + down) / 2 if down is not None else 1.0]
+    W, H = a.size
+    box = (round(ext[0] * W), round(ext[1] * H), round(ext[2] * W), round(ext[3] * H))
+    inner = (round(x0 * W), round(y0 * H), round(x1 * W), round(y1 * H))
+    delta = ImageStat.Stat(ImageChops.difference(a.crop(inner), b.crop(inner)).convert("L")).mean[0]
+    out = a.copy()
+    out.paste(b.crop(box), box[:2])
+    buf = io.BytesIO()
+    if mime == "image/jpeg":
+        out.save(buf, "JPEG", quality=95)
+    else:
+        out.save(buf, "PNG")
+        mime = "image/png"
+    return buf.getvalue(), mime, True, [[round(v, 4) for v in c] for c in ga], delta
 
 
 def unframed(text: str) -> str:
@@ -991,10 +1161,31 @@ PREVIEW_SCENE = ("A long table laid for many guests under a large tree in front 
 PREVIEW_SHAPE = "square"   # the picker's cards are square: a landscape preview would lose its sides in one
 
 
-def preview_prompt(style: str) -> str:
-    """The preview prompt of a style (a listed slug, or a person's own words): `PREVIEW_SCENE`, the style sentence and the
-    no-text line, joined exactly as a real prompt's parts are (`Illustrator._assemble`)."""
-    return Illustrator._assemble(PREVIEW_SCENE, style=style_sentence(style))
+def preview_prompt(style: str, body: str = PREVIEW_SCENE) -> str:
+    """The preview prompt of a style (a listed slug, or a person's own words): `body` (`PREVIEW_SCENE`, or a book's own
+    opening scene from `Illustrator.preview_body`), the style sentence and the no-text line, joined exactly as a real
+    prompt's parts are (`Illustrator._assemble`). Drawn at PREVIEW_SHAPE."""
+    return Illustrator._assemble(body, style=style_sentence(style))
+
+
+# A book's own style previews: one scene from the opening of the book (its first OPENING_CHAPTERS story chapters, never
+# later, since the previews are seen before and while reading), drawn in every style. `Illustrator.opening_moments` lists
+# the scenes to choose from with no call, `Illustrator.preview_body` writes one scene's body once per book (no reference
+# pictures: the previews compare styles, not likenesses), and `preview_prompt(style, body)` joins it with each style.
+OPENING_CHAPTERS = 2
+
+
+@dataclass
+class Moment:
+    """One scene of a book's opening that its style previews may show (`Illustrator.opening_moments`)."""
+    kind: str                 # "plate" (a chapter's main moment) or "event" (another non-minor event)
+    target: str               # the plate's chapter title (the plan's), or the event id
+    chapter: str              # the chapter title (the plan's, " (2)" for a repeat)
+    anchor: str               # the anchor the picture shows from
+    summary: str              # the event's summary, or the chapter's first recap sentence for a plate with no event
+    event: str | None = None  # the event it shows (None: a plate told by its recap only)
+    n: int = 0                # the chapter's plan number
+    bi: int = 0               # the book index in the run
 
 
 def style_slug(style: str) -> str:
@@ -2482,6 +2673,77 @@ class Illustrator:
         return {"plates": plates, "portraits": len(ports), "new_portraits": new, "portraits_max": most,
                 "chapters": chapters}
 
+    # ---- a book's own style previews
+
+    def _opening_chapters(self, bi: int, chapters: int, story: Callable[[str, int], bool] | None) -> list[dict]:
+        """The plan's chapters among the book's first `chapters` story chapters. With a table of contents the story chapters
+        are counted on it (every entry, indexed or not, its words from the EPUB), so an index that starts later in the book
+        never makes a later chapter its opening; without one, on the plan's chapters. `story(title, words)` says whether a
+        section is story (the web's `jobs.is_story`); None: every section is."""
+        b = self.books[bi]
+        story = story or (lambda title, words: True)
+        toc = b.epub.chapters if b.epub is not None and b.epub.chapters else []
+        if toc:
+            blocks = b.epub.blocks
+            ns = []
+            for k, c in enumerate(toc):
+                end = toc[k + 1].start if k + 1 < len(toc) else len(blocks)
+                if story(c.title, sum(len(x.words) for x in blocks[c.start:end])):
+                    ns.append(k + 1)          # the plan numbers its chapters by their place in the table of contents
+                if len(ns) >= chapters:
+                    break
+            return [c for c in b.chapters if c["n"] in ns]
+        return [c for c in b.chapters if story(c["title"], c["words"])][:chapters]
+
+    def opening_moments(self, bi: int = -1, chapters: int = OPENING_CHAPTERS,
+                        story: Callable[[str, int], bool] | None = None) -> list[Moment]:
+        """The scenes a book's style previews may show, with no model call: in its first `chapters` story chapters only
+        (`story(title, words)`, the web's `jobs.is_story`; None: every section is story), each chapter's main moment first
+        (its plate: the moment `job("plate", ...)` draws, from a fresh screening, else every non-minor event), then their
+        other drawable non-minor events, in reading order. A plate with no event is told by its recap's first sentence.
+        Empty when the opening has no events or recaps. The first moment with an event is the default
+        (`default_moment`)."""
+        bi = len(self.books) - 1 if bi < 0 else bi
+        b = self.books[bi]
+        plates, others = [], []
+        for ch in self._opening_chapters(bi, chapters, story):
+            ids = self.screened(bi, ch)
+            if ids is None:
+                ids = [e["id"] for e in ch["events"] if e.get("kind") != "minor"]
+            main = self._main_moment(bi, ch, ids)
+            if main:
+                plates.append(Moment("plate", ch["title"], ch["title"], ch["last"], b.events[main]["summary"], main, ch["n"], bi))
+            elif ch["recaps"]:
+                first = next((x for r in ch["recaps"] for x in self._sentences(r["text"])), "")
+                plates.append(Moment("plate", ch["title"], ch["title"], ch["last"], first, None, ch["n"], bi))
+            others += [Moment("event", x, ch["title"], b.events[x]["from"], b.events[x]["summary"], x, ch["n"], bi)
+                       for x in ids if x != main]
+        others.sort(key=lambda m: b.ord_of[m.anchor])
+        return plates + others
+
+    @staticmethod
+    def default_moment(moments: list[Moment]) -> Moment | None:
+        """The scene a book's previews show unless the person chose another: the first chapter's main moment, else the next
+        moment that shows an event, else the first moment (a plate told by its recap); None when there are none."""
+        return next((m for m in moments if m.event), moments[0] if moments else None)
+
+    def preview_body(self, moment: Moment, finished: set[str] | frozenset[str] = frozenset(),
+                     story: Callable[[str, int], bool] | None = None, chapters: int = OPENING_CHAPTERS) -> Prompt:
+        """The body of a book's style previews: `moment`'s scene prompt from the scene writer at its anchor, as
+        `make_prompt` writes it, but with no reference pictures (every figure is labelled and described in words, none marked
+        portrait="yes"; nothing is attached and no reference note is built). `finished` defaults to none of the earlier
+        books, so nothing of an unfinished earlier series book reaches it and it suits any reader of this book. The moment
+        must be one of `opening_moments` (same `story` and `chapters`), else ValueError("not an opening moment"): never a
+        scene past the opening. Raises what `make_prompt` raises (Dropped, TextFailed)."""
+        bi = len(self.books) - 1 if moment.bi < 0 else moment.bi
+        opening = {(m.kind, m.target, m.anchor) for m in self.opening_moments(bi, chapters, story)}
+        if (moment.kind, moment.target, moment.anchor) not in opening:
+            raise ValueError("not an opening moment")
+        job = self.job(moment.kind, moment.target, bi, shape=PREVIEW_SHAPE, finished=finished)
+        if job.anchor != moment.anchor:
+            raise ValueError("not an opening moment")
+        return self._make_prompt(job, frozenset(finished), pictures=False)
+
     def _classified(self, bi: int, eid: str) -> bool:
         """Whether the manifest holds a fresh look index for the entity (a run has checked its looks, even when none was found)."""
         items = self.items(bi, eid)
@@ -3066,11 +3328,12 @@ class Illustrator:
         return deg
 
     def _labels(self, figures: list[str], pos: tuple[int, int], view: dict, finished: frozenset[str] | None,
-                upto: int | None) -> tuple[dict[str, str], set[str]]:
+                upto: int | None, pictures: bool = True) -> tuple[dict[str, str], set[str]]:
         """The figure label of each of a scene's people and creatures (`figures`, in entry order), and the entities among them
         whose reference picture is sent: those with a picture first, in `_pictured`'s order (most tied first), then the
-        rest, most tied first, then in entry order. Only the first MAX_REFERENCES with a picture have it sent."""
-        found = [eid for eid, _ in self._pictured(figures, pos, view, finished, upto, limit=None)]
+        rest, most tied first, then in entry order. Only the first MAX_REFERENCES with a picture have it sent. `pictures`
+        False: no picture is looked for (a style preview), so none is sent."""
+        found = [eid for eid, _ in self._pictured(figures, pos, view, finished, upto, limit=None)] if pictures else []
         deg = self._ties(view)
         order = {eid: n for n, eid in enumerate(dict.fromkeys(figures))}
         rest = sorted((eid for eid in order if eid not in found), key=lambda e: (-deg[e], order[e]))
@@ -3451,7 +3714,9 @@ class Illustrator:
         return self._make_prompt(job, finished, soften_request(refused, reason, limit), set(labels_in(refused)))
 
     def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "",
-                     keep: set[str] | None = None) -> Prompt:
+                     keep: set[str] | None = None, pictures: bool = True) -> Prompt:
+        """`pictures` False (a style preview's body): no figure is marked as having a reference picture and none is
+        attached."""
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -3626,7 +3891,7 @@ class Illustrator:
         pictured: set[str] = set()
         if scene:
             people = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
-            label_of, pictured = self._labels(people, self._pos(bi, anchor), view, fin, self._reach(job))
+            label_of, pictured = self._labels(people, self._pos(bi, anchor), view, fin, self._reach(job), pictures)
         def entry(eid: str, tag: str, budget: int, look: bool, figure: str = "", portrait: bool = False) -> None:
             """An entry of the scene (or the entity's group) in `tag`, with its look told earlier (`look`) within `budget`."""
             desc, shown = self._describe(vis[eid], budget)
@@ -3700,7 +3965,7 @@ class Illustrator:
             # the labelled figures first; a figure with a picture that the text does not label is not drawn (one with none,
             # the writer may have drawn unlabelled: `shows` decides)
             ids = labelled + [x for x in self._shown(out, ids, vis) if x not in labelled and x not in pictured]
-        refs = self.references(job, ids, fin, figures)
+        refs = self.references(job, ids, fin, figures) if pictures else []
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         style = self._style(bi)
@@ -3920,10 +4185,12 @@ class Illustrator:
                 self.report.checks["not verified: verification failed"] += 1
         return v
 
-    def _draw_fix(self, image, data: bytes, mime: str, faults: list[dict], note: str, shape: str, quality: str) -> images.Drawn:
-        """One edit call: the picture as the only reference, `fix_prompt` as the prompt. A ProviderError is sent again once
-        only when the request surely never reached the provider, as `draw` does; ImageRefused is raised."""
-        text = fix_prompt(faults, note)
+    def _draw_fix(self, image, data: bytes, mime: str, faults: list[dict], note: str, shape: str, quality: str,
+                  text: str | None = None) -> images.Drawn:
+        """One edit call: the picture as the only reference, `fix_prompt` (or `text`, a panel fix's own) as the prompt. A
+        ProviderError is sent again once only when the request surely never reached the provider, as `draw` does;
+        ImageRefused is raised."""
+        text = fix_prompt(faults, note) if text is None else text
         for attempt in (0, 1):
             try:
                 return image.draw(text, shape=shape, quality=quality, references=[(data, mime)])
@@ -4002,6 +4269,100 @@ class Illustrator:
         self.log(f"    fixed {kind} {rec.get('target')} ({rec.get('id')} -> {fid}, ${pic.cost:.3f}"
                  + (f", {v['fixed']} of {v['of']} put right" + (f", {v['partly']} partly" if v["partly"] else "")
                     if v else ", not verified") + ")")
+        return new
+
+    def fix_panel(self, rec: dict, k: int, text: str = "", note: str = "", faults=(), bi: int | None = None,
+                  verify: bool = True, checker=None) -> dict:
+        """Fix panel `k` (1-based) of a comic page of this run's sets and leave the other panels as they are. One edit call
+        on the comic's image model, at the record's quality and shape, with the page as the only reference and code's words
+        (`panel_fix_prompt`): the person's new `text` for the panel (their own words, drawn as given), `faults` and `note`.
+        Then by code the edited page's box k is pasted into the original page (both grids found, `n` boxes each, every edge
+        within GRID_AGREE of the page; the box reaches the middle of the gutters around it), so every other panel stays the
+        original pixels; else the whole edited page is kept. A pasted panel that differs from before by under
+        PANEL_UNCHANGED, or a verdict (`verify_fix`) that the edit changed nothing, files nothing and raises FixUnchanged.
+        The new record is filed as `fix`'s is, its `fixes[-1]` gaining `panel`, `text` (only when it changed) and `pasted`;
+        a changed text replaces panel k's in the record's `prompt`; `grid` is the original's when pasted, else the edited
+        page's. ValueError: not a comic, no such panel, nothing to fix, or the file is missing."""
+        if rec.get("kind") != "comic":
+            raise ValueError("not a comic")
+        n = len(rec.get("panels") or [])
+        if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= n:
+            raise ValueError("no such panel")
+        faults = clean_faults(faults, limit=MAX_FIX_FAULTS)
+        note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
+        text = " ".join(str(text or "").split())[:PANEL_TEXT_CHARS]
+        j = self._book_of(rec) if bi is None else bi
+        old_prompt = rec.get("prompt") or ""
+        spans = _panel_spans(old_prompt, self._style(j))   # as stored on the prompt (names replaced)
+        if text and spans and len(spans) == n and text == old_prompt[spans[k - 1][0]:spans[k - 1][1]]:
+            text = ""                                    # what the panel already says is not a change
+        if not text and not note and not faults:
+            raise ValueError("nothing to fix")
+        data = self.books[j].b.sink.read(rec.get("file") or "")
+        if data is None:
+            raise ValueError("the picture file is missing")
+        image, prov, name = self.image_for("comic")
+        quality = llm.nearest_quality(prov, name, rec["quality"]) if rec.get("quality") in images.QUALITIES else self.quality_for("comic")
+        shape = rec["shape"] if rec.get("shape") in images.SHAPES else SHAPE_OF["comic"]
+        old_mime = rec.get("mime") or "image/png"
+        grid = rec.get("grid") if isinstance(rec.get("grid"), list) and len(rec["grid"]) == n else comic_grid(data, n)
+        pic = self._draw_fix(image, data, old_mime, faults, note, shape, quality,
+                             text=panel_fix_prompt(n, k, _where(grid, k), text, note, faults))
+        with self.lock:
+            self.report.cost += pic.cost        # billed whatever the verdict
+            self.last_cost = pic.cost or self.last_cost
+        final, mime, pasted, new_grid = pic.data, pic.mime or "image/png", False, None
+        merged = _paste_panel(data, pic.data, k, n, old_mime)
+        if merged is not None:
+            final, mime, pasted, new_grid, delta = merged
+            if delta < PANEL_UNCHANGED:
+                items = len(faults) + (1 if text or note else 0)       # the panel's own item first, as the verification lists them
+                verdict = Verdict([{"n": i, "fixed": "no"} for i in range(1, items + 1)], False, [], True, 0.0,
+                                  "the panel came back as it was")
+                with self.lock:
+                    self.report.checks["not fixed: the fix changed nothing"] += 1
+                self.log(f"    fix of panel {k} of comic {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
+                raise FixUnchanged(verdict, round(pic.cost, 6))
+        else:
+            new_grid = comic_grid(pic.data, n)
+        asked = list(faults)
+        if text or note:      # the panel's own change comes first, so verified.results[0] is whether the panel changed
+            asked.insert(0, {"what": f"panel {k} should show: {text}" if text else note, "where": f"panel {k}", "severity": "major"})
+        verdict = None
+        if verify or final == data:
+            verdict = self._verify((data, old_mime), (final, mime), asked, note if text else "", j, checker)
+            if verdict.unchanged():
+                with self.lock:
+                    self.report.checks["not fixed: the fix changed nothing"] += 1
+                self.log(f"    fix of panel {k} of comic {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
+                raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
+        fid = "p" + hashlib.sha256(final).hexdigest()[:8]
+        w, h = size_of(final)
+        entry = self._fix_entry(faults, note, pic, prov, name, verdict)
+        entry.update({"panel": k, "pasted": pasted, **({"text": text} if text else {})})
+        new = {a: v for a, v in rec.items() if a not in ("replaces", "url", "set")}
+        new.update({"id": fid, "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h,
+                    "provider": prov or rec.get("provider"), "model": pic.model or name or rec.get("model"), "quality": quality,
+                    "shape": shape, "cost": round((rec.get("cost") or 0) + entry["cost"], 6), "created": _now(),
+                    "grid": new_grid,
+                    "fixes": [*(f for f in rec.get("fixes") or [] if isinstance(f, dict)), entry]})
+        if text and spans and len(spans) == n:
+            new["prompt"] = old_prompt[:spans[k - 1][0]] + text + old_prompt[spans[k - 1][1]:]
+        if text and isinstance(rec.get("panelTexts"), list) and len(rec["panelTexts"]) == n:
+            new["panelTexts"] = [text if i == k - 1 else t for i, t in enumerate(rec["panelTexts"])]
+        with self.lock:
+            self.books[j].b.sink.put(new["file"], final)
+            self._dirty.add(j)
+            pics = self.man[j]["pictures"]
+            pics[:] = [r for r in pics if r.get("id") != fid]
+            pics.append(new)
+            self.report.fixed += 1
+            self.man[j]["cost"] = round(sum(r.get("cost") or 0 for r in pics), 6)
+            self._save(j)
+        v = entry["verified"]
+        self.log(f"    fixed panel {k} of comic {rec.get('target')} ({rec.get('id')} -> {fid}, ${pic.cost:.3f}"
+                 + (", pasted" if pasted else ", whole page")
+                 + (f", {v['fixed']} of {v['of']} put right" if v else ", not verified") + ")")
         return new
 
     def _auto_check(self, job: Job, pr: Prompt, pic: images.Drawn, quality: str, held: float,
@@ -4141,6 +4502,10 @@ class Illustrator:
             rec["figures"] = figures
         if job.kind == "comic":            # the page's moments, one per panel: the Reader captions each from the view
             rec["panels"] = list(pr.panels if pr.panels is not None else job.panels)
+            rec["grid"] = comic_grid(pic.data, len(rec["panels"]))   # the panel boxes, for a panel fix; None when not found
+            texts = panel_texts(pr.text, pr.style or "")             # the panels' texts as drawn, for the Reader's form
+            if texts and len(texts) == len(rec["panels"]):
+                rec["panelTexts"] = texts
         if pr.partial:
             rec["partial"] = True
         _, provider, model = self.image_for(job.kind)

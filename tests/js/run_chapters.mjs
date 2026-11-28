@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const { classify, label, numbering, numbersByStart, ownNumber, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
+const { classify, label, numbering, numbersByStart, ownNumber, recapChapter, recapNumbers, roman } = await import(join(here, "../../src/lorekeeper/web/static/js/chapters.js"));
 let failed = 0;
 const test = (name, fn) => { try { fn(); console.log(`ok   ${name}`); } catch (e) { failed++; console.log(`FAIL ${name}\n${e.message}`); } };
 
@@ -79,6 +79,61 @@ test("recaps: a book that numbers its chapters keeps the numbers whichever recap
   assert.deepEqual(Object.fromEntries(recapNumbers(doc)), { c: null, t: 2, f: 4 });
   assert.equal(recapNumbers(null).size, 0);
 });
+
+// recapChapter: which map chapter a chapter recap sits in. Blocks: a short heading (2 words) opens each chapter.
+{
+  //            ch XIV: 10..19          ch XV: 20..29          Part Two: 30   ch XVI: 31..40
+  const map = [{ title: "Chapter XIV. Father of Whispers", start: 10 }, { title: "Chapter XV. The Bridge", start: 20 },
+    { title: "Part Two", start: 30 }, { title: "Chapter XVI", start: 31 }];
+  const words = Array.from({ length: 41 }, (_, k) => (map.some((c) => c.start === k) ? 2 : 120));
+  const at = (seq, title) => recapChapter(map, seq, title, words)?.start ?? null;
+  test("recapChapter: anchored on the next chapter's second block, goes to its own chapter", () => {
+    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
+    assert.equal(at(21, "  chapter xiv.   father OF whispers "), 10);   // case and spacing do not matter
+  });
+  test("recapChapter: parts of one long chapter stay together", () => {
+    assert.equal(at(14, "Chapter XIV. Father of Whispers"), 10);
+    assert.equal(at(18, "Chapter XIV. Father of Whispers"), 10);
+    assert.equal(at(21, "Chapter XIV. Father of Whispers"), 10);
+  });
+  test("recapChapter: anchored in a chapter's first long paragraph with no matching title, stays there", () => {
+    assert.equal(at(22, "Something else"), 20);
+    assert.equal(at(22, ""), 20);
+  });
+  test("recapChapter: a hand-titled recap after an all-short opening goes back one", () => {
+    assert.equal(at(21, "What happened at the bridge"), 10);
+    assert.equal(at(20, "What happened at the bridge"), 10);   // on the heading itself
+  });
+  test("recapChapter: a short divider between is passed over, never more than one real chapter back", () => {
+    assert.equal(at(32, "Chapter XV. The Bridge"), 20);
+    assert.equal(at(32, "My own title"), 20);
+    assert.equal(at(32, "Chapter XIV. Father of Whispers"), 20);   // XIV is out of reach: rule 2, one back
+  });
+  test("recapChapter: never after the anchor's chapter, null before the first", () => {
+    assert.equal(at(14, "Chapter XV. The Bridge"), 10);
+    assert.equal(at(5, "Chapter XIV. Father of Whispers"), null);
+    assert.equal(recapChapter([], 5, "x", words), null);
+    assert.equal(recapChapter(map, null, "x", words), null);
+  });
+  test("recapChapter: the first chapter has nothing to go back to", () => {
+    assert.equal(at(11, "Anything"), 10);
+  });
+  test("recapChapter: two chapters with one title, decided by where the anchor is", () => {
+    const twin = [{ title: "Interlude", start: 0 }, { title: "Interlude", start: 10 }];
+    const w = Array.from({ length: 20 }, (_, k) => (k === 0 || k === 10 ? 1 : 50));
+    assert.equal(recapChapter(twin, 11, "Interlude", w).start, 0);    // snapped past the first one's end
+    assert.equal(recapChapter(twin, 14, "Interlude", w).start, 10);   // its own text before the anchor
+  });
+  test("recapChapter: without word counts, the title alone decides and nothing goes back by rule 2", () => {
+    assert.equal(recapChapter(map, 21, "Chapter XIV. Father of Whispers", null).start, 10);
+    assert.equal(recapChapter(map, 21, "My own title", null).start, 20);
+  });
+  test("recapChapter: a tidier is applied to both titles", () => {
+    const up = [{ title: "CHAPTER I", start: 0 }, { title: "CHAPTER II", start: 10 }];
+    const w = Array.from({ length: 20 }, (_, k) => (k % 10 ? 50 : 2));
+    assert.equal(recapChapter(up, 11, "Chapter i", w, (t) => t.toLowerCase()).start, 0);
+  });
+}
 
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");

@@ -7,7 +7,7 @@ import { PASSWORD_RULE, passwordForm } from "./auth.js";
 import { confirmDialog } from "./build.js";
 import { clear, fmtInt, h, icon, relTime, toast } from "./dom.js";
 import { CHECK_COST } from "./artfix.js";
-import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, levelsOf, loadStyles, modelFor, modelProviders, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, stylePicker, writerSelect } from "./art.js";
+import { artDefaults, drawsPictures, fitQuality, imageLine, imageModels, imagePrice, levelsOf, loadStyles, modelFor, modelProviders, money as aboutMoney, portraitImageSelect, QUALITIES, setArtDefaults, STYLES, styleLabel, stylePicker, writerSelect } from "./art.js";
 
 const gb = (bytes) => (bytes ? `${(bytes / 1e9).toFixed(1)} GB` : "");
 // A 100,000-word novel at standard depth, measured on a fact-checked run: 1.2 input and 0.58 output tokens per word.
@@ -383,6 +383,21 @@ export function mountSettings(root) {
   paintCloud();
 
   // ---- Pictures ------------------------------------------------------------------------------
+  /** What a book's style previews cost: every style once per image provider, square, at the provider's default model's
+   *  cheapest level (what the previews run draws at). "About 30 cents per book for Gemini." */
+  function previewCost(provs, styles) {
+    const each = provs.map((p) => {
+      const m = modelFor(p);
+      const q = levelsOf(p, m)[0]?.[0] || "draft";
+      const one = imagePrice(p, q, "square", m);
+      return { name: p.label || p.id, usd: one == null ? null : one * styles };
+    });
+    const one = (x) => (x.usd == null ? "price unknown" : aboutMoney(x.usd));
+    if (each.length === 1) { const t = one(each[0]); return `${t[0].toUpperCase()}${t.slice(1)} per book with ${each[0].name}.`; }
+    const parts = each.map((x, i) => `${one(x)}${i ? "" : " per book"} for ${x.name}`);
+    const said = `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+    return `${said[0].toUpperCase()}${said.slice(1)}.`;
+  }
   // The defaults new pictures start from (kept in this browser), and the art sets on this server with their size.
   async function paintPictures(focusId = null) {
     const d = artDefaults();
@@ -426,6 +441,8 @@ export function mountSettings(root) {
     const sets = h("div.pic-sets", h("p.set-note", "Looking for pictures…"));
     const check = h("input", { type: "checkbox", role: "switch", id: "pic-check", checked: d.check,
       on: { change: (e) => save({ check: e.target.checked }, "Drawing fault check") } });
+    const previews = h("input", { type: "checkbox", role: "switch", id: "pic-previews", checked: d.previews,
+      on: { change: (e) => save({ previews: e.target.checked }, "Style previews") } });
     clear(panes.pictures,
       head("pictures", "Pictures", provs.length ? "What new pictures start from, and the pictures kept on this server." : null),
       provs.length ? null : h("p.set-note", "Pictures need a Gemini or OpenAI key. ", h("a", { href: "#/settings/cloud" }, "Add one in Cloud models")),
@@ -439,7 +456,10 @@ export function mountSettings(root) {
           onChange: (c) => save({ portraitProvider: c?.provider || null, portraitModel: c?.model || null }, "Portrait model") })) : null,
         provs.length ? row(h("label", { for: "pic-check" }, "Check pictures for drawing faults"), h("div.pic-check",
           h("span.switch", check, h("span", d.check ? "On" : "Off")),
-          h("p.hint", `A cheap model looks at each new picture for drawing faults, such as an extra hand or a head far too small. When it finds one you would see at a glance, the picture is fixed once, and the original is kept if a second look finds the fix put nothing right. Smaller faults are left as drawn. ${CHECK_COST}`)), null, { top: true }) : null),
+          h("p.hint", `A cheap model looks at each new picture for drawing faults, such as an extra hand or a head far too small. When it finds one you would see at a glance, the picture is fixed once, and the original is kept if a second look finds the fix put nothing right. Smaller faults are left as drawn. ${CHECK_COST}`)), null, { top: true }) : null,
+        provs.length ? row(h("label", { for: "pic-previews" }, "Draw style previews for new books"), h("div.pic-check",
+          h("span.switch", previews, h("span", d.previews ? "On" : "Off")),
+          h("p.hint", `After a book's first build, one scene from its opening is drawn in every style, once per image provider, so the style cards show that book. ${previewCost(provs, styles.length)}`)), null, { top: true }) : null),
       h("h3.pic-sets-h#pic-styles-h", "Styles"),
       h("p.set-note", "Every style shows the same scene; the one you choose is where new pictures start."),
       h("div.pic-styles", { role: "region", "aria-labelledby": "pic-styles-h" }, picker.el),

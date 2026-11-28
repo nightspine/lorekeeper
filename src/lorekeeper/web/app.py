@@ -36,14 +36,15 @@ from ..generate import slug
 from . import art as artstore
 from . import auth as authmod
 from . import bookorbit, position, protocol
+from . import previews as previewsmod
 from . import read as readmod
 from . import styles as stylesmod
 from .catalog import Catalog, series_num, story_chapters
 from .community import KEEP, Community, CommunityError
 from .editor import EditError, Editor, WordingError
 from .identity import Identity
-from .jobs import (BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story, run_limits,
-                   text_choice_config)
+from .jobs import (SIDE_KINDS, BookStore, JobManager, art_config, chapter_choice, describe, entity_run, is_story,
+                   previews_config, run_limits, text_choice_config)
 from .secrets import Keys, SecretStore, mask
 
 STATIC = Path(__file__).parent / "static"
@@ -211,6 +212,9 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     arts = artstore.ArtStore(data_dir)
     jobs.art_store = arts
     style_store = stylesmod.StyleStore(data_dir)     # saved picture styles; also gives art.style_sentence their words
+    preview_store = previewsmod.PreviewStore(data_dir)   # a book's own style previews (web/previews.py), never an art set
+    jobs.previews = preview_store
+    jobs.preview_styles = lambda: {st["slug"]: st["text"] for st in style_store.all()}
     library = Library([("generated", data_dir / "indexes"), ("community", data_dir / "community" / "indexes"),
                        *index_dirs], [data_dir / "books", *epub_dirs])
     catalog = Catalog(data_dir, books, jobs, library)
@@ -245,7 +249,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return none
         # A pictures run writes its prompts with a cloud model: it counts only when its text provider is Ollama.
         busy = any(j.status in ("running", "stopping")
-                   and (j.config.get("provider") or ("" if j.kind == "art" else "ollama")) == "ollama"
+                   and (j.config.get("provider") or ("" if j.kind in SIDE_KINDS else "ollama")) == "ollama"
                    for j in jobs.jobs.values())
         # one Ollama model at a time: don't compete with a running build
         return {"model": None if busy else llm.make("ollama", llm.DEFAULT_MODEL, url=ollama_url),
@@ -460,7 +464,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
 
     def job_json(job) -> dict:
         return {**asdict(job), "output_name": Path(job.output).name,
-                **({"index": job.config.get("index_key")} if job.kind == "art" else {})}
+                **({"index": job.config.get("index_key")} if job.kind in SIDE_KINDS else {})}
 
     @app.get("/")
     def root():
@@ -2030,6 +2034,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return art_error(e.status, e.code, e.detail)
         return {"removed": slugs, "undo": entry["id"] if entry else None}
 
+    GRIDS: dict[tuple[str, str], list | None] = {}     # (textHash, picture id) -> panel boxes, for comics drawn before `grid`
+
+    def comic_grid_of(h: str, slug_: str, pid: str):
+        """The panel boxes of a comic whose record has no `grid` (drawn before it), found from its file once and kept in
+        memory by picture id; never written. None without Pillow or when the boxes are not found."""
+        if (h, pid) not in GRIDS:
+            f = arts.path(h, slug_, pid)
+            rec = arts.find(h, pid)
+            n = len([x for x in (rec[1].get("panels") or []) if isinstance(x, str)]) if rec else 0
+            try:
+                GRIDS[(h, pid)] = artmod.comic_grid(f.read_bytes(), n) if f and n else None
+            except Exception:
+                GRIDS[(h, pid)] = None
+        return GRIDS[(h, pid)]
+
     @app.get("/api/library/{key}/art")
     def library_art(key: str, style: str | None = None):
         """The art set of one style, whole (the Reader gates every picture by its `from`), with the styles present."""
@@ -2047,6 +2066,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             body["world"] = artstore.world_of(bg)
         hashes = edition_hashes(ctx) if m and any(isinstance(r.get("figures"), list) for r in body.get("pictures", [])) else None
         body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
+        for r in body["pictures"]:
+            if r.get("kind") != "comic":
+                continue
+            if "grid" not in r:
+                r["grid"] = comic_grid_of(h, slug_, r["id"])
+            if "panelTexts" not in r:       # drawn before they were stored: cut from the prompt, never written
+                texts = None
+                cut = getattr(artmod, "panel_texts", None)
+                if cut and isinstance(r.get("prompt"), str):
+                    try:
+                        texts = cut(r["prompt"], artmod.style_sentence((m or {}).get("style") or ""))
+                    except Exception:
+                        texts = None
+                if texts and len(texts) == len([x for x in r.get("panels") or [] if isinstance(x, str)]):
+                    r["panelTexts"] = texts
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
     def story_rows(il, rows: list[dict]) -> list[dict]:
@@ -2812,10 +2846,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     "model": artmod.model_ref(checker)}
         return await work()
 
-    def fix_request(body: dict) -> tuple[list[dict], str]:
+    def fix_request(body: dict, need: bool = True) -> tuple[list[dict], str]:
         """The faults and note of a fix request, checked: 0 to 8 faults, each {what: 1 to 200 characters, where: 0 to
-        120, severity: major or minor (missing: major)}, a note of at most 300, and at least one fault or a note. Raises
-        422 `bad-fix`."""
+        120, severity: major or minor (missing: major)}, a note of at most 300, and (with `need`) at least one fault or a
+        note. Raises 422 `bad-fix`."""
         raw = body.get("faults", [])
         note = body.get("note") or ""
         if not isinstance(raw, list) or len(raw) > artmod.MAX_FIX_FAULTS or not isinstance(note, str):
@@ -2838,7 +2872,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         note = " ".join(note.split())
         if len(note) > artmod.FIX_NOTE_CHARS:
             raise ArtRefusal(422, "bad-fix", "Keep the note to 300 characters.")
-        if not faults and not note:
+        if need and not faults and not note:
             raise ArtRefusal(422, "bad-fix", "Say what to fix.")
         return faults, note
 
@@ -2866,51 +2900,255 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         @art_route
         def work():
             faults, note = fix_request(body)
-            ctx = art_index(key)
-            slug_, rec = art_record(ctx, pid)
-            art_busy(ctx["hash"])
-            fin = art_finished(ctx, body)
-            checker = art_checker(body)
-            with arts.lock(ctx["hash"], slug_):
-                slug_, rec = art_record(ctx, pid)       # read again under the lock
-                prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
-                mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
-                qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
-                il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod, text_needed=False)
-                if image is None:
-                    which = llm.PROVIDERS[prov]["label"] if prov else "Gemini or OpenAI"
-                    raise ArtRefusal(409, "no-image-key", f"Add a {which} key in Settings to fix this picture.")
-                art_gate(ctx, il, rec, body, fin)
-                try:
-                    new = il.fix(rec, faults, note, bi=len(il.books) - 1, verify=checker is not None, checker=checker)
-                except images.ImageRefused as e:
-                    raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
-                except ValueError as e:
-                    if "missing" in str(e):
-                        raise ArtRefusal(409, "stale", "The picture file is missing.") from e
-                    raise ArtRefusal(422, "bad-fix", str(e)) from e
-                except artmod.FixUnchanged as e:
-                    v = getattr(e, "verdict", None)
-                    raise ArtRefusal(422, "unchanged", UNCHANGED, extra={
-                        "verified": verified_json(v, len(faults)) if v is not None else None,
-                        "fixCost": round(getattr(e, "cost", 0) or 0, 6)}) from e
-                if "inherits" not in rec:
-                    new.pop("inherits", None)
-                # the fix sends none of the person's pictures (an edit keeps the picture's own look), but they stay with it
-                # for a redraw
-                carry = {"userRefs": rec["userRefs"]} if rec.get("userRefs") and not new.get("userRefs") else None
-                new = {**new, **(carry or {})}
-                kept = arts.path(ctx["hash"], slug_, pid)
-                before = kept is not None and kept.name != new["file"]
-                entry = take_place_of(key, ctx["hash"], slug_, rec, new, "fixed a picture", carry)
-            last = (new.get("fixes") or [{}])[-1]
-            verified = last.get("verified")
-            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
-                    "fixCost": last.get("cost") or 0,
-                    "verified": ({**verified, "new": [fault_json(f) for f in verified.get("new") or []]}
-                                 if isinstance(verified, dict) else None),
-                    "beforeUrl": f"/api/library/{key}/art/{new['id']}/before" if before else None}
+            return file_fix(key, pid, body,
+                            lambda il, rec, checker: il.fix(rec, faults, note, bi=len(il.books) - 1,
+                                                            verify=checker is not None, checker=checker),
+                            "fixed a picture")
         return await work()
+
+    def file_fix(key: str, pid: str, body: dict, edit, what: str) -> dict:
+        """What the fix and the panel-fix routes share: the gates, the record's own image model, one `edit(il, rec,
+        checker)` that returns the new record (or raises `FixUnchanged`, `ImageRefused`, `ValueError`), then the new record
+        takes the old one's place (one journal entry, `what`) and the reply carries `verified` and `beforeUrl`. A 422
+        `unchanged` serves the pipeline's own verdict as it built it (its results, never a count made from the request)."""
+        ctx = art_index(key)
+        slug_, rec = art_record(ctx, pid)
+        art_busy(ctx["hash"])
+        fin = art_finished(ctx, body)
+        checker = art_checker(body)
+        with arts.lock(ctx["hash"], slug_):
+            slug_, rec = art_record(ctx, pid)       # read again under the lock
+            prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
+            mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
+            qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
+            il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod, text_needed=False)
+            if image is None:
+                which = llm.PROVIDERS[prov]["label"] if prov else "Gemini or OpenAI"
+                raise ArtRefusal(409, "no-image-key", f"Add a {which} key in Settings to fix this picture.")
+            art_gate(ctx, il, rec, body, fin)
+            try:
+                new = edit(il, rec, checker)
+            except images.ImageRefused as e:
+                raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
+            except ValueError as e:
+                if "missing" in str(e):
+                    raise ArtRefusal(409, "stale", "The picture file is missing.") from e
+                raise ArtRefusal(422, "bad-fix", str(e)) from e
+            except artmod.FixUnchanged as e:
+                v = getattr(e, "verdict", None)
+                raise ArtRefusal(422, "unchanged", UNCHANGED, extra={
+                    "verified": verified_json(v, len(getattr(v, "results", None) or [])) if v is not None else None,
+                    "fixCost": round(getattr(e, "cost", 0) or 0, 6)}) from e
+            if "inherits" not in rec:
+                new.pop("inherits", None)
+            kept = arts.path(ctx["hash"], slug_, pid)
+            before = kept is not None and kept.name != new["file"]
+            # the fix sends none of the person's pictures (an edit keeps the picture's own look), but they stay with it
+            # for a redraw
+            carry = {"userRefs": rec["userRefs"]} if rec.get("userRefs") and not new.get("userRefs") else None
+            new = {**new, **(carry or {})}
+            entry = take_place_of(key, ctx["hash"], slug_, rec, new, what, carry)
+        last = (new.get("fixes") or [{}])[-1]
+        verified = last.get("verified")
+        return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
+                "fixCost": last.get("cost") or 0,
+                "verified": ({**verified, "new": [fault_json(f) for f in verified.get("new") or []]}
+                             if isinstance(verified, dict) else None),
+                "beforeUrl": f"/api/library/{key}/art/{new['id']}/before" if before else None}
+
+    @app.post("/api/library/{key}/art/{pid}/panel")
+    async def art_panel(key: str, pid: str, request: Request):
+        """Fix one panel of a comic page: `{k, text?, note?, faults?, p?, finished?}`. One edit of the whole page by the
+        image model that drew it, then only panel k's box is pasted into the original (`Illustrator.fix_panel`); filed and
+        answered as the fix route does (`verified`, `beforeUrl`, `fixCost`, `undo`, 422 `unchanged` and `refused`), the
+        journal entry saying "fixed panel k of a comic". 422 `not-comic`, `bad-panel`, `bad-fix`."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            _, rec = art_record(ctx, pid)
+            if rec.get("kind") != "comic":
+                raise ArtRefusal(422, "not-comic", "Only a comic page has panels.")
+            k = body.get("k")
+            n = len([x for x in rec.get("panels") or [] if isinstance(x, str)])
+            if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= n:
+                raise ArtRefusal(422, "bad-panel", "Choose one of the page's panels.")
+            text_ = body.get("text") or ""
+            if not isinstance(text_, str):
+                raise ArtRefusal(422, "bad-fix", "The panel's text must be text.")
+            text_ = " ".join(text_.split())
+            if len(text_) > artmod.PANEL_TEXT_CHARS:
+                raise ArtRefusal(422, "bad-fix", f"Keep the panel's text to {artmod.PANEL_TEXT_CHARS} characters.")
+            faults, note = fix_request(body, need=False)
+            if not faults and not note and not text_:
+                raise ArtRefusal(422, "bad-fix", "Say what to fix.")
+            return file_fix(key, pid, body,
+                            lambda il, r, checker: il.fix_panel(r, k, text_, note, faults, bi=len(il.books) - 1,
+                                                                verify=checker is not None, checker=checker),
+                            f"fixed panel {k} of a comic")
+        return await work()
+
+    # ---- style previews: one opening scene of the book in every style, per image provider (web/previews.py) ----------
+
+    def preview_moments(ctx: dict, need: bool = True):
+        """(Illustrator, opening moments) of an index, no model call; (None, []) without the EPUB unless `need`."""
+        try:
+            book = art_epub(ctx)
+        except ArtRefusal:
+            if need:
+                raise
+            return None, []
+        il = previewsmod.illustrator(ctx["doc"], book, art_prior(ctx), None, preview_seed(ctx["hash"]))
+        return il, previewsmod.opening(il, is_story)
+
+    def preview_seed(h: str) -> dict | None:
+        sets = arts.styles(h)
+        return arts.manifest(h, sets[0]["slug"]) if sets else None
+
+    def preview_scene_json(scene: dict | None) -> dict | None:
+        if not isinstance(scene, dict):
+            return None
+        return {k: scene.get(k) for k in ("kind", "target", "chapter", "storyChapter", "summary", "writer", "chosen",
+                                          "created")}
+
+    def preview_estimate_json(plan: dict) -> dict:
+        return {"pictures": plan["pictures"], "price": plan["price"], "styles": plan["styles"],
+                "providers": [{"provider": r["provider"], "label": llm.PROVIDERS.get(r["provider"], {}).get("label", r["provider"]),
+                               "model": r["model"], "quality": r["quality"], "price": r["price"],
+                               "pictures": len(r["styles"])} for r in plan["providers"]]}
+
+    def preview_target(ctx: dict, raw) -> tuple[dict, dict | None, bool]:
+        """(the moment a previews job would draw, the stored data, whether the scene is new): 422 `no-moments` when the
+        opening has none, `bad-scene` for a target that is not one of them."""
+        _, moments = preview_moments(ctx)
+        if not moments:
+            raise ArtRefusal(422, "no-moments", "The first chapters of this book have no moments to draw.")
+        cur = preview_store.get(ctx["hash"])
+        m = previewsmod.choose(moments, raw, (cur or {}).get("scene"))
+        if m is None:
+            raise ArtRefusal(422, "bad-scene", "Choose a moment from the first chapters of the book.")
+        return m, cur, not previewsmod.same_scene((cur or {}).get("scene"), m)
+
+    @app.get("/api/library/{key}/previews")
+    @art_route
+    def previews_get(key: str):
+        """The book's own style previews: the scene (never its prompt), one URL per provider and style with whether it is
+        stale, the opening moments a person may choose instead, and whether a previews job is under way."""
+        ctx = art_index(key)
+        h = ctx["hash"]
+        il, moments = preview_moments(ctx, need=False)
+        data = preview_store.get(h) or {}
+        scene = data.get("scene")
+        if il is not None and isinstance(scene, dict):
+            b = il.books[-1]       # a stored scene outside the opening as the book reads now is never shown
+            story = [c for c in b.chapters if is_story(c["title"], c.get("words", 0))][:previewsmod.OPENING_CHAPTERS]
+            s = b.seq_of.get(scene.get("anchor"))
+            if s is None or not any(c["lo"] <= s <= c["hi"] for c in story):
+                scene = None
+        words = jobs.preview_styles()
+        providers = {}
+        if scene:
+            for p, per in (data.get("items") or {}).items():
+                if p not in llm.IMAGE_PROVIDERS or not isinstance(per, dict):
+                    continue
+                row = {}
+                for slug_, it in per.items():
+                    if slug_ not in words or not isinstance(it, dict) or preview_store.path(h, p, slug_) is None:
+                        continue
+                    ref = artmod.style_reference(slug_) if slug_ not in artmod.STYLES else None
+                    row[slug_] = {"url": f"/api/previews/{h}/{p}/{slug_}?v={int(it.get('created') or 0)}",
+                                  "model": it.get("model"), "quality": it.get("quality"),
+                                  "stale": previewsmod.stale(it, words[slug_], ref.sha if ref else None)}
+                if row:
+                    providers[p] = row
+        return {"scene": preview_scene_json(scene), "providers": providers,
+                "moments": [previewsmod.public_moment(m) for m in moments], "drawing": jobs.previewing(h)}
+
+    @app.get("/api/previews/{text_hash}/{provider}/{slug}")
+    def preview_file(text_hash: str, provider: str, slug: str):
+        p = preview_store.path(text_hash, provider, slug)
+        if p is None:
+            raise HTTPException(404, "no such preview")
+        return FileResponse(p, media_type=previewsmod.MIME.get(p.suffix[1:], "application/octet-stream"),
+                            headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+    @app.get("/api/library/{key}/previews/estimate")
+    @art_route
+    def previews_estimate(key: str, scene: str | None = None, redraw: bool = False):
+        """What drawing the previews would cost, no model call: every style for each image provider with a key, at its
+        default model's cheapest level, square; with the same scene, only the styles not drawn yet or stale (all with
+        `redraw`). `price` null when a picture to draw has no known price."""
+        ctx = art_index(key)
+        _, _, fresh = preview_target(ctx, scene or None)
+        return preview_estimate_json(jobs.preview_plan(ctx["hash"], None, None, fresh=fresh, redraw=redraw))
+
+    @app.post("/api/library/{key}/previews")
+    async def previews_post(key: str, request: Request):
+        """Queue the book's style previews ({scene?: a moment's target, redraw?: bool, styles?, providers?}); answers the job."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
+            ctx = art_index(key)
+            try:
+                cfg = previews_config(body)
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            if not any(jobs.keys(p) for p in (cfg["providers"] or llm.IMAGE_PROVIDERS)):
+                raise ArtRefusal(409, "no-image-key", "Add a Gemini or OpenAI key in Settings to draw style previews.")
+            m, _, fresh = preview_target(ctx, cfg["scene"])
+            if fresh and jobs.text_choice("cheap") is None:
+                raise ArtRefusal(409, "no-text-model", "Style previews need a cloud model to write the scene. Add a key in Settings.")
+            if jobs.previewing(ctx["hash"]):
+                raise ArtRefusal(409, "busy", "Style previews are already being drawn for this book.")
+            plan = jobs.preview_plan(ctx["hash"], cfg["styles"], cfg["providers"], fresh=fresh, redraw=cfg["redraw"])
+            if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+                raise ArtRefusal(422, "bad-config", f"That would cost more than ${previewsmod.CAP:.2f}.")
+            owner = next((e for e in catalog.entries() if any(v["key"] == key for v in e["versions"])), None)
+            title = ctx["doc"].get("work", {}).get("title") or key
+            try:
+                job = jobs.submit_previews(key, {**cfg, "scene": m["target"] if cfg["scene"] else None},
+                                           index_path=str(ctx["item"]["path"]), book_id=(owner or {}).get("localId") or "",
+                                           title=title, text_hash=ctx["hash"], catalog_key=(owner or {}).get("key"))
+            except ValueError as e:
+                raise ArtRefusal(422, "bad-config", str(e)) from e
+            except RuntimeError as e:
+                raise ArtRefusal(409, "busy", str(e)) from e
+            return job_json(job)
+        return await work()
+
+    @app.delete("/api/library/{key}/previews")
+    @art_route
+    def previews_delete(key: str):
+        ctx = art_index(key)
+        if jobs.previewing(ctx["hash"]):
+            raise ArtRefusal(409, "busy", "Style previews are being drawn for this book. Stop that run first.")
+        return {"removed": preview_store.remove(ctx["hash"])}
+
+    def after_build(job) -> str | None:
+        """A finished build asked for style previews (`stylePreviews` in its config): queue them when the edition has
+        none yet and an image provider has a key. The line goes into the build's log."""
+        if job.config.get("stylePreviews") is not True:
+            return None
+        key = art_key_for(job)
+        item = library.get(key) if key else None
+        if item is None or item["doc"].get("kind") != "index":
+            return None
+        h = artstore.text_hash(item["doc"])
+        if not artstore.HASH.fullmatch(h) or preview_store.get(h) or jobs.previewing(h):
+            return None
+        if not any(jobs.keys(p) for p in llm.IMAGE_PROVIDERS):
+            return "style previews: not drawn (add a Gemini or OpenAI key in Settings to draw them)"
+        plan = jobs.preview_plan(h, None, None, fresh=True)
+        if plan["price"] is not None and plan["price"] > previewsmod.CAP:
+            return f"style previews: not drawn (they would cost more than ${previewsmod.CAP:.2f})"
+        title = item["doc"].get("work", {}).get("title") or job.book_title
+        jobs.submit_previews(key, {}, index_path=str(item["path"]), book_id=job.book_id, title=title, text_hash=h,
+                             catalog_key=job.config.get("catalog_key"))
+        cost = "price unknown" if plan["price"] is None else f"about ${plan['price']:.2f}"
+        return f"style previews: queued, {plan['pictures']} pictures, {cost}"
+    jobs.after_build = after_build
 
     @app.get("/api/library/{key}/art/{pid}/before")
     def art_before(key: str, pid: str, p: str | None = None, finished: str | None = None):
