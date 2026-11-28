@@ -1880,6 +1880,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             return art_error(e.status, e.code, e.detail)
         return {"removed": slugs, "undo": entry["id"] if entry else None}
 
+    GRIDS: dict[tuple[str, str], list | None] = {}     # (textHash, picture id) -> panel boxes, for comics drawn before `grid`
+
+    def comic_grid_of(h: str, slug_: str, pid: str):
+        """The panel boxes of a comic whose record has no `grid` (drawn before it), found from its file once and kept in
+        memory by picture id; never written. None without Pillow or when the boxes are not found."""
+        if (h, pid) not in GRIDS:
+            f = arts.path(h, slug_, pid)
+            rec = arts.find(h, pid)
+            n = len([x for x in (rec[1].get("panels") or []) if isinstance(x, str)]) if rec else 0
+            try:
+                GRIDS[(h, pid)] = artmod.comic_grid(f.read_bytes(), n) if f and n else None
+            except Exception:
+                GRIDS[(h, pid)] = None
+        return GRIDS[(h, pid)]
+
     @app.get("/api/library/{key}/art")
     def library_art(key: str, style: str | None = None):
         """The art set of one style, whole (the Reader gates every picture by its `from`), with the styles present."""
@@ -1897,6 +1912,21 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             body["world"] = artstore.world_of(bg)
         hashes = edition_hashes(ctx) if m and any(isinstance(r.get("figures"), list) for r in body.get("pictures", [])) else None
         body["pictures"] = [picture_json(ctx, slug_, r, hashes) for r in body.get("pictures", [])] if m else []
+        for r in body["pictures"]:
+            if r.get("kind") != "comic":
+                continue
+            if "grid" not in r:
+                r["grid"] = comic_grid_of(h, slug_, r["id"])
+            if "panelTexts" not in r:       # drawn before they were stored: cut from the prompt, never written
+                texts = None
+                cut = getattr(artmod, "panel_texts", None)
+                if cut and isinstance(r.get("prompt"), str):
+                    try:
+                        texts = cut(r["prompt"], artmod.style_sentence((m or {}).get("style") or ""))
+                    except Exception:
+                        texts = None
+                if texts and len(texts) == len([x for x in r.get("panels") or [] if isinstance(x, str)]):
+                    r["panelTexts"] = texts
         return {**body, "slug": slug_ if m else None, "styles": styles, "size": arts.size(h)}
 
     def story_rows(il, rows: list[dict]) -> list[dict]:
@@ -2470,10 +2500,10 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     "model": artmod.model_ref(checker)}
         return await work()
 
-    def fix_request(body: dict) -> tuple[list[dict], str]:
+    def fix_request(body: dict, need: bool = True) -> tuple[list[dict], str]:
         """The faults and note of a fix request, checked: 0 to 8 faults, each {what: 1 to 200 characters, where: 0 to
-        120, severity: major or minor (missing: major)}, a note of at most 300, and at least one fault or a note. Raises
-        422 `bad-fix`."""
+        120, severity: major or minor (missing: major)}, a note of at most 300, and (with `need`) at least one fault or a
+        note. Raises 422 `bad-fix`."""
         raw = body.get("faults", [])
         note = body.get("note") or ""
         if not isinstance(raw, list) or len(raw) > artmod.MAX_FIX_FAULTS or not isinstance(note, str):
@@ -2496,7 +2526,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         note = " ".join(note.split())
         if len(note) > artmod.FIX_NOTE_CHARS:
             raise ArtRefusal(422, "bad-fix", "Keep the note to 300 characters.")
-        if not faults and not note:
+        if need and not faults and not note:
             raise ArtRefusal(422, "bad-fix", "Say what to fix.")
         return faults, note
 
@@ -2524,46 +2554,89 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         @art_route
         def work():
             faults, note = fix_request(body)
+            return file_fix(key, pid, body, len(faults),
+                            lambda il, rec, checker: il.fix(rec, faults, note, bi=len(il.books) - 1,
+                                                            verify=checker is not None, checker=checker),
+                            "fixed a picture")
+        return await work()
+
+    def file_fix(key: str, pid: str, body: dict, of: int, edit, what: str) -> dict:
+        """What the fix and the panel-fix routes share: the gates, the record's own image model, one `edit(il, rec,
+        checker)` that returns the new record (or raises `FixUnchanged`, `ImageRefused`, `ValueError`), then the new record
+        takes the old one's place (one journal entry, `what`) and the reply carries `verified` and `beforeUrl`. `of` is the
+        number of faults the verdict counts."""
+        ctx = art_index(key)
+        slug_, rec = art_record(ctx, pid)
+        art_busy(ctx["hash"])
+        fin = art_finished(ctx, body)
+        checker = art_checker(body)
+        with arts.lock(ctx["hash"], slug_):
+            slug_, rec = art_record(ctx, pid)       # read again under the lock
+            prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
+            mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
+            qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
+            il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod, text_needed=False)
+            if image is None:
+                which = llm.PROVIDERS[prov]["label"] if prov else "Gemini or OpenAI"
+                raise ArtRefusal(409, "no-image-key", f"Add a {which} key in Settings to fix this picture.")
+            art_gate(ctx, il, rec, body, fin)
+            try:
+                new = edit(il, rec, checker)
+            except images.ImageRefused as e:
+                raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
+            except ValueError as e:
+                if "missing" in str(e):
+                    raise ArtRefusal(409, "stale", "The picture file is missing.") from e
+                raise ArtRefusal(422, "bad-fix", str(e)) from e
+            except artmod.FixUnchanged as e:
+                v = getattr(e, "verdict", None)
+                raise ArtRefusal(422, "unchanged", UNCHANGED, extra={
+                    "verified": verified_json(v, of) if v is not None else None,
+                    "fixCost": round(getattr(e, "cost", 0) or 0, 6)}) from e
+            if "inherits" not in rec:
+                new.pop("inherits", None)
+            kept = arts.path(ctx["hash"], slug_, pid)
+            before = kept is not None and kept.name != new["file"]
+            entry = take_place_of(key, ctx["hash"], slug_, rec, new, what)
+        last = (new.get("fixes") or [{}])[-1]
+        verified = last.get("verified")
+        return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
+                "fixCost": last.get("cost") or 0,
+                "verified": ({**verified, "new": [fault_json(f) for f in verified.get("new") or []]}
+                             if isinstance(verified, dict) else None),
+                "beforeUrl": f"/api/library/{key}/art/{new['id']}/before" if before else None}
+
+    @app.post("/api/library/{key}/art/{pid}/panel")
+    async def art_panel(key: str, pid: str, request: Request):
+        """Fix one panel of a comic page: `{k, text?, note?, faults?, p?, finished?}`. One edit of the whole page by the
+        image model that drew it, then only panel k's box is pasted into the original (`Illustrator.fix_panel`); filed and
+        answered as the fix route does (`verified`, `beforeUrl`, `fixCost`, `undo`, 422 `unchanged` and `refused`), the
+        journal entry saying "fixed panel k of a comic". 422 `not-comic`, `bad-panel`, `bad-fix`."""
+        body = await json_body(request)
+
+        @art_route
+        def work():
             ctx = art_index(key)
-            slug_, rec = art_record(ctx, pid)
-            art_busy(ctx["hash"])
-            fin = art_finished(ctx, body)
-            checker = art_checker(body)
-            with arts.lock(ctx["hash"], slug_):
-                slug_, rec = art_record(ctx, pid)       # read again under the lock
-                prov = rec.get("provider") if rec.get("provider") in llm.IMAGE_PROVIDERS else None
-                mod = rec.get("model") if prov and llm.image_model(prov, rec.get("model") or "") else None
-                qual = rec.get("quality") if rec.get("quality") in QUALITIES else "standard"
-                il, image, slug_ = illustrator(ctx, slug_, qual, prov, mod, text_needed=False)
-                if image is None:
-                    which = llm.PROVIDERS[prov]["label"] if prov else "Gemini or OpenAI"
-                    raise ArtRefusal(409, "no-image-key", f"Add a {which} key in Settings to fix this picture.")
-                art_gate(ctx, il, rec, body, fin)
-                try:
-                    new = il.fix(rec, faults, note, bi=len(il.books) - 1, verify=checker is not None, checker=checker)
-                except images.ImageRefused as e:
-                    raise ArtRefusal(422, "refused", f"refused: {e.reason[:160]}") from e
-                except ValueError as e:
-                    if "missing" in str(e):
-                        raise ArtRefusal(409, "stale", "The picture file is missing.") from e
-                    raise ArtRefusal(422, "bad-fix", str(e)) from e
-                except artmod.FixUnchanged as e:
-                    v = getattr(e, "verdict", None)
-                    raise ArtRefusal(422, "unchanged", UNCHANGED, extra={
-                        "verified": verified_json(v, len(faults)) if v is not None else None,
-                        "fixCost": round(getattr(e, "cost", 0) or 0, 6)}) from e
-                if "inherits" not in rec:
-                    new.pop("inherits", None)
-                kept = arts.path(ctx["hash"], slug_, pid)
-                before = kept is not None and kept.name != new["file"]
-                entry = take_place_of(key, ctx["hash"], slug_, rec, new, "fixed a picture")
-            last = (new.get("fixes") or [{}])[-1]
-            verified = last.get("verified")
-            return {**picture_json(ctx, slug_, {**new, "replaces": pid}), "slug": slug_, "undo": entry["id"],
-                    "fixCost": last.get("cost") or 0,
-                    "verified": ({**verified, "new": [fault_json(f) for f in verified.get("new") or []]}
-                                 if isinstance(verified, dict) else None),
-                    "beforeUrl": f"/api/library/{key}/art/{new['id']}/before" if before else None}
+            _, rec = art_record(ctx, pid)
+            if rec.get("kind") != "comic":
+                raise ArtRefusal(422, "not-comic", "Only a comic page has panels.")
+            k = body.get("k")
+            n = len([x for x in rec.get("panels") or [] if isinstance(x, str)])
+            if not isinstance(k, int) or isinstance(k, bool) or not 1 <= k <= n:
+                raise ArtRefusal(422, "bad-panel", "Choose one of the page's panels.")
+            text_ = body.get("text") or ""
+            if not isinstance(text_, str):
+                raise ArtRefusal(422, "bad-fix", "The panel's text must be text.")
+            text_ = " ".join(text_.split())
+            if len(text_) > artmod.PANEL_TEXT_CHARS:
+                raise ArtRefusal(422, "bad-fix", f"Keep the panel's text to {artmod.PANEL_TEXT_CHARS} characters.")
+            faults, note = fix_request(body, need=False)
+            if not faults and not note and not text_:
+                raise ArtRefusal(422, "bad-fix", "Say what to fix.")
+            return file_fix(key, pid, body, len(faults) + 1,
+                            lambda il, r, checker: il.fix_panel(r, k, text_, note, faults, bi=len(il.books) - 1,
+                                                                verify=checker is not None, checker=checker),
+                            f"fixed panel {k} of a comic")
         return await work()
 
     @app.get("/api/library/{key}/art/{pid}/before")
