@@ -1502,6 +1502,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             raise ArtRefusal(422, "bad-style", "Choose a style, or write one of at most 200 characters.")
         return style
 
+    def query_position(ctx: dict, raw: str) -> str | float:
+        """A position from a query string: an anchor id of the index when it is one (an id may look like a number, "1"),
+        else the fraction of the book read when it reads as one, else the string as given (`art_position` refuses it)."""
+        if any(a.get("id") == raw for a in ctx["doc"].get("anchors", [])):
+            return raw
+        return float(raw) if re.fullmatch(r"(0|1)(\.[0-9]{1,12})?", raw) else raw
+
     def art_position(ctx: dict, body: dict) -> tuple[bool, str | None]:
         """(given, anchor) of the reader's position `p`: an anchor id, or the fraction of the book's words read (as the
         Reader's address), gated in "finished" mode like `/v0` with a `block` locator."""
@@ -1898,7 +1905,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 return None if raw is None else [x.strip() for x in raw.split(",") if x.strip()]
             u = None
             if until is not None:
-                u = {"p": float(until) if re.fullmatch(r"(0|1)(\.[0-9]{1,12})?", until) else until}
+                u = {"p": query_position(ctx, until)}
             try:
                 ecfg = art_config({"style": style, "level": level, "chapters": None, "portraits": cast or False,
                                    "quality": quality, "provider": provider, "model": model, "cap": 1,
@@ -2495,15 +2502,20 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             slug_, rec = art_record(ctx, pid)
             fin = art_finished(ctx, {"finished": None if finished is None else
                                      [k for k in finished.split(",") if k.strip()]})
-            gate = {} if p is None else {"p": float(p) if re.fullmatch(r"(0|1)(\.[0-9]{1,12})?", p) else p}
+            gate = {} if p is None else {"p": query_position(ctx, p)}
             hit = identity.art_entry_filing(key, ctx["hash"], slug_, pid)
             if hit is None:
                 raise ArtRefusal(404, "no-before", "There is no earlier picture to show.")
             entry, snap = hit
             old = next((r for r in entry["art"].get("removed") or [] if isinstance(r, dict)), None)
             name = old.get("file") if old else None
-            f = snap / name if isinstance(name, str) and name and "/" not in name and "\\" not in name else None
-            if f is None or name.startswith(".") or not f.is_file():
+            # only a picture file as the store names one (`<id>.<ext>` of the replaced record), inside the snapshot
+            f = None
+            if isinstance(name, str) and artstore.FILE.fullmatch(name) and name.startswith(f"{old.get('id')}."):
+                f = (snap / name).resolve()
+                if not f.is_relative_to(snap.resolve()) or not f.is_file():
+                    f = None
+            if f is None:
                 raise ArtRefusal(404, "no-before", "There is no earlier picture to show.")
             il, _, slug_ = illustrator(ctx, slug_, text_needed=False)
             art_gate(ctx, il, rec, gate, fin)
