@@ -433,14 +433,18 @@ FIX_UNPRICED = 1.5         # a fix on a token-billed model is held at this times
 MAX_FIX_FAULTS = 8         # faults one fix may list (the check finds at most MAX_FAULTS; a person may add more)
 MAX_NEW_FAULTS = 3         # faults the verification may say a fix added
 # Measured by bench/anatomy_check.py on 2026-11-26 (20 Gemini draft scenes of Dracula and Empire of the Vampire, Claude Haiku
-# 5.5 as the picker): it flagged 11 of 20 (0.55), the share of drawn pictures the cost cap reserves a fix for; one check took
-# 2,629 tokens in and 72 out on average, about $0.03 per 100 pictures. CHECK_TOKENS (with a margin) is what `check_price`
-# prices for the estimate and the cap reserves before each check. An edit kept the picture (9 of 10 by the picker) where a
-# redraw with the faults to avoid made another picture (4.4 of 10), at about the same rate of faults left, so a fix is an edit.
-FIX_RATE = 0.55
-CHECK_TOKENS = (2800, 120)
+# 5.5 as the picker): an edit kept the picture (9 of 10 by the picker) where a redraw with the faults to avoid made another
+# picture (4.4 of 10), at about the same rate of faults left, so a fix is an edit. Measured again on the same 20 on 2026-11-27
+# with this ANATOMY (two runs): Haiku flagged 18 and 15 (the 0.27.0 prompt 11 and 10), Sonnet 5.5 8 and 8 (5 and 6); Haiku
+# found a major fault in 4 of 20 both times, the share of drawn pictures the cost cap reserves a fix (and its verification)
+# for, since the automatic path fixes major faults only. One check took 3,633 tokens in and 290 out on average (637 at most),
+# one verification 3,976 in and 62 to 112 out; CHECK_TOKENS and VERIFY_TOKENS (with a margin) are what `check_price` and
+# `verify_price` price for the estimate and what the cap reserves. Of 8 edits Sonnet called 2 unchanged, 5 partly fixed and
+# 1 fixed; Haiku 0, 8 and 0.
+FIX_RATE = 0.2
+CHECK_TOKENS = (3800, 400)
 CHECK_FALLBACK = 0.002     # USD for one check when the picker's price is unknown, so the cap still reserves something
-VERIFY_TOKENS = (5200, 120)  # one verification: two pictures in, the verdict out
+VERIFY_TOKENS = (4200, 200)  # one verification: two pictures in, the verdict out
 VERIFY_FALLBACK = 0.004
 
 
