@@ -833,7 +833,8 @@ VERIFY_FIX = """You check whether an image model fixed a picture. Picture 1 is t
 
 Compare the two pictures closely. Be strict: image models often send a picture back with nothing corrected, or with the fault moved, or only half put right.
 - For each listed fault, by its number "n", say whether picture 2 fixes it: "yes" when the part is now drawn right, "partly" when it is better but still visibly wrong, "no" when it is as wrong as before or wrong in a new way.
-- "changed": true only when picture 2 visibly differs from picture 1 where the faults are (or, with no faults listed, where the request asks for a change). A picture that is the same, or differs only in noise, sharpness or colour, has not changed.
+- An item worded "The change asked for: ..." is the person's own request: judge it by its number like a fault, "yes" when picture 2 shows the change, "partly" when it shows some of it, "no" when it does not.
+- "changed": true only when picture 2 visibly differs from picture 1 where the faults are (or where the change asked for is). A picture that is the same, or differs only in noise, sharpness or colour, has not changed.
 - A listed fault about letters or writing is fixed when picture 2 shows no such writing any more ("no" when it is still there). A listed fault about the picture's style is fixed when picture 2 now looks like the style named (an ink drawing, an oil painting), "partly" when it is closer but still not.
 - "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged, letters or words drawn), each as a short "what" (at most about 150 characters) written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
 Taste, composition and likeness are not faults, and style is one only where a listed fault names it. Return "results", "changed" and "new"."""
@@ -866,12 +867,13 @@ class Verdict:
     why: str = ""
 
     def unchanged(self) -> bool:
-        """A checked verdict that the fix did nothing: the picture did not change, or not one fault was put right."""
-        return self.checked and (not self.changed or bool(self.results) and not any(
-            r["fixed"] in ("yes", "partly") for r in self.results))
+        """A checked verdict that the fix did nothing: the picture did not change, or not one item (a fault, or the change
+        the note asked for) was put right, even in part. One rule whether faults, a note or both were asked."""
+        return self.checked and (not self.changed or not any(r["fixed"] in ("yes", "partly") for r in self.results))
 
     def counts(self) -> dict:
-        """What a fix record's `verified` stores."""
+        """What a fix record's `verified` stores: the note's item, when there was one, is counted with the faults and its
+        result carries `note: true`."""
         return {"fixed": sum(r["fixed"] == "yes" for r in self.results),
                 "partly": sum(r["fixed"] == "partly" for r in self.results), "of": len(self.results),
                 "results": [dict(r) for r in self.results], "new": [dict(f) for f in self.new]}
@@ -879,19 +881,26 @@ class Verdict:
 
 def verify_fix(model, before: tuple[bytes, str], after: tuple[bytes, str], faults: list[dict], note: str = "") -> Verdict:
     """One call on `model` (a text model that sees pictures) with both pictures, the original first, under VERIFY_FIX: was
-    each fault put right? Byte-identical pictures are a verdict of code, with no call: nothing changed. A failed call (a
-    model that cannot see pictures included) is a Verdict that was not checked; llm.Cancelled is raised."""
+    each fault put right? A `note` is one more item, the last ("The change asked for: <note>"), judged yes, partly or no
+    like a fault, its result marked `note: true`. Byte-identical pictures are a verdict of code, with no call: nothing
+    changed. A failed call (a model that cannot see pictures included) is a Verdict that was not checked; llm.Cancelled is
+    raised."""
     faults = clean_faults(faults, limit=len(faults) if isinstance(faults, list) else 0)
+    note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
+    items = len(faults) + (1 if note else 0)          # the note is the last item, judged like a fault
+
+    def marked(results: list[dict]) -> list[dict]:
+        return [{**r, "note": True} if note and r["n"] == items else r for r in results]
+
     if before[0] == after[0]:
-        return Verdict([{"n": i, "fixed": "no"} for i in range(1, len(faults) + 1)], False, [], True, 0.0,
+        return Verdict(marked([{"n": i, "fixed": "no"} for i in range(1, items + 1)]), False, [], True, 0.0,
                        "the picture came back as it was")
     if model is None:
         return Verdict([], False, [], False, 0.0, "no model to verify with")
     lines = [f"{i}. {f['where']}: {f['what']}" if f["where"] else f"{i}. {f['what']}" for i, f in enumerate(faults, 1)]
-    note = " ".join(str(note or "").split())[:FIX_NOTE_CHARS]
     asked = ("The faults it was asked to correct:\n" + "\n".join(lines)) if lines else "No faults were listed."
     if note:
-        asked += f"\nThe request also said: {note}"
+        asked += f"\n{'Also judge' if lines else 'Judge'} this item:\n{items}. The change asked for: {note}"
     cost0 = _cost_of(model)
     try:
         out = _seeing_call(model, VERIFY_FIX, VERIFY_FIX_PROMPT.format(asked=asked), VERIFY_FIX_SCHEMA, [before, after])
@@ -904,10 +913,10 @@ def verify_fix(model, before: tuple[bytes, str], after: tuple[bytes, str], fault
         return Verdict([], False, [], False, cost, "no verdict in the reply")
     said = {}
     for r in out["results"]:
-        if isinstance(r, dict) and isinstance(r.get("n"), int) and r.get("fixed") in FIXED and 1 <= r["n"] <= len(faults):
+        if isinstance(r, dict) and isinstance(r.get("n"), int) and r.get("fixed") in FIXED and 1 <= r["n"] <= items:
             said.setdefault(r["n"], r["fixed"])
-    # a fault the reply skipped counts as not fixed: the verdict is strict, as the prompt asks
-    results = [{"n": i, "fixed": said.get(i, "no")} for i in range(1, len(faults) + 1)]
+    # an item the reply skipped counts as not fixed: the verdict is strict, as the prompt asks
+    results = marked([{"n": i, "fixed": said.get(i, "no")} for i in range(1, items + 1)])
     return Verdict(results, out["changed"], clean_faults(out.get("new"), limit=MAX_NEW_FAULTS), True, cost)
 
 
@@ -4330,23 +4339,39 @@ class Illustrator:
         raise AssertionError("unreachable")
 
     def _fix_entry(self, faults: list[dict], note: str, pic: images.Drawn, provider: str, model: str,
-                   verdict: Verdict | None = None) -> dict:
+                   verdict: Verdict | None = None, doubtful: bool = False) -> dict:
         """One `fixes` entry: what was asked, its date, what the edit and its verification cost, the image model, and
-        `verified` (the verdict's counts; None when it could not be verified)."""
+        `verified` (the verdict's counts, with `doubtful: true` for a hand fix kept against a verdict that nothing was put
+        right; None when it could not be verified)."""
         cost = pic.cost + (verdict.cost if verdict is not None else 0.0)
+        verified = verdict.counts() if verdict is not None and verdict.checked else None
+        if verified is not None and doubtful:
+            verified["doubtful"] = True
         return {"faults": faults, "note": note, "created": _now(), "cost": round(cost, 6), "provider": provider,
-                "model": pic.model or model,
-                "verified": verdict.counts() if verdict is not None and verdict.checked else None}
+                "model": pic.model or model, "verified": verified}
+
+    def _doubtful(self, keep: bool, same: bool, what: str) -> bool:
+        """After a verdict that a fix changed nothing: True when it is still filed (`keep`, a hand fix, and the picture did
+        come back different), counted "kept: fix the checker doubts"; False when nothing is filed, counted "not fixed: the
+        fix changed nothing"."""
+        kept = keep and not same
+        with self.lock:
+            self.report.checks["kept: fix the checker doubts" if kept else "not fixed: the fix changed nothing"] += 1
+        self.log(f"    fix of {what}: the checker found nothing put right; the fix is kept for the person to judge" if kept
+                 else f"    fix of {what} changed nothing; the picture is kept")
+        return kept
 
     def fix(self, rec: dict, faults: list[dict], note: str = "", bi: int | None = None, verify: bool = True,
-            checker=None) -> dict:
+            checker=None, keep_doubtful: bool = False) -> dict:
         """Fix the drawing faults of a picture of this run's sets: one image call on the image model of its kind (the web
         app builds the Illustrator with the record's own provider and model), at the record's quality and shape, editing
         the picture itself with code's words (`fix_prompt`), then one verification (`verify_fix`, both pictures) on
         `checker`, else the run's checker, unless `verify` is False. A reply with the same bytes, or a checked verdict that
-        the picture did not change or that not one fault was put right (with no faults, a note alone, that it did not
-        change), files nothing and raises FixUnchanged (its `cost` is the edit's and the verification's, billed all the
-        same). Otherwise the new record is filed in the same set beside the old one (the caller files it in the old one's
+        the picture did not change or that not one item was put right even in part (the faults and the note, its last
+        item, under one rule: `Verdict.unchanged`), files nothing and raises FixUnchanged (its `cost` is the edit's and the verification's, billed all the
+        same). With `keep_doubtful` (a fix the person asked for by hand) only the same bytes raise FixUnchanged: a picture
+        that changed but whose verdict says nothing was put right is filed all the same, its `verified` gaining
+        `doubtful: true`, so the person sees it and decides. Otherwise the new record is filed in the same set beside the old one (the caller files it in the old one's
         place: the web app's `take_place_of`) and keeps the record's prompt, figures, references and sources; its `fixes`
         gains {faults, note, created, cost, provider, model, verified}, newest last, `verified` being {fixed, partly, of,
         results, new} or None when the verification failed, and its cost is the old one's plus the fix's. Raises ValueError
@@ -4369,17 +4394,16 @@ class Illustrator:
             self.report.cost += pic.cost        # billed whatever the verdict
             self.last_cost = pic.cost or self.last_cost
         mime = pic.mime or "image/png"
-        verdict = None
+        verdict, doubtful = None, False
         if verify or pic.data == data:
             verdict = self._verify((data, old_mime), (pic.data, mime), faults, note, j, checker)
             if verdict.unchanged():
-                with self.lock:
-                    self.report.checks["not fixed: the fix changed nothing"] += 1
-                self.log(f"    fix of {kind} {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
-                raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
+                doubtful = self._doubtful(keep_doubtful, pic.data == data, f"{kind} {rec.get('target')} ({rec.get('id')})")
+                if not doubtful:
+                    raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
         fid = "p" + hashlib.sha256(pic.data).hexdigest()[:8]
         w, h = (pic.width, pic.height) if pic.width else size_of(pic.data)
-        entry = self._fix_entry(faults, note, pic, prov, name, verdict)
+        entry = self._fix_entry(faults, note, pic, prov, name, verdict, doubtful)
         new = {k: v for k, v in rec.items() if k not in ("replaces", "url", "set")}
         new.update({"id": fid, "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h,
                     "provider": prov or rec.get("provider"), "model": pic.model or name or rec.get("model"), "quality": quality,
@@ -4401,14 +4425,16 @@ class Illustrator:
         return new
 
     def fix_panel(self, rec: dict, k: int, text: str = "", note: str = "", faults=(), bi: int | None = None,
-                  verify: bool = True, checker=None) -> dict:
+                  verify: bool = True, checker=None, keep_doubtful: bool = False) -> dict:
         """Fix panel `k` (1-based) of a comic page of this run's sets and leave the other panels as they are. One edit call
         on the comic's image model, at the record's quality and shape, with the page as the only reference and code's words
         (`panel_fix_prompt`): the person's new `text` for the panel (their own words, drawn as given), `faults` and `note`.
         Then by code the edited page's box k is pasted into the original page (both grids found, `n` boxes each, every edge
         within GRID_AGREE of the page; the box reaches the middle of the gutters around it), so every other panel stays the
         original pixels; else the whole edited page is kept. A pasted panel that differs from before by under
-        PANEL_UNCHANGED, or a verdict (`verify_fix`) that the edit changed nothing, files nothing and raises FixUnchanged.
+        PANEL_UNCHANGED, or a verdict (`verify_fix`) that the edit changed nothing, files nothing and raises FixUnchanged;
+        with `keep_doubtful` only the panel (or page) that came back as it was does, and a doubtful verdict is filed with
+        `verified.doubtful` true, as `fix` does.
         The new record is filed as `fix`'s is, its `fixes[-1]` gaining `panel`, `text` (only when it changed) and `pasted`;
         a changed text replaces panel k's in the record's `prompt`; `grid` is the original's when pasted, else the edited
         page's. ValueError: not a comic, no such panel, nothing to fix, or the file is missing."""
@@ -4441,33 +4467,33 @@ class Illustrator:
             self.report.cost += pic.cost        # billed whatever the verdict
             self.last_cost = pic.cost or self.last_cost
         final, mime, pasted, new_grid = pic.data, pic.mime or "image/png", False, None
+        asked = list(faults)
+        if text or note:      # the panel's own change comes first, so verified.results[0] is whether the panel changed
+            asked.insert(0, {"what": f"panel {k} should show: {text}" if text else note, "where": f"panel {k}", "severity": "major"})
         merged = _paste_panel(data, pic.data, k, n, old_mime)
         if merged is not None:
             final, mime, pasted, new_grid, delta = merged
             if delta < PANEL_UNCHANGED:
-                items = len(faults) + (1 if text or note else 0)       # the panel's own item first, as the verification lists them
-                verdict = Verdict([{"n": i, "fixed": "no"} for i in range(1, items + 1)], False, [], True, 0.0,
-                                  "the panel came back as it was")
+                # the code verdict of the same bytes, with the items the verification would have listed (the note last)
+                verdict = verify_fix(None, (data, old_mime), (data, old_mime), asked, note if text else "")
+                verdict.why = "the panel came back as it was"
                 with self.lock:
                     self.report.checks["not fixed: the fix changed nothing"] += 1
                 self.log(f"    fix of panel {k} of comic {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
                 raise FixUnchanged(verdict, round(pic.cost, 6))
         else:
             new_grid = comic_grid(pic.data, n)
-        asked = list(faults)
-        if text or note:      # the panel's own change comes first, so verified.results[0] is whether the panel changed
-            asked.insert(0, {"what": f"panel {k} should show: {text}" if text else note, "where": f"panel {k}", "severity": "major"})
-        verdict = None
+        verdict, doubtful = None, False
         if verify or final == data:
             verdict = self._verify((data, old_mime), (final, mime), asked, note if text else "", j, checker)
             if verdict.unchanged():
-                with self.lock:
-                    self.report.checks["not fixed: the fix changed nothing"] += 1
-                self.log(f"    fix of panel {k} of comic {rec.get('target')} ({rec.get('id')}) changed nothing; the picture is kept")
-                raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
+                doubtful = self._doubtful(keep_doubtful, final == data,
+                                          f"panel {k} of comic {rec.get('target')} ({rec.get('id')})")
+                if not doubtful:
+                    raise FixUnchanged(verdict, round(pic.cost + verdict.cost, 6))
         fid = "p" + hashlib.sha256(final).hexdigest()[:8]
         w, h = size_of(final)
-        entry = self._fix_entry(faults, note, pic, prov, name, verdict)
+        entry = self._fix_entry(faults, note, pic, prov, name, verdict, doubtful)
         entry.update({"panel": k, "pasted": pasted, **({"text": text} if text else {})})
         new = {a: v for a, v in rec.items() if a not in ("replaces", "url", "set")}
         new.update({"id": fid, "file": f"{fid}.{_ext(mime)}", "mime": mime, "width": w, "height": h,

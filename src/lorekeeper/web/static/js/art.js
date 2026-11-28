@@ -47,7 +47,7 @@ const LOOSE = "*words";
 const slugOf = (text) => String(text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "custom";
 export { estimateText, money } from "./artestimate.js";
 import { estimateText, money } from "./artestimate.js";
-import { autoFixed, beforeSrc, cleanFaults, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, kindOf, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
+import { autoFixed, beforeSrc, cleanFaults, doubtful, fixBody, fixLines, MAX_FAULTS, NOTE_CHARS, panelBody, panelTextsOf, panelWish, PANEL_TEXT_CHARS, kindOf, severityOf, verdictLine, WHAT_CHARS } from "./artfix.js";
 
 // ---- per-viewer preferences (localStorage) ----------------------------------------------------
 
@@ -526,7 +526,7 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
     const ready = () => { go_.disabled = !fixBody(read(), note.value); };
     function row(r, n) {
       r.input = h("textarea.input.lb-fault", { rows: "2", maxlength: String(WHAT_CHARS), "aria-label": `What to fix, ${n + 1}`,
-        placeholder: "What is wrong, for example: the left hand has six fingers", on: { input: ready } });
+        placeholder: "For example: the left hand has five fingers", on: { input: ready } });
       r.input.value = r.what;
       const del = h("button.icon-btn.lb-fault-del", { type: "button", "aria-label": `Remove ${n + 1}`, title: "Remove", on: { click: () => {
         const k = rows.indexOf(r);
@@ -573,18 +573,20 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         paint();
         fixResult(it, r, { sent: body.faults, old, before: beforeSrc(r?.beforeUrl, at) });
       } catch (e) {
-        const why = e.code === "unchanged" ? "The model sent the picture back without the fix, so your picture is kept. Try again, or say it differently."
+        const why = e.code === "unchanged" ? "The model sent the picture back unchanged, so your picture is kept. Try again, or say it differently."
           : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
         if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
         if (items[i] !== it) return;
         fixForm(it, keep.faults, said, { note: keep.note, error: why });
       }
     });
-    clear(acts, h("div.lb-fix", h("p.hint", said), list, add,
+    clear(acts, h("div.lb-fix", h("p.hint", said), fixHint(), list, add,
       h("label.label", { for: "lb-fix-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
     ready();
     (error ? go_ : rows[0].input).focus();
   }
+  /** The one line on how to ask: an edit model acts on what the picture should show, not on what is wrong with it. */
+  const fixHint = () => h("p.hint.lb-fix-hint", "Say what it should look like, for example: his hand grips the collar.");
   /** Fix one panel of a comic page: its text as drawn (editable) and a note; the model edits the page and only that panel is
    *  taken from the result. The result view is the picture Fix's. */
   function panelForm(it, k, { value = null, note: noteText = "", error = "" } = {}) {
@@ -620,14 +622,14 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
         paint();
         fixResult(it, r, { sent: [panelWish(k, body)], old, before: beforeSrc(r?.beforeUrl, at) });
       } catch (e) {
-        const why = e.code === "unchanged" ? "The model sent the page back without the change, so your picture is kept. Try again, or say it differently."
+        const why = e.code === "unchanged" ? "The model sent the page back unchanged, so your picture is kept. Try again, or say it differently."
           : e.code === "refused" ? `The provider would not draw it: ${e.message}` : e.message;
         if (!dlg.open) { toast(e.code === "unchanged" || e.code === "refused" ? why : `Couldn't fix it: ${e.message}`, "error", { host: modalToasts() }); return; }
         if (items[i] !== it) return;
         panelForm(it, k, { ...keep, error: why });
       }
     });
-    clear(acts, h("div.lb-fix", h("h3.lb-fix-title", `Panel ${k}`),
+    clear(acts, h("div.lb-fix", h("h3.lb-fix-title", `Panel ${k}`), fixHint(),
       h("label.label", { for: "lb-panel-text" }, `What panel ${k} shows`), text,
       h("label.label", { for: "lb-panel-note" }, "Anything else, optional"), note, err, price, h("div.btns", cancel, go_)));
     ready();
@@ -716,11 +718,18 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       for (const b of [bBefore, bAfter]) b.setAttribute("aria-pressed", String(b === (which === "before" ? bBefore : bAfter)));
       const img = artImg(which === "before" ? before : after, `${it.caption || "Picture"}${which === "before" ? ", before the fix" : ""}`, "lb-img", { eager: true });
       // a "before" that cannot be fetched (undone elsewhere, or the server has none): the toggle goes, the fix stays shown
-      if (which === "before") img?.addEventListener("error", () => { seg?.remove(); show("after"); }, { once: true });
+      if (which === "before") img?.addEventListener("error", () => {
+        const had = seg?.contains(document.activeElement);
+        seg?.remove(); show("after");
+        if (had) refocus();
+      }, { once: true });
       clear(stage, img);
     }
-    const keepFix = h("button.btn.primary", { type: "button", on: { click: () => { pending = null; paintStage(); paintActs(); refocus(); } } }, "Keep the fix");
-    const keepOld = id ? h("button.btn.quiet", { type: "button" }, "Keep the original") : null;
+    // A doubtful fix (the picture changed, but the checker thinks nothing was put right): the person decides by looking, so
+    // neither choice is the default and focus goes to Before / After.
+    const unsure = doubtful(r?.verified);
+    const keepFix = h(unsure ? "button.btn" : "button.btn.primary", { type: "button", on: { click: () => { pending = null; paintStage(); paintActs(); refocus(); } } }, "Keep the fix");
+    const keepOld = id ? h(unsure ? "button.btn" : "button.btn.quiet", { type: "button" }, "Keep the original") : null;
     keepOld?.addEventListener("click", async () => {
       keepOld.disabled = keepFix.disabled = true;
       err.textContent = "";
@@ -752,8 +761,10 @@ export function openLightbox(items, index = 0, { onChanged = null } = {}) {
       }
     });
     clear(acts, h("div.lb-fix.lb-fixed", { role: "group", "aria-label": "The fix" },
-      h("p.lb-verdict", { role: "status" }, verdictLine(r?.verified, sent)), seg, err, h("div.btns", keepOld, keepFix)));
-    keepFix.focus();
+      h("p.lb-verdict", { role: "status" }, verdictLine(r?.verified, sent)),
+      unsure ? h("p.hint", seg ? "Compare Before and After, then keep the one you want." : "Look at the picture, then keep the one you want.") : null,
+      seg, err, h("div.btns", keepOld, keepFix)));
+    (unsure && seg ? bBefore : keepFix).focus();
   }
   const lbFigures = (it) => figureLines(it.rec.figures, { name: it.figureName || undefined, thumb: (f) => (it.figureThumb ? it.figureThumb(it.rec, f) : null) });
   /** Names and thumbnails again from the reader's view now (a position that moved back hides what it no longer reveals). */

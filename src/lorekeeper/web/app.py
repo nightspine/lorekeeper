@@ -2985,17 +2985,19 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 "partly": sum(r.get("fixed") == "partly" for r in results), "of": of,
                 "results": results, "new": [fault_json(f) for f in getattr(verdict, "new", None) or [] if isinstance(f, dict)]}
 
-    UNCHANGED = "The model sent the picture back without the fix, so your picture is kept."
+    UNCHANGED = "The model sent the picture back unchanged, so your picture is kept."
 
     @app.post("/api/library/{key}/art/{pid}/fix")
     async def art_fix(key: str, pid: str, request: Request):
         """Fix the drawing faults of a picture: one edit by the image model that drew it (its provider, model, quality and
         shape), the picture itself the only reference, everything but the listed faults kept; then one call on the checker
-        (`art_checker`, as the check route's) comparing the two pictures. An edit that changed nothing, or put none of the
-        faults right, is 422 `unchanged` with its `verified` and `fixCost`, and nothing is filed. Otherwise the new record
-        takes the old one's place as a redraw does (one journal entry, undone like an edit; the stored prompt is
-        unchanged) and the reply carries `verified` (null when the verdict failed or no model can see pictures) and
-        `beforeUrl`, the replaced picture while the entry is live (`/before`)."""
+        (`art_checker`, as the check route's) comparing the two pictures, the note judged as the last item. A hand fix the
+        person paid for is never thrown away unseen (`keep_doubtful=True`): only an edit that came back byte-identical is
+        422 `unchanged` with its `verified` and `fixCost`, and nothing is filed. A changed picture the checker says fixed
+        nothing is filed all the same, its `verified` carrying `doubtful: true`. The new record takes the old one's place
+        as a redraw does (one journal entry, undone like an edit; the stored prompt is unchanged) and the reply carries
+        `verified` (null when the verdict failed or no model can see pictures) and `beforeUrl`, the replaced picture while
+        the entry is live (`/before`), so Before/After and Keep the original (the undo) work for a doubtful fix too."""
         body = await json_body(request)
 
         @art_route
@@ -3003,7 +3005,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             faults, note = fix_request(body)
             return file_fix(key, pid, body,
                             lambda il, rec, checker: il.fix(rec, faults, note, bi=len(il.books) - 1,
-                                                            verify=checker is not None, checker=checker),
+                                                            verify=checker is not None, checker=checker,
+                                                            keep_doubtful=True),
                             "fixed a picture")
         return await work()
 
@@ -3061,7 +3064,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     async def art_panel(key: str, pid: str, request: Request):
         """Fix one panel of a comic page: `{k, text?, note?, faults?, p?, finished?}`. One edit of the whole page by the
         image model that drew it, then only panel k's box is pasted into the original (`Illustrator.fix_panel`); filed and
-        answered as the fix route does (`verified`, `beforeUrl`, `fixCost`, `undo`, 422 `unchanged` and `refused`), the
+        answered as the fix route does (`verified`, `doubtful` in it, `beforeUrl`, `fixCost`, `undo`, 422 `unchanged` only
+        for a panel that came back as it was, and `refused`), the
         journal entry saying "fixed panel k of a comic". 422 `not-comic`, `bad-panel`, `bad-fix`."""
         body = await json_body(request)
 
@@ -3086,7 +3090,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 raise ArtRefusal(422, "bad-fix", "Say what to fix.")
             return file_fix(key, pid, body,
                             lambda il, r, checker: il.fix_panel(r, k, text_, note, faults, bi=len(il.books) - 1,
-                                                                verify=checker is not None, checker=checker),
+                                                                verify=checker is not None, checker=checker,
+                                                                keep_doubtful=True),
                             f"fixed panel {k} of a comic")
         return await work()
 

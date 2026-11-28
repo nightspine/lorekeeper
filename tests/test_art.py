@@ -3748,23 +3748,35 @@ def test_verify_fix_sends_both_pictures_and_reads_a_strict_verdict():
     prompt, pictures = eye.verified[-1]
     assert pictures == [b"one", b"two"]
     assert "1. the woman at the gate: the head is far too small for the body and robe" in prompt
-    assert "2. the miller in the doorway: the left hand has six fingers" in prompt and "keep the cloak red" in prompt
-    # an unknown answer and a skipped fault are "no"; an n out of range is ignored; new faults cleaned, at most 3
-    assert v.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "partly"}] and v.checked and v.changed
+    assert "2. the miller in the doorway: the left hand has six fingers" in prompt
+    assert "3. The change asked for: keep the cloak red" in prompt                 # the note is the last item
+    # an unknown answer and a skipped item are "no"; an n out of range is ignored; new faults cleaned, at most 3
+    assert v.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "partly"}, {"n": 3, "fixed": "no", "note": True}]
+    assert v.checked and v.changed
     assert len(v.new) == art.MAX_NEW_FAULTS and v.new[0] == {"what": "new 0", "where": "x", "severity": "minor", "kind": "drawing"}
     assert not v.unchanged() and v.cost == pytest.approx(0.002)
-    assert v.counts() == {"fixed": 0, "partly": 1, "of": 2, "results": v.results, "new": v.new}
+    assert v.counts() == {"fixed": 0, "partly": 1, "of": 3, "results": v.results, "new": v.new}
     for bad in ({}, {"results": [], "changed": "yes", "new": []}, {"changed": True}):
         assert not art.verify_fix(Seeing(verdict=bad), (b"a", "image/png"), (b"b", "image/png"), [HEAD]).checked
     failed = art.verify_fix(Seeing(vfail=True), (b"a", "image/png"), (b"b", "image/png"), [HEAD])
     assert not failed.checked and not failed.unchanged() and "RuntimeError" in failed.why
     blind = art.verify_fix(Seeing(blind=True), (b"a", "image/png"), (b"b", "image/png"), [HEAD])
     assert not blind.checked and blind.why.startswith("NoVision")
-    # with no faults (a note alone) only `changed` decides
-    assert art.verify_fix(Seeing(verdict={"results": [], "changed": False, "new": []}), (b"a", "image/png"),
-                          (b"b", "image/png"), [], note="open the left eye").unchanged()
-    assert not art.verify_fix(Seeing(verdict={"results": [], "changed": True, "new": []}), (b"a", "image/png"),
-                              (b"b", "image/png"), [], note="open the left eye").unchanged()
+    # a note alone is one item, judged like a fault: the same rule decides
+    def alone(results, changed=True):
+        eye = Seeing(verdict={"results": results, "changed": changed, "new": []})
+        v = art.verify_fix(eye, (b"a", "image/png"), (b"b", "image/png"), [], note="open the left eye")
+        assert "No faults were listed." in eye.verified[-1][0] and "1. The change asked for: open the left eye" in eye.verified[-1][0]
+        return v
+    assert alone([{"n": 1, "fixed": "yes"}], changed=False).unchanged()
+    assert alone([], changed=True).unchanged()                                      # changed, but the change not judged done
+    assert alone([{"n": 1, "fixed": "no"}]).unchanged()
+    v = alone([{"n": 1, "fixed": "partly"}])
+    assert not v.unchanged() and v.results == [{"n": 1, "fixed": "partly", "note": True}]
+    assert v.counts()["of"] == 1 and v.counts()["partly"] == 1
+    # the same bytes: every item "no", the note's marked, no call
+    same = art.verify_fix(None, (b"s", "image/png"), (b"s", "image/png"), [HEAD], note="x")
+    assert same.unchanged() and same.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no", "note": True}]
 
 
 def test_a_fix_sent_back_as_it_was_files_nothing_and_is_billed():
@@ -3826,14 +3838,67 @@ def test_the_fix_is_verified_by_the_checker_given():
     assert not picker.verified and len(strong.verified) == 1 and new["fixes"][-1]["verified"]["partly"] == 1
 
 
-def test_a_note_alone_is_verified_on_whether_the_picture_changed():
-    eye = Seeing(verdict={"results": [], "changed": False, "new": []})
+def test_a_note_alone_follows_the_rule_of_the_faults():
+    eye = Seeing(verdict={"results": [{"n": 1, "fixed": "yes"}], "changed": False, "new": []})
     il, sink, im, scene = scene_of(eye)
     with pytest.raises(art.FixUnchanged):
         il.fix(scene, [], note="the left eye open")
-    eye.verdict = {"results": [], "changed": True, "new": []}
+    eye.verdict = {"results": [], "changed": True, "new": []}                      # changed, the change not judged done
+    with pytest.raises(art.FixUnchanged):
+        il.fix(scene, [], note="the left eye open")
+    eye.verdict = {"results": [{"n": 1, "fixed": "yes"}], "changed": True, "new": []}
     new = il.fix(scene, [], note="the left eye open")
-    assert new["fixes"][-1]["verified"] == {"fixed": 0, "partly": 0, "of": 0, "results": [], "new": []}
+    assert new["fixes"][-1]["verified"] == {"fixed": 1, "partly": 0, "of": 1, "new": [],
+                                            "results": [{"n": 1, "fixed": "yes", "note": True}]}
+    # with faults the note is the last item, counted with them
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "yes"}], "changed": True, "new": []}
+    v = il.fix(scene, [HEAD], note="the left eye open")["fixes"][-1]["verified"]
+    assert v["of"] == 2 and v["fixed"] == 1 and v["results"][-1] == {"n": 2, "fixed": "yes", "note": True}
+    assert "doubtful" not in v
+
+
+@pytest.mark.parametrize("verdict", [
+    {"results": [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}], "changed": True, "new": []},
+    {"results": [{"n": 1, "fixed": "yes"}, {"n": 2, "fixed": "yes"}], "changed": False, "new": []},
+])
+def test_a_hand_fix_the_checker_doubts_is_filed_as_doubtful(verdict):
+    eye = Seeing(verdict=verdict)
+    il, sink, im, scene = scene_of(eye)
+    new = il.fix(scene, [HEAD, HAND], keep_doubtful=True)
+    v = new["fixes"][-1]["verified"]
+    assert v["doubtful"] is True and v["of"] == 2 and [r["fixed"] for r in v["results"]] == [r["fixed"] for r in verdict["results"]]
+    assert sink.m["pictures"][-1]["id"] == new["id"] and new["id"] != scene["id"] and il.report.fixed == 1
+    assert new["fixes"][-1]["cost"] == pytest.approx(0.052)
+    assert il.report.checks["kept: fix the checker doubts"] == 1 and not il.report.checks["not fixed: the fix changed nothing"]
+    # a note alone the checker doubts: filed too, the note's item named
+    eye.verdict = {"results": [{"n": 1, "fixed": "no"}], "changed": True, "new": []}
+    v = il.fix(scene, [], note="his hand grips the collar", keep_doubtful=True)["fixes"][-1]["verified"]
+    assert v["doubtful"] is True and v["results"] == [{"n": 1, "fixed": "no", "note": True}]
+    # a verdict that something was put right is not doubtful
+    eye.verdict = {"results": [{"n": 1, "fixed": "partly"}], "changed": True, "new": []}
+    assert "doubtful" not in il.fix(scene, [HEAD], keep_doubtful=True)["fixes"][-1]["verified"]
+    # an unverified hand fix is not doubtful either: nothing judged it
+    assert il.fix(scene, [HEAD], keep_doubtful=True, verify=False)["fixes"][-1]["verified"] is None
+
+
+def test_a_hand_fix_sent_back_byte_identical_is_still_refused():
+    eye = Seeing()
+    il, sink, im, scene = scene_of(eye, image=Echo())
+    before = list(sink.m["pictures"])
+    for verify in (True, False):
+        with pytest.raises(art.FixUnchanged) as e:
+            il.fix(scene, [HEAD], note="his hand grips the collar", keep_doubtful=True, verify=verify)
+        assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no", "note": True}]
+    assert sink.m["pictures"] == before and il.report.checks["not fixed: the fix changed nothing"] == 2
+    assert not il.report.checks["kept: fix the checker doubts"]
+
+
+def test_the_automatic_check_stays_strict_and_never_keeps_a_doubtful_fix():
+    eye = Seeing(faults=[HEAD], verdict={"results": [{"n": 1, "fixed": "no"}], "changed": True, "new": []})
+    il, rep, sink, t, im = run(cheap_text=eye, check=True, portraits=False)
+    assert fixes(im) and rep.fixed == 0 and not rep.checks["kept: fix the checker doubts"]
+    for p in pics(sink):
+        assert p["check"]["fixed"] is False and "fixes" not in p and "doubtful" not in p["check"]["verified"]
 
 
 def test_the_automatic_check_fixes_major_faults_only():
@@ -4509,7 +4574,8 @@ def test_a_panel_fix_pastes_only_that_panel_so_the_others_stay_the_original_pixe
     assert new["grid"] == grid and new["mime"] == "image/png" and new["id"] != rec["id"] and sink.files[new["file"]]
     e = new["fixes"][-1]
     assert e["panel"] == 2 and e["pasted"] is True and e["text"] == "A man sits up in bed, awake." and e["note"] == "keep the lamp"
-    assert e["verified"] and e["verified"]["of"] == 1 and e["faults"] == []
+    assert e["verified"] and e["verified"]["of"] == 2 and e["faults"] == []           # the panel item, then the note
+    assert e["verified"]["results"][-1].get("note") is True and not e["verified"]["results"][0].get("note")
     assert new["cost"] == pytest.approx(rec["cost"] + e["cost"]) and new["panels"] == rec["panels"] and new["from"] == rec["from"]
     assert any(r["id"] == rec["id"] for r in sink.m["pictures"]) and sink.m["pictures"][-1]["id"] == new["id"]
 
@@ -4569,6 +4635,10 @@ def test_a_panel_that_came_back_as_it_was_is_unchanged_with_no_verification():
         il.fix_panel(rec, 2, text="A man sits up.", faults=[HAND])               # the panel item first, then the fault
     assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}]
     with pytest.raises(art.FixUnchanged) as e:
+        il.fix_panel(rec, 2, text="A man sits up.", note="keep the lamp", faults=[HAND])   # as the verification lists them
+    assert e.value.verdict.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "no"}, {"n": 3, "fixed": "no", "note": True}]
+    assert e.value.verdict.counts()["of"] == 3 and e.value.verdict.why == "the panel came back as it was"
+    with pytest.raises(art.FixUnchanged) as e:
         il.fix_panel(rec, 2, faults=[HAND])                                      # a fault alone: no panel item
     assert e.value.verdict.results == [{"n": 1, "fixed": "no"}]
     il, sink, im, rec = comic_page(eye=eye, image=Paged(edit=lambda k, src: src))
@@ -4583,6 +4653,20 @@ def test_a_changed_panel_the_verification_calls_unchanged_files_nothing():
     with pytest.raises(art.FixUnchanged) as e:
         il.fix_panel(rec, 2, text="A man sits up.")
     assert sink.m["pictures"] == before and e.value.cost == pytest.approx(0.052) and il.report.fixed == 0
+
+
+def test_a_hand_panel_fix_the_checker_doubts_is_filed_but_one_that_came_back_as_it_was_is_not():
+    eye = Seeing(verdict={"results": [{"n": 1, "fixed": "no"}], "changed": False, "new": []})
+    il, sink, im, rec = comic_page(eye=eye)
+    new = il.fix_panel(rec, 2, text="A man sits up.", keep_doubtful=True)
+    v = new["fixes"][-1]["verified"]
+    assert v["doubtful"] is True and sink.m["pictures"][-1]["id"] == new["id"] and il.report.fixed == 1
+    assert il.report.checks["kept: fix the checker doubts"] == 1
+    il, sink, im, rec = comic_page(eye=Seeing(), image=Paged(edit=lambda k, src: page(3, jitter=0)))
+    before = list(sink.m["pictures"])
+    with pytest.raises(art.FixUnchanged):
+        il.fix_panel(rec, 2, note="sit up", keep_doubtful=True)                  # the panel came back as it was
+    assert sink.m["pictures"] == before
 
 
 def test_the_verification_lists_the_panels_own_change_first():
