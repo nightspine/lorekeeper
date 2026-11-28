@@ -280,7 +280,7 @@ def test_the_prompt_route_writes_a_prompt_without_drawing(env):
     r = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"})
     assert r.status_code == 200, r.text
     got = r.json()
-    assert got["prompt"].endswith(art.NO_TEXT) and art.STYLES["ink"] in got["prompt"]
+    assert got["prompt"].endswith(art.LABEL_NOT_TEXT) and art.STYLES["ink"] in got["prompt"]
     assert got["anchor"] in {a["id"] for a in env.doc["anchors"]} and got["shape"] == "landscape"
     assert got["price"] == llm.image_price("gemini", GEMINI, "standard", "landscape") and env.image.calls == []
 
@@ -1141,7 +1141,7 @@ def test_the_prompt_comes_in_parts_with_every_style_sentence(env):
     assert env.c.post(f"/api/library/{KEY}/art/draw", json=custom).status_code == 200
     got = env.c.post(f"/api/library/{KEY}/art/prompt", json={"kind": "event", "target": "e5", "style": "ink"}).json()
     assert got["prompt"] == " ".join([got["body"], got["style"], got["noText"]])
-    assert got["style"] == art.STYLES["ink"] and got["noText"] == art.NO_TEXT
+    assert got["style"] == art.STYLES["ink"] and got["noText"] == f"{art.NO_TEXT} {art.LABEL_NOT_TEXT}"
     assert art.STYLES["ink"] not in got["body"] and art.NO_TEXT not in got["body"]
     # every listed style, and the edition's own custom set by its stored text, so the sheet swaps a sentence with no call
     assert {k: got["styles"][k] for k in art.STYLES} == art.STYLES

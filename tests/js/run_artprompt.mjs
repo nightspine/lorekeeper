@@ -106,5 +106,16 @@ test("with the no-text sentence taken out, the style sentence that closes the pr
   assert.equal(r.missing, false);
 });
 
+test("a no-text part of two sentences (the label line after it) is one slot, kept by a style change", () => {
+  const nt = "No text anywhere. Each figure is called by a label only to tell the figures apart.";
+  const two = promptParts({ ...reply, noText: nt, prompt: `${reply.body} ${reply.style} ${nt}` });
+  assert.equal(composePrompt(two.body, two.style, two.noText), `${reply.body} ${reply.style} ${nt}`);
+  const unedited = restyle({ prompt: `${reply.body} ${reply.style} ${nt}`, written: `${reply.body} ${reply.style} ${nt}`, parts: two, old: two.style, next: "Soft watercolour washes." });
+  assert.equal(unedited.prompt, `${reply.body} Soft watercolour washes. ${nt}`);
+  const edited = restyle({ prompt: `A very tall woman. ${reply.style} ${nt}`, written: `${reply.body} ${reply.style} ${nt}`, parts: two, old: two.style, next: "Soft watercolour washes." });
+  assert.equal(edited.prompt, `A very tall woman. Soft watercolour washes. ${nt}`);
+  assert.equal(edited.missing, false);
+});
+
 if (failed) { console.log(`${failed} failed`); process.exit(1); }
 console.log("all passed");

@@ -33,7 +33,7 @@ def eye(env, monkeypatch):
     return e
 
 
-MAJOR = {**HEAD, "severity": "major"}
+MAJOR = {**HEAD, "severity": "major", "kind": "drawing"}
 
 
 def one_picture(env):
@@ -458,7 +458,7 @@ def test_a_partial_fix_is_filed_with_its_verdict_and_the_picture_it_replaced(env
     r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [HEAD] * 3})
     assert r.status_code == 200, r.text
     new = r.json()
-    assert new["verified"] == {**v, "new": [{"what": "a third hand", "where": "the man", "severity": "major"}]}
+    assert new["verified"] == {**v, "new": [{"what": "a third hand", "where": "the man", "severity": "major", "kind": "drawing"}]}
     assert new["beforeUrl"] == f"/api/library/{KEY}/art/{new['id']}/before"
     got = env.c.get(new["beforeUrl"])
     assert got.status_code == 200 and got.content == old_bytes and got.headers["cache-control"] == "no-cache"
@@ -586,3 +586,47 @@ def test_the_picture_before_is_only_ever_a_picture_file_inside_its_snapshot(env,
     (snap / good).symlink_to(outside)
     r = named(good)
     assert r.status_code == 404 and r.json()["code"] == "no-before"                # a link out of the snapshot
+
+
+@pytest.mark.parametrize("kind", ["text", "style", "drawing", None])
+def test_a_fault_may_carry_its_kind_and_it_is_passed_on_as_sent(env, kind, monkeypatch):
+    old = one_picture(env)
+    seen = []
+    real = art.Illustrator.fix
+
+    def fix(self, rec, faults, note="", bi=None, verify=True, checker=None):
+        seen.append(faults)
+        return real(self, rec, faults, note, bi=bi, verify=verify, checker=checker)
+    monkeypatch.setattr(art.Illustrator, "fix", fix)
+    f = {**HEAD, **({"kind": kind} if kind else {})}
+    assert env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [f]}).status_code == 200
+    assert seen[-1] == [{**HEAD, "severity": "major", **({"kind": kind} if kind else {})}]
+
+
+@pytest.mark.parametrize("kind", ["photo", "", 1, ["text"]])
+def test_an_unknown_kind_is_a_bad_fix(env, kind):
+    old = one_picture(env)
+    env.image.calls.clear()
+    r = env.c.post(f"/api/library/{KEY}/art/{old['id']}/fix", json={"faults": [{**HEAD, "kind": kind}]})
+    assert r.status_code == 422 and r.json()["code"] == "bad-fix" and env.image.calls == []
+
+
+def test_the_check_answers_each_faults_kind(env, eye, monkeypatch):
+    old = one_picture(env)
+    faults = [{**HEAD, "kind": "text"}, {**HEAD, "kind": "style", "severity": "major"}, {**HEAD, "kind": "bogus"}, HEAD]
+    # what the pipeline's check returns is its own business (tests/test_art.py); the route answers what it is given
+    monkeypatch.setattr(art.Illustrator, "check_picture", lambda self, *a, **k: art.Check(faults, True, 0.001, ""))
+    got = env.c.post(f"/api/library/{KEY}/art/{old['id']}/check", json={}).json()["faults"]
+    assert [f["kind"] for f in got] == ["text", "style", "drawing", "drawing"]
+
+
+def test_the_check_sends_the_sets_style_sentence_inside_style_and_none_without_one(env, eye, monkeypatch):
+    old = one_picture(env)
+    eye.faults = []
+    url = f"/api/library/{KEY}/art/{old['id']}/check"
+    assert env.c.post(url, json={}).status_code == 200
+    prompt = eye.looked[-1][0]
+    assert f"<style>{art.style_sentence('ink')}</style>" in prompt          # the ink set's own sentence
+    monkeypatch.setattr(art.Illustrator, "_style", lambda self, bi: "")      # a set with no style sentence
+    assert env.c.post(url, json={}).status_code == 200
+    assert "<style>" not in eye.looked[-1][0]

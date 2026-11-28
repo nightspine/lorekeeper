@@ -209,7 +209,7 @@ export const api = {
   artRefUpload: (key, file, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/refs`, fileForm(file), { signal }),
   /** Change a drawn picture's own reference pictures (what a redraw sends) without drawing: the record back, with `undo`. */
   artRefsPut: (key, id, refs) => request("PUT", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/refs`, { refs }),
-  /** Look at a picture for drawing faults: { faults: [{ what, where, severity }], cost, model: { provider, model } }. `at` is { p, finished }; `picker` an
+  /** Look at a picture for drawing faults: { faults: [{ what, where, severity, kind }], cost, model: { provider, model } }. `at` is { p, finished }; `picker` an
    *  optional { provider, model } (the lightbox sends none: the server picks its strong checker). 409 "no-vision" when no model here can see pictures. */
   artCheck: (key, id, at = {}, picker = null, signal) => request("POST", `/api/library/${encodeURIComponent(key)}/art/${encodeURIComponent(id)}/check`,
     { ...at, ...(picker ? { picker } : {}) }, { signal }),
