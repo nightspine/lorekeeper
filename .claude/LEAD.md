@@ -13,6 +13,7 @@ Definitions live in `.claude/agents/`; every worker also follows `.claude/WORKER
 | `spec-keeper` | SPEC.md, `schema/`, `conformance/`, `examples/` | the format, a schema, a conformance case or example content changes |
 | `core-engineer` | `epub.py`, `text.py`, `anchors.py`, `locators.py`, `gating.py`, `validate.py` | how positions, anchors or views are computed |
 | `pipeline-engineer` | `generate.py`, `llm.py`, `portraits.py`, `merge.py`, `bench/` | prompts, fact-checking, providers, identity |
+| `prompt-engineer` | the picture prompt text in `art.py` (writers, soften, fix, assembly, frames, style sentences) and the picture-prompt benches | how a picture is described to a model, measured before and after against the providers' own guides |
 | `web-engineer` | `src/lorekeeper/web/*.py` | routes, jobs, catalog, auth, `/v0`, Book Orbit |
 | `frontend-engineer` | `web/static/js`, `web/static/css` (not the two client files) | anything a person sees in the app |
 | `client-engineer` | `gating.js`, `lorekeeper-client.js`, `clients/`, `tests/js` | a port, a client, or a Python contract they mirror changed |
