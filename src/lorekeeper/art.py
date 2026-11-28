@@ -855,6 +855,7 @@ class UserRef:
     sha: str
     note: str = ""
     description: str | None = None
+    applies: str = "scene"      # "scene", "subject" or a figure label "A".."F": what the picture is for
 
 
 def user_note(note: str | None) -> str:
