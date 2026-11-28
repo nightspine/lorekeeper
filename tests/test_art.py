@@ -3871,6 +3871,20 @@ def test_fault_lists_are_cleaned_and_priced():
     assert art.check_price("custom", "mine") is None
 
 
+def test_a_long_fault_is_cut_at_a_word_boundary():
+    # Sonnet's faults on the bench ran past 200 characters; the fix prompt must never end on half a word.
+    long = ("the falcon's talons do not close round the glove and float above it, the glove itself bends back through the "
+            "wrist, and the strap that should tie the jesses hangs loose in the air beside the arm without clear attachment")
+    assert len(long) > art.FAULT_CHARS
+    got = art.clean_faults([{"what": long, "where": "the falconer on the left, " * 8, "severity": "minor"}])[0]
+    assert len(got["what"]) <= art.FAULT_CHARS and long.startswith(got["what"])
+    assert long[len(got["what"])] == " " and not got["what"].endswith(("att", ","))
+    assert len(got["where"]) <= art.WHERE_CHARS and got["where"].endswith(" on")
+    assert art._cut_words("a broken sword, " * 20, 40) == "a broken sword, a broken sword, a broken"
+    assert art._cut_words("short.", 40) == "short"
+    assert "at most about 150 characters" in art.ANATOMY and "at most about 150 characters" in art.VERIFY_FIX
+
+
 def test_the_writers_ask_for_no_visible_writing_and_no_detail_too_small_once():
     for w in art.WRITERS if hasattr(art, "WRITERS") else (art.WRITER, art.SCENE_WRITER, art.PORTRAIT_WRITER):
         assert w.count("Never ask for writing, words, letters, numbers or runes to be visible") == 1

@@ -403,7 +403,7 @@ Judge how things are drawn, not whether the picture follows the prompt: a thing 
 
 Report what a careful viewer would find wrong on a second look. A fault you can point to is reported even when it is small. "severity" is "major" for a fault a reader notices at a glance: a wrong number of heads, limbs, hands or fingers, bodies merged, a melted or doubled face, a joint bent backwards, an object through a body, a broken or doubled object in the middle of the picture; it is major even when the figure is small in the picture. It is "minor" when it takes a second look: a grip that does not quite close, a slightly wrong proportion, a small object a little out of shape.
 
-For each fault, "what" is a short phrase saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "the sword passes through the man's hand"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
+For each fault, "what" is a short phrase of at most about 150 characters saying what is wrong, written so it can be handed to the image model as something to correct ("the head is far too small for the body and robe", "the left hand has six fingers", "the sword passes through the man's hand"), and "where" names the figure or object by how it looks or by its label from the prompt ("figure B, the robed man on the right"), never by a name. At most 6 faults, the most visible first. A picture with none of these faults gets an empty list.
 Return "figures", then "faults"."""
 ANATOMY_SCHEMA = {"type": "object", "required": ["figures", "faults"], "properties": {
     "figures": {"type": "array", "items": {
@@ -458,16 +458,31 @@ class Check:
     why: str = ""
 
 
+def _cut_words(text, limit: int) -> str:
+    """`text` with whitespace collapsed, cut to at most `limit` characters at a word boundary, so the image model is never
+    handed half a word ("without clear att"); a cut never keeps a trailing comma, dash or stop. A first word longer than half
+    the limit is cut where the limit falls (there is no boundary worth keeping)."""
+    text = " ".join(str(text or "").split())
+    if len(text) > limit:
+        head = text[:limit]
+        if text[limit] != " ":
+            space = head.rfind(" ")
+            if space > limit // 2:
+                head = head[:space]
+        text = head.rstrip(" ,;:-\u2013\u2014")
+    return text.rstrip(" .")
+
+
 def clean_faults(raw, limit: int = MAX_FAULTS) -> list[dict]:
     """A list of faults as code keeps them: each {"what", "where", "severity"} with whitespace collapsed and cut to
-    FAULT_CHARS and WHERE_CHARS, one with no "what" left out, at most `limit`. A missing or unknown severity is "major", so an
-    older client's list and a person's own lines are fixed in full."""
+    FAULT_CHARS and WHERE_CHARS at a word boundary (`_cut_words`), one with no "what" left out, at most `limit`. A missing or
+    unknown severity is "major", so an older client's list and a person's own lines are fixed in full."""
     out = []
     for f in raw if isinstance(raw, list) else []:
         if not isinstance(f, dict):
             continue
-        what = " ".join(str(f.get("what") or "").split())[:FAULT_CHARS].rstrip(" .")
-        where = " ".join(str(f.get("where") or "").split())[:WHERE_CHARS].rstrip(" .")
+        what = _cut_words(f.get("what"), FAULT_CHARS)
+        where = _cut_words(f.get("where"), WHERE_CHARS)
         severity = f.get("severity") if f.get("severity") in SEVERITIES else "major"
         if what and len(out) < limit:
             out.append({"what": what, "where": where, "severity": severity})
@@ -510,7 +525,7 @@ VERIFY_FIX = """You check whether an image model fixed a picture. Picture 1 is t
 Compare the two pictures closely. Be strict: image models often send a picture back with nothing corrected, or with the fault moved, or only half put right.
 - For each listed fault, by its number "n", say whether picture 2 fixes it: "yes" when the part is now drawn right, "partly" when it is better but still visibly wrong, "no" when it is as wrong as before or wrong in a new way.
 - "changed": true only when picture 2 visibly differs from picture 1 where the faults are (or, with no faults listed, where the request asks for a change). A picture that is the same, or differs only in noise, sharpness or colour, has not changed.
-- "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged), each as a short "what" written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
+- "new": the drawing faults picture 2 has that picture 1 did not (an extra or missing limb, a melted face, an object through a hand, a broken object, bodies merged), each as a short "what" (at most about 150 characters) written so it can be handed to the image model and "where" by how the figure looks, never by a name, and its "severity" ("major" seen at a glance, "minor" on a second look). At most 3; none is an empty list.
 Style, colour, composition and likeness are not faults. Return "results", "changed" and "new"."""
 VERIFY_FIX_SCHEMA = {"type": "object", "required": ["results", "changed", "new"], "properties": {
     "results": {"type": "array", "items": {
