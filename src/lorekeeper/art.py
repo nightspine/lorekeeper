@@ -732,10 +732,31 @@ PREVIEW_SCENE = ("A long table laid for many guests under a large tree in front 
 PREVIEW_SHAPE = "square"   # the picker's cards are square: a landscape preview would lose its sides in one
 
 
-def preview_prompt(style: str) -> str:
-    """The preview prompt of a style (a listed slug, or a person's own words): `PREVIEW_SCENE`, the style sentence and the
-    no-text line, joined exactly as a real prompt's parts are (`Illustrator._assemble`)."""
-    return Illustrator._assemble(PREVIEW_SCENE, style=style_sentence(style))
+def preview_prompt(style: str, body: str = PREVIEW_SCENE) -> str:
+    """The preview prompt of a style (a listed slug, or a person's own words): `body` (`PREVIEW_SCENE`, or a book's own
+    opening scene from `Illustrator.preview_body`), the style sentence and the no-text line, joined exactly as a real
+    prompt's parts are (`Illustrator._assemble`). Drawn at PREVIEW_SHAPE."""
+    return Illustrator._assemble(body, style=style_sentence(style))
+
+
+# A book's own style previews: one scene from the opening of the book (its first OPENING_CHAPTERS story chapters, never
+# later, since the previews are seen before and while reading), drawn in every style. `Illustrator.opening_moments` lists
+# the scenes to choose from with no call, `Illustrator.preview_body` writes one scene's body once per book (no reference
+# pictures: the previews compare styles, not likenesses), and `preview_prompt(style, body)` joins it with each style.
+OPENING_CHAPTERS = 2
+
+
+@dataclass
+class Moment:
+    """One scene of a book's opening that its style previews may show (`Illustrator.opening_moments`)."""
+    kind: str                 # "plate" (a chapter's main moment) or "event" (another non-minor event)
+    target: str               # the plate's chapter title (the plan's), or the event id
+    chapter: str              # the chapter title (the plan's, " (2)" for a repeat)
+    anchor: str               # the anchor the picture shows from
+    summary: str              # the event's summary, or the chapter's first recap sentence for a plate with no event
+    event: str | None = None  # the event it shows (None: a plate told by its recap only)
+    n: int = 0                # the chapter's plan number
+    bi: int = 0               # the book index in the run
 
 
 def style_slug(style: str) -> str:
@@ -2214,6 +2235,77 @@ class Illustrator:
         return {"plates": plates, "portraits": len(ports), "new_portraits": new, "portraits_max": most,
                 "chapters": chapters}
 
+    # ---- a book's own style previews
+
+    def _opening_chapters(self, bi: int, chapters: int, story: Callable[[str, int], bool] | None) -> list[dict]:
+        """The plan's chapters among the book's first `chapters` story chapters. With a table of contents the story chapters
+        are counted on it (every entry, indexed or not, its words from the EPUB), so an index that starts later in the book
+        never makes a later chapter its opening; without one, on the plan's chapters. `story(title, words)` says whether a
+        section is story (the web's `jobs.is_story`); None: every section is."""
+        b = self.books[bi]
+        story = story or (lambda title, words: True)
+        toc = b.epub.chapters if b.epub is not None and b.epub.chapters else []
+        if toc:
+            blocks = b.epub.blocks
+            ns = []
+            for k, c in enumerate(toc):
+                end = toc[k + 1].start if k + 1 < len(toc) else len(blocks)
+                if story(c.title, sum(len(x.words) for x in blocks[c.start:end])):
+                    ns.append(k + 1)          # the plan numbers its chapters by their place in the table of contents
+                if len(ns) >= chapters:
+                    break
+            return [c for c in b.chapters if c["n"] in ns]
+        return [c for c in b.chapters if story(c["title"], c["words"])][:chapters]
+
+    def opening_moments(self, bi: int = -1, chapters: int = OPENING_CHAPTERS,
+                        story: Callable[[str, int], bool] | None = None) -> list[Moment]:
+        """The scenes a book's style previews may show, with no model call: in its first `chapters` story chapters only
+        (`story(title, words)`, the web's `jobs.is_story`; None: every section is story), each chapter's main moment first
+        (its plate: the moment `job("plate", ...)` draws, from a fresh screening, else every non-minor event), then their
+        other drawable non-minor events, in reading order. A plate with no event is told by its recap's first sentence.
+        Empty when the opening has no events or recaps. The first moment with an event is the default
+        (`default_moment`)."""
+        bi = len(self.books) - 1 if bi < 0 else bi
+        b = self.books[bi]
+        plates, others = [], []
+        for ch in self._opening_chapters(bi, chapters, story):
+            ids = self.screened(bi, ch)
+            if ids is None:
+                ids = [e["id"] for e in ch["events"] if e.get("kind") != "minor"]
+            main = self._main_moment(bi, ch, ids)
+            if main:
+                plates.append(Moment("plate", ch["title"], ch["title"], ch["last"], b.events[main]["summary"], main, ch["n"], bi))
+            elif ch["recaps"]:
+                first = next((x for r in ch["recaps"] for x in self._sentences(r["text"])), "")
+                plates.append(Moment("plate", ch["title"], ch["title"], ch["last"], first, None, ch["n"], bi))
+            others += [Moment("event", x, ch["title"], b.events[x]["from"], b.events[x]["summary"], x, ch["n"], bi)
+                       for x in ids if x != main]
+        others.sort(key=lambda m: b.ord_of[m.anchor])
+        return plates + others
+
+    @staticmethod
+    def default_moment(moments: list[Moment]) -> Moment | None:
+        """The scene a book's previews show unless the person chose another: the first chapter's main moment, else the next
+        moment that shows an event, else the first moment (a plate told by its recap); None when there are none."""
+        return next((m for m in moments if m.event), moments[0] if moments else None)
+
+    def preview_body(self, moment: Moment, finished: set[str] | frozenset[str] = frozenset(),
+                     story: Callable[[str, int], bool] | None = None, chapters: int = OPENING_CHAPTERS) -> Prompt:
+        """The body of a book's style previews: `moment`'s scene prompt from the scene writer at its anchor, as
+        `make_prompt` writes it, but with no reference pictures (every figure is labelled and described in words, none marked
+        portrait="yes"; nothing is attached and no reference note is built). `finished` defaults to none of the earlier
+        books, so nothing of an unfinished earlier series book reaches it and it suits any reader of this book. The moment
+        must be one of `opening_moments` (same `story` and `chapters`), else ValueError("not an opening moment"): never a
+        scene past the opening. Raises what `make_prompt` raises (Dropped, TextFailed)."""
+        bi = len(self.books) - 1 if moment.bi < 0 else moment.bi
+        opening = {(m.kind, m.target, m.anchor) for m in self.opening_moments(bi, chapters, story)}
+        if (moment.kind, moment.target, moment.anchor) not in opening:
+            raise ValueError("not an opening moment")
+        job = self.job(moment.kind, moment.target, bi, shape=PREVIEW_SHAPE, finished=finished)
+        if job.anchor != moment.anchor:
+            raise ValueError("not an opening moment")
+        return self._make_prompt(job, frozenset(finished), pictures=False)
+
     def _classified(self, bi: int, eid: str) -> bool:
         """Whether the manifest holds a fresh look index for the entity (a run has checked its looks, even when none was found)."""
         items = self.items(bi, eid)
@@ -2792,11 +2884,12 @@ class Illustrator:
         return deg
 
     def _labels(self, figures: list[str], pos: tuple[int, int], view: dict, finished: frozenset[str] | None,
-                upto: int | None) -> tuple[dict[str, str], set[str]]:
+                upto: int | None, pictures: bool = True) -> tuple[dict[str, str], set[str]]:
         """The figure label of each of a scene's people and creatures (`figures`, in entry order), and the entities among them
         whose reference picture is sent: those with a picture first, in `_pictured`'s order (most tied first), then the
-        rest, most tied first, then in entry order. Only the first MAX_REFERENCES with a picture have it sent."""
-        found = [eid for eid, _ in self._pictured(figures, pos, view, finished, upto, limit=None)]
+        rest, most tied first, then in entry order. Only the first MAX_REFERENCES with a picture have it sent. `pictures`
+        False: no picture is looked for (a style preview), so none is sent."""
+        found = [eid for eid, _ in self._pictured(figures, pos, view, finished, upto, limit=None)] if pictures else []
         deg = self._ties(view)
         order = {eid: n for n, eid in enumerate(dict.fromkeys(figures))}
         rest = sorted((eid for eid in order if eid not in found), key=lambda e: (-deg[e], order[e]))
@@ -3177,7 +3270,9 @@ class Illustrator:
         return self._make_prompt(job, finished, soften_request(refused, reason, limit), set(labels_in(refused)))
 
     def _make_prompt(self, job: Job, finished: set[str] | frozenset[str] | None, extra: str = "",
-                     keep: set[str] | None = None) -> Prompt:
+                     keep: set[str] | None = None, pictures: bool = True) -> Prompt:
+        """`pictures` False (a style preview's body): no figure is marked as having a reference picture and none is
+        attached."""
         bi, b = job.bi, self.books[job.bi]
         me = self._bkey(bi)
         fin = self._finished(bi, finished if finished is not None else job.finished)
@@ -3352,7 +3447,7 @@ class Illustrator:
         pictured: set[str] = set()
         if scene:
             people = [eid for eid in others[:MAX_ENTRIES] if eid in ids and vis[eid]["type"] in PORTRAIT_TYPES]
-            label_of, pictured = self._labels(people, self._pos(bi, anchor), view, fin, self._reach(job))
+            label_of, pictured = self._labels(people, self._pos(bi, anchor), view, fin, self._reach(job), pictures)
         def entry(eid: str, tag: str, budget: int, look: bool, figure: str = "", portrait: bool = False) -> None:
             """An entry of the scene (or the entity's group) in `tag`, with its look told earlier (`look`) within `budget`."""
             desc, shown = self._describe(vis[eid], budget)
@@ -3426,7 +3521,7 @@ class Illustrator:
             # the labelled figures first; a figure with a picture that the text does not label is not drawn (one with none,
             # the writer may have drawn unlabelled: `shows` decides)
             ids = labelled + [x for x in self._shown(out, ids, vis) if x not in labelled and x not in pictured]
-        refs = self.references(job, ids, fin, figures)
+        refs = self.references(job, ids, fin, figures) if pictures else []
         for j, r in refs:                  # a reference picture carries what its own prompt came from
             inherits |= set(r.get("inherits", [])) | ({self._bkey(j)} if j != bi else set())
         style = self._style(bi)
