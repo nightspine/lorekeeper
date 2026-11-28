@@ -139,6 +139,27 @@ test("a doubtful hand fix: the checker thinks nothing was fixed", () => {
   assert.equal(doubtful(null), false);
   assert.equal(cleanVerified({ fixed: 0, partly: 0, of: 0, doubtful: 1 }).doubtful, undefined);
 });
+test("a doubtful fix whose items were judged put right: little visible change, only the no items named", () => {
+  const d = (results, of) => {
+    const yes = results.filter((r) => r.fixed === "yes").length, partly = results.filter((r) => r.fixed === "partly").length;
+    return { fixed: yes, partly, of, results, new: [], doubtful: true };
+  };
+  // both faults judged fixed, but the checker says the picture did not visibly change (changed: false)
+  assert.equal(verdictLine(d(res("yes", "yes"), 2), sent.slice(0, 2)),
+    "The checker found little visible change, though it judged 2 of 2 put right.");
+  assert.equal(verdictLine(d(res("yes", "no", "partly"), 3), sent),
+    "The checker found little visible change, though it judged 1 of 3 put right and 1 partly. Still wrong: the chair has three legs.");
+  assert.equal(verdictLine(d(res("partly", "no"), 2), sent.slice(0, 2)),
+    "The checker found little visible change, though it judged 1 partly. Still wrong: the chair has three legs.");
+  assert.equal(verdictLine(d(withNote("yes", "no"), 2), sent.slice(0, 1)),
+    "The checker found little visible change, though it judged 1 of 1 put right. Your change: not done.");
+  assert.equal(verdictLine(d(withNote("no", "yes"), 2), sent.slice(0, 1)),
+    "The checker found little visible change, though it judged your change done. Still wrong: the left hand has six fingers.");
+  assert.equal(verdictLine(d(withNote("partly"), 1), []), "The checker found little visible change, though it judged your change partly done.");
+  // everything no: only the items judged no are named
+  assert.equal(verdictLine(d(res("no", "no"), 2), sent.slice(0, 2)),
+    "The checker thinks nothing was fixed: the left hand has six fingers; the chair has three legs.");
+});
 test("How this was drawn: the note's own result, and a doubtful fix", () => {
   assert.equal(fixLine({ faults: [{ what: "a" }, { what: "b" }], note: "brighter.", verified: { fixed: 2, partly: 0, of: 3, results: withNote("yes", "no", "yes") } }),
     "Fixed: a; b (1 of 2 put right). Also: brighter (done).");
@@ -148,6 +169,15 @@ test("How this was drawn: the note's own result, and a doubtful fix", () => {
     "Tried to fix: a (0 of 1 put right). Also: n (not done).");
   assert.equal(panelFixLine({ panel: 2, text: "A boy asleep.", verified: { fixed: 0, partly: 0, of: 1, results: res("no"), doubtful: true } }),
     "Tried to fix panel 2: A boy asleep (0 of 1 put right).");
+  // a new text and a note: the note is the last item, out of the tally, with its own result
+  assert.equal(panelFixLine({ panel: 3, text: "The boy sits up.", note: "brighter", verified: { fixed: 1, partly: 0, of: 2, results: withNote("yes", "no") } }),
+    "Fixed panel 3: The boy sits up (1 of 1 put right). Also: brighter (not done).");
+  assert.equal(panelFixLine({ panel: 3, text: "The boy sits up.", note: "brighter", verified: null }), "Fixed panel 3: The boy sits up. Also: brighter.");
+  // a note alone is the panel's own wish (item 1, not flagged)
+  assert.equal(panelFixLine({ panel: 1, note: "brighter.", verified: { fixed: 1, partly: 0, of: 1, results: res("yes") } }),
+    "Fixed panel 1: brighter (1 of 1 put right).");
+  assert.equal(verdictLine({ fixed: 1, partly: 0, of: 2, results: withNote("yes", "no"), new: [] }, [panelWish(3, { text: "the boy sits up" })]),
+    "Fixed it. Your change: not done.");
   assert.equal(verdictLine({ fixed: 0, partly: 0, of: 1, results: res("no"), new: [], doubtful: true }, [panelWish(2, { text: "a boy asleep" })]),
     "The checker thinks nothing was fixed: panel 2 should show: a boy asleep.");
 });
