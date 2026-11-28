@@ -8,8 +8,8 @@ export const WHAT_CHARS = 200;
 export const WHERE_CHARS = 120;
 export const NOTE_CHARS = 300;
 
-/** The cost of the automatic check, said once in Settings. A placeholder the lead sets from the bench. */
-export const CHECK_COST = "Checking costs about 3 cents per 100 pictures, plus one fix for each picture with a fault, at the price of a picture.";
+/** The cost of the automatic check, said once in Settings, from the 2026-11-27 bench (art.FIX_RATE, CHECK_TOKENS on Haiku). */
+export const CHECK_COST = "Checking costs about 5 cents per 100 pictures. In a test about one picture in five had a fault worth fixing, and each fix costs one more picture.";
 
 const text = (v, n) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, n) : "");
 
