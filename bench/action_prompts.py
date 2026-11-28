@@ -64,6 +64,12 @@ MOMENTS = [
     ("dracula", "dracula.ev.215", "control", "crowded: five pledge with joined hands"),
     ("dracula", "dracula.ev.7", "control", "a place: a carriage stops in a ruined castle's courtyard"),
 ]
+# (book, chapter title): comic pages of chapters with fights, to see how much of a scene writer's change carries into comics
+COMICS = [
+    ("eotv", "Chapter IV: House of the Dead"),
+    ("eotv", "Chapter XII: Everything Falling Apart"),
+    ("dracula", "CHAPTER XXVII MINA HARKER’S JOURNAL"),
+]
 CRITERIA = ("dynamism", "clarity", "fidelity", "anatomy", "overall")
 
 JUDGE = """You judge illustrations for a reader's illustrated companion to a novel. You are shown two pictures, A (the first) and B (the second), drawn for the same moment of the book in the same drawing style from two different prompts. You do not know how either was made, and neither is the reference. Below the pictures comes the material the moment was drawn from: what happens, and the book's own paragraphs. Judge each picture against that material, then compare.
@@ -240,6 +246,48 @@ def write_side(name: str, books: dict, moments, a, spend: Spend, img: Path, log)
     return rows
 
 
+def comic_side(name: str, books: dict, a, spend: Spend, img: Path, log) -> dict:
+    """One comic page per COMICS chapter with candidate `name`'s writers, drawn once, portrait, and checked."""
+    prov, _, mid = a.image.partition(":")
+    image = llm.make_image(prov, mid or None)
+    quality = llm.nearest_quality(prov, image.name, a.quality)
+    rows = {}
+    with cands.patched(name):
+        def one(c) -> None:
+            book, title = c
+            doc, bk = books[book]
+            writer = spend.model(text_model(a.writer, "strong"), name, "writer")
+            il = illustrator(doc, bk, writer, spend.model(text_model(a.picker), name, "writer"), image, a.style, quality)
+            key = f"comic:{title}"
+            row = rows[key] = {"book": book, "event": key, "group": "comic", "what": title, "draws": []}
+            try:
+                job = il.job("comic", title)
+                pr = il.make_prompt(job)
+            except Exception as e:     # noqa: BLE001
+                row["skipped"] = f"no prompt: {type(e).__name__}: {e}"[:300]
+                return
+            evs = {x["id"]: x for x in doc["events"]}
+            summary = " ".join(f"Panel {k}: {evs[x]['summary']}" for k, x in enumerate(pr.panels or [], 1))
+            row.update({"summary": "A comic page, one panel per moment. " + summary, "prompt": pr.text, "body": pr.body,
+                        "words": len(pr.body.split()), "material": pr.check[:MATERIAL_CHARS]})
+            try:
+                pic = image.draw(pr.text, shape="portrait", quality=quality, references=[])
+            except Exception as e:     # noqa: BLE001
+                row["draws"].append({"error": f"{type(e).__name__}: {e}"[:300]})
+                return
+            spend.add(name, "images", pic.cost or 0.0)
+            f = img / f"{name}-comic-{book}-{hashlib.sha256(pic.data).hexdigest()[:6]}.{art._ext(pic.mime)}"
+            f.write_bytes(pic.data)
+            ck = art.check_picture(spend.model(text_model(a.checker, "strong"), name, "checks"), pic.data, pic.mime, pr.text)
+            row["draws"].append({"file": f.name, "mime": pic.mime, "cost": pic.cost, "softened": False,
+                                 "check": {"checked": ck.checked, "faults": ck.faults, "why": ck.why}})
+            log(f"  {name} {key}: {row['words']} words, {len(ck.faults)} faults")
+
+        with ThreadPoolExecutor(a.workers) as pool:
+            list(pool.map(one, COMICS))
+    return rows
+
+
 def more_draws(name: str, side: dict, a, spend: Spend, img: Path, log) -> None:
     """Draw a reused arm's prompts again until each has `--draws` pictures (the prompt as first drawn, softened or not)."""
     prov, _, mid = a.image.partition(":")
@@ -325,7 +373,7 @@ def summarise(results: dict, names: list[str], pairs: list[tuple[str, str]], spe
     for name in names:
         pics = [(r["group"], d) for r in results["sides"][name].values() for d in r["draws"] if d.get("file")]
         out["faults"][name] = {}
-        for g in ("action", "control", "all"):
+        for g in ("action", "control", "comic", "all"):
             ds = [d for gg, d in pics if g in ("all", gg) and d["check"]["checked"]]
             out["faults"][name][g] = {
                 "pictures": len(ds), "with_fault": sum(bool(d["check"]["faults"]) for d in ds),
@@ -337,7 +385,7 @@ def summarise(results: dict, names: list[str], pairs: list[tuple[str, str]], spe
     for name, base in pairs:
         vs = results["verdicts"].get(f"{name}|{base}", {})
         c = {}
-        for g in ("action", "control", "all"):
+        for g in ("action", "control", "comic", "all"):
             got = [v for k, v in vs.items() if "mean" in v and (g == "all" or v["group"] == g)]
             per = {}
             for crit in CRITERIA:
@@ -362,7 +410,7 @@ def sheet(results: dict, summary: dict, names: list[str], pairs: list[tuple[str,
             f"judge {e(results['config']['judge'])}; this run spent ${summary['spent']['total']}.</p>"
             f"<pre>{e(json.dumps({k: summary[k] for k in ('pairs', 'faults', 'spent')}, indent=1))}</pre>")
     body = []
-    for book, eid, group, what in MOMENTS:
+    for book, eid, group, what in MOMENTS + [(b_, f"comic:{t}", "comic", t) for b_, t in COMICS]:
         rows = {n: results["sides"][n].get(eid) for n in names}
         r0 = rows[names[0]]
         if not r0:
@@ -415,6 +463,7 @@ def main() -> int:
     ap.add_argument("--draws", type=int, default=1, help="pictures per prompt; a reused arm with fewer gets more")
     ap.add_argument("--pairs", default="", help="CAND:BASE,... to judge (default every candidate against the first)")
     ap.add_argument("--no-draw", action="store_true", help="write the prompts only")
+    ap.add_argument("--comics", action="store_true", help="draw comic pages of COMICS instead of the scene moments")
     ap.add_argument("--only", default="", help="comma-separated event ids")
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--cap", type=float, default=3.0)
@@ -462,14 +511,18 @@ def main() -> int:
             log(f"{n}: reused from {d}")
             more_draws(n, results["sides"][n], a, spend, img, log)
             continue
-        log(f"{n}: writing and drawing {len(moments)} moments")
-        results["sides"][n] = write_side(n, books, moments, a, spend, img, log)
+        if a.comics:
+            log(f"{n}: writing and drawing {len(COMICS)} comic pages")
+            results["sides"][n] = comic_side(n, books, a, spend, img, log)
+        else:
+            log(f"{n}: writing and drawing {len(moments)} moments")
+            results["sides"][n] = write_side(n, books, moments, a, spend, img, log)
         (out / "results.json").write_text(json.dumps(results, indent=1, ensure_ascii=False))
     pairs = [tuple(x.split(":")) for x in a.pairs.split(",") if x] or [(n, names[0]) for n in names[1:]]
     jobs = []
     for n, base in pairs:
         vs = results["verdicts"].setdefault(f"{n}|{base}", {})
-        for book, eid, group, what in moments:
+        for book, eid, group, what in ([(b_, f"comic:{t}", "comic", t) for b_, t in COMICS] if a.comics else moments):
             ra, rb = results["sides"][base].get(eid), results["sides"][n].get(eid)
             if not ra or not rb:
                 continue
