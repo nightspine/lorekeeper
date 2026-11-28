@@ -70,7 +70,9 @@ export function artDefaults() {
     portraitProvider: typeof d.portraitProvider === "string" && d.portraitProvider ? d.portraitProvider : null,
     portraitModel: typeof d.portraitModel === "string" && d.portraitModel ? d.portraitModel : null,
     // Check every new picture for drawing faults and fix it once when one is found (off unless chosen).
-    check: d.check === true };
+    check: d.check === true,
+    // After a book's first build, draw its own style previews (on unless turned off).
+    previews: d.previews !== false };
 }
 const textPick = (v) => (v && typeof v === "object" && typeof v.provider === "string" && v.provider && typeof v.model === "string" && v.model
   ? { provider: v.provider, model: v.model } : null);
@@ -1233,7 +1235,7 @@ export async function openPictureSheet(opts) {
     textarea.value = st.prompt;
     // The chosen style as one row (its preview and name) that opens the gallery as a sheet over this one.
     const extra = setStyles();
-    const styleChoice = styleRow({ id: "art-style-row", extra, value: st.style === LOOSE ? (st.slug || slugOf(st.custom)) : st.style,
+    const styleChoice = styleRow({ id: "art-style-row", extra, book: opts.key, provider: st.provider, value: st.style === LOOSE ? (st.slug || slugOf(st.custom)) : st.style,
       onPick: (s) => {
         const legacy = extra.find((x) => x.slug === s.slug);
         if (legacy) { if (st.style === LOOSE && st.custom === legacy.text) return; st.style = LOOSE; st.custom = legacy.text; st.slug = legacy.slug; }
@@ -1653,7 +1655,7 @@ export function chapterCount(c) {
   return `${n} picture${n === 1 ? "" : "s"}${done ? `, ${done} already drawn` : ""}`;
 }
 
-export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null, runProvider = null } = {}) {
+export function picturesForm({ estimate, fallback = null, open = false, always = false, idPrefix = "art", chapters: listChapters = false, onChange = null, runProvider = null, book = null } = {}) {
   const d = artDefaults();
   // The style is a slug (built-in, or custom saved on this server), or an older default typed as words, sent as it is.
   const st = { on: always, style: d.style, level: "main", cast: "main",
@@ -1770,7 +1772,8 @@ export function picturesForm({ estimate, fallback = null, open = false, always =
     };
     // An older default typed as words, not saved here: still offered, by its words.
     const extra = STYLE_LABEL[st.style] || savedStyle(st.style) ? [] : [{ slug: st.style, name: styleLabel(st.style), text: st.style }];
-    const styleChoice = styleRow({ id: `${idPrefix}-style`, value: st.style, extra, disabled: !st.on,
+    // `book`: the index's library key (or a function giving it, null before a first build), for the book's own style previews.
+    const styleChoice = styleRow({ id: `${idPrefix}-style`, value: st.style, extra, disabled: !st.on, book, provider: st.provider,
       onPick: (s) => { if (s.slug === st.style) return; st.style = s.slug; paint(); el.querySelector(`#${idPrefix}-style`)?.focus({ preventScroll: true }); } }).el;
     // Every level is shown; the ones the chosen model does not offer are disabled (Nano Banana 2 Lite has no Best).
     const levels = (st.provider ? levelsOf(st.provider, st.model) : QUALITIES).map(([k]) => k);

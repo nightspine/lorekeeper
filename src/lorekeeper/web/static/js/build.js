@@ -2,6 +2,7 @@
 // has no index" choice, and a compact settings dialog for queuing several books in order.
 import { api } from "./api.js";
 import { state as appState } from "./app.js";
+import { artDefaults } from "./art.js";
 import { clear, fmtDuration, fmtInt, h, icon, showModalLocked, closeLocked, toast } from "./dom.js";
 
 /** Shown wherever a Book Orbit book without an EPUB cannot be built. */
@@ -183,7 +184,8 @@ export async function buildDialog(books, { title } = {}) {
   go.addEventListener("click", async () => {
     go.disabled = true;
     try {
-      const { jobs } = await api.buildMany(books.map((b) => b.key), cfg);
+      // Settings, Pictures: each book's own style previews after its first build (the server skips a book that has them).
+      const { jobs } = await api.buildMany(books.map((b) => b.key), { ...cfg, stylePreviews: artDefaults().previews });
       m.close();
       toast(`Queued ${jobs.length} build${jobs.length === 1 ? "" : "s"}`);
       location.hash = `#/studio/job/${jobs[0].id}`;
@@ -234,6 +236,8 @@ export function partLine(pr, status) {
   // Drawing pictures (the stage after the index, or an "Add pictures" run): "12 of 52 pictures".
   const art = Array.isArray(pr.art) ? pr.art : null;
   if (art && (pr.last === "art" || pr.phase === "art" || !(Number(pr.chunks) > 0))) return `${Number(art[0]) || 0} of ${Number(art[1]) || 0} pictures`;
+  // A style previews run: "12 of 22 pictures" too.
+  if (Array.isArray(pr.previews)) return `${Number(pr.previews[0]) || 0} of ${Number(pr.previews[1]) || 0} pictures`;
   const n = Number(pr.chunks);
   if (!Number.isFinite(n) || n <= 0) return "";
   if (status === "done") return `${n} of ${n} parts`;
