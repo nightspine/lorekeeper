@@ -2554,17 +2554,17 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         @art_route
         def work():
             faults, note = fix_request(body)
-            return file_fix(key, pid, body, len(faults),
+            return file_fix(key, pid, body,
                             lambda il, rec, checker: il.fix(rec, faults, note, bi=len(il.books) - 1,
                                                             verify=checker is not None, checker=checker),
                             "fixed a picture")
         return await work()
 
-    def file_fix(key: str, pid: str, body: dict, of: int, edit, what: str) -> dict:
+    def file_fix(key: str, pid: str, body: dict, edit, what: str) -> dict:
         """What the fix and the panel-fix routes share: the gates, the record's own image model, one `edit(il, rec,
         checker)` that returns the new record (or raises `FixUnchanged`, `ImageRefused`, `ValueError`), then the new record
-        takes the old one's place (one journal entry, `what`) and the reply carries `verified` and `beforeUrl`. `of` is the
-        number of faults the verdict counts."""
+        takes the old one's place (one journal entry, `what`) and the reply carries `verified` and `beforeUrl`. A 422
+        `unchanged` serves the pipeline's own verdict as it built it (its results, never a count made from the request)."""
         ctx = art_index(key)
         slug_, rec = art_record(ctx, pid)
         art_busy(ctx["hash"])
@@ -2591,7 +2591,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             except artmod.FixUnchanged as e:
                 v = getattr(e, "verdict", None)
                 raise ArtRefusal(422, "unchanged", UNCHANGED, extra={
-                    "verified": verified_json(v, of) if v is not None else None,
+                    "verified": verified_json(v, len(getattr(v, "results", None) or [])) if v is not None else None,
                     "fixCost": round(getattr(e, "cost", 0) or 0, 6)}) from e
             if "inherits" not in rec:
                 new.pop("inherits", None)
@@ -2633,7 +2633,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             faults, note = fix_request(body, need=False)
             if not faults and not note and not text_:
                 raise ArtRefusal(422, "bad-fix", "Say what to fix.")
-            return file_fix(key, pid, body, len(faults) + 1,
+            return file_fix(key, pid, body,
                             lambda il, r, checker: il.fix_panel(r, k, text_, note, faults, bi=len(il.books) - 1,
                                                                 verify=checker is not None, checker=checker),
                             f"fixed panel {k} of a comic")

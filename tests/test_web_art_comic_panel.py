@@ -192,3 +192,14 @@ def test_the_art_route_serves_panel_texts_as_stored_else_cut_from_the_prompt(env
         assert "panelTexts" not in next(p for p in pictures(env) if p["id"] == old["id"])
     else:
         assert len(got["panelTexts"]) == 3
+
+
+def test_unchanged_serves_the_pipelines_own_verdict_not_a_count_from_the_request(env, pipe, monkeypatch):
+    old = page(env)
+    verdict = art.Verdict(results=[], changed=False, new=[], checked=True, cost=0.0)
+
+    def fix_panel(self, *a, **k):
+        raise art.FixUnchanged(verdict, 0.03)
+    monkeypatch.setattr(art.Illustrator, "fix_panel", fix_panel, raising=False)
+    r = ok(env, old, k=1, text="Other words", faults=[{"what": "a third hand", "where": "panel 1"}])
+    assert r.status_code == 422 and r.json()["verified"] == {"fixed": 0, "partly": 0, "of": 0, "results": [], "new": []}
