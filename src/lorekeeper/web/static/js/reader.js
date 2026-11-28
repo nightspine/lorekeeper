@@ -12,7 +12,7 @@ import { families } from "./kinship.js";
 import { createEditor } from "./editor.js";
 import { mentionsSection, forgetMentions } from "./mentions.js";
 import { fetchPreview, previewError, previewStrip } from "./community.js";
-import { createAsk } from "./ask.js";
+import { createAsk, passageBlocks, passageLabel, passageOpenable } from "./ask.js";
 import { createReading } from "./read.js";
 import { artImg, artOn, lightboxHides, refParts, artStyle, artUrl, ENTITY_KINDS, forgetArt, imageProviders, KIND_OF_TYPE, loadArt, openLightbox, openPictureSheet, modalToasts, setArtOn, setArtStyle, sheetWorld as worldForSheet, styleLabel, unfinishedSources, visibleArt } from "./art.js";
 
@@ -118,7 +118,7 @@ export function mountReader(root) {
     key: () => s.key,
     position: askPosition,
     view: () => s.view,
-    examples: askExamples, canOpen: canOpenCite, open: openCite,
+    examples: askExamples, canOpen: canOpenCite, open: openCite, citeLabel: askCiteLabel, hasBook: () => canRead(),
     onStatus: () => { if (!disposed && el.tabs) paintTabs(); },
   });
   if (!preview) ask.refreshStatus();
@@ -240,6 +240,7 @@ export function mountReader(root) {
     clearTimeout(s.dupesTimer);
     s.graph.pos = null; s.graph.sel = null; s.graph.userView = false; s.graph.arch = null;
     ask.check();   // another index: nothing asked about the last one stays
+    s.askPassage?.close(true);
     reading.reset();   // and nothing of the last one's text
     render();
     if (!preview) loadPictures(stale);   // pictures are an extra: they arrive after the page and repaint what shows them
@@ -1063,6 +1064,7 @@ export function mountReader(root) {
     }
     s.prevIds = ids;
     ask.check();   // moved back, a book unticked or switched: the thread goes
+    if (s.askPassage && !canOpenCite(s.askPassage.cite)) s.askPassage.close(true);   // a passage now at or past the position
     // Pictures: a book ticked or unticked as finished changes which art sets may show; an open lightbox that could
     // step to a picture the position no longer reveals closes (the spoiler rule outranks it), as does a picture sheet.
     const books = pictureBooks().map(bkKey).join(",");
@@ -2899,7 +2901,7 @@ export function mountReader(root) {
     const anchor = s.map.frontier(s.p);
     const order = s.series ? s.series.orders[s.order] : null;
     const finished = s.series ? finishedSet() : null;
-    return { anchor, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
+    return { anchor, p: s.p, finished, order: s.series ? s.order : null, key: s.key, book: s.book, series: s.series?.id ?? null,
       rank: order ? order.indexOf(s.book) : 0, ord: anchor ? s.doc.anchors.findIndex((a) => a.id === anchor) : -1 };
   }
   // ---- Ask: examples, sources, entry points -----------------------------------------------------
@@ -2929,9 +2931,31 @@ export function mountReader(root) {
   };
   /** The entity whose current view carries this arc (an arc replaced since, or past the position, is not there). */
   const arcEntity = (id) => { const e = s.view.entities.find((x) => (x.arcs || []).some((a) => a.id === id)); return e && nameOf(e.id) ? e.id : null; };
+  /** The first block not yet read in the book on screen (finished mode: the block being read never counts; the end of
+   *  the book is every block), or null without its exact map. Passages the server sent all lie before it. */
+  function askFrontierSeq() {
+    if (!canRead() || !s.map.cum) return null;
+    return s.p >= 1 - 1e-12 ? s.map.cum.length : s.map.seqAt(s.p);
+  }
+  /** A passage of the book being read is labelled by the book's own chapter number (the chapter map), else the server's
+   *  number, else its title; an earlier book's carries that book's short title. */
+  function askCiteLabel(c) {
+    if (c?.kind !== "passage") return null;
+    // A passage of this book at or past the position is only "The book" (passageLabel), never its chapter.
+    return passageLabel(c, { book: s.book ?? null, frontier: askFrontierSeq(), short: (k) => bookShort(k), chapter: (x) => {
+      const current = (x.book ?? null) === (s.book ?? null);
+      let ch = null;
+      if (current && Number.isInteger(x.seq)) for (const g of s.map?.chapters || []) if (g.start <= x.seq) ch = g; else break;
+      const title = ch?.title || x.chapter || "";
+      const n = ch ? mapNumbers().get(ch.start) ?? null : Number.isInteger(x.number) ? x.number : null;
+      const full = tidyTitle(title) || "";
+      return chapterLabel(title, n) || full.match(SELF_NAMED_SHORT)?.[0].trim() || full || null;
+    } });
+  }
   /** A source is a link only while the item is in the view on screen. */
   function canOpenCite(c) {
     if (disposed || !s.view) return false;
+    if (c.kind === "passage") return passageOpenable(c, { book: s.book ?? null, frontier: askFrontierSeq() });
     if (c.kind === "event") return s.view.events.some((ev) => ev.id === c.id);
     if (c.kind === "chapter") return chapterGroups().some((g) => g.ids.includes(c.id));
     if (c.kind === "recap") return s.view.recap?.id === c.id;   // the recap is replaced as the story goes on: the old one is plain text
@@ -2939,7 +2963,8 @@ export function mountReader(root) {
   }
   async function openCite(c) {
     if (!canOpenCite(c)) return;
-    if (c.kind === "event") {
+    if (c.kind === "passage") openPassage(c);
+    else if (c.kind === "event") {
       s.tab = "timeline"; saveUrl();
       paintTabs();
       let li = el.panel.querySelector(`[data-ev="${CSS.escape(c.id)}"]`);
@@ -2969,6 +2994,32 @@ export function mountReader(root) {
       const target = (arc.book && [...(box?.querySelectorAll(".arc-card[data-book]") || [])].find((n) => n.dataset.book === arc.book)) || box?.querySelector('[data-jump="arc"]');
       target?.scrollIntoView({ block: "start", behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
     } else openDrawer(entryOfCite(c), { from: document.activeElement });
+  }
+  /** A passage an answer cites, in a sheet: the book's own paragraphs, only those before the position. Opening it in the
+   *  Read tab would move the position back to it (Read's position is the paragraph at the top), which clears the thread,
+   *  so that is a separate, stated choice. */
+  async function openPassage(c) {
+    const body = h("div.ask-passage", loading("Opening the passage…"));
+    const go = h("button.btn", { type: "button", on: { click: async () => {
+      // Closed at once, not with the slide-out: after the move the cited paragraphs are no longer before the position.
+      sh.close(true);
+      if (!canOpenCite(c)) return;
+      await moveTo(s.map.blockStart(c.seq));
+      if (disposed || Math.abs(s.p - s.map.blockStart(c.seq)) > 1e-9) return;
+      s.tab = "read"; saveUrl(); paintTabs();
+    } } }, "Read from here");
+    const sh = sheet({ title: askCiteLabel(c), content: body, className: "ask-passage-sheet",
+      footer: [h("p.hint.ask-passage-note", "Reading from here moves your position back to this passage, which clears your questions."), go],
+      onClose: () => { if (s.askPassage === sh) s.askPassage = null; } });
+    s.askPassage = sh;
+    sh.cite = c;
+    let r;
+    try { r = await api.readChapter(s.key, { seq: c.seq }); }
+    catch { if (!sh.finished) sh.set(h("p.ask-err", "The passage could not be loaded.")); return; }
+    if (sh.finished || disposed) return;
+    if (!canOpenCite(c)) { sh.close(true); return; }
+    const blocks = passageBlocks(r?.blocks, c, askFrontierSeq());
+    sh.set(h("div.ask-passage", blocks.length ? blocks.map((b) => h(b.heading ? "h3.ask-passage-h" : "p.ask-passage-p", b.text)) : h("p.hint", "The passage could not be found in the book.")));
   }
   /** Open the Ask tab (the palette, the entry's link). A modal entry closes first; typed text in a form is asked about. */
   async function showAsk({ text = null } = {}) {
@@ -3036,7 +3087,7 @@ export function mountReader(root) {
   import("./palette.js").then((m) => { if (!disposed) unregister = m.registerProvider("reader", paletteItems); }).catch((e) => { console.warn("palette provider", e); });
 
   return () => {
-    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); reading.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
+    disposed = true; s.art.lightbox?.close(); s.art.sheet?.opened.then((sh) => sh?.close(true)); if (s.mergeToast && s.mergeToast.host?.contains(s.mergeToast.node) !== false && s.mergeToast.node?.isConnected) toastedMerges.delete(s.mergeToast.auto.id); s.dropMergeToast?.(); ask.dispose(); s.askPassage?.close(true); reading.dispose(); dropPending(); unregister?.(); clearTimeout(s.autoTimer); clearTimeout(s.dupesTimer); closeDrawer({ focus: false }); clearTimeout(urlTimer); clearInterval(pollTimer);
     window.removeEventListener("resize", onResize);
     document.removeEventListener("visibilitychange", onVisible); window.removeEventListener("focus", onVisible);
   };

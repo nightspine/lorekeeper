@@ -36,15 +36,107 @@ export function cleanUserRefs(list) {
     if (!r || typeof r !== "object" || !SHA_RE.test(r.sha || "") || seen.has(r.sha)) continue;
     seen.add(r.sha);
     const description = typeof r.description === "string" ? r.description.replace(/\s+/g, " ").trim().slice(0, 300) : "";
-    out.push({ sha: r.sha, ext: EXTS.has(r.ext) ? r.ext : null, note: cleanNote(r.note), description: description || null, url: refUrl(r.url) });
+    out.push({ sha: r.sha, ext: EXTS.has(r.ext) ? r.ext : null, note: cleanNote(r.note), description: description || null, url: refUrl(r.url),
+      appliesTo: cleanApplies(r.appliesTo) });
     if (out.length >= MAX_REFS) break;
   }
   return out;
 }
 
-/** The `refs` of a draw, redraw or `PUT .../refs` body from the row's items: [{ sha, note? }], uploaded ones only. */
+/** The `refs` of a draw, redraw or `PUT .../refs` body from the row's items: [{ sha, note?, appliesTo? }], uploaded ones
+ *  only. `appliesTo` goes only when it is not "scene" (missing means the whole scene, as an older server reads it too). */
 export function refsBody(items) {
-  return cleanUserRefs((items || []).filter((x) => x && !x.uploading && !x.error)).map((r) => (r.note ? { sha: r.sha, note: r.note } : { sha: r.sha }));
+  return cleanUserRefs((items || []).filter((x) => x && !x.uploading && !x.error)).map((r) => ({
+    sha: r.sha, ...(r.note ? { note: r.note } : {}), ...(r.appliesTo !== "scene" ? { appliesTo: r.appliesTo } : {}) }));
+}
+
+// ---- what each picture applies to ---------------------------------------------------------------
+
+/** Picture kinds drawn of one subject (a portrait, a place, a thing): a reference may be for that subject. */
+const SUBJECT_KINDS = new Set(["portrait", "place", "thing"]);
+const LABEL_RE = /^[A-F]$/;
+/** "scene", "subject" or a figure label "A".."F"; anything else (missing, null, a name, an id) is "scene". */
+export function cleanApplies(v) {
+  return v === "subject" || (typeof v === "string" && LABEL_RE.test(v)) ? v : "scene";
+}
+/** The subject in words when the view gives no name: "This place", "This thing", "The person drawn". */
+const subjectWord = (kind) => (kind === "place" ? "This place" : kind === "thing" ? "This thing" : "The person drawn");
+
+/**
+ * The "Applies to" choices for one reference picture: [{ value, label }], the whole picture first.
+ *   kind     the picture's kind (plate | event | comic | portrait | place | thing)
+ *   figures  for a scene or comic: the labelled figures the prompt text uses now, [{ label, name }] where `name` comes from
+ *            the reader's view only (null: not visible there, so just "Figure A"); the caller filters by the text
+ *   subject  for a portrait, place or thing: the subject's name from the reader's view (null: "This place" and so on)
+ */
+export function appliesOptions({ kind, figures = [], subject = null } = {}) {
+  if (SUBJECT_KINDS.has(kind)) {
+    return [{ value: "scene", label: "The whole picture" }, { value: "subject", label: typeof subject === "string" && subject ? subject : subjectWord(kind) }];
+  }
+  const out = [{ value: "scene", label: "The whole scene" }], seen = new Set();
+  for (const f of figures || []) {
+    if (!f || !LABEL_RE.test(f.label || "") || seen.has(f.label)) continue;
+    seen.add(f.label);
+    out.push({ value: f.label, label: f.name ? `Figure ${f.label}, ${f.name}` : `Figure ${f.label}` });
+  }
+  return out.sort((a, b) => (a.value === "scene" ? -1 : b.value === "scene" ? 1 : a.value < b.value ? -1 : 1));
+}
+
+/** The sentence under a reference (and in the done view) when its figure is not in the prompt: "" for anything else. */
+export function fallbackLine(wanted, kind = null) {
+  const v = cleanApplies(wanted);
+  if (LABEL_RE.test(v)) return `Figure ${v} is no longer in the prompt, so this picture now applies to the whole scene.`;
+  if (v === "subject" && SUBJECT_KINDS.has(kind)) return "This picture now applies to the whole picture.";
+  return "";
+}
+
+/**
+ * What a reference applies to, given what the person chose (`wanted`) and the choices now (`options`, from appliesOptions;
+ * null while no prompt is written yet). Returns { value, options, fallback }: `value` the one sent, `options` the select's
+ * (while there is no prompt yet a chosen figure is kept as an option, so a redraw's choice waits for the new text),
+ * `fallback` the quiet line when a chosen figure left the text ("" otherwise). "subject" on a scene is the whole scene,
+ * silently (it only comes from an odd record).
+ */
+export function resolveApplies(wanted, options) {
+  const v = cleanApplies(wanted);
+  if (!options) {
+    const opts = [{ value: "scene", label: "The whole scene" }];
+    if (LABEL_RE.test(v)) opts.push({ value: v, label: `Figure ${v}` });
+    return { value: LABEL_RE.test(v) ? v : "scene", options: opts, fallback: "" };
+  }
+  if (options.some((o) => o.value === v)) return { value: v, options, fallback: "" };
+  return { value: "scene", options, fallback: LABEL_RE.test(v) ? fallbackLine(v) : "" };
+}
+
+/** The done view's sentence when the server used the whole scene for a picture tied to a figure (`appliesFallback`, the
+ *  shas, on the reply's record): said once, naming the figures as they were sent. `sent` is the body's `refs`. "" for none. */
+export function fallbackDoneLine(sent, shas, kind = null) {
+  if (!Array.isArray(shas) || !shas.length) return "";
+  const back = new Set(shas.filter((x) => typeof x === "string"));
+  const labels = [...new Set((sent || []).filter((r) => r && back.has(r.sha)).map((r) => cleanApplies(r.appliesTo)).filter((v) => LABEL_RE.test(v)))].sort();
+  if (!labels.length) return back.size ? (SUBJECT_KINDS.has(kind) ? "One of your pictures was used for the whole picture." : "One of your pictures was used for the whole scene.") : "";
+  if (labels.length === 1) return fallbackLine(labels[0]);
+  const names = `${labels.slice(0, -1).map((l) => `Figure ${l}`).join(", ")} and Figure ${labels[labels.length - 1]}`;
+  return `${names} are no longer in the prompt, so those pictures now apply to the whole scene.`;
+}
+
+/**
+ * The lightbox's line under a reference's note: "For figure A, Mina", "For figure A", "For Mina", "For this place"; "" for
+ * the whole scene. The label maps to an entity only through the record's own `figures`; `name(entity)` is the reader's
+ * view (null: not visible), so a figure not visible is only "For figure A". `rec` is the picture's record.
+ */
+export function appliesLine(appliesTo, rec, name = () => null) {
+  const v = cleanApplies(appliesTo);
+  if (v === "scene") return "";
+  const nm = (id) => { try { const n = typeof id === "string" && id ? name(id) : null; return typeof n === "string" && n ? n : null; } catch { return null; } };
+  if (v === "subject") {
+    if (!SUBJECT_KINDS.has(rec?.kind)) return "";
+    const n = nm(rec.target);
+    return n ? `For ${n}` : `For ${subjectWord(rec.kind).replace(/^This/, "this").replace(/^The/, "the")}`;
+  }
+  const f = (Array.isArray(rec?.figures) ? rec.figures : []).find((x) => x && x.label === v);
+  const n = f ? nm(f.entity) : null;
+  return n ? `For figure ${v}, ${n}` : `For figure ${v}`;
 }
 /** Do two lists send the same pictures with the same notes, in the same order? */
 export function sameRefs(a, b) {
