@@ -89,7 +89,10 @@ test("describePrice and describeCost never make up a number", () => {
   assert.equal(R.describePrice({ price: null }, 1), null);
   assert.equal(R.describePrice(m, 0), null);
   assert.equal(R.describeCost({ price: null }), null);
-  assert.match(R.describeCost(m, 2), /cent/);
+  assert.equal(R.describeCost({ price: [0.1, 0.5] }, 1), "less than 1 cent");
+  assert.equal(R.describeCost({ price: [3, 15] }, 2), "1 cent");
+  assert.equal(R.describeCost({ price: [3, 15] }, 4), "3 cents");
+  assert.equal(R.describeCost({ price: [300, 1500] }, 4), "$2.88");
 });
 test("refPath and pathLine say which way the pictures go, and to whom", () => {
   assert.equal(R.refPath({ takes: true, describer: null }), "pictures");

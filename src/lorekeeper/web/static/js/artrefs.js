@@ -3,7 +3,7 @@
 // this (tests/js/run_artrefs.mjs). The pictures are the person's own files, kept beside the picture they drew (`userRefs`
 // on its record), never in an index. Notes and descriptions are plain text: the caller only ever shows them through h().
 // Picture files are fetched only from /api/art/<textHash>/refs/<sha> addresses checked here.
-import { refProblem, REF_ACCEPT, REF_MAX_BYTES, smallCost, sniff } from "./styleref.js";
+import { refProblem, REF_ACCEPT, REF_MAX_BYTES, sniff } from "./styleref.js";
 
 export { REF_ACCEPT, sniff };
 
@@ -83,10 +83,13 @@ export function describePrice(model, n = 1) {
   return n * (DESCRIBE_TOKENS[0] * +pr[0] + DESCRIBE_TOKENS[1] * +pr[1]) / 1e6;
 }
 
-/** The description's cost as a phrase for the path line ("less than 1 cent" style, from `smallCost`), null when unknown. */
+/** The description's cost as a phrase for the path line: "less than 1 cent", "2 cents", "$1.20"; null when unknown. */
 export function describeCost(model, n = 1) {
   const usd = describePrice(model, n);
-  return usd == null ? null : smallCost(usd);
+  if (usd == null || !(usd > 0)) return null;
+  const c = Math.round(usd * 100);
+  if (c < 1) return "less than 1 cent";
+  return c < 100 ? `${c} cent${c === 1 ? "" : "s"}` : `$${usd.toFixed(2)}`;
 }
 
 /** Which way the pictures go, from the chosen image model: "pictures" (sent as image input), "words" (described by a
