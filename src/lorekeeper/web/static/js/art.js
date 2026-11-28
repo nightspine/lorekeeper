@@ -808,7 +808,7 @@ async function inspectRef(file) {
 
 /**
  * The picture sheet's "Reference pictures" row: up to MAX_REFS of the person's own pictures, each uploaded as soon as it
- * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it") and Remove.
+ * is chosen (`POST .../art/refs`) and shown as a thumbnail with a one-line note ("What to take from it: this dress") and Remove.
  * `initial` is a record's `userRefs` (a redraw starts from them). The element is made once and kept across the sheet's
  * repaints, so a change of style, shape, quality, model or moment keeps it as it is. Returns
  * { el, refs() [{sha, note?, appliesTo?}], count(), busy(), dirty(), drop(sentence), setPath(text), setFigures(rows),
@@ -818,6 +818,10 @@ async function inspectRef(file) {
  * (`kind`) its subject (`subject()`, the name from the reader's view, null when not visible). A chosen figure that leaves
  * the text falls back to the whole scene with one quiet line, and comes back if the label does.
  */
+/** The note names the thing to take, never who wears it: "Applies to" says who (a note naming the other sex changes the
+ *  figure). Shorter on a phone, where the field is about 170px wide at 16px and the longer one would be cut off. */
+const notePlaceholder = () => (globalThis.matchMedia?.("(max-width: 640px)").matches ? "Take from it: this dress" : "What to take from it: this dress");
+
 function refsRow({ key, kind = null, subject = () => null, initial = [], onChange = null }) {
   let seq = 0;
   // { id, sha, ext, note, description, url, local (object URL while uploading), uploading, ctrl, done (Promise),
@@ -848,7 +852,7 @@ function refsRow({ key, kind = null, subject = () => null, initial = [], onChang
       img.addEventListener("error", () => img.remove());
       thumb.prepend(img);
     }
-    const note = h("input.input.art-ref-note", { type: "text", maxlength: String(REF_NOTE_CHARS), placeholder: "What to take from it",
+    const note = h("input.input.art-ref-note", { type: "text", maxlength: String(REF_NOTE_CHARS), placeholder: notePlaceholder(),
       "aria-label": `What to take from picture ${n + 1}`, dataset: { ref: String(it.id) },
       on: { input: (e) => { it.note = e.target.value; changed(); } } });
     note.value = it.note || "";
