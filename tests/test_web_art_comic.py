@@ -1,13 +1,17 @@
 """Comic pages in the web app: the prompt, draw, soften and redraw routes accept the `comic` kind, always at the reader's
 position, drawn with the scene image model, with `panels` in every answer. Scripted models (tests/test_art.py)."""
 
+import re
+
 import pytest
 
 pytest.importorskip("fastapi")
 
 from lorekeeper import art  # noqa: E402
 
-from .test_web_art import GEMINI, KEY, env, short_world  # noqa: E402,F401
+from .test_art import PANEL  # noqa: E402
+
+from .test_web_art import GEMINI, KEY, env, series_env, short_world  # noqa: E402,F401
 
 CH = "Chapter Two"     # e4 (a turning point), e5, e6
 
@@ -194,3 +198,24 @@ def test_a_page_kept_while_the_reader_moved_on_keeps_its_own_anchor_and_panels(e
     late = ask(env, "prompt", p=1.0).json()
     rec = ask(env, "draw", p=anchor_of(env, "e6"), prompt=late["prompt"]).json()
     assert rec["from"] == anchor_of(env, "e6") and rec["panels"] == ["e4", "e5", "e6"]
+
+
+def test_a_page_written_for_more_finished_books_is_hidden_until_they_are_finished(series_env, monkeypatch):
+    c, _ = series_env
+    monkeypatch.setenv("GEMINI_API_KEY", "g-test")
+    at = next(x for x in c.get(f"/api/library/{KEY}").json()["events"] if x["id"] == "e5")["from"]   # book two's
+    base = {"kind": "comic", "target": CH, "style": "ink", "p": at}
+    p0 = c.post(f"/api/library/{KEY}/art/prompt", json={**base, "finished": []}).json()      # the sheet opens: book one unread
+    # written with book one read, so its words may carry what only book one tells
+    c.text.comic = lambda prompt: [PANEL + " A mill wheel turns in the winter moonlight."] * len(re.findall(r"<moment n=", prompt))
+    p1 = c.post(f"/api/library/{KEY}/art/prompt", json={**base, "finished": ["one"]}).json()
+    c.text.comic = None
+    assert p0["anchor"] == p1["anchor"] == at and "one" not in p0["inherits"] and p1["body"] != p0["body"]
+    n = len(c.text.prompts)
+    for text_ in (p1["prompt"], f'{p1["body"]} {art.style_sentence("watercolour")} {p1["noText"]}'):
+        rec = c.post(f"/api/library/{KEY}/art/draw", json={**base, "finished": [], "prompt": text_}).json()
+        assert rec["from"] == at and rec["inherits"] == ["one"] and rec["partial"] is True    # hidden until book one is
+    assert len(c.text.prompts) == n                          # a cache hit: nothing written again
+    # this reader's own page keeps only what it carries
+    own = c.post(f"/api/library/{KEY}/art/draw", json={**base, "finished": [], "prompt": p0["prompt"]}).json()
+    assert own["inherits"] == p0["inherits"] and "one" not in own["inherits"]

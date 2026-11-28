@@ -2217,8 +2217,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     placed = comic_place(il, ctx["hash"], style, k, job, text_, at, fresh=copy.copy(pr))
                     if isinstance(placed, tuple):       # the page the sheet kept while the reader moved on
                         pr, made_in = placed[0], ""     # its references are taken again at its anchor
-                    elif placed == "position" and later_than(il, job, at):
-                        job.anchor = pr.anchor = at     # the person's own text: shown from where it was drawn
+                    elif placed == "position":
+                        # the person's own text, or a page written for another set of finished books: shown from where it
+                        # was drawn, and its words hidden until every earlier book is finished, on a cache hit too, since
+                        # it may carry what the cached prompt's `inherits` does not
+                        if later_than(il, job, at):
+                            job.anchor = pr.anchor = at
+                        pr.inherits = sorted(set(pr.inherits) | set(earlier_keys(ctx)))
                 pr = restyled(il, job, pr, slug_, made_in)
                 if missed and text_ != " ".join(pr.text.split()):
                     # The text drawn is not the prompt just written for this reader, so it may come from one written for a
