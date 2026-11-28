@@ -218,7 +218,7 @@ function previewOf(s, cls = "style-prev", { marks = false } = {}) {
  *   manage         Settings: custom cards get Edit and Delete
  *   pickNew        choose a style as soon as it is saved (true in the sheet and dialogs, false in Settings)
  *   onChanged()    after a style was saved, edited or deleted
- *   book           the index's library key: the cards show that book's own previews where it has them
+ *   book           the index's library key, or a promise of it: the cards show that book's own previews where it has them
  *   provider       the flow's image provider (an id or a provider object): whose previews of the book to show first
  * Returns { el, set(value), refresh() }.
  */
@@ -287,25 +287,30 @@ export function stylePicker({ value = null, extra = [], onPick = null, manage = 
   }
   paint();
   loadStyles().then((l) => { list = l; paint(); });
-  if (book) bookPreviews(book).then((d) => { if (!d) return; bookData = d; prov = shownProvider(d, want); paint(); });
+  // `book` may be a promise of the key (a build form learns it late): the cards follow once it is in.
+  if (book) Promise.resolve(book).then((k) => (typeof k === "string" && k ? bookPreviews(k) : null))
+    .then((d) => { if (!d) return; bookData = d; prov = shownProvider(d, want); paint(); }, () => {});
   return { el, set: (v) => { chosen = v; paint(); }, refresh };
 }
 
 /**
  * The compact row the sheet and the dialogs show: the chosen style's thumbnail and name, opening the grid as a bottom
- * sheet titled "Styles". Choosing a card closes it. `opts` as stylePicker, plus `disabled` and `id`; `book` may also be a
- * function giving the key (asked when the row paints and when it opens: a build form learns the key late).
+ * sheet titled "Styles". Choosing a card closes it. `opts` as stylePicker, plus `disabled` and `id`; `book` may be the
+ * key, a promise of it (a build form learns the key late: the row and a sheet already open follow once it arrives), or a
+ * function giving either.
  * Returns { el, set(value) }.
  */
 export function styleRow({ value = null, extra = [], onPick = null, disabled = false, id = null, book = null, provider = null } = {}) {
   let chosen = value, bookData = null, bookAsked = null;
-  const bookKey = () => { const k = typeof book === "function" ? book() : book; return typeof k === "string" && k ? k : null; };
+  // The key, or a promise of it (a function is asked each time).
+  const bookKey = () => (typeof book === "function" ? book() : book);
   /** The book's previews for the thumbnail, asked once per key. */
   const askBook = () => {
-    const k = bookKey();
-    if (!k || k === bookAsked) return;
-    bookAsked = k;
-    bookPreviews(k).then((d) => { if (d && bookAsked === k) { bookData = d; paint(); } });
+    Promise.resolve(bookKey()).then((k) => {
+      if (typeof k !== "string" || !k || k === bookAsked) return;
+      bookAsked = k;
+      bookPreviews(k).then((d) => { if (d && bookAsked === k) { bookData = d; paint(); } });
+    }, () => {});
   };
   const btn = h("button.style-row", { type: "button", id, disabled, "aria-haspopup": "dialog" });
   const find = () => savedStyle(chosen) || (extra || []).map((x) => ({ slug: x.slug, name: x.name || x.slug, text: squash(x.text), preview: null })).find((x) => x.slug === chosen)
