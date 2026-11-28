@@ -1,0 +1,1560 @@
+{
+ "about": "Shared vectors for chapters.py and web/static/js/chapters.js: each case is a book's table of contents in order ({title, story}) and the expected {kind, number} per entry (number null: no Chapter N label).",
+ "cases": [
+  {
+   "name": "isako",
+   "note": "The Last Contract of Isako: a plain-titled opener, then chapters named only by number words",
+   "entries": [
+    {
+     "title": "The Company",
+     "story": true
+    },
+    {
+     "title": "One",
+     "story": true
+    },
+    {
+     "title": "Two",
+     "story": true
+    },
+    {
+     "title": "Three",
+     "story": true
+    },
+    {
+     "title": "Four",
+     "story": true
+    },
+    {
+     "title": "Five",
+     "story": true
+    },
+    {
+     "title": "Six",
+     "story": true
+    },
+    {
+     "title": "Seven",
+     "story": true
+    },
+    {
+     "title": "Eight",
+     "story": true
+    },
+    {
+     "title": "Nine",
+     "story": true
+    },
+    {
+     "title": "Ten",
+     "story": true
+    },
+    {
+     "title": "Eleven",
+     "story": true
+    },
+    {
+     "title": "Twelve",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "chapter",
+     "number": 8
+    },
+    {
+     "kind": "chapter",
+     "number": 9
+    },
+    {
+     "kind": "chapter",
+     "number": 10
+    },
+    {
+     "kind": "chapter",
+     "number": 11
+    },
+    {
+     "kind": "chapter",
+     "number": 12
+    }
+   ]
+  },
+  {
+   "name": "empire-of-the-damned",
+   "note": "Dramatis personae, three roman openers, then a Book divider and chapters that restart at I",
+   "entries": [
+    {
+     "title": "Dramatis Personae",
+     "story": true
+    },
+    {
+     "title": "I",
+     "story": true
+    },
+    {
+     "title": "II",
+     "story": true
+    },
+    {
+     "title": "III",
+     "story": true
+    },
+    {
+     "title": "Book One: Saints and Sinners",
+     "story": true
+    },
+    {
+     "title": "I: Nothing but Darkness",
+     "story": true
+    },
+    {
+     "title": "II: The Last Light",
+     "story": true
+    },
+    {
+     "title": "III: A Cold Welcome",
+     "story": true
+    },
+    {
+     "title": "IV: Blood and Ash",
+     "story": true
+    },
+    {
+     "title": "Book Two: The Long Night",
+     "story": true
+    },
+    {
+     "title": "V: Wolves",
+     "story": true
+    },
+    {
+     "title": "VI: Embers",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    }
+   ]
+  },
+  {
+   "name": "empire-of-the-dawn",
+   "note": "A plain-titled prologue and a Book divider carry no number; Chapter I is 1",
+   "entries": [
+    {
+     "title": "Sunset",
+     "story": true
+    },
+    {
+     "title": "Book One. Deathseeker",
+     "story": true
+    },
+    {
+     "title": "Chapter I. Parting Gifts",
+     "story": true
+    },
+    {
+     "title": "Chapter II. The Road",
+     "story": true
+    },
+    {
+     "title": "Chapter III. Ashes",
+     "story": true
+    },
+    {
+     "title": "Chapter IV. Silver",
+     "story": true
+    },
+    {
+     "title": "Book Two. Dawnbringer",
+     "story": true
+    },
+    {
+     "title": "Chapter V. Morning",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    }
+   ]
+  },
+  {
+   "name": "leviathan-wakes",
+   "note": "Self-named chapters with a named prologue and epilogue",
+   "entries": [
+    {
+     "title": "Prologue: Julie",
+     "story": true
+    },
+    {
+     "title": "Chapter One: Holden",
+     "story": true
+    },
+    {
+     "title": "Chapter Two: Miller",
+     "story": true
+    },
+    {
+     "title": "Chapter Three: Holden",
+     "story": true
+    },
+    {
+     "title": "Chapter Four: Miller",
+     "story": true
+    },
+    {
+     "title": "Epilogue: Fred",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "named",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "harry-potter",
+   "note": "Chapter N - Title",
+   "entries": [
+    {
+     "title": "Chapter 1 - The Boy Who Lived",
+     "story": true
+    },
+    {
+     "title": "Chapter 2 - The Vanishing Glass",
+     "story": true
+    },
+    {
+     "title": "Chapter 3 - The Letters from No One",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    }
+   ]
+  },
+  {
+   "name": "scion-gap",
+   "note": "Numbers as stated, gaps kept (a missing chapter 7 shifts nothing)",
+   "entries": [
+    {
+     "title": "Chapter 5",
+     "story": true
+    },
+    {
+     "title": "Chapter 6",
+     "story": true
+    },
+    {
+     "title": "Chapter 8",
+     "story": true
+    },
+    {
+     "title": "Chapter 9",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 8
+    },
+    {
+     "kind": "chapter",
+     "number": 9
+    }
+   ]
+  },
+  {
+   "name": "titled-only",
+   "note": "Chapters with titles only: counted in order, dividers, named and non-story entries skipped",
+   "entries": [
+    {
+     "title": "Contents",
+     "story": false
+    },
+    {
+     "title": "Preface",
+     "story": true
+    },
+    {
+     "title": "Part One",
+     "story": true
+    },
+    {
+     "title": "The Arrival",
+     "story": true
+    },
+    {
+     "title": "A Long Night",
+     "story": true
+    },
+    {
+     "title": "Interlude",
+     "story": true
+    },
+    {
+     "title": "Part Two",
+     "story": true
+    },
+    {
+     "title": "The Storm",
+     "story": true
+    },
+    {
+     "title": "Morning",
+     "story": true
+    },
+    {
+     "title": "Epilogue",
+     "story": true
+    },
+    {
+     "title": "About the Author",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": 1
+    },
+    {
+     "kind": "other",
+     "number": 2
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": 3
+    },
+    {
+     "kind": "other",
+     "number": 4
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "titled-with-one-number",
+   "note": "Mostly titled: the count goes on, a stated number still wins",
+   "entries": [
+    {
+     "title": "The Arrival",
+     "story": true
+    },
+    {
+     "title": "A Long Night",
+     "story": true
+    },
+    {
+     "title": "Chapter 7",
+     "story": true
+    },
+    {
+     "title": "The Storm",
+     "story": true
+    },
+    {
+     "title": "Morning",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": 1
+    },
+    {
+     "kind": "other",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "other",
+     "number": 4
+    },
+    {
+     "kind": "other",
+     "number": 5
+    }
+   ]
+  },
+  {
+   "name": "lone-i-and-tricky-words",
+   "note": "A lone I is a number, I went home and Interlude are not",
+   "entries": [
+    {
+     "title": "I",
+     "story": true
+    },
+    {
+     "title": "II",
+     "story": true
+    },
+    {
+     "title": "I went home",
+     "story": true
+    },
+    {
+     "title": "Interlude",
+     "story": true
+    },
+    {
+     "title": "III",
+     "story": true
+    },
+    {
+     "title": "Twenty-One",
+     "story": true
+    },
+    {
+     "title": "Twenty One",
+     "story": true
+    },
+    {
+     "title": "Ninety-Nine",
+     "story": true
+    },
+    {
+     "title": "One-Eyed Jack",
+     "story": true
+    },
+    {
+     "title": "XIV. The River",
+     "story": true
+    },
+    {
+     "title": "3.",
+     "story": true
+    },
+    {
+     "title": "4 - Title",
+     "story": true
+    },
+    {
+     "title": "1984",
+     "story": true
+    }
+   ],
+   "expected": [
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 21
+    },
+    {
+     "kind": "chapter",
+     "number": 21
+    },
+    {
+     "kind": "chapter",
+     "number": 99
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 14
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "other",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "no-story-flags",
+   "note": "Entries with no story flag count as story",
+   "entries": [
+    {
+     "title": "Prologue"
+    },
+    {
+     "title": "One"
+    },
+    {
+     "title": "Two"
+    }
+   ],
+   "expected": [
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    }
+   ]
+  },
+  {
+   "name": "non-story-numbered",
+   "note": "A numbered section outside the story (a preview of the next book) gets no number",
+   "entries": [
+    {
+     "title": "Chapter 1",
+     "story": true
+    },
+    {
+     "title": "Chapter 2",
+     "story": true
+    },
+    {
+     "title": "Book Two – Chapter 1",
+     "story": false
+    },
+    {
+     "title": "Chapter 1",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "empty",
+   "note": "No chapters",
+   "entries": [],
+   "expected": []
+  },
+  {
+   "name": "a-study-in-scarlet",
+   "note": "Part I chapters I to VII, then Part II restarts at I (corpus/pg244, the real table of contents)",
+   "entries": [
+    {
+     "title": "A STUDY IN SCARLET",
+     "story": false
+    },
+    {
+     "title": "CONTENTS",
+     "story": false
+    },
+    {
+     "title": "A STUDY IN SCARLET.",
+     "story": false
+    },
+    {
+     "title": "PART I.",
+     "story": false
+    },
+    {
+     "title": "CHAPTER I. MR. SHERLOCK HOLMES.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER II. THE SCIENCE OF DEDUCTION.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER III. THE LAURISTON GARDENS MYSTERY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER IV. WHAT JOHN RANCE HAD TO TELL.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER V. OUR ADVERTISEMENT BRINGS A VISITOR.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VI. TOBIAS GREGSON SHOWS WHAT HE CAN DO.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VII. LIGHT IN THE DARKNESS.",
+     "story": true
+    },
+    {
+     "title": "PART II. The Country of the Saints.",
+     "story": false
+    },
+    {
+     "title": "CHAPTER I. ON THE GREAT ALKALI PLAIN.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER II. THE FLOWER OF UTAH.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER III. JOHN FERRIER TALKS WITH THE PROPHET.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER IV. A FLIGHT FOR LIFE.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER V. THE AVENGING ANGELS.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VI. A CONTINUATION OF THE REMINISCENCES OF JOHN WATSON, M.D.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VII. THE CONCLUSION.",
+     "story": true
+    },
+    {
+     "title": "THE FULL PROJECT GUTENBERG™ LICENSE",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "other",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "dracula",
+   "note": "CHAPTER V with no name; front matter not story (corpus/pg345, the real table of contents)",
+   "entries": [
+    {
+     "title": "D R A C U L A",
+     "story": false
+    },
+    {
+     "title": "Contents",
+     "story": false
+    },
+    {
+     "title": "D R A C U L A",
+     "story": false
+    },
+    {
+     "title": "CHAPTER I JONATHAN HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER II JONATHAN HARKER’S JOURNAL—continued",
+     "story": true
+    },
+    {
+     "title": "CHAPTER III JONATHAN HARKER’S JOURNAL—continued",
+     "story": true
+    },
+    {
+     "title": "CHAPTER IV JONATHAN HARKER’S JOURNAL—continued",
+     "story": true
+    },
+    {
+     "title": "CHAPTER V",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VI MINA MURRAY’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VII CUTTING FROM “THE DAILYGRAPH,” 8 AUGUST",
+     "story": true
+    },
+    {
+     "title": "CHAPTER VIII MINA MURRAY’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER IX",
+     "story": true
+    },
+    {
+     "title": "CHAPTER X",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XI",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XII DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XIII DR. SEWARD’S DIARY—continued.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XIV MINA HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XV DR. SEWARD’S DIARY—continued.",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XVI DR. SEWARD’S DIARY—continued",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XVII DR. SEWARD’S DIARY—continued",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XVIII DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XIX JONATHAN HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XX JONATHAN HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXI DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXII JONATHAN HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXIII DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXIV DR. SEWARD’S PHONOGRAPH DIARY, SPOKEN BY VAN HELSING",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXV DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXVI DR. SEWARD’S DIARY",
+     "story": true
+    },
+    {
+     "title": "CHAPTER XXVII MINA HARKER’S JOURNAL",
+     "story": true
+    },
+    {
+     "title": "NOTE",
+     "story": true
+    },
+    {
+     "title": "THE FULL PROJECT GUTENBERG™ LICENSE",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "chapter",
+     "number": 8
+    },
+    {
+     "kind": "chapter",
+     "number": 9
+    },
+    {
+     "kind": "chapter",
+     "number": 10
+    },
+    {
+     "kind": "chapter",
+     "number": 11
+    },
+    {
+     "kind": "chapter",
+     "number": 12
+    },
+    {
+     "kind": "chapter",
+     "number": 13
+    },
+    {
+     "kind": "chapter",
+     "number": 14
+    },
+    {
+     "kind": "chapter",
+     "number": 15
+    },
+    {
+     "kind": "chapter",
+     "number": 16
+    },
+    {
+     "kind": "chapter",
+     "number": 17
+    },
+    {
+     "kind": "chapter",
+     "number": 18
+    },
+    {
+     "kind": "chapter",
+     "number": 19
+    },
+    {
+     "kind": "chapter",
+     "number": 20
+    },
+    {
+     "kind": "chapter",
+     "number": 21
+    },
+    {
+     "kind": "chapter",
+     "number": 22
+    },
+    {
+     "kind": "chapter",
+     "number": 23
+    },
+    {
+     "kind": "chapter",
+     "number": 24
+    },
+    {
+     "kind": "chapter",
+     "number": 25
+    },
+    {
+     "kind": "chapter",
+     "number": 26
+    },
+    {
+     "kind": "chapter",
+     "number": 27
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "sign-of-four",
+   "note": "Chapter I Title (corpus/pg2097, the real table of contents)",
+   "entries": [
+    {
+     "title": "The Sign of the Four",
+     "story": false
+    },
+    {
+     "title": "Contents",
+     "story": false
+    },
+    {
+     "title": "Chapter I The Science of Deduction",
+     "story": true
+    },
+    {
+     "title": "Chapter II The Statement of the Case",
+     "story": true
+    },
+    {
+     "title": "Chapter III In Quest of a Solution",
+     "story": true
+    },
+    {
+     "title": "Chapter IV The Story of the Bald-Headed Man",
+     "story": true
+    },
+    {
+     "title": "Chapter V The Tragedy of Pondicherry Lodge",
+     "story": true
+    },
+    {
+     "title": "Chapter VI Sherlock Holmes Gives a Demonstration",
+     "story": true
+    },
+    {
+     "title": "Chapter VII The Episode of the Barrel",
+     "story": true
+    },
+    {
+     "title": "Chapter VIII The Baker Street Irregulars",
+     "story": true
+    },
+    {
+     "title": "Chapter IX A Break in the Chain",
+     "story": true
+    },
+    {
+     "title": "Chapter X The End of the Islander",
+     "story": true
+    },
+    {
+     "title": "Chapter XI The Great Agra Treasure",
+     "story": true
+    },
+    {
+     "title": "Chapter XII The Strange Story of Jonathan Small",
+     "story": true
+    },
+    {
+     "title": "THE FULL PROJECT GUTENBERG™ LICENSE",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "chapter",
+     "number": 1
+    },
+    {
+     "kind": "chapter",
+     "number": 2
+    },
+    {
+     "kind": "chapter",
+     "number": 3
+    },
+    {
+     "kind": "chapter",
+     "number": 4
+    },
+    {
+     "kind": "chapter",
+     "number": 5
+    },
+    {
+     "kind": "chapter",
+     "number": 6
+    },
+    {
+     "kind": "chapter",
+     "number": 7
+    },
+    {
+     "kind": "chapter",
+     "number": 8
+    },
+    {
+     "kind": "chapter",
+     "number": 9
+    },
+    {
+     "kind": "chapter",
+     "number": 10
+    },
+    {
+     "kind": "chapter",
+     "number": 11
+    },
+    {
+     "kind": "chapter",
+     "number": 12
+    },
+    {
+     "kind": "other",
+     "number": null
+    }
+   ]
+  },
+  {
+   "name": "hamlet",
+   "note": "Acts are dividers, scenes keep their own heading, Dramatis Personæ named (corpus/pg1524, the real table of contents)",
+   "entries": [
+    {
+     "title": "THE TRAGEDY OF HAMLET, PRINCE OF DENMARK",
+     "story": false
+    },
+    {
+     "title": "Contents",
+     "story": false
+    },
+    {
+     "title": "Dramatis Personæ",
+     "story": false
+    },
+    {
+     "title": "SCENE. Elsinore.",
+     "story": false
+    },
+    {
+     "title": "ACT I",
+     "story": false
+    },
+    {
+     "title": "SCENE I. Elsinore. A platform before the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE II. Elsinore. A room of state in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE III. A room in Polonius’s house.",
+     "story": true
+    },
+    {
+     "title": "SCENE IV. The platform.",
+     "story": true
+    },
+    {
+     "title": "SCENE V. A more remote part of the Castle.",
+     "story": true
+    },
+    {
+     "title": "ACT II",
+     "story": false
+    },
+    {
+     "title": "SCENE I. A room in Polonius’s house.",
+     "story": true
+    },
+    {
+     "title": "SCENE II. A room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "ACT III",
+     "story": false
+    },
+    {
+     "title": "SCENE I. A room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE II. A hall in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE III. A room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE IV. Another room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "ACT IV",
+     "story": false
+    },
+    {
+     "title": "SCENE I. A room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE II. Another room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE III. Another room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE IV. A plain in Denmark.",
+     "story": true
+    },
+    {
+     "title": "SCENE V. Elsinore. A room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE VI. Another room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "SCENE VII. Another room in the Castle.",
+     "story": true
+    },
+    {
+     "title": "ACT V",
+     "story": false
+    },
+    {
+     "title": "SCENE I. A churchyard.",
+     "story": true
+    },
+    {
+     "title": "SCENE II. A hall in the Castle.",
+     "story": true
+    },
+    {
+     "title": "THE FULL PROJECT GUTENBERG™ LICENSE",
+     "story": false
+    }
+   ],
+   "expected": [
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "divider",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "named",
+     "number": null
+    },
+    {
+     "kind": "other",
+     "number": null
+    }
+   ]
+  }
+ ]
+}
