@@ -1066,6 +1066,8 @@ class Report:
             out.append(f"stopped: {self.stopped}")
         out += [f"  {n} x {why}" for why, n in sorted(self.skipped.items())]
         out += [f"  {n} x {why}" for why, n in sorted(self.dropped.items())]
+        if self.refs_left_out:
+            out.append(f"  {self.refs_left_out} x figure picture left out to make room")
         if self.checked or self.checks:
             out.append(f"checked: {self.checked} pictures")
             out += [f"  {n} x {why}" for why, n in (("fixed: drawing fault", self.fixed), ("fix refused", self.fix_refused),

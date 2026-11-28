@@ -92,6 +92,7 @@ def test_room_for_four_of_the_persons_pictures_trims_the_last_labelled_figure(mo
     a, b = rec["figures"]
     assert a["label"] == "A" and a["ref"] and b["label"] == "B" and b["ref"] is None     # stored like a figure whose file is gone
     assert rec["refsLeftOut"] == 1 and il.report.refs_left_out == 1 and rec["references"] == [a["ref"]]
+    assert "  1 x figure picture left out to make room" in il.report.lines()
     assert "figure B" not in call["note"] and call["note"].startswith("Reference picture 1 is figure A. " + art.FIGURE_NOTE)
     assert "Reference picture 2 is from the person: note 0." in call["note"]
     assert "Reference picture 5 is from the person: note 3." in call["note"] and call["note"].endswith(art.USER_REF + " " + art.STYLE_REF)
