@@ -930,6 +930,47 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
     MAX_ASKS = 2
     ASK_TIMEOUT = 120   # seconds a backend may wait on one call (Ollama and OpenAI-compatible have `timeout`)
 
+    ASK_SOURCES = ("index", "both", "book")
+
+    def ask_text(item: dict, scan: dict, series: dict | None, order: str | None, finished, frac: float):
+        """The book text Ask may search, as `ask.BookText`, or None when the index's own book file is not here.
+        The book being read gives only its blocks strictly before the frontier block at `frac` (`frontier_seq`,
+        finished mode, the same rule as a picture's position); in a series an earlier book gives its whole text only
+        when the request lists it as finished and it comes before this book in the reading order used. A later or
+        unfinished book, or one whose file is not here, gives nothing. `ask.BookText` cuts at `before` again."""
+        p = index_book_file(item["doc"])
+        if p is None:
+            return None
+        sref = item["doc"].get("series")
+        names = {b["key"]: b.get("title") for b in series["books"]} if series else {}
+
+        def text_book(doc: dict, path: Path, key: str | None, before: int | None):
+            bk = parsed(path)
+            cut = len(bk.blocks) if before is None else before
+            # chapters that start at or after the cut are not even titled (their numbers go with them)
+            shown = [i for i, c in enumerate(bk.chapters) if c.start < cut]
+            nums = toc_numbers(path, bk) if bk.chapters else None
+            return askmod.TextBook(book=key, title=(names.get(key) or key) if key else None,
+                                   blocks=[b for b in bk.blocks if b.seq < cut],
+                                   chapters=[bk.chapters[i] for i in shown],
+                                   numbers=[nums[i] for i in shown] if nums is not None else None, before=cut)
+
+        own = parsed(p)
+        books_ = []
+        if series and sref:
+            seq_order = series["orders"].get(order or series.get("defaultOrder"), [])
+            earlier = seq_order[:seq_order.index(sref["book"])] if sref["book"] in seq_order else []
+            done = set(finished or [])
+            _, siblings = proto.series_parts(item, scan)
+            by_book = {s["doc"]["series"]["book"]: s for s in siblings}
+            for k in earlier:
+                sib = by_book.get(k)
+                q = index_book_file(sib["doc"]) if sib and k in done else None
+                if q is not None:
+                    books_.append(text_book(sib["doc"], q, k, None))
+        books_.append(text_book(item["doc"], p, sref["book"] if series and sref else None, frontier_seq(own, frac)))
+        return askmod.BookText(books_)
+
     def ask_error(status: int, code: str, detail: str) -> JSONResponse:
         return JSONResponse({"detail": detail, "code": code}, status_code=status)
 
@@ -956,13 +997,23 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
             if not isinstance(t, dict):
                 continue
             cites = t.get("cites") if isinstance(t.get("cites"), list) else []
+            # A passage cite ("p:<book>:<seq>") is dropped here: an earlier answer's passage is never fetched again
+            # nor described, so a cite to text past where the reader is now can't bring it back.
             turns.append(askmod.Turn(str(t.get("question") or "")[:500], str(t.get("answer") or "")[:1500],
-                                     [c for c in cites if isinstance(c, str)][:40]))
+                                     [c for c in cites if isinstance(c, str) and not c.startswith("p:")][:40]))
         anchor, order, finished, book = body.get("anchor"), body.get("order"), body.get("finished"), body.get("book")
         if (anchor is not None and not isinstance(anchor, str)) or (order is not None and not isinstance(order, str)) \
                 or (book is not None and not isinstance(book, str)) \
                 or (finished is not None and not (isinstance(finished, list) and all(isinstance(k, str) for k in finished))):
             return ask_error(422, "bad-position", "The position is not understood.")
+        source = body.get("source", "index")
+        if source not in ASK_SOURCES:
+            return ask_error(422, "bad-source", "source must be index, both or book.")
+        frac = body.get("p")
+        if frac is not None and (isinstance(frac, bool) or not isinstance(frac, (int, float)) or not 0 <= frac <= 1):
+            return ask_error(422, "bad-position", "The position is not understood.")
+        if source != "index" and frac is None:
+            return ask_error(422, "bad-position", "Reading the book needs the position in it.")
 
         def work():
             """Everything that reads files, computes the view or waits on a model, off the event loop.
@@ -995,6 +1046,11 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     names = {b["key"]: b.get("title") for b in series["books"]}
                     titles = {k: {"title": names.get(k) or k, "number": n}
                               for n, k in enumerate(series["orders"][order or series["defaultOrder"]], 1)}
+                text = None
+                if source != "index":
+                    text = ask_text(item, scan, series, order, finished, frac)
+                    if text is None:
+                        return ask_error(409, "no-book-file", "The book file for this index is not here.")
                 c = pick_model("cheap")
                 if c["model"] is None:
                     return ask_error(409, c["reason"] or "no-model", "The local model is busy building an index."
@@ -1002,9 +1058,13 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 if hasattr(c["model"], "timeout"):
                     c["model"].timeout = ASK_TIMEOUT   # a question must not hold a slot for half an hour
                 budget = askmod.OLLAMA_BUDGET if c["local"] else askmod.DEFAULT_BUDGET
+                roster = askmod.ROSTER_CHARS if not c["local"] else 0
                 try:
-                    got = askmod.answer(view, question, c["model"], turns, budget, titles,
-                                        askmod.ROSTER_CHARS if not c["local"] else 0)
+                    if source == "index":     # exactly today's call, so "Index only" is unchanged
+                        got = askmod.answer(view, question, c["model"], turns, budget, titles, roster)
+                    else:
+                        got = askmod.answer(view, question, c["model"], turns, budget, titles, roster,
+                                            text=text, source=source)
                 except llm.ProviderError as e:
                     return ask_error(502, "model-failed", str(e)[:200])
                 except Exception as e:  # noqa: BLE001 - a provider's failure must not leak its body or key
@@ -1012,7 +1072,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 info = ask_info(c)
                 return {"answer": got.answer, "found": got.found, "cites": got.cites, "note": got.note,
                         "provider": info["provider"], "model": info["model"], "local": info["local"],
-                        "usage": got.usage}
+                        "usage": got.usage, **({} if source == "index" else {"source": getattr(got, "source", source)})}
             finally:
                 with ask_lock:
                     ask_slots["n"] -= 1
@@ -1030,6 +1090,25 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                 parsed_books.pop(next(iter(parsed_books)))
             parsed_books[k] = epub.read(p)
         return parsed_books[k]
+
+    def index_book_file(doc: dict) -> Path | None:
+        """The EPUB an index was built from, when it is here (the first `builtFrom` edition the library holds)."""
+        return next((q for ed in doc.get("editions", []) if ed.get("builtFrom", True)
+                     for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
+
+    def frontier_seq(book: epub.Book, frac: float) -> int:
+        """The seq of the block holding word `floor(frac × words)` of `book`: the first block not yet read in
+        "finished" mode, so everything before it counts as read and it does not. `frac >= 1` (or a book with no
+        words) is the whole book read: `len(book.blocks)`."""
+        total = sum(len(b.words) for b in book.blocks)
+        if frac >= 1 or not total:
+            return len(book.blocks)
+        done = 0
+        for b in book.blocks:
+            if done + len(b.words) > frac * total:
+                return b.seq
+            done += len(b.words)
+        return len(book.blocks)
 
     editor = Editor(identity, library, data_dir, reader=parsed)
     def after_run(job):
@@ -1234,8 +1313,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         item = library.get(key)
         if item is None or item["doc"].get("kind") != "index":
             return None, None, JSONResponse({"detail": "no such index", "code": "not-found"}, status_code=404)
-        p = next((q for ed in item["doc"].get("editions", []) if ed.get("builtFrom", True)
-                  for q in [library.edition_path(ed.get("textHash", ""))] if q), None)
+        p = index_book_file(item["doc"])
         if p is None:
             return None, None, JSONResponse({"detail": "The book file for this index is not here.",
                                              "code": "no-book-file"}, status_code=404)
@@ -1584,13 +1662,7 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
         if isinstance(p, bool) or not isinstance(p, (int, float)) or not 0 <= p <= 1:
             raise ArtRefusal(422, "bad-position", "The position is not understood.")
         book = art_epub(ctx)
-        total = sum(len(b.words) for b in book.blocks)
-        seq, done = len(book.blocks) - 1, 0
-        for b in book.blocks:
-            if done + len(b.words) > p * total:
-                seq = b.seq
-                break
-            done += len(b.words)
+        seq = min(frontier_seq(book, p), len(book.blocks) - 1)
         # The block being read does not count, unless the whole book is read.
         pos = protocol.make_position(block=str(seq), textHash=ctx["hash"], inclusive="true" if p >= 1 else "false")
         try:
