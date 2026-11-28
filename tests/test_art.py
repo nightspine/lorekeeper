@@ -3470,7 +3470,7 @@ class Seeing(Text):
         return {"figures": [], "faults": list(got)}
 
 
-HEAD = {"what": "the head is far too small for the body and robe", "where": "the woman at the gate", "severity": "major"}
+HEAD = {"what": "the head is far too small for the body and robe", "where": "the woman at the gate", "severity": "major", "kind": "drawing"}
 ALL_FIXED_1 = {"fixed": 1, "partly": 0, "of": 1, "results": [{"n": 1, "fixed": "yes"}], "new": []}
 
 
@@ -3626,7 +3626,7 @@ def test_the_pickers_faults_name_no_person_but_the_persons_own_are_kept_as_typed
     assert all("Mira" not in c["prompt"] for c in fixes(im))
     new = il.fix(pics(sink)[0], [named])                          # the person's own list: their words
     assert "Mira's left hand has six fingers" in im.calls[-1]["prompt"]
-    assert new["fixes"][-1]["faults"] == [{**named, "severity": "major"}]
+    assert new["fixes"][-1]["faults"] == [{**named, "severity": "major", "kind": "drawing"}]
 
 
 def test_the_persons_own_text_is_checked_and_fixed_but_never_rewritten():
@@ -3663,7 +3663,7 @@ def test_fix_on_demand_keeps_the_record_and_adds_to_its_fixes():
     assert new["id"] != scene["id"] and sink.files[new["file"]] and new["prompt"] == scene["prompt"]
     for k in ("figures", "references", "sources", "from", "kind", "target", "inherits", "notes"):
         assert new[k] == scene[k], k
-    assert new["fixes"][-1]["faults"][1] == {"what": "an extra hand", "where": "", "severity": "major"}
+    assert new["fixes"][-1]["faults"][1] == {"what": "an extra hand", "where": "", "severity": "major", "kind": "drawing"}
     assert new["fixes"][-1]["note"] == "the cloak should stay red" and new["cost"] == pytest.approx(scene["cost"] + 0.052)
     assert any(r["id"] == scene["id"] for r in sink.m["pictures"]) and sink.m["pictures"][-1]["id"] == new["id"]
     again = il.fix(new, [], note="the left eye open")                 # a second fix by hand adds to the list, newest last
@@ -3684,7 +3684,7 @@ class Echo(Image):
         return images.Drawn(refs[0][0], refs[0][1], d.model, d.cost) if prompt.startswith(art.FIX) and refs else d
 
 
-HAND = {"what": "the left hand has six fingers", "where": "the miller in the doorway", "severity": "minor"}
+HAND = {"what": "the left hand has six fingers", "where": "the miller in the doorway", "severity": "minor", "kind": "drawing"}
 
 
 def scene_of(eye, image=None, **kw):
@@ -3699,7 +3699,7 @@ def test_the_check_is_critical_takes_stock_first_and_grades_each_fault():
                   "a limb that starts or ends nowhere", "passing through a hand", "a held thing floating with no hand",
                   "a chair with a leg missing", "could not stand", "at an impossible scale",
                   "Report what a careful viewer would find wrong on a second look", "anything the prompt asks for",
-                  "cut off by the frame", "foreshortening", "text or lettering", "At most 6 faults"):
+                  "cut off by the frame", "foreshortening", "letters, words, numbers", "At most 6 faults"):
         assert words in art.ANATOMY, words
     props = art.ANATOMY_SCHEMA["properties"]
     assert art.ANATOMY_SCHEMA["required"] == ["figures", "faults"]      # the stock-taking is written before the faults
@@ -3709,8 +3709,9 @@ def test_the_check_is_critical_takes_stock_first_and_grades_each_fault():
     assert art.MAX_FAULTS == 6
     # severity is kept; missing or unknown is major (an older client's list, a person's own line)
     assert art.clean_faults([{"what": "a", "where": "", "severity": "minor"}, {"what": "b"}, {"what": "c", "severity": "huge"}]) \
-        == [{"what": "a", "where": "", "severity": "minor"}, {"what": "b", "where": "", "severity": "major"},
-            {"what": "c", "where": "", "severity": "major"}]
+        == [{"what": "a", "where": "", "severity": "minor", "kind": "drawing"},
+            {"what": "b", "where": "", "severity": "major", "kind": "drawing"},
+            {"what": "c", "where": "", "severity": "major", "kind": "drawing"}]
 
 
 def test_the_checks_figures_are_never_kept():
@@ -3750,7 +3751,7 @@ def test_verify_fix_sends_both_pictures_and_reads_a_strict_verdict():
     assert "2. the miller in the doorway: the left hand has six fingers" in prompt and "keep the cloak red" in prompt
     # an unknown answer and a skipped fault are "no"; an n out of range is ignored; new faults cleaned, at most 3
     assert v.results == [{"n": 1, "fixed": "no"}, {"n": 2, "fixed": "partly"}] and v.checked and v.changed
-    assert len(v.new) == art.MAX_NEW_FAULTS and v.new[0] == {"what": "new 0", "where": "x", "severity": "minor"}
+    assert len(v.new) == art.MAX_NEW_FAULTS and v.new[0] == {"what": "new 0", "where": "x", "severity": "minor", "kind": "drawing"}
     assert not v.unchanged() and v.cost == pytest.approx(0.002)
     assert v.counts() == {"fixed": 0, "partly": 1, "of": 2, "results": v.results, "new": v.new}
     for bad in ({}, {"results": [], "changed": "yes", "new": []}, {"changed": True}):
@@ -3794,7 +3795,7 @@ def test_a_fix_the_verification_calls_unchanged_files_nothing(verdict):
 
 
 def test_a_partial_fix_is_filed_with_what_the_verification_counted():
-    named = {"what": "Mira's arm is now fused into the gate", "where": "Mira, the woman at the gate", "severity": "major"}
+    named = {"what": "Mira's arm is now fused into the gate", "where": "Mira, the woman at the gate", "severity": "major", "kind": "drawing"}
     eye = Seeing(verdict={"results": [{"n": 1, "fixed": "yes"}, {"n": 2, "fixed": "partly"}, {"n": 3, "fixed": "no"}],
                           "changed": True, "new": [named]})
     il, sink, im, scene = scene_of(eye)
@@ -3983,7 +3984,8 @@ def test_a_comic_prompt_is_one_writer_call_and_code_puts_the_page_together():
     labs = re.findall(r'<entry name="[^"]*"[^>]*? figure="([A-F])"', w)       # every figure labelled, portrait or not
     panel = PANEL + "".join(f" Figure {x} waits by the wall." for x in labs)
     assert pr.body == art.comic_body([panel] * 3) and pr.body.startswith(art.comic_frame(3) + " Panel 1: " + PANEL)
-    assert pr.text == f"{pr.body} {art.style_sentence('ink')} {art.COMIC_NO_TEXT}" and pr.no_text == art.COMIC_NO_TEXT
+    closing = f"{art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}"          # a body that labels a figure adds the label line
+    assert pr.text == f"{pr.body} {art.style_sentence('ink')} {closing}" and pr.no_text == closing
     assert "speech balloons" in art.COMIC_NO_TEXT and pr.panels == ["e4", "e6", "e7"] and pr.shape == "portrait"
     assert {"a6", "a8", "a9"} <= set(pr.sources) and all(ordinal(d)[a] <= ordinal(d)["a9"] for a in pr.sources)
     for rule in ("one panel for each <moment>", "No speech balloons", "Two hands each", "is called by that label the first time"):
@@ -4005,7 +4007,7 @@ def test_a_comic_labels_a_figure_once_for_the_whole_page_and_the_record_keeps_it
     rec = il2.draw(j, pr)
     assert rec["kind"] == "comic" and rec["target"] == "Two" and rec["panels"] == j.panels and rec["from"] == "a11"
     assert rec["shape"] == "portrait" and im.calls[-1]["shape"] == "portrait" and len(im.calls[-1]["references"]) == 4
-    assert im.calls[-1]["prompt"].endswith(art.COMIC_NO_TEXT) and [f["label"] for f in rec["figures"]] == ["A", "B", "C", "D"]
+    assert im.calls[-1]["prompt"].endswith(art.LABEL_NOT_TEXT) and [f["label"] for f in rec["figures"]] == ["A", "B", "C", "D"]
     assert set(rec["sources"]) >= {il2.books[0].events[x]["from"] for x in j.panels}
     # a scene record never carries panels
     rec = il2.draw(il2.job("event", "e6", at="a11"))
@@ -4434,7 +4436,7 @@ def test_the_panel_text_replaces_that_panels_in_the_stored_prompt_only():
     assert texts and len(texts) == 3
     new = il.fix_panel(rec, 2, text="  A man   sits up in bed.  ")
     assert art.panel_texts(new["prompt"], art.style_sentence("ink")) == [texts[0], "A man sits up in bed.", texts[2]]
-    assert new["prompt"].endswith(f" {art.style_sentence('ink')} {art.COMIC_NO_TEXT}") and new["prompt"].startswith(art.comic_frame(3))
+    assert new["prompt"].endswith(f" {art.style_sentence('ink')} {art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}") and new["prompt"].startswith(art.comic_frame(3))
     assert rec["prompt"] != new["prompt"] and "text" in new["fixes"][-1]
     assert rec["panelTexts"] == texts and new["panelTexts"] == [texts[0], "A man sits up in bed.", texts[2]]
     again = il.fix_panel(new, 3, note="the road wet")
@@ -4549,8 +4551,123 @@ def test_a_panel_text_is_replaced_in_a_prompt_whose_style_sentence_had_a_name_re
                          log=lambda *_: None, pause=0)
     rec = il.draw(il.job("comic", "Two", at="a9"))
     stored = il._style(0)
-    assert stored != art.style_sentence("mira-ink") and "Mira" not in stored and rec["prompt"].endswith(f" {stored} {art.COMIC_NO_TEXT}")
+    assert stored != art.style_sentence("mira-ink") and "Mira" not in stored and rec["prompt"].endswith(f" {stored} {art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}")
     new = il.fix_panel(rec, 3, text="Nobody is at the mill.")                     # the last panel: the style stays after it
-    assert new["prompt"].endswith(f" Panel 3: Nobody is at the mill. {stored} {art.COMIC_NO_TEXT}")
+    assert new["prompt"].endswith(f" Panel 3: Nobody is at the mill. {stored} {art.COMIC_NO_TEXT} {art.LABEL_NOT_TEXT}")
     assert art.panel_texts(new["prompt"], stored)[2] == "Nobody is at the mill."
     assert new["panelTexts"][2] == "Nobody is at the mill."
+
+
+# ---- figure labels are never drawn as letters; the check finds writing and a wrong style -----------------------------
+
+def test_a_body_that_labels_a_figure_gets_the_label_line_after_the_no_text_line_and_one_that_does_not_gets_none():
+    assert not art.labels_in(art.LABEL_NOT_TEXT)         # the line names no label, or the text's labels would count it
+    plain, labelled = "A man at a gate.", "Figure A stands at a gate beside figure B, a miller."
+    for no_text in (art.NO_TEXT, art.COMIC_NO_TEXT):
+        assert art.no_text_for(no_text, plain) == no_text
+        assert art.no_text_for(no_text, labelled) == f"{no_text} {art.LABEL_NOT_TEXT}"
+    assert art.no_text_for("My own closing words.", labelled) == "My own closing words."
+    assert art.Illustrator._assemble(labelled, style="Ink.") == f"{labelled} Ink. {art.NO_TEXT} {art.LABEL_NOT_TEXT}"
+    assert art.Illustrator._assemble(plain, style="Ink.") == f"{plain} Ink. {art.NO_TEXT}"
+    # idempotent: a part that already carries the line is not given it twice
+    both = art.no_text_for(art.NO_TEXT, labelled)
+    assert art.no_text_for(both, labelled) == both
+
+
+def test_a_labelled_scene_prompt_carries_the_label_line_in_its_no_text_part():
+    il, rep, sink, t, im = run(level="all", portraits=False)
+    labelled = [p for p in pics(sink) if p["kind"] == "event" and art.labels_in(p["prompt"])]
+    assert labelled
+    for p in labelled:
+        assert p["prompt"].endswith(f"{art.NO_TEXT} {art.LABEL_NOT_TEXT}")
+        assert p["prompt"].count(art.LABEL_NOT_TEXT) == 1
+    pr = il.make_prompt(il.job("event", "e5", at="a11"))
+    if art.labels_in(pr.body):
+        assert pr.no_text == f"{art.NO_TEXT} {art.LABEL_NOT_TEXT}" and pr.text.endswith(pr.no_text)
+        assert pr.text == f"{pr.body} {pr.style} {pr.no_text}"
+    assert not any(art.LABEL_NOT_TEXT in p["prompt"] for p in pics(sink, "portrait"))   # no label, no line
+
+
+def test_a_same_prompt_redraw_of_an_older_labelled_prompt_gets_the_label_line():
+    old = f"Figure A stands at a gate. {art.style_sentence('ink')} {art.NO_TEXT}"
+    new = art.with_label_note(old, "plate")
+    assert new == f"{old} {art.LABEL_NOT_TEXT}" and art.with_label_note(new, "plate") == new
+    assert art.with_label_note("A man at a gate. " + art.NO_TEXT, "plate") == "A man at a gate. " + art.NO_TEXT   # no label
+    assert art.with_label_note("Figure A waits. Ink.", "plate") == "Figure A waits. Ink."                      # the person's own words
+    comic = f"A comic page. Panel 1: Figure A waits. Ink. {art.COMIC_NO_TEXT}"
+    assert art.with_label_note(comic, "comic") == f"{comic} {art.LABEL_NOT_TEXT}"
+    assert art.with_label_note(comic, "plate") == comic       # the plate's no-text line is not this one's
+
+
+def test_a_softened_labelled_prompt_is_cut_back_to_the_writers_text_before_it_is_written_again():
+    il, rep, sink, t, im = run(level="all", portraits=False)
+    p = next(p for p in pics(sink) if p["kind"] == "event" and art.labels_in(p["prompt"]))
+    job = il.job("event", p["target"])
+    pr = il.soften(job, p["prompt"], "too violent")
+    assert t.prompts[-1].count(art.LABEL_NOT_TEXT) == 0 and art.NO_TEXT not in t.prompts[-1].split("It was refused")[0]
+    assert pr.no_text.endswith(art.LABEL_NOT_TEXT) or not art.labels_in(pr.body)
+
+
+def test_the_check_reports_writing_and_a_wrong_style_with_their_kind_and_keeps_only_a_major_style_fault():
+    assert "text or lettering" not in art.ANATOMY and '"kind" is "text"' in art.ANATOMY
+    assert art.KINDS == ("drawing", "text", "style")
+    assert art.ANATOMY_SCHEMA["properties"]["faults"]["items"]["properties"]["kind"]["enum"] == list(art.KINDS)
+    # clean_faults: a missing or unknown kind is a drawing fault; a person's own line stays whatever it is
+    got = art.clean_faults([{"what": "a", "kind": "text"}, {"what": "b", "kind": "style"}, {"what": "c"},
+                            {"what": "d", "kind": "weird"}])
+    assert [f["kind"] for f in got] == ["text", "style", "drawing", "drawing"]
+    TEXT = {"what": "a letter A is drawn beside the man", "where": "top right", "severity": "major", "kind": "text"}
+    WRONG = {"what": "it is a photograph, not an ink drawing", "where": "the whole picture", "severity": "major", "kind": "style"}
+    DRIFT = {"what": "a wash of colour in the ink drawing", "where": "the whole picture", "severity": "minor", "kind": "style"}
+    eye = Seeing(faults=[TEXT, DRIFT, HAND])
+    c = art.check_picture(eye, b"x", "image/png", "A man at a gate.", style=art.STYLES["ink"])
+    assert c.faults == [TEXT, HAND] and c.checked                      # the minor style fault is dropped, writing is kept
+    prompt = eye.looked[-1][0]
+    assert f"<style>{art.STYLES['ink']}</style>" in prompt and "<prompt>A man at a gate.</prompt>" in prompt
+    eye = Seeing(faults=[DRIFT, WRONG, {**WRONG, "what": "another one"}, TEXT])
+    assert art.check_picture(eye, b"x", "image/png", "p", style="Ink.").faults == [WRONG, TEXT]     # one style fault at most
+    eye = Seeing(faults=[WRONG, HAND])
+    c = art.check_picture(eye, b"x", "image/png", "p")                  # no style given: the check never reports one
+    assert c.faults == [HAND] and "<style>" not in eye.looked[-1][0]
+    assert art.check_picture(Seeing(faults=[WRONG]), b"x", "image/png", "p", style="  ").faults == []
+
+
+def test_the_illustrators_check_gives_the_checker_its_sets_style_sentence(monkeypatch):
+    seen = []
+    eye = Seeing(faults=lambda prompt, data: seen.append(prompt) or [])
+    il, sink, im, scene = scene_of(eye)
+    il.check_picture(scene)
+    assert f"<style>{art.style_sentence('ink')}</style>" in seen[-1]
+    il.check_picture(scene, style="")
+    assert "<style>" not in seen[-1]
+
+
+def test_a_fix_names_writing_to_remove_and_a_wrong_style_to_redraw_in_the_pictures_style():
+    TEXT = {"what": "a letter A is drawn beside the man", "where": "top right", "severity": "major", "kind": "text"}
+    WRONG = {"what": "it reads as a photograph", "where": "the whole picture", "severity": "major", "kind": "style"}
+    p = art.fix_prompt([HEAD, TEXT])
+    assert p.split("\n") == [art.FIX, "- the woman at the gate: the head is far too small for the body and robe.",
+                             "- top right: a letter A is drawn beside the man. Remove it and paint over what was behind it.",
+                             art.NO_TEXT]
+    assert "writing (a letter, label or caption) is removed" in art.FIX
+    style = art.style_sentence("ink")
+    q = art.fix_prompt([WRONG, HEAD], "keep the lamp", style)
+    first = q.split("\n")[0]
+    assert first.startswith(art.FIX_HEAD) and f"redraw it all in this style: {style}" in first
+    assert "the drawing style" not in first and "composition and framing, every face, the clothing and the light" in first
+    assert q.endswith(f"Also: keep the lamp.\n{art.NO_TEXT}")
+    assert art.fix_prompt([WRONG], style="").split("\n")[0] == art.FIX         # no style sentence: the ordinary keep-list
+    assert art.fix_prompt([HEAD], style=style).split("\n")[0] == art.FIX       # a drawing fault alone keeps its style as before
+
+
+def test_fix_sends_the_sets_style_with_a_style_fault_and_the_checker_reads_the_kind_through(monkeypatch):
+    WRONG = {"what": "it reads as a photograph", "where": "the whole picture", "severity": "major", "kind": "style"}
+    eye = Seeing()
+    il, sink, im, scene = scene_of(eye)
+    new = il.fix(scene, [WRONG])
+    call = im.calls[-1]
+    assert f"redraw it all in this style: {art.style_sentence('ink')}" in call["prompt"]
+    assert new["fixes"][-1]["faults"] == [WRONG]
+    assert "1. the whole picture: it reads as a photograph" in eye.verified[-1][0]
+    names = il._nameless([{**WRONG, "what": "it is Mira's photograph"}], 0)
+    assert names[0]["kind"] == "style" and names[0]["severity"] == "major"

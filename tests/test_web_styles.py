@@ -169,7 +169,7 @@ def test_a_saved_style_draws_by_its_slug_in_a_run_and_the_estimate(env):
     job = run_set(env, style="moody-noir", portraits=False)
     assert job["status"] == "done" and job["report"]["art"]["style"] == "moody-noir"
     plates = pictures(env, "moody-noir")
-    assert plates and all(p["prompt"].endswith(NOIR + " " + art.NO_TEXT) for p in plates)
+    assert plates and all(NOIR + " " + art.NO_TEXT in p["prompt"] for p in plates)
     assert not (env.data / "art" / env.hash / "ink").exists()
     assert env.c.get("/api/art/estimate", params=ask).json()["plates"] == 0      # the same set: all drawn
 

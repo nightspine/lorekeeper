@@ -2694,7 +2694,8 @@ def create_app(data_dir: Path, index_dirs: list[tuple[str, Path]], epub_dirs: li
                     figures = [{"label": f["label"], "entity": f["entity"]} for f in rec["figures"]
                                if isinstance(f, dict) and isinstance(f.get("label"), str) and isinstance(f.get("entity"), str)]
                 # a portrait drawn with the older half-length frame is drawn again with the mid-chest one
-                text_ = (note.rstrip(".") + ". " if note else "") + artmod.reframed(rec["kind"], rec["prompt"], il.style_sentence())
+                text_ = (note.rstrip(".") + ". " if note else "") + artmod.with_label_note(
+                    artmod.reframed(rec["kind"], rec["prompt"], il.style_sentence()), rec["kind"])
                 # The text is the old prompt's, so is the earlier-book content it carries: `inherits` (and `partial`) go
                 # with it, or the Reader would show a prompt it had hidden until those books are finished. A record from
                 # before `inherits` existed gets none on the new one either, so the Reader keeps treating it as unknown.
