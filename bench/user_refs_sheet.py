@@ -40,6 +40,12 @@ def main() -> int:
     d = res["described"]
     rows.append((f"described: portrait {d['target']}", out / res["refs"][d["ref"]]["file"], None,
                  out / d["file"] if d["file"] else None, (d.get("userRefs") or [{}])[0].get("description", "")))
+    strong = out / "strong.json"       # the scenes drawn again with the stronger USER_REF line, if that rerun was made
+    if strong.exists():
+        for ev, r in json.loads(strong.read_text()).items():
+            row = next(x for x in res["rows"] if x["target"] == ev)
+            rows.append((f"stronger line: event {ev}", out / res["refs"][row["ref"]]["file"], out / row["b"],
+                         out / "sets" / Path(row["b"]).parent.name / r["file"], row["note"] + " (b: before, right: after)"))
     heads = ["the person's picture", "(a) without", "(b) with it"]
     sheet = Image.new("RGB", (CELL * 3, (CELL + LABEL) * len(rows) + 24), (12, 12, 14))
     draw = ImageDraw.Draw(sheet)

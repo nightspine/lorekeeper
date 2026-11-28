@@ -692,7 +692,10 @@ MAX_USER_REFS = 4
 USER_NOTE_CHARS = 120
 USER_REF_LINE = "Reference picture {n} is from the person: {note}."
 USER_REF_PLAIN = "Reference picture {n} is from the person: draw what the prompt describes with its help."
-USER_REF = "Take only what the person says from their pictures, never their drawing style."
+# the second half measured on Dracula (2026-11-27): without it the scene's own words won over the person's picture in both
+# scenes tried (a nightdress, a stone house); with it both scenes drew the noted dress and house
+USER_REF = ("Take only what the person says from their pictures, never their drawing style; where their note and the prompt "
+            "disagree about that thing, draw it as their picture shows.")
 
 
 @dataclass
