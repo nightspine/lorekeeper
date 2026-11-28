@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.32.0](https://github.com/nightspine/lorekeeper/compare/v0.31.1...v0.32.0) (2026-11-28)
+
+
+### Features
+
+* Ask can read the book's own text before your position, beside the index or alone ([#179](https://github.com/nightspine/lorekeeper/issues/179)) ([d07df1c](https://github.com/nightspine/lorekeeper/commit/d07df1cf03a261aa309cc46326d5e0f0e93d8892))
+* fix one panel of a comic page from the lightbox and keep the other panels as they are ([#177](https://github.com/nightspine/lorekeeper/issues/177)) ([337d4a7](https://github.com/nightspine/lorekeeper/commit/337d4a7ead9a08079de3ed54da0ef0d5f58bbf8d))
+* say which figure, or the subject, each of your reference pictures is for ([#180](https://github.com/nightspine/lorekeeper/issues/180)) ([37da151](https://github.com/nightspine/lorekeeper/commit/37da1510f8257f59f15c47d1d7fc62651adada01))
+
+
+### Bug Fixes
+
+* a chapter picture is written from its own chapter's recap and shown in its own chapter ([#181](https://github.com/nightspine/lorekeeper/issues/181)) ([06f5449](https://github.com/nightspine/lorekeeper/commit/06f5449c9752204fd1f1feedd76a25cc6ba2ba27))
+* a style preview may show the opening's last chapter picture when it is anchored just past its chapter ([#183](https://github.com/nightspine/lorekeeper/issues/183)) ([b531bed](https://github.com/nightspine/lorekeeper/commit/b531bed184f9252bb7bde594faf3fc85edd30101))
+* figure labels are never drawn as letters, and the drawing check finds writing and a wrong style ([#182](https://github.com/nightspine/lorekeeper/issues/182)) ([d0d7e36](https://github.com/nightspine/lorekeeper/commit/d0d7e3688443e9d5fc48983ff7669f7bc7799b0f))
+
+
+### Performance Improvements
+
+* serve pictures as small cached WebP copies at the size each place shows them ([#184](https://github.com/nightspine/lorekeeper/issues/184)) ([b495d1d](https://github.com/nightspine/lorekeeper/commit/b495d1d1ec81a15529fd07f40c0be8a5fe18f6e5))
+
 ## [0.31.1](https://github.com/nightspine/lorekeeper/compare/v0.31.0...v0.31.1) (2026-11-28)
 
 
